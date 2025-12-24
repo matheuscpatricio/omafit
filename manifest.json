@@ -1,0 +1,87 @@
+{
+  "name": "Omafit",
+  "handle": "",
+  "modules": [
+    {
+      "type": "theme_app_extension",
+      "handle": "omafit-theme",
+      "uid": "c4b277f4-57fb-a144-fcf3-d741ca7642cd48f6ca8c",
+      "uuid": "c4b277f4-57fb-a144-fcf3-d741ca7642cd48f6ca8c",
+      "assets": "c4b277f4-57fb-a144-fcf3-d741ca7642cd48f6ca8c",
+      "target": "",
+      "config": {
+        "theme_extension": {
+          "files": {}
+        }
+      }
+    },
+    {
+      "type": "app_access",
+      "handle": "app_access",
+      "uid": "app_access",
+      "assets": "app_access",
+      "target": "",
+      "config": {
+        "scopes": "",
+        "optional_scopes": [],
+        "use_legacy_install_flow": false,
+        "redirect_url_allowlist": []
+      }
+    },
+    {
+      "type": "webhooks",
+      "handle": "webhooks",
+      "uid": "webhooks",
+      "assets": "webhooks",
+      "target": "",
+      "config": {
+        "api_version": "2025-10"
+      }
+    },
+    {
+      "type": "app_home",
+      "handle": "app_home",
+      "uid": "app_home",
+      "assets": "app_home",
+      "target": "",
+      "config": {
+        "app_url": "https://occurring-wines-pest-compiler.trycloudflare.com",
+        "embedded": true
+      }
+    },
+    {
+      "type": "branding",
+      "handle": "branding",
+      "uid": "branding",
+      "assets": "branding",
+      "target": "",
+      "config": {
+        "name": "Omafit"
+      }
+    },
+    {
+      "type": "webhook_subscription",
+      "handle": "4103dafc7ac513f42a23183acf8fae610f56f29e",
+      "uid": "app/scopes_update::undefined::/webhooks/app/scopes_update",
+      "assets": "app/scopes_update::undefined::/webhooks/app/scopes_update",
+      "target": "",
+      "config": {
+        "topic": "app/scopes_update",
+        "api_version": "2025-10",
+        "uri": "https://occurring-wines-pest-compiler.trycloudflare.com/webhooks/app/scopes_update"
+      }
+    },
+    {
+      "type": "webhook_subscription",
+      "handle": "09711dbb6e24902b5a6cc0eb5164b8e4d2301cbf",
+      "uid": "app/uninstalled::undefined::/webhooks/app/uninstalled",
+      "assets": "app/uninstalled::undefined::/webhooks/app/uninstalled",
+      "target": "",
+      "config": {
+        "topic": "app/uninstalled",
+        "api_version": "2025-10",
+        "uri": "https://occurring-wines-pest-compiler.trycloudflare.com/webhooks/app/uninstalled"
+      }
+    }
+  ]
+}

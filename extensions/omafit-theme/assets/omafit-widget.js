@@ -201,11 +201,23 @@
       if (rootElement) {
         shopDomain = rootElement.dataset.shopDomain || '';
         publicId = rootElement.dataset.publicId || '';
+        
+        // Se shop.domain retornar apenas o nome da loja (sem .myshopify.com), adicionar
+        if (shopDomain && !shopDomain.includes('.')) {
+          shopDomain = shopDomain + '.myshopify.com';
+        }
       }
 
       // Tentar detectar shop domain do Shopify
       if (!shopDomain && window.Shopify && window.Shopify.shop) {
         shopDomain = window.Shopify.shop;
+        console.log('✅ Shop domain obtido do window.Shopify.shop:', shopDomain);
+      }
+      
+      // Tentar obter do window.Shopify.myshop
+      if (!shopDomain && window.Shopify && window.Shopify.myshop) {
+        shopDomain = window.Shopify.myshop;
+        console.log('✅ Shop domain obtido do window.Shopify.myshop:', shopDomain);
       }
 
       // Tentar extrair do meta tag
@@ -248,7 +260,9 @@
             text: '#810707',
             overlay: '#810707CC'
           },
-          shopDomain: ''
+          shopDomain: '',
+          widgetEnabled: true,
+          isActive: true
         };
       }
 
@@ -294,19 +308,45 @@
       let validPublicId = publicId || 'wgt_pub_default';
       
       // Prioridade 1: Tentar obter publicId da tabela widget_keys (mais confiável)
+      let isWidgetActive = true; // Default true para permitir funcionar na primeira instalação
+      let widgetKeyFound = false;
+      
       if (widgetKeyResponse.ok) {
         try {
           const widgetKeyText = await widgetKeyResponse.text();
           if (widgetKeyText && widgetKeyText.trim().length > 0) {
             const widgetKeyData = JSON.parse(widgetKeyText);
-            if (widgetKeyData && widgetKeyData.length > 0 && widgetKeyData[0].public_id && widgetKeyData[0].is_active) {
-              validPublicId = widgetKeyData[0].public_id;
-              console.log('✅ PublicId válido obtido de widget_keys:', validPublicId);
+            if (widgetKeyData && widgetKeyData.length > 0) {
+              widgetKeyFound = true;
+              
+              if (widgetKeyData[0].public_id) {
+                validPublicId = widgetKeyData[0].public_id;
+              }
+              
+              // Só verificar is_active se widget_keys foi encontrado
+              // Se não encontrou, permitir funcionar (pode ser primeira instalação)
+              if (widgetKeyData[0].is_active === false) {
+                isWidgetActive = false;
+                console.warn('⚠️ Widget encontrado em widget_keys mas is_active=false');
+              } else if (widgetKeyData[0].is_active === true) {
+                isWidgetActive = true;
+                console.log('✅ Widget encontrado e ativo em widget_keys. PublicId:', validPublicId);
+              } else {
+                // is_active pode ser null/undefined, tratar como true
+                isWidgetActive = true;
+                console.log('✅ Widget encontrado em widget_keys (is_active não especificado, tratando como true). PublicId:', validPublicId);
+              }
+            } else {
+              console.log('ℹ️ Nenhum registro encontrado em widget_keys. Permissão para funcionar (primeira instalação).');
             }
           }
         } catch (e) {
           console.warn('⚠️ Erro ao obter publicId de widget_keys:', e);
+          // Em caso de erro, permitir funcionar
+          isWidgetActive = true;
         }
+      } else {
+        console.log('ℹ️ widget_keys não encontrado ou erro ao buscar. Status:', widgetKeyResponse.status, 'Permitindo funcionar (pode ser primeira instalação).');
       }
       
       // Prioridade 2: Tentar obter publicId da tabela shopify_shops
@@ -366,6 +406,28 @@
         });
       }
       
+      // Verificar se widget está habilitado na configuração
+      // Se não houver configuração, considerar habilitado por padrão
+      const widgetEnabled = config ? (config.widget_enabled !== false) : true;
+      
+      // Widget só está desabilitado se:
+      // 1. widget_enabled explicitamente false NA CONFIGURAÇÃO, OU
+      // 2. widget_keys foi encontrado E is_active é explicitamente false
+      // Se widget_keys não foi encontrado, permitir funcionar (primeira instalação)
+      const finalWidgetEnabled = widgetEnabled && (widgetKeyFound ? isWidgetActive : true);
+      
+      console.log('📊 Status do widget:', {
+        configExists: !!config,
+        widgetKeysFound: widgetKeyFound,
+        widgetEnabledInConfig: widgetEnabled,
+        isActiveInWidgetKeys: widgetKeyFound ? isWidgetActive : 'N/A (não encontrado)',
+        finalStatus: finalWidgetEnabled ? '✅ HABILITADO' : '❌ DESABILITADO',
+        motivo: !finalWidgetEnabled ? 
+          (!widgetEnabled ? 'widget_enabled=false na configuração' : 
+           (widgetKeyFound && !isWidgetActive ? 'is_active=false em widget_keys' : 'desconhecido')) : 
+          'Widget habilitado'
+      });
+      
       // Mapear campos do banco de dados para o formato esperado pelo widget
       const mappedConfig = {
         publicId: validPublicId,
@@ -379,7 +441,9 @@
           text: config?.primary_color || '#810707',
           overlay: (config?.primary_color || '#810707') + 'CC'
         },
-        shopDomain: shopDomain
+        shopDomain: shopDomain,
+        widgetEnabled: finalWidgetEnabled,
+        isActive: isWidgetActive
       };
       
       console.log('✅ Configuração mapeada:', {
@@ -392,7 +456,7 @@
       return mappedConfig;
     } catch (error) {
       console.error('❌ Erro ao buscar configuração:', error);
-      // Retornar configuração padrão em caso de erro
+      // Retornar configuração padrão em caso de erro (widget habilitado por padrão)
       return {
         publicId: 'wgt_pub_default',
         linkText: 'Experimentar virtualmente',
@@ -405,7 +469,9 @@
           text: '#810707',
           overlay: '#810707CC'
         },
-        shopDomain: ''
+        shopDomain: '',
+        widgetEnabled: true,
+        isActive: true
       };
     }
   }
@@ -1151,11 +1217,22 @@
             text: '#810707',
             overlay: '#810707CC'
           },
-          shopDomain: ''
+          shopDomain: '',
+          widgetEnabled: true,
+          isActive: true
         };
       }
 
       console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
+
+      // Verificar se widget está habilitado antes de inserir
+      const isEnabled = OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false;
+      
+      if (!isEnabled) {
+        console.warn('⚠️ Widget Omafit está desabilitado. widgetEnabled:', OMAFIT_CONFIG.widgetEnabled, 'isActive:', OMAFIT_CONFIG.isActive);
+        console.warn('⚠️ Para habilitar, configure widget_enabled=true no app e is_active=true em widget_keys');
+        return;
+      }
 
       // Aguardar um pouco para garantir que o DOM está pronto
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -1174,10 +1251,15 @@
             linkText: 'Experimentar virtualmente',
             colors: { primary: '#810707', text: '#810707' },
             fontFamily: 'inherit',
-            shopDomain: ''
+            shopDomain: '',
+            widgetEnabled: true,
+            isActive: true
           };
         }
-        insertOmafitLinkUnderAddToCart();
+        // Verificar se está habilitado mesmo no fallback
+        if (OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false) {
+          insertOmafitLinkUnderAddToCart();
+        }
       } catch (err) {
         console.error('❌ Erro crítico ao inserir widget:', err);
       }

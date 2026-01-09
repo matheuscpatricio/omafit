@@ -2,6 +2,8 @@
 
 ## Problema 1: Link do Omafit não aparece na loja
 
+**ATUALIZAÇÃO:** O widget agora verifica se está habilitado antes de exibir. Se `widget_enabled = false` ou `is_active = false`, o link não aparecerá.
+
 ### Verificações Necessárias
 
 #### 1. Tema Instalado e Ativado
@@ -31,10 +33,13 @@
 2. Pressione **F12** para abrir o DevTools
 3. Vá na aba **Console**
 4. Procure por mensagens relacionadas ao Omafit:
+   - `🚀 Omafit: Iniciando widget...`
    - `🔍 Shop domain detectado: ...`
-   - `✅ Link Omafit já existe na página`
-   - `⚠️ Shop domain não encontrado`
-   - Erros relacionados ao Supabase
+   - `✅ PublicId válido obtido de widget_keys`
+   - `📊 Status do widget: { finalStatus: "✅ HABILITADO" }` ← **IMPORTANTE**
+   - `✅ Widget inserido após botão de carrinho`
+   - `⚠️ Widget Omafit está desabilitado` ← **Se aparecer isso, execute o script SQL**
+   - `⚠️ Widget encontrado mas não está ativo` ← **Se aparecer isso, execute o script SQL**
 
 #### 5. Verificar se o Script está Carregando
 1. No DevTools, vá na aba **Network**
@@ -44,6 +49,15 @@
 5. Se não estiver:
    - O tema pode não estar instalado corretamente
    - Execute: `shopify app deploy` para reinstalar o tema
+
+### Solução Rápida: Habilitar Widget no Banco
+
+**Se aparecer no console:** `⚠️ Widget Omafit está desabilitado`:
+
+1. Execute o script `habilitar_widget.sql` no Supabase
+2. Substitua `'SUA-LOJA.myshopify.com'` pelo shop domain real
+3. Execute o script
+4. Recarregue a página da loja (Ctrl+Shift+R)
 
 ### Solução: Reinstalar Tema
 ```bash

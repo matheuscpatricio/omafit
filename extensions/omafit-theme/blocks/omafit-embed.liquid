@@ -1,6 +1,6 @@
 <div
   id="omafit-widget-root"
-  data-shop-domain="{{ shop.domain }}"
+  data-shop-domain="{% if shop.domain contains '.myshopify.com' %}{{ shop.domain }}{% else %}{{ shop.domain }}.myshopify.com{% endif %}"
   {% if product %}
     data-product-id="{{ product.id }}"
     data-product-handle="{{ product.handle }}"

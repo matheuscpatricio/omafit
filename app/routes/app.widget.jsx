@@ -55,11 +55,13 @@ export default function WidgetPage() {
   const loadConfig = async () => {
     try {
       setLoading(true);
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      // Tentar obter do window.ENV (exposto pelo loader) ou import.meta.env
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       if (!supabaseUrl || !supabaseKey) {
-        console.warn('[Widget] Supabase não configurado');
+        console.error('[Widget] Supabase não configurado. Verifique as variáveis de ambiente no Railway.');
+        setError('Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Railway.');
         setLoading(false);
         return;
       }
@@ -132,11 +134,11 @@ export default function WidgetPage() {
       setError(null);
       setSaving(true);
 
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       if (!supabaseUrl || !supabaseKey) {
-        throw new Error('Supabase não configurado. Verifique as variáveis de ambiente.');
+        throw new Error('Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Railway.');
       }
 
       // Gerar nome único para o arquivo: UUID + timestamp + extensão
@@ -203,11 +205,11 @@ export default function WidgetPage() {
       setError(null);
       setSuccess(false);
 
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       if (!supabaseUrl || !supabaseKey) {
-        throw new Error('Supabase não configurado. Verifique as variáveis de ambiente.');
+        throw new Error('Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Railway.');
       }
 
       console.log('[Widget] Salvando configuração para shop_domain:', shopDomain);

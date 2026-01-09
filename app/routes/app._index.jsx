@@ -70,8 +70,8 @@ export default function DashboardPage() {
       // });
 
       // Opção 2: Buscar diretamente do Supabase (para desenvolvimento/teste)
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${shop}`, {
         headers: {

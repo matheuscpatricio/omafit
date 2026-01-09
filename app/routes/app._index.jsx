@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getShopDomain } from '../utils/getShopDomain';
+import { reactivateShop } from '../utils/reactivateShop';
 import {
   Page,
   Layout,
@@ -50,6 +51,13 @@ export default function DashboardPage() {
 
       // Obter shop domain dos query params (passado pelo Shopify)
       const shop = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
+
+      // Tentar reativar a loja automaticamente se necessário (não bloqueia o carregamento)
+      if (shop && shop !== 'demo-shop.myshopify.com') {
+        reactivateShop(shop).catch((error) => {
+          console.warn('[Dashboard] Erro ao tentar reativar loja (não crítico):', error);
+        });
+      }
 
       // Opção 1: Chamar Edge Function que autentica com Shopify
       // const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/shopify-dashboard`, {

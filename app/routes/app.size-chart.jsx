@@ -67,8 +67,15 @@ export default function SizeChartPage() {
   const loadSizeCharts = async () => {
     try {
       setLoading(true);
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      // Usar window.ENV (exposto pelo loader) com fallback para import.meta.env
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        console.error('[SizeChart] Variáveis de ambiente do Supabase não configuradas');
+        setError('Supabase não está configurado. Verifique as variáveis de ambiente.');
+        return;
+      }
 
       console.log('[SizeChart] Carregando tabelas para shop_domain:', shopDomain);
 
@@ -121,8 +128,18 @@ export default function SizeChartPage() {
       setError(null);
       setSuccess(false);
 
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      // Validar shopDomain primeiro
+      if (!shopDomain) {
+        throw new Error('Shop domain não encontrado. Verifique se está acessando pelo Shopify Admin.');
+      }
+
+      // Usar window.ENV (exposto pelo loader) com fallback para import.meta.env
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error('Supabase não está configurado. Verifique as variáveis de ambiente.');
+      }
 
       // Salvar cada tabela que estiver habilitada
       const chartsToSave = [];
@@ -207,7 +224,10 @@ export default function SizeChartPage() {
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       console.error('[SizeChart] Erro ao salvar tabelas:', err);
-      setError(err.message || 'Erro ao salvar tabelas de medidas. Tente novamente.');
+      const errorMessage = err instanceof Error ? err.message : String(err) || 'Erro ao salvar tabelas de medidas. Tente novamente.';
+      setError(errorMessage);
+      
+      // Não fazer throw do erro para evitar que o React Router trate como erro não tratado
     } finally {
       setSaving(false);
     }

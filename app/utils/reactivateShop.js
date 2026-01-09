@@ -10,14 +10,11 @@ export async function reactivateShop(shopDomain) {
   }
 
   try {
-    // Suporta tanto cliente (import.meta.env) quanto servidor (process.env)
-    const supabaseUrl = typeof import !== 'undefined' && import.meta?.env?.VITE_SUPABASE_URL
-      ? import.meta.env.VITE_SUPABASE_URL
-      : process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-    
-    const supabaseKey = typeof import !== 'undefined' && import.meta?.env?.VITE_SUPABASE_ANON_KEY
-      ? import.meta.env.VITE_SUPABASE_ANON_KEY
-      : process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    // Esta função roda apenas no cliente (navegador)
+    // window.ENV é exposto pelo loader do React Router (app.jsx)
+    // As variáveis são passadas do servidor para o cliente via loader
+    const supabaseUrl = typeof window !== 'undefined' && window.ENV?.VITE_SUPABASE_URL ? window.ENV.VITE_SUPABASE_URL : '';
+    const supabaseKey = typeof window !== 'undefined' && window.ENV?.VITE_SUPABASE_ANON_KEY ? window.ENV.VITE_SUPABASE_ANON_KEY : '';
 
     if (!supabaseUrl || !supabaseKey) {
       console.warn('[ReactivateShop] Variáveis de ambiente do Supabase não configuradas');

@@ -144,21 +144,27 @@ export default function WidgetPage() {
       // Gerar nome único para o arquivo: UUID + timestamp + extensão
       const fileExtension = file.name.split('.').pop() || 'png';
       const fileName = `${crypto.randomUUID()}-${Date.now()}.${fileExtension}`;
+      
+      // Caminho no bucket: Video banner/widget-logos/nome-do-arquivo
+      const bucketName = 'Video banner';
+      const filePath = `widget-logos/${fileName}`;
+      const fullPath = `${bucketName}/${filePath}`;
 
-      console.log('[Widget] Fazendo upload do logo via Edge Function:', fileName);
+      console.log('[Widget] Fazendo upload do logo no Supabase Storage:', fullPath);
 
-      // Fazer upload via Edge Function enviando arquivo binário diretamente
+      // Fazer upload diretamente no Supabase Storage
+      // Endpoint: /storage/v1/object/{bucket}/{path}
       const uploadResponse = await fetch(
-        `${supabaseUrl}/functions/v1/upload-widget-logo`,
+        `${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucketName)}/${encodeURIComponent(filePath)}`,
         {
           method: 'POST',
           headers: {
             'apikey': supabaseKey,
             'Authorization': `Bearer ${supabaseKey}`,
-            'x-file-name': fileName,
-            'x-content-type': file.type
+            'Content-Type': file.type,
+            'x-upsert': 'true' // Permite sobrescrever se já existir
           },
-          body: file // Enviar arquivo binário diretamente
+          body: file
         }
       );
 
@@ -168,26 +174,22 @@ export default function WidgetPage() {
         
         try {
           const errorData = JSON.parse(errorText);
-          errorMessage = errorData.error || errorMessage;
+          errorMessage = errorData.message || errorData.error || errorMessage;
         } catch (e) {
           errorMessage = errorText || errorMessage;
         }
         
-        console.error('[Widget] Erro no upload:', errorMessage);
+        console.error('[Widget] Erro no upload:', errorMessage, 'Status:', uploadResponse.status);
         throw new Error(errorMessage);
       }
 
-      const result = await uploadResponse.json();
+      // Construir URL pública do arquivo
+      // Formato: https://{supabase-url}/storage/v1/object/public/{bucket}/{path}
+      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucketName)}/${encodeURIComponent(filePath)}`;
       
-      if (!result.success) {
-        throw new Error(result.error || 'Erro ao fazer upload do logo.');
-      }
+      console.log('[Widget] Logo enviado com sucesso. URL pública:', publicUrl);
 
-      const publicUrl = result.url;
-      
-      console.log('[Widget] Logo enviado com sucesso. URL:', publicUrl);
-
-      // Atualizar configuração com a URL
+      // Atualizar configuração com a URL pública
       const newConfig = { ...config, store_logo: publicUrl };
       setConfig(newConfig);
       await saveConfig(newConfig);

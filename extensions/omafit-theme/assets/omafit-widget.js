@@ -1,5 +1,8 @@
 // Omafit - Widget oficial adaptado para Theme App Extension
 (function () {
+  // Log imediato para confirmar que script está carregando
+  console.log('✅ Script omafit-widget.js carregado e executando...');
+  
   // Configuração global (será preenchida pela API)
   let OMAFIT_CONFIG = null;
 

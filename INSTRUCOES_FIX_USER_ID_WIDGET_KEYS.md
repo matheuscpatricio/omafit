@@ -64,3 +64,4 @@ Se você criou a tabela usando `supabase_create_widget_keys_final.sql`, a coluna
 
 
 
+

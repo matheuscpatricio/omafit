@@ -81,3 +81,4 @@ COMMENT ON FUNCTION sync_widget_keys_logo IS 'Função trigger que sincroniza st
 
 
 
+

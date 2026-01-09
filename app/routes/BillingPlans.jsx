@@ -96,7 +96,7 @@ export default function BillingPlans({
                 {isEnterprise ? (
                   <Button
                     variant="primary"
-                    url="https://seu-site-omafit.com/contato"
+                    url="mailto:contato@omafit.co"
                     external
                   >
                     Fale com a gente

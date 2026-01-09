@@ -11,8 +11,44 @@ import {
   Spinner,
   Banner,
   Badge,
-  ProgressBar
+  ProgressBar,
+  Image
 } from '@shopify/polaris';
+
+// Mapeamento de tipos de corpo (0-4)
+const BODY_TYPE_NAMES = {
+  0: 'Magro',
+  1: 'Esbelto',
+  2: 'Médio',
+  3: 'Robusto',
+  4: 'Atlético'
+};
+
+// Mapeamento de ajustes (0-2)
+const FIT_PREFERENCE_NAMES = {
+  0: 'Justa',
+  1: 'Na medida',
+  2: 'Solta'
+};
+
+// URLs das imagens de manequim por tipo de corpo e gênero
+// Estas são URLs placeholder - você deve substituir por URLs reais das imagens
+const BODY_TYPE_IMAGES = {
+  male: {
+    0: 'https://via.placeholder.com/200x400?text=Magro+Masculino',
+    1: 'https://via.placeholder.com/200x400?text=Esbelto+Masculino',
+    2: 'https://via.placeholder.com/200x400?text=Médio+Masculino',
+    3: 'https://via.placeholder.com/200x400?text=Robusto+Masculino',
+    4: 'https://via.placeholder.com/200x400?text=Atlético+Masculino'
+  },
+  female: {
+    0: 'https://via.placeholder.com/200x400?text=Magro+Feminino',
+    1: 'https://via.placeholder.com/200x400?text=Esbelto+Feminino',
+    2: 'https://via.placeholder.com/200x400?text=Médio+Feminino',
+    3: 'https://via.placeholder.com/200x400?text=Robusto+Feminino',
+    4: 'https://via.placeholder.com/200x400?text=Atlético+Feminino'
+  }
+};
 
 export default function AnalyticsPage() {
   const [searchParams] = useSearchParams();
@@ -67,7 +103,7 @@ export default function AnalyticsPage() {
       const dateFilter = new Date();
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange));
 
-      // 2. Buscar session analytics
+      // 2. Buscar session analytics com user_measurements
       const sessionsResponse = await fetch(
         `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${userId}&created_at=gte.${dateFilter.toISOString()}&select=*`,
         {
@@ -107,6 +143,72 @@ export default function AnalyticsPage() {
         .sort((a, b) => b.count - a.count)
         .slice(0, 5);
 
+      // 5. Calcular estatísticas por gênero (tamanho, corpo, ajuste)
+      const genderStats = { male: {}, female: {} };
+      
+      sessionsData.forEach((session) => {
+        // Tentar extrair user_measurements de diferentes formatos
+        let measurements = null;
+        if (session.user_measurements) {
+          if (typeof session.user_measurements === 'string') {
+            try {
+              measurements = JSON.parse(session.user_measurements);
+            } catch (e) {
+              console.warn('[Analytics] Erro ao fazer parse de user_measurements:', e);
+            }
+          } else if (typeof session.user_measurements === 'object') {
+            measurements = session.user_measurements;
+          }
+        } else if (session.gender || session.recommended_size || session.body_type_index !== undefined || session.fit_preference_index !== undefined) {
+          // Dados podem estar em campos separados
+          measurements = {
+            gender: session.gender,
+            recommended_size: session.recommended_size,
+            body_type_index: session.body_type_index,
+            fit_preference_index: session.fit_preference_index
+          };
+        }
+
+        if (measurements && measurements.gender && (measurements.gender === 'male' || measurements.gender === 'female')) {
+          const gender = measurements.gender;
+          if (!genderStats[gender].sizes) genderStats[gender].sizes = {};
+          if (!genderStats[gender].bodyTypes) genderStats[gender].bodyTypes = {};
+          if (!genderStats[gender].fits) genderStats[gender].fits = {};
+
+          // Tamanho mais sugerido
+          if (measurements.recommended_size) {
+            const size = measurements.recommended_size;
+            genderStats[gender].sizes[size] = (genderStats[gender].sizes[size] || 0) + 1;
+          }
+
+          // Corpo mais escolhido
+          if (measurements.body_type_index !== undefined && measurements.body_type_index !== null) {
+            const bodyType = measurements.body_type_index;
+            genderStats[gender].bodyTypes[bodyType] = (genderStats[gender].bodyTypes[bodyType] || 0) + 1;
+          }
+
+          // Ajuste mais escolhido
+          if (measurements.fit_preference_index !== undefined && measurements.fit_preference_index !== null) {
+            const fit = measurements.fit_preference_index;
+            genderStats[gender].fits[fit] = (genderStats[gender].fits[fit] || 0) + 1;
+          }
+        }
+      });
+
+      // Calcular mais frequentes por gênero
+      const calculateMostFrequent = (obj) => {
+        if (!obj || Object.keys(obj).length === 0) return null;
+        return Object.entries(obj).sort((a, b) => b[1] - a[1])[0];
+      };
+
+      const maleMostSize = calculateMostFrequent(genderStats.male.sizes);
+      const maleMostBodyType = calculateMostFrequent(genderStats.male.bodyTypes);
+      const maleMostFit = calculateMostFrequent(genderStats.male.fits);
+
+      const femaleMostSize = calculateMostFrequent(genderStats.female.sizes);
+      const femaleMostBodyType = calculateMostFrequent(genderStats.female.bodyTypes);
+      const femaleMostFit = calculateMostFrequent(genderStats.female.fits);
+
       setMetrics({
         totalSessions,
         completedSessions,
@@ -114,7 +216,19 @@ export default function AnalyticsPage() {
         completionRate,
         averageSessionDuration,
         totalImagesProcessed,
-        topProducts: topProductsArray
+        topProducts: topProductsArray,
+        genderStats: {
+          male: {
+            mostSize: maleMostSize ? { size: maleMostSize[0], count: maleMostSize[1] } : null,
+            mostBodyType: maleMostBodyType ? { index: parseInt(maleMostBodyType[0]), count: maleMostBodyType[1] } : null,
+            mostFit: maleMostFit ? { index: parseInt(maleMostFit[0]), count: maleMostFit[1] } : null
+          },
+          female: {
+            mostSize: femaleMostSize ? { size: femaleMostSize[0], count: femaleMostSize[1] } : null,
+            mostBodyType: femaleMostBodyType ? { index: parseInt(femaleMostBodyType[0]), count: femaleMostBodyType[1] } : null,
+            mostFit: femaleMostFit ? { index: parseInt(femaleMostFit[0]), count: femaleMostFit[1] } : null
+          }
+        }
       });
     } catch (err) {
       console.error('[Analytics] Erro ao carregar:', err);
@@ -360,6 +474,209 @@ export default function AnalyticsPage() {
               )}
             </BlockStack>
           </Card>
+        </Layout.Section>
+
+        {/* Estatísticas por Gênero */}
+        <Layout.Section>
+          <BlockStack gap="400">
+            <Text variant="headingLg" as="h2">
+              Estatísticas por Gênero
+            </Text>
+
+            {/* Masculino */}
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h3">
+                  Gênero Masculino
+                </Text>
+
+                <InlineStack gap="400" wrap>
+                  {/* Tamanho mais sugerido */}
+                  <div style={{ flex: '1 1 300px' }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text variant="bodyMd" fontWeight="semibold">
+                          Tamanho Mais Sugerido
+                        </Text>
+                        {metrics?.genderStats?.male?.mostSize ? (
+                          <BlockStack gap="200">
+                            <Text variant="headingXl" as="p">
+                              {metrics.genderStats.male.mostSize.size}
+                            </Text>
+                            <Text variant="bodyMd" tone="subdued">
+                              {metrics.genderStats.male.mostSize.count} seleções
+                            </Text>
+                          </BlockStack>
+                        ) : (
+                          <Text variant="bodyMd" tone="subdued">
+                            Sem dados disponíveis
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Card>
+                  </div>
+
+                  {/* Corpo mais escolhido */}
+                  <div style={{ flex: '1 1 300px' }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text variant="bodyMd" fontWeight="semibold">
+                          Corpo Mais Escolhido
+                        </Text>
+                        {metrics?.genderStats?.male?.mostBodyType ? (
+                          <BlockStack gap="200">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <div style={{ width: '120px', height: '200px', overflow: 'hidden', borderRadius: '8px' }}>
+                                <img
+                                  src={BODY_TYPE_IMAGES.male[metrics.genderStats.male.mostBodyType.index] || BODY_TYPE_IMAGES.male[2]}
+                                  alt={BODY_TYPE_NAMES[metrics.genderStats.male.mostBodyType.index] || 'Médio'}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                              </div>
+                              <BlockStack gap="100">
+                                <Text variant="headingXl" as="p">
+                                  {BODY_TYPE_NAMES[metrics.genderStats.male.mostBodyType.index] || 'N/A'}
+                                </Text>
+                                <Text variant="bodyMd" tone="subdued">
+                                  {metrics.genderStats.male.mostBodyType.count} seleções
+                                </Text>
+                              </BlockStack>
+                            </div>
+                          </BlockStack>
+                        ) : (
+                          <Text variant="bodyMd" tone="subdued">
+                            Sem dados disponíveis
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Card>
+                  </div>
+
+                  {/* Ajuste mais escolhido */}
+                  <div style={{ flex: '1 1 300px' }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text variant="bodyMd" fontWeight="semibold">
+                          Ajuste Mais Escolhido
+                        </Text>
+                        {metrics?.genderStats?.male?.mostFit ? (
+                          <BlockStack gap="200">
+                            <Text variant="headingXl" as="p">
+                              {FIT_PREFERENCE_NAMES[metrics.genderStats.male.mostFit.index] || 'N/A'}
+                            </Text>
+                            <Text variant="bodyMd" tone="subdued">
+                              {metrics.genderStats.male.mostFit.count} seleções
+                            </Text>
+                          </BlockStack>
+                        ) : (
+                          <Text variant="bodyMd" tone="subdued">
+                            Sem dados disponíveis
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Card>
+                  </div>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+
+            {/* Feminino */}
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h3">
+                  Gênero Feminino
+                </Text>
+
+                <InlineStack gap="400" wrap>
+                  {/* Tamanho mais sugerido */}
+                  <div style={{ flex: '1 1 300px' }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text variant="bodyMd" fontWeight="semibold">
+                          Tamanho Mais Sugerido
+                        </Text>
+                        {metrics?.genderStats?.female?.mostSize ? (
+                          <BlockStack gap="200">
+                            <Text variant="headingXl" as="p">
+                              {metrics.genderStats.female.mostSize.size}
+                            </Text>
+                            <Text variant="bodyMd" tone="subdued">
+                              {metrics.genderStats.female.mostSize.count} seleções
+                            </Text>
+                          </BlockStack>
+                        ) : (
+                          <Text variant="bodyMd" tone="subdued">
+                            Sem dados disponíveis
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Card>
+                  </div>
+
+                  {/* Corpo mais escolhido */}
+                  <div style={{ flex: '1 1 300px' }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text variant="bodyMd" fontWeight="semibold">
+                          Corpo Mais Escolhido
+                        </Text>
+                        {metrics?.genderStats?.female?.mostBodyType ? (
+                          <BlockStack gap="200">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <div style={{ width: '120px', height: '200px', overflow: 'hidden', borderRadius: '8px' }}>
+                                <img
+                                  src={BODY_TYPE_IMAGES.female[metrics.genderStats.female.mostBodyType.index] || BODY_TYPE_IMAGES.female[2]}
+                                  alt={BODY_TYPE_NAMES[metrics.genderStats.female.mostBodyType.index] || 'Médio'}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                              </div>
+                              <BlockStack gap="100">
+                                <Text variant="headingXl" as="p">
+                                  {BODY_TYPE_NAMES[metrics.genderStats.female.mostBodyType.index] || 'N/A'}
+                                </Text>
+                                <Text variant="bodyMd" tone="subdued">
+                                  {metrics.genderStats.female.mostBodyType.count} seleções
+                                </Text>
+                              </BlockStack>
+                            </div>
+                          </BlockStack>
+                        ) : (
+                          <Text variant="bodyMd" tone="subdued">
+                            Sem dados disponíveis
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Card>
+                  </div>
+
+                  {/* Ajuste mais escolhido */}
+                  <div style={{ flex: '1 1 300px' }}>
+                    <Card>
+                      <BlockStack gap="300">
+                        <Text variant="bodyMd" fontWeight="semibold">
+                          Ajuste Mais Escolhido
+                        </Text>
+                        {metrics?.genderStats?.female?.mostFit ? (
+                          <BlockStack gap="200">
+                            <Text variant="headingXl" as="p">
+                              {FIT_PREFERENCE_NAMES[metrics.genderStats.female.mostFit.index] || 'N/A'}
+                            </Text>
+                            <Text variant="bodyMd" tone="subdued">
+                              {metrics.genderStats.female.mostFit.count} seleções
+                            </Text>
+                          </BlockStack>
+                        ) : (
+                          <Text variant="bodyMd" tone="subdued">
+                            Sem dados disponíveis
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Card>
+                  </div>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+          </BlockStack>
         </Layout.Section>
 
         <Layout.Section>

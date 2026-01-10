@@ -168,31 +168,65 @@ export default function WidgetPage() {
         }
       );
 
+      // Ler resposta do upload
+      const uploadResponseText = await uploadResponse.text();
+      
+      console.log('[Widget] Resposta do upload:', {
+        status: uploadResponse.status,
+        statusText: uploadResponse.statusText,
+        ok: uploadResponse.ok,
+        responseText: uploadResponseText.substring(0, 200)
+      });
+
       if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
         let errorMessage = 'Erro ao fazer upload do logo.';
         
         try {
-          const errorData = JSON.parse(errorText);
+          const errorData = JSON.parse(uploadResponseText);
           errorMessage = errorData.message || errorData.error || errorMessage;
         } catch (e) {
-          errorMessage = errorText || errorMessage;
+          errorMessage = uploadResponseText || errorMessage;
         }
         
         console.error('[Widget] Erro no upload:', errorMessage, 'Status:', uploadResponse.status);
         throw new Error(errorMessage);
       }
 
-      // Construir URL pública do arquivo
+      // Upload bem-sucedido - construir URL pública do arquivo
       // Formato: https://{supabase-url}/storage/v1/object/public/{bucket}/{path}
-      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucketName)}/${encodeURIComponent(filePath)}`;
+      // IMPORTANTE: bucket name com espaço precisa ser URL-encoded
+      const encodedBucket = encodeURIComponent(bucketName); // "Video banner" -> "Video%20banner"
+      const encodedPath = encodeURIComponent(filePath);
+      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodedBucket}/${encodedPath}`;
       
-      console.log('[Widget] Logo enviado com sucesso. URL pública:', publicUrl);
+      console.log('[Widget] ✅ Logo enviado com sucesso!');
+      console.log('[Widget] Bucket:', bucketName);
+      console.log('[Widget] File path:', filePath);
+      console.log('[Widget] URL pública gerada:', publicUrl);
+
+      // Testar se a URL é acessível (verificação opcional)
+      try {
+        const testResponse = await fetch(publicUrl, { method: 'HEAD' });
+        console.log('[Widget] Teste de acesso à URL:', testResponse.status, testResponse.ok ? '✅ Acessível' : '⚠️ Não acessível ainda');
+      } catch (e) {
+        console.warn('[Widget] ⚠️ Não foi possível testar acesso à URL (pode ser normal):', e.message);
+      }
 
       // Atualizar configuração com a URL pública
       const newConfig = { ...config, store_logo: publicUrl };
+      console.log('[Widget] Atualizando estado local com URL:', publicUrl);
       setConfig(newConfig);
-      await saveConfig(newConfig);
+      
+      // Salvar configuração no banco de dados
+      console.log('[Widget] Salvando URL no banco de dados...');
+      try {
+        await saveConfig(newConfig);
+        console.log('[Widget] ✅ URL salva no banco com sucesso!');
+      } catch (saveError) {
+        console.error('[Widget] ❌ Erro ao salvar URL no banco:', saveError);
+        // Ainda atualizar o estado local mesmo se salvar falhar
+        throw saveError;
+      }
     } catch (err) {
       console.error('[Widget] Erro ao fazer upload do logo:', err);
       setError(err.message || 'Erro ao fazer upload do logo. Tente novamente.');
@@ -224,6 +258,11 @@ export default function WidgetPage() {
         primary_color: configToSave.primary_color,
         widget_enabled: configToSave.widget_enabled
       };
+      
+      console.log('[Widget] Payload a ser enviado:', {
+        ...payload,
+        store_logo: payload.store_logo ? `${payload.store_logo.substring(0, 100)}...` : '(vazio)'
+      });
 
       let response;
       
@@ -265,7 +304,13 @@ export default function WidgetPage() {
         const responseText = await response.text();
         let data = null;
         
-        console.log('[Widget] Resposta do salvamento:', response.status, responseText.substring(0, 200));
+        console.log('[Widget] ✅ Resposta do salvamento recebida:', {
+          status: response.status,
+          statusText: response.statusText,
+          ok: response.ok,
+          responseLength: responseText.length,
+          responsePreview: responseText.substring(0, 200)
+        });
         
         // Tentar fazer parse do JSON apenas se houver conteúdo
         if (responseText && responseText.trim().length > 0) {

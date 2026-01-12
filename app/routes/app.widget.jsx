@@ -194,15 +194,24 @@ export default function WidgetPage() {
 
       // Upload bem-sucedido - construir URL pública do arquivo
       // Formato: https://{supabase-url}/storage/v1/object/public/{bucket}/{path}
-      // IMPORTANTE: bucket name com espaço precisa ser URL-encoded
+      // IMPORTANTE: bucket name com espaço precisa ser URL-encoded na URL final
+      // Mas precisamos garantir que cada parte seja encoded corretamente
       const encodedBucket = encodeURIComponent(bucketName); // "Video banner" -> "Video%20banner"
       const encodedPath = encodeURIComponent(filePath);
-      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodedBucket}/${encodedPath}`;
+      
+      // Construir URL pública - garantir que não haja encoding duplo
+      // A URL deve ter a estrutura: /storage/v1/object/public/{bucket}/{path}
+      // onde bucket e path são cada um URL-encoded separadamente
+      const publicUrl = `${supabaseUrl.replace(/\/$/, '')}/storage/v1/object/public/${encodedBucket}/${encodedPath}`;
       
       console.log('[Widget] ✅ Logo enviado com sucesso!');
-      console.log('[Widget] Bucket:', bucketName);
-      console.log('[Widget] File path:', filePath);
-      console.log('[Widget] URL pública gerada:', publicUrl);
+      console.log('[Widget] Bucket (original):', bucketName);
+      console.log('[Widget] Bucket (encoded):', encodedBucket);
+      console.log('[Widget] File path (original):', filePath);
+      console.log('[Widget] File path (encoded):', encodedPath);
+      console.log('[Widget] Supabase URL:', supabaseUrl);
+      console.log('[Widget] URL pública gerada (completa):', publicUrl);
+      console.log('[Widget] Tamanho da URL:', publicUrl.length, 'caracteres');
 
       // Testar se a URL é acessível (verificação opcional)
       try {
@@ -251,18 +260,29 @@ export default function WidgetPage() {
       console.log('[Widget] Salvando configuração para shop_domain:', shopDomain);
       console.log('[Widget] ConfigId atual:', configId);
 
+      // Garantir que store_logo seja uma string válida e não vazia/null
+      const storeLogoValue = configToSave.store_logo ? String(configToSave.store_logo).trim() : null;
+      
       const payload = {
         shop_domain: shopDomain,
-        link_text: configToSave.link_text,
-        store_logo: configToSave.store_logo,
-        primary_color: configToSave.primary_color,
-        widget_enabled: configToSave.widget_enabled
+        link_text: configToSave.link_text || 'Experimentar virtualmente',
+        store_logo: storeLogoValue || null, // null ao invés de string vazia
+        primary_color: configToSave.primary_color || '#810707',
+        widget_enabled: configToSave.widget_enabled !== false
       };
       
       console.log('[Widget] Payload a ser enviado:', {
-        ...payload,
-        store_logo: payload.store_logo ? `${payload.store_logo.substring(0, 100)}...` : '(vazio)'
+        shop_domain: payload.shop_domain,
+        link_text: payload.link_text,
+        store_logo: payload.store_logo ? `✅ Presente (${payload.store_logo.length} chars): ${payload.store_logo.substring(0, 100)}...` : '❌ Ausente/null',
+        primary_color: payload.primary_color,
+        widget_enabled: payload.widget_enabled
       });
+      
+      // Validação adicional: verificar se store_logo é uma URL válida
+      if (storeLogoValue && !storeLogoValue.startsWith('http')) {
+        console.warn('[Widget] ⚠️ store_logo não parece ser uma URL válida:', storeLogoValue.substring(0, 50));
+      }
 
       let response;
       
@@ -312,6 +332,10 @@ export default function WidgetPage() {
           responsePreview: responseText.substring(0, 200)
         });
         
+        // Log adicional: verificar se store_logo foi salvo corretamente
+        console.log('[Widget] Verificando se store_logo foi salvo...');
+        console.log('[Widget] store_logo enviado:', payload.store_logo ? `✅ ${payload.store_logo.substring(0, 80)}...` : '❌ null');
+        
         // Tentar fazer parse do JSON apenas se houver conteúdo
         if (responseText && responseText.trim().length > 0) {
           try {
@@ -319,26 +343,74 @@ export default function WidgetPage() {
             if (data && Array.isArray(data) && data.length > 0 && data[0].id) {
               setConfigId(data[0].id);
               console.log('[Widget] ConfigId salvo:', data[0].id);
+              
+              // Verificar se store_logo foi salvo corretamente na resposta
+              if (data[0].store_logo) {
+                console.log('[Widget] ✅ store_logo salvo no banco (confirmado na resposta):', data[0].store_logo.substring(0, 100) + '...');
+              } else {
+                console.warn('[Widget] ⚠️ store_logo não aparece na resposta (pode ser normal se foi PATCH)');
+                // Buscar novamente para confirmar
+                await loadConfig();
+              }
             } else if (data && data.id) {
               setConfigId(data.id);
               console.log('[Widget] ConfigId salvo:', data.id);
+              
+              // Verificar se store_logo foi salvo
+              if (data.store_logo) {
+                console.log('[Widget] ✅ store_logo salvo no banco (confirmado na resposta):', data.store_logo.substring(0, 100) + '...');
+              }
             } else if (data && Array.isArray(data) && data.length === 0) {
               // PATCH pode retornar array vazio, buscar novamente
-              console.log('[Widget] PATCH retornou vazio, buscando configuração novamente...');
+              console.log('[Widget] PATCH retornou vazio, buscando configuração novamente para confirmar store_logo...');
               await loadConfig();
             }
           } catch (e) {
             console.warn('[Widget] Resposta não é JSON válido, mas status é OK:', responseText);
-            // Se o status é OK, buscar novamente para garantir que temos o ID
-            if (!configId) {
-              await loadConfig();
-            }
+            // Se o status é OK, buscar novamente para garantir que temos o ID e store_logo
+            console.log('[Widget] Buscando configuração novamente para confirmar salvamento...');
+            await loadConfig();
           }
-        } else if (!configId) {
-          // Se não recebemos resposta mas status é OK, buscar novamente
-          console.log('[Widget] Resposta vazia, buscando configuração novamente...');
+        } else {
+          // Se não recebemos resposta mas status é OK, buscar novamente para confirmar
+          console.log('[Widget] Resposta vazia, buscando configuração novamente para confirmar store_logo...');
           await loadConfig();
         }
+        
+        // Verificação final: buscar configuração do banco para confirmar que store_logo foi salvo
+        console.log('[Widget] ⏳ Fazendo verificação final do store_logo no banco...');
+        setTimeout(async () => {
+          try {
+            // Buscar configuração diretamente para verificar
+            const verifyResponse = await fetch(
+              `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=store_logo`,
+              {
+                headers: {
+                  'apikey': supabaseKey,
+                  'Authorization': `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            
+            if (verifyResponse.ok) {
+              const verifyData = await verifyResponse.json();
+              if (verifyData && verifyData.length > 0) {
+                const savedLogo = verifyData[0].store_logo;
+                if (savedLogo) {
+                  console.log('[Widget] ✅ VERIFICAÇÃO FINAL: store_logo salvo corretamente no banco!');
+                  console.log('[Widget] URL salva:', savedLogo.substring(0, 100) + '...');
+                  console.log('[Widget] Tamanho:', savedLogo.length, 'caracteres');
+                  console.log('[Widget] URL corresponde ao esperado?', savedLogo === payload.store_logo ? '✅ SIM' : '⚠️ NÃO (pode ser normal se foi truncado ou modificado)');
+                } else {
+                  console.error('[Widget] ❌ VERIFICAÇÃO FINAL: store_logo NÃO foi salvo (está null/vazio)');
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[Widget] ⚠️ Erro ao verificar store_logo:', e);
+          }
+        }, 500);
         
         setSuccess(true);
         setTimeout(() => setSuccess(false), 3000);

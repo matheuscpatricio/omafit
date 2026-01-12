@@ -2,11 +2,13 @@
 
 client_id = "edd62a3e2d33c579c9c248c03ebd736c"
 name = "Omafit"
-application_url = "https://ranging-drill-proper-wayne.trycloudflare.com"
+application_url = "https://omafit-production.up.railway.app/"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+# Desabilitado para evitar que o CLI atualize para túnel Cloudflare durante deploy
+# Em desenvolvimento local, use 'shopify app dev' que cria túnel automaticamente
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2025-10"

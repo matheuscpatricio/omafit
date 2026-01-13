@@ -88,7 +88,7 @@ export default function AnalyticsPage() {
 
       console.log('[Analytics] Carregando analytics para shop_domain:', shopDomain);
 
-      // 1. Buscar user_id da loja
+      // 1. Buscar user_id da loja (o user_id usado para inserir dados na session_analytics)
       const shopUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id`;
       console.log('[Analytics] Buscando user_id da loja:', shopUrl);
       
@@ -107,10 +107,8 @@ export default function AnalyticsPage() {
       }
 
       const shopData = await shopResponse.json();
-      console.log('[Analytics] Dados da loja recebidos:', shopData);
-      
       const userId = shopData && shopData.length > 0 ? shopData[0]?.user_id : null;
-      console.log('[Analytics] user_id encontrado:', userId);
+      console.log('[Analytics] user_id da loja encontrado:', userId);
 
       if (!userId) {
         console.warn('[Analytics] user_id não encontrado para shop_domain:', shopDomain);
@@ -134,50 +132,12 @@ export default function AnalyticsPage() {
       const dateFilter = new Date();
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange));
 
-      // 2. Primeiro, tentar buscar TODAS as sessões sem filtro de data para debug
-      const testUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*&limit=10`;
-      console.log('[Analytics] TESTE: Buscando TODAS as sessões (sem filtro de data):', testUrl);
-      
-      const testResponse = await fetch(testUrl, {
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (testResponse.ok) {
-        const testData = await testResponse.json();
-        console.log('[Analytics] TESTE: Total de sessões encontradas (sem filtro):', testData?.length || 0);
-        if (testData && testData.length > 0) {
-          console.log('[Analytics] TESTE: Exemplo de sessão:', JSON.stringify(testData[0], null, 2));
-        }
-      }
-
-      // 3. Tentar buscar também em tryon_sessions caso session_analytics não tenha dados
-      const tryonSessionsUrl = `${supabaseUrl}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&select=*&limit=10`;
-      console.log('[Analytics] TESTE: Buscando também em tryon_sessions:', tryonSessionsUrl);
-      
-      const tryonResponse = await fetch(tryonSessionsUrl, {
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (tryonResponse.ok) {
-        const tryonData = await tryonResponse.json();
-        console.log('[Analytics] TESTE: Sessões em tryon_sessions:', tryonData?.length || 0);
-        if (tryonData && tryonData.length > 0) {
-          console.log('[Analytics] TESTE: Exemplo de tryon_session:', JSON.stringify(tryonData[0], null, 2));
-        }
-      }
-
-      // 4. Buscar session analytics com filtro de data (query original)
-      const sessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*`;
-      console.log('[Analytics] Buscando session_analytics (com filtro de data):', sessionsUrl);
-      console.log('[Analytics] Data filtro:', dateFilter.toISOString(), 'Período:', timeRange, 'dias');
+      // 2. Buscar session_analytics usando user_id da loja
+      // IMPORTANTE: O user_id em session_analytics É o user_id da LOJA (não do cliente)
+      // A Edge Function insere os dados com o user_id da loja (linhas 250 e 268)
+      const sessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`;
+      console.log('[Analytics] Buscando session_analytics por user_id da loja:', sessionsUrl);
+      console.log('[Analytics] Período:', timeRange, 'dias | Data filtro:', dateFilter.toISOString());
       
       const sessionsResponse = await fetch(sessionsUrl, {
         headers: {
@@ -193,13 +153,13 @@ export default function AnalyticsPage() {
         throw new Error(`Erro ao buscar sessões: ${sessionsResponse.status}`);
       }
 
-      let sessionsData = await sessionsResponse.json();
-      console.log('[Analytics] Sessões encontradas (com filtro de data):', sessionsData?.length || 0);
+      let sessionsData = await sessionsResponse.json() || [];
+      console.log('[Analytics] ✅ Sessões encontradas (filtradas por user_id da loja):', sessionsData.length);
       
-      // Se não encontrou com filtro de data, tentar sem filtro
-      if (!sessionsData || sessionsData.length === 0) {
-        console.log('[Analytics] Nenhuma sessão encontrada com filtro de data. Buscando TODAS as sessões...');
-        const allSessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*`;
+      // Se não encontrou com filtro de data, tentar sem filtro de data (mas ainda com user_id da loja)
+      if (sessionsData.length === 0) {
+        console.log('[Analytics] Nenhuma sessão encontrada com filtro de data. Buscando todas as sessões da loja...');
+        const allSessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc`;
         const allSessionsResponse = await fetch(allSessionsUrl, {
           headers: {
             'apikey': supabaseKey,
@@ -210,8 +170,7 @@ export default function AnalyticsPage() {
         
         if (allSessionsResponse.ok) {
           const allSessionsData = await allSessionsResponse.json();
-          console.log('[Analytics] Total de sessões (sem filtro de data):', allSessionsData?.length || 0);
-          // Usar todas as sessões se não houver com filtro
+          console.log('[Analytics] Total de sessões da loja (sem filtro de data):', allSessionsData?.length || 0);
           sessionsData = allSessionsData || [];
         }
       }

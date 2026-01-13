@@ -14,6 +14,7 @@ import {
   ProgressBar,
   Image
 } from '@shopify/polaris';
+import { getShopDomain } from '../utils/getShopDomain';
 
 // Mapeamento de tipos de corpo (0-4)
 const BODY_TYPE_NAMES = {
@@ -53,7 +54,7 @@ const BODY_TYPE_IMAGES = {
 export default function AnalyticsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const shop = searchParams.get('shop') || 'demo-shop.myshopify.com';
+  const shopDomain = getShopDomain(searchParams);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -61,19 +62,37 @@ export default function AnalyticsPage() {
   const [metrics, setMetrics] = useState(null);
 
   useEffect(() => {
-    loadAnalytics();
-  }, [timeRange]);
+    if (shopDomain) {
+      loadAnalytics();
+    } else {
+      setError('Shop domain não encontrado. Verifique se está acessando pelo Shopify Admin.');
+      setLoading(false);
+    }
+  }, [timeRange, shopDomain]);
 
   const loadAnalytics = async () => {
     try {
       setLoading(true);
       setError(null);
 
+      if (!shopDomain) {
+        throw new Error('Shop domain não encontrado. Verifique se está acessando pelo Shopify Admin.');
+      }
+
       const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error('Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.');
+      }
+
+      console.log('[Analytics] Carregando analytics para shop_domain:', shopDomain);
+
       // 1. Buscar user_id da loja
-      const shopResponse = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${shop}&select=user_id`, {
+      const shopUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id`;
+      console.log('[Analytics] Buscando user_id da loja:', shopUrl);
+      
+      const shopResponse = await fetch(shopUrl, {
         headers: {
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,
@@ -81,12 +100,20 @@ export default function AnalyticsPage() {
         }
       });
 
-      if (!shopResponse.ok) throw new Error('Erro ao buscar loja');
+      if (!shopResponse.ok) {
+        const errorText = await shopResponse.text();
+        console.error('[Analytics] Erro ao buscar loja:', shopResponse.status, errorText);
+        throw new Error(`Erro ao buscar loja: ${shopResponse.status}`);
+      }
 
       const shopData = await shopResponse.json();
-      const userId = shopData[0]?.user_id;
+      console.log('[Analytics] Dados da loja recebidos:', shopData);
+      
+      const userId = shopData && shopData.length > 0 ? shopData[0]?.user_id : null;
+      console.log('[Analytics] user_id encontrado:', userId);
 
       if (!userId) {
+        console.warn('[Analytics] user_id não encontrado para shop_domain:', shopDomain);
         setMetrics({
           totalSessions: 0,
           completedSessions: 0,
@@ -94,7 +121,11 @@ export default function AnalyticsPage() {
           completionRate: 0,
           averageSessionDuration: 0,
           totalImagesProcessed: 0,
-          topProducts: []
+          topProducts: [],
+          genderStats: {
+            male: {},
+            female: {}
+          }
         });
         setLoading(false);
         return;
@@ -104,20 +135,25 @@ export default function AnalyticsPage() {
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange));
 
       // 2. Buscar session analytics com user_measurements
-      const sessionsResponse = await fetch(
-        `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${userId}&created_at=gte.${dateFilter.toISOString()}&select=*`,
-        {
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
-          }
+      const sessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*`;
+      console.log('[Analytics] Buscando session_analytics:', sessionsUrl);
+      
+      const sessionsResponse = await fetch(sessionsUrl, {
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
         }
-      );
+      });
 
-      if (!sessionsResponse.ok) throw new Error('Erro ao buscar sessões');
+      if (!sessionsResponse.ok) {
+        const errorText = await sessionsResponse.text();
+        console.error('[Analytics] Erro ao buscar sessões:', sessionsResponse.status, errorText);
+        throw new Error(`Erro ao buscar sessões: ${sessionsResponse.status}`);
+      }
 
       const sessionsData = await sessionsResponse.json();
+      console.log('[Analytics] Sessões encontradas:', sessionsData?.length || 0);
 
       // 3. Calcular métricas
       const totalSessions = sessionsData.length;
@@ -247,7 +283,7 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <Page title="Analytics" backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shop}`) }}>
+      <Page title="Analytics" backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}>
         <Layout>
           <Layout.Section>
             <Card>
@@ -266,7 +302,7 @@ export default function AnalyticsPage() {
     <Page
       title="Analytics Avançado"
       subtitle="Métricas detalhadas do desempenho do Omafit"
-      backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shop}`) }}
+      backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}
     >
       <Layout>
         {error && (

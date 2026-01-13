@@ -134,9 +134,50 @@ export default function AnalyticsPage() {
       const dateFilter = new Date();
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange));
 
-      // 2. Buscar session analytics com user_measurements
+      // 2. Primeiro, tentar buscar TODAS as sessões sem filtro de data para debug
+      const testUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*&limit=10`;
+      console.log('[Analytics] TESTE: Buscando TODAS as sessões (sem filtro de data):', testUrl);
+      
+      const testResponse = await fetch(testUrl, {
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (testResponse.ok) {
+        const testData = await testResponse.json();
+        console.log('[Analytics] TESTE: Total de sessões encontradas (sem filtro):', testData?.length || 0);
+        if (testData && testData.length > 0) {
+          console.log('[Analytics] TESTE: Exemplo de sessão:', JSON.stringify(testData[0], null, 2));
+        }
+      }
+
+      // 3. Tentar buscar também em tryon_sessions caso session_analytics não tenha dados
+      const tryonSessionsUrl = `${supabaseUrl}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&select=*&limit=10`;
+      console.log('[Analytics] TESTE: Buscando também em tryon_sessions:', tryonSessionsUrl);
+      
+      const tryonResponse = await fetch(tryonSessionsUrl, {
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (tryonResponse.ok) {
+        const tryonData = await tryonResponse.json();
+        console.log('[Analytics] TESTE: Sessões em tryon_sessions:', tryonData?.length || 0);
+        if (tryonData && tryonData.length > 0) {
+          console.log('[Analytics] TESTE: Exemplo de tryon_session:', JSON.stringify(tryonData[0], null, 2));
+        }
+      }
+
+      // 4. Buscar session analytics com filtro de data (query original)
       const sessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*`;
-      console.log('[Analytics] Buscando session_analytics:', sessionsUrl);
+      console.log('[Analytics] Buscando session_analytics (com filtro de data):', sessionsUrl);
+      console.log('[Analytics] Data filtro:', dateFilter.toISOString(), 'Período:', timeRange, 'dias');
       
       const sessionsResponse = await fetch(sessionsUrl, {
         headers: {
@@ -152,8 +193,28 @@ export default function AnalyticsPage() {
         throw new Error(`Erro ao buscar sessões: ${sessionsResponse.status}`);
       }
 
-      const sessionsData = await sessionsResponse.json();
-      console.log('[Analytics] Sessões encontradas:', sessionsData?.length || 0);
+      let sessionsData = await sessionsResponse.json();
+      console.log('[Analytics] Sessões encontradas (com filtro de data):', sessionsData?.length || 0);
+      
+      // Se não encontrou com filtro de data, tentar sem filtro
+      if (!sessionsData || sessionsData.length === 0) {
+        console.log('[Analytics] Nenhuma sessão encontrada com filtro de data. Buscando TODAS as sessões...');
+        const allSessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*`;
+        const allSessionsResponse = await fetch(allSessionsUrl, {
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (allSessionsResponse.ok) {
+          const allSessionsData = await allSessionsResponse.json();
+          console.log('[Analytics] Total de sessões (sem filtro de data):', allSessionsData?.length || 0);
+          // Usar todas as sessões se não houver com filtro
+          sessionsData = allSessionsData || [];
+        }
+      }
 
       // 3. Calcular métricas
       const totalSessions = sessionsData.length;

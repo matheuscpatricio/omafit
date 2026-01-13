@@ -88,9 +88,9 @@ export default function AnalyticsPage() {
 
       console.log('[Analytics] Carregando analytics para shop_domain:', shopDomain);
 
-      // 1. Buscar user_id da loja (o user_id usado para inserir dados na session_analytics)
-      const shopUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id`;
-      console.log('[Analytics] Buscando user_id da loja:', shopUrl);
+      // 1. Buscar dados da loja (user_id e images_used_month)
+      const shopUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month`;
+      console.log('[Analytics] Buscando dados da loja:', shopUrl);
       
       const shopResponse = await fetch(shopUrl, {
         headers: {
@@ -108,7 +108,9 @@ export default function AnalyticsPage() {
 
       const shopData = await shopResponse.json();
       const userId = shopData && shopData.length > 0 ? shopData[0]?.user_id : null;
+      const imagesUsedMonth = shopData && shopData.length > 0 ? (shopData[0]?.images_used_month || 0) : 0;
       console.log('[Analytics] user_id da loja encontrado:', userId);
+      console.log('[Analytics] images_used_month:', imagesUsedMonth);
 
       if (!userId) {
         console.warn('[Analytics] user_id não encontrado para shop_domain:', shopDomain);
@@ -150,7 +152,7 @@ export default function AnalyticsPage() {
       if (!sessionsResponse.ok) {
         const errorText = await sessionsResponse.text();
         console.error('[Analytics] Erro ao buscar sessões:', sessionsResponse.status, errorText);
-        throw new Error(`Erro ao buscar sessões: ${sessionsResponse.status}`);
+        throw new Error(`Erro ao buscar sessões: ${sessionsResponse.status} - ${errorText}`);
       }
 
       let sessionsData = await sessionsResponse.json() || [];
@@ -175,6 +177,11 @@ export default function AnalyticsPage() {
         }
       }
 
+      // Log detalhado das sessões encontradas
+      if (sessionsData.length > 0) {
+        console.log('[Analytics] Exemplo de sessão (primeira):', JSON.stringify(sessionsData[0], null, 2));
+      }
+
       // 3. Calcular métricas
       const totalSessions = sessionsData.length;
       const completedSessions = sessionsData.filter((s) => s.completed).length;
@@ -184,7 +191,18 @@ export default function AnalyticsPage() {
       const totalDuration = sessionsData.reduce((sum, s) => sum + (s.duration_seconds || 0), 0);
       const averageSessionDuration = totalSessions > 0 ? totalDuration / totalSessions : 0;
 
-      const totalImagesProcessed = sessionsData.reduce((sum, s) => sum + (s.images_processed || 0), 0);
+      // Usar images_used_month da tabela shopify_shops (igual à home)
+      // Isso mostra o total de imagens processadas pela conta, não apenas do período
+      const totalImagesProcessed = imagesUsedMonth || 0;
+
+      console.log('[Analytics] Métricas calculadas:', {
+        totalSessions,
+        completedSessions,
+        uniqueUsers,
+        completionRate: completionRate.toFixed(2) + '%',
+        averageSessionDuration: averageSessionDuration.toFixed(2) + 's',
+        totalImagesProcessed
+      });
 
       // 4. Top products
       const productCounts = {};
@@ -265,7 +283,7 @@ export default function AnalyticsPage() {
       const femaleMostBodyType = calculateMostFrequent(genderStats.female.bodyTypes);
       const femaleMostFit = calculateMostFrequent(genderStats.female.fits);
 
-      setMetrics({
+      const metricsData = {
         totalSessions,
         completedSessions,
         uniqueUsers,
@@ -285,11 +303,16 @@ export default function AnalyticsPage() {
             mostFit: femaleMostFit ? { index: parseInt(femaleMostFit[0]), count: femaleMostFit[1] } : null
           }
         }
-      });
+      };
+
+      console.log('[Analytics] ✅ Definindo métricas no estado:', metricsData);
+      setMetrics(metricsData);
     } catch (err) {
-      console.error('[Analytics] Erro ao carregar:', err);
+      console.error('[Analytics] ❌ Erro ao carregar:', err);
+      console.error('[Analytics] Stack trace:', err.stack);
       setError(err.message);
     } finally {
+      console.log('[Analytics] Finalizando carregamento, setLoading(false)');
       setLoading(false);
     }
   };

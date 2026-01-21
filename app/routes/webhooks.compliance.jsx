@@ -12,10 +12,35 @@ import db from "../db.server";
  * A verificação HMAC é feita automaticamente pelo authenticate.webhook
  */
 export const action = async ({ request }) => {
+  let webhookData;
+  
   try {
     // authenticate.webhook verifica automaticamente a assinatura HMAC
-    // Se a verificação falhar, uma exceção será lançada
-    const { payload, shop, topic } = await authenticate.webhook(request);
+    // Se a verificação falhar, uma exceção será lançada ou uma Response será retornada
+    webhookData = await authenticate.webhook(request);
+    
+    // Se authenticate.webhook retornar uma Response (erro de autenticação), 
+    // garantir que seja 401 em vez de qualquer outro status
+    if (webhookData instanceof Response) {
+      // Se já for 401, retornar como está
+      if (webhookData.status === 401) {
+        return webhookData;
+      }
+      // Se for outro status de erro, converter para 401 (HMAC inválido)
+      if (webhookData.status >= 400) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      return webhookData;
+    }
+  } catch (error) {
+    // Qualquer erro do authenticate.webhook indica falha na verificação HMAC
+    // Retornar 401 conforme exigido pela Shopify
+    console.error(`[Compliance Webhook] HMAC verification failed:`, error);
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  try {
+    const { payload, shop, topic } = webhookData;
 
     console.log(`[Compliance Webhook] Received ${topic} webhook for ${shop}`);
 
@@ -39,15 +64,9 @@ export const action = async ({ request }) => {
 
     return new Response(null, { status: 200 });
   } catch (error) {
+    // Erros durante o processamento do webhook (não relacionados à autenticação)
+    // Retornar 500 apenas para erros internos
     console.error(`[Compliance Webhook] Error processing webhook:`, error);
-    
-    // Se a verificação HMAC falhar, authenticate.webhook lançará uma exceção
-    // Retornar 401 para indicar falha de autenticação
-    if (error.message?.includes("HMAC") || error.message?.includes("signature")) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-    
-    // Outros erros retornam 500
     return new Response("Internal Server Error", { status: 500 });
   }
 };

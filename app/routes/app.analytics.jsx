@@ -137,6 +137,29 @@ export default function AnalyticsPage() {
       // 2. Buscar session_analytics usando user_id da loja
       // IMPORTANTE: O user_id em session_analytics É o user_id da LOJA (não do cliente)
       // A Edge Function insere os dados com o user_id da loja (linhas 250 e 268)
+      
+      // DEBUG: Primeiro tentar buscar TODAS as sessões (sem filtro) para ver quantas existem e quais user_ids
+      console.log('[Analytics] DEBUG: Buscando TODAS as sessões (sem filtro) para debug...');
+      const debugUrl = `${supabaseUrl}/rest/v1/session_analytics?select=user_id,id,created_at&limit=10&order=created_at.desc`;
+      const debugResponse = await fetch(debugUrl, {
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (debugResponse.ok) {
+        const debugData = await debugResponse.json();
+        console.log('[Analytics] DEBUG: Total de sessões na tabela (amostra):', debugData.length);
+        if (debugData.length > 0) {
+          console.log('[Analytics] DEBUG: user_ids encontrados (amostra):', debugData.map(s => s.user_id));
+          console.log('[Analytics] DEBUG: user_id que estamos buscando:', userId);
+          console.log('[Analytics] DEBUG: Correspondência?', debugData.some(s => s.user_id === userId));
+        }
+      }
+      
+      // Buscar sessões com filtro de data
       const sessionsUrl = `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`;
       console.log('[Analytics] Buscando session_analytics por user_id da loja:', sessionsUrl);
       console.log('[Analytics] Período:', timeRange, 'dias | Data filtro:', dateFilter.toISOString());
@@ -174,6 +197,9 @@ export default function AnalyticsPage() {
           const allSessionsData = await allSessionsResponse.json();
           console.log('[Analytics] Total de sessões da loja (sem filtro de data):', allSessionsData?.length || 0);
           sessionsData = allSessionsData || [];
+        } else {
+          const errorText = await allSessionsResponse.text();
+          console.error('[Analytics] Erro ao buscar todas as sessões:', allSessionsResponse.status, errorText);
         }
       }
 

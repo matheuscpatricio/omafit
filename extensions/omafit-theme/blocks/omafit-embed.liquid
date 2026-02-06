@@ -10,6 +10,9 @@
     data-product-id="{{ product.id }}"
     data-product-handle="{{ product.handle }}"
   {% endif %}
+  {% if block.settings.default_gender != blank %}
+    data-default-gender="{{ block.settings.default_gender }}"
+  {% endif %}
 ></div>
 
 <script src="{{ 'omafit-widget.js' | asset_url }}"></script>
@@ -22,6 +25,20 @@
   "enabled_on": {
     "templates": ["product"]
   },
-  "settings": []
+  "settings": [
+    {
+      "type": "select",
+      "id": "default_gender",
+      "label": "Gênero padrão (tabela de medidas)",
+      "info": "Use quando o produto é majoritariamente para um gênero. O widget usará essa tabela até o cliente escolher. Evita buscar tabela unissex quando você criou só masculina ou feminina.",
+      "options": [
+        { "value": "", "label": "Não definir (app decide)" },
+        { "value": "male", "label": "Masculino" },
+        { "value": "female", "label": "Feminino" },
+        { "value": "unisex", "label": "Unissex" }
+      ],
+      "default": ""
+    }
+  ]
 }
 {% endschema %}

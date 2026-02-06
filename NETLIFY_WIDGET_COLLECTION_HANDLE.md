@@ -1,63 +1,78 @@
-# App Netlify: usar `collection_handle` ao buscar tabela de medidas
+# App Netlify: `collection_handle` e `defaultGender` para tabela de medidas
 
-O widget na Shopify envia o **handle da coleção** para o app em `https://omafit.netlify.app/widget`. O app Netlify **precisa** usar esse valor ao buscar a tabela de medidas no Supabase.
+O widget na Shopify envia **collectionHandle** e **defaultGender** para o app em `https://omafit.netlify.app/widget`. O app Netlify **precisa** usar esses valores ao buscar a tabela de medidas no Supabase.
 
-## Onde o app Netlify recebe `collectionHandle`
+## Gênero: por que estava indo "unisex"
+
+O theme extension **não envia** o gênero escolhido pelo usuário (isso é selecionado dentro do app Netlify). Se o app não recebe nenhum gênero, ao buscar a tabela ele não deve **assumir unisex**. A ordem correta é:
+
+1. **Gênero selecionado pelo usuário** no widget (male/female) → usar esse.
+2. Se o usuário ainda não escolheu → usar **`defaultGender`** vindo da URL ou postMessage (o lojista pode configurar "Masculino" ou "Feminino" no bloco do tema).
+3. Só usar **unisex** se não houver `defaultGender` e o usuário ainda não tiver selecionado (ou tiver selecionado unissex).
+
+Se o app sempre usar `gender=unisex` na primeira busca, a tabela masculina que o lojista criou nunca será usada. Por isso é essencial ler **`defaultGender`** e usá-lo quando o usuário ainda não escolheu o gênero.
+
+---
+
+## Onde o app Netlify recebe os dados
 
 ### 1. URL (query string)
-Ao abrir o iframe, a URL inclui:
 ```
-?shopDomain=...&collectionHandle=calca-jeans&...
+?shopDomain=...&collectionHandle=calca-jeans&defaultGender=male&...
 ```
-- Parâmetro: **`collectionHandle`**
-- Valor: handle da coleção (ex: `calca-jeans`, `camisetas`) ou vazio quando não há coleção (tabela padrão da loja).
+- **`collectionHandle`**: handle da coleção (ex: `calca-jeans`) ou vazio (tabela padrão).
+- **`defaultGender`**: `male` | `female` | `unisex` ou vazio. Definido pelo lojista no bloco "Omafit embed" no tema.
 
 ### 2. postMessage (após o iframe carregar)
-O theme extension envia duas mensagens que podem conter `collectionHandle`:
 
-**a) Mensagem dedicada:**
+**a) Mensagem `omafit-context` (enviada logo ao carregar):**
 ```js
 window.addEventListener('message', (event) => {
   if (event.origin !== 'https://...') return;
-  if (event.data?.type === 'omafit-collection-handle') {
+  if (event.data?.type === 'omafit-context') {
     const collectionHandle = event.data.collectionHandle ?? '';
-    // guardar no estado do app e usar ao buscar size_charts
+    const defaultGender = event.data.defaultGender ?? '';  // 'male' | 'female' | 'unisex' | ''
+    // guardar no estado e usar ao buscar size_charts
   }
 });
 ```
 
-**b) Dentro de `omafit-config-update`:**
+**b) Em `omafit-config-update`:**
 ```js
 if (event.data?.type === 'omafit-config-update') {
   const collectionHandle = event.data.collectionHandle ?? '';
+  const defaultGender = event.data.defaultGender ?? '';
   const shopDomain = event.data.shopDomain ?? '';
   // ...
 }
 ```
 
+---
+
 ## Como buscar a tabela de medidas no Supabase
 
-**Antes (incorreto):** usar só `shop_domain` e `gender`:
+**Incorreto:** usar só `shop_domain` e `gender`, e usar sempre `gender=unisex` por padrão.
+
+**Correto:**
+1. Definir o `gender` para a busca:
+   - Se o usuário já escolheu gênero no widget → usar esse (`male` ou `female`).
+   - Senão, se veio **`defaultGender`** na URL/postMessage → usar esse (`male`, `female` ou `unisex`).
+   - Senão → usar `unisex` só como último recurso.
+2. Chamar o Supabase com **três** filtros:
+
 ```
-GET .../size_charts?shop_domain=eq.XXX&gender=eq.male
+GET .../rest/v1/size_charts?shop_domain=eq.XXX&collection_handle=eq.YYY&gender=eq.ZZZ&select=sizes,measurement_refs
 ```
 
-**Correto:** incluir **`collection_handle`**:
-```
-GET .../rest/v1/size_charts?shop_domain=eq.XXX&collection_handle=eq.YYY&gender=eq.male&select=sizes,measurement_refs
-```
+- `XXX` = shopDomain  
+- `YYY` = collectionHandle (string vazia `''` para tabela padrão)  
+- `ZZZ` = gender usado no passo 1 (`male`, `female` ou `unisex`)
 
-- `YYY` = valor de `collectionHandle` recebido (URL ou postMessage). Se for vazio ou "Geral", use **string vazia** `''` na query (tabela padrão da loja).
-- A tabela no Supabase tem UNIQUE `(shop_domain, collection_handle, gender)`; sem `collection_handle` a busca não fica correta por coleção.
+---
 
 ## Resumo para quem altera o app Netlify
 
-1. Ler `collectionHandle` na inicialização:
-   - da query da URL (ex: `new URLSearchParams(window.location.search).get('collectionHandle')`);
-   - e/ou dos postMessages `omafit-collection-handle` e `omafit-config-update`.
-2. Guardar em estado (React, etc.) e atualizar quando chegar `omafit-collection-handle` ou `omafit-config-update`.
-3. Em **todas** as chamadas ao Supabase que buscam `size_charts`, usar os três filtros:
-   - `shop_domain=eq.{shopDomain}`
-   - `collection_handle=eq.{collectionHandle}` (usar `''` quando for padrão)
-   - `gender=eq.{gender}`
-4. Ao calcular tamanho recomendado, passar `collectionHandle` para a função que usa a tabela (para escolher a tabela certa por coleção e gênero).
+1. Ler **`collectionHandle`** e **`defaultGender`** na inicialização (URL e postMessage `omafit-context` e `omafit-config-update`).
+2. Guardar em estado e atualizar quando chegarem novas mensagens.
+3. **Não** usar `unisex` como padrão quando existir `defaultGender=male` ou `defaultGender=female`; usar o `defaultGender` até o usuário escolher no widget.
+4. Em todas as chamadas ao Supabase que buscam `size_charts`, usar os três filtros: `shop_domain`, `collection_handle` e `gender` (sendo `gender` o escolhido pelo usuário ou, na falta, o `defaultGender`).

@@ -729,6 +729,7 @@
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
     const rootEl = document.getElementById('omafit-widget-root');
     const collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
+    const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
     
     // Limitar imagens na URL - passar apenas as primeiras 3 para evitar URL muito longa
     const limitedImages = allProductImages.slice(0, 3);
@@ -758,6 +759,7 @@
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
+      (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
       '&config=' + encodeURIComponent(JSON.stringify(config));
     
     // Se houver imagens, passar apenas as primeiras 3 na URL para evitar URL muito longa
@@ -834,13 +836,14 @@
       
       // Enviar dados grandes via postMessage para evitar URL muito longa
       try {
-        // Enviar collectionHandle para o app Netlify usar ao buscar tabela de medidas no Supabase
-        if (collectionHandle !== undefined && collectionHandle !== null) {
-          iframe.contentWindow.postMessage({
-            type: 'omafit-collection-handle',
-            collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : ''
-          }, 'https://omafit.netlify.app');
-          console.log('📤 collectionHandle enviado via postMessage:', collectionHandle || '(padrão/vazio)');
+        // Enviar collectionHandle e defaultGender para o app Netlify usar ao buscar tabela de medidas no Supabase
+        iframe.contentWindow.postMessage({
+          type: 'omafit-context',
+          collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
+          defaultGender: typeof defaultGender === 'string' ? defaultGender : ''
+        }, 'https://omafit.netlify.app');
+        if (collectionHandle || defaultGender) {
+          console.log('📤 Contexto enviado via postMessage:', { collectionHandle: collectionHandle || '(vazio)', defaultGender: defaultGender || '(vazio)' });
         }
 
         // Enviar todas as imagens do produto (não apenas as 3 primeiras)
@@ -881,7 +884,8 @@
               storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
-              collectionHandle: collectionHandle || ''
+              collectionHandle: collectionHandle || '',
+              defaultGender: defaultGender || ''
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (com logo):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
@@ -904,7 +908,8 @@
               storeName: OMAFIT_CONFIG.storeName || 'Omafit',
               fontFamily: detectedFontFamily,
               shopDomain: shopDomain,
-              collectionHandle: collectionHandle || ''
+              collectionHandle: collectionHandle || '',
+              defaultGender: defaultGender || ''
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (sem logo - inválido):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
@@ -922,7 +927,8 @@
             storeName: OMAFIT_CONFIG.storeName || 'Omafit',
             fontFamily: detectedFontFamily,
             shopDomain: shopDomain,
-            collectionHandle: collectionHandle || ''
+            collectionHandle: collectionHandle || '',
+            defaultGender: defaultGender || ''
           }, 'https://omafit.netlify.app');
           console.log('📤 Configuração enviada via postMessage (sem logo):', {
             primaryColor: OMAFIT_CONFIG.colors?.primary,

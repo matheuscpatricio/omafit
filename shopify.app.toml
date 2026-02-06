@@ -28,8 +28,8 @@ api_version = "2025-10"
   uri = "/webhooks/compliance"
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = ""
+# read_products = ler produtos e coleções (necessário para lista de coleções na tabela de medidas)
+scopes = "read_products"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 

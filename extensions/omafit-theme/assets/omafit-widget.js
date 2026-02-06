@@ -834,6 +834,15 @@
       
       // Enviar dados grandes via postMessage para evitar URL muito longa
       try {
+        // Enviar collectionHandle para o app Netlify usar ao buscar tabela de medidas no Supabase
+        if (collectionHandle !== undefined && collectionHandle !== null) {
+          iframe.contentWindow.postMessage({
+            type: 'omafit-collection-handle',
+            collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : ''
+          }, 'https://omafit.netlify.app');
+          console.log('📤 collectionHandle enviado via postMessage:', collectionHandle || '(padrão/vazio)');
+        }
+
         // Enviar todas as imagens do produto (não apenas as 3 primeiras)
         if (allProductImages.length > 3) {
           iframe.contentWindow.postMessage({
@@ -870,7 +879,9 @@
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
               storeName: OMAFIT_CONFIG.storeName || 'Omafit',
               storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
-              fontFamily: detectedFontFamily // Enviar fonte detectada
+              fontFamily: detectedFontFamily, // Enviar fonte detectada
+              shopDomain: shopDomain,
+              collectionHandle: collectionHandle || ''
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (com logo):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
@@ -891,7 +902,9 @@
               type: 'omafit-config-update',
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
               storeName: OMAFIT_CONFIG.storeName || 'Omafit',
-              fontFamily: detectedFontFamily
+              fontFamily: detectedFontFamily,
+              shopDomain: shopDomain,
+              collectionHandle: collectionHandle || ''
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (sem logo - inválido):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
@@ -907,7 +920,9 @@
             type: 'omafit-config-update',
             primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
             storeName: OMAFIT_CONFIG.storeName || 'Omafit',
-            fontFamily: detectedFontFamily
+            fontFamily: detectedFontFamily,
+            shopDomain: shopDomain,
+            collectionHandle: collectionHandle || ''
           }, 'https://omafit.netlify.app');
           console.log('📤 Configuração enviada via postMessage (sem logo):', {
             primaryColor: OMAFIT_CONFIG.colors?.primary,

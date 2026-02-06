@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate, useLoaderData } from 'react-router-dom';
 import {
   Page,
@@ -99,62 +99,56 @@ export default function SizeChartPage() {
   const collectionHandles = ['', ...shopifyCollections.map((c) => c.handle)];
   const selectedHandle = collectionHandles[selectedCollectionIndex] ?? '';
 
+  const loadSizeCharts = useCallback(async () => {
+    if (!shopDomain) return;
+    const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+    const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) return;
+    const chartsRes = await fetch(
+      `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
+      {
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    if (chartsRes.ok) {
+      const data = await chartsRes.json();
+      const byCollection = {};
+      data.forEach((row) => {
+        const handle = row.collection_handle ?? '';
+        if (!byCollection[handle]) {
+          byCollection[handle] = {
+            male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+            female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+            unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
+          };
+        }
+        const refs =
+          Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
+            ? row.measurement_refs
+            : DEFAULT_REFS.slice();
+        byCollection[handle][row.gender] = {
+          enabled: true,
+          measurementRefs: refs,
+          sizes: row.sizes || []
+        };
+      });
+      setCharts(byCollection);
+    }
+  }, [shopDomain]);
+
   useEffect(() => {
     if (!shopDomain) return;
     let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-        if (!supabaseUrl || !supabaseKey) {
-          setLoading(false);
-          return;
-        }
-        const chartsRes = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-          {
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        if (cancelled) return;
-        if (chartsRes.ok) {
-          const data = await chartsRes.json();
-          const byCollection = {};
-          data.forEach((row) => {
-            const handle = row.collection_handle ?? '';
-            if (!byCollection[handle]) {
-              byCollection[handle] = {
-                male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-                female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-                unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
-              };
-            }
-            const refs =
-              Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
-                ? row.measurement_refs
-                : DEFAULT_REFS.slice();
-            byCollection[handle][row.gender] = {
-              enabled: true,
-              measurementRefs: refs,
-              sizes: row.sizes || []
-            };
-          });
-          setCharts(byCollection);
-        }
-      } catch (err) {
-        if (!cancelled) console.error('[SizeChart] Erro ao carregar tabelas:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    setLoading(true);
+    loadSizeCharts().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
     return () => { cancelled = true; };
-  }, [shopDomain]);
+  }, [shopDomain, loadSizeCharts]);
 
   const getChart = (handle, gender) => {
     const coll = charts[handle];

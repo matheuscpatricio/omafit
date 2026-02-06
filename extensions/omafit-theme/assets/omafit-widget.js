@@ -479,24 +479,21 @@
     }
   }
 
-  // Buscar tabelas de medidas do Supabase
-  async function fetchSizeCharts(shopDomain, gender) {
+  // Buscar tabela de medidas do Supabase por loja, coleção e gênero
+  // collectionHandle: handle da coleção (ex: 'camisetas'); '' = tabela padrão da loja
+  async function fetchSizeCharts(shopDomain, collectionHandle, gender) {
     try {
-      if (!shopDomain) {
-        return null;
-      }
+      if (!shopDomain) return null;
 
       const supabaseUrl = 'https://lhkgnirolvbmomeduoaj.supabase.co';
       const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI';
 
-      // Tentar buscar tabela específica do gênero, ou unissex como fallback
+      const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
       let genderToFetch = gender;
-      if (gender !== 'male' && gender !== 'female') {
-        genderToFetch = 'unisex';
-      }
+      if (gender !== 'male' && gender !== 'female') genderToFetch = 'unisex';
 
       const response = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&gender=eq.${genderToFetch}&select=sizes`,
+        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.${genderToFetch}&select=sizes,measurement_refs`,
         {
           headers: {
             'apikey': supabaseAnonKey,
@@ -509,14 +506,18 @@
       if (response.ok) {
         const data = await response.json();
         if (data && data.length > 0 && data[0].sizes) {
-          return data[0].sizes;
+          return {
+            sizes: data[0].sizes,
+            measurementRefs: Array.isArray(data[0].measurement_refs) && data[0].measurement_refs.length === 3
+              ? data[0].measurement_refs
+              : ['peito', 'cintura', 'quadril']
+          };
         }
       }
 
-      // Se não encontrou, tentar unissex como fallback
       if (genderToFetch !== 'unisex') {
         const unisexResponse = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&gender=eq.unisex&select=sizes`,
+          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.unisex&select=sizes,measurement_refs`,
           {
             headers: {
               'apikey': supabaseAnonKey,
@@ -525,11 +526,15 @@
             }
           }
         );
-
         if (unisexResponse.ok) {
           const unisexData = await unisexResponse.json();
           if (unisexData && unisexData.length > 0 && unisexData[0].sizes) {
-            return unisexData[0].sizes;
+            return {
+              sizes: unisexData[0].sizes,
+              measurementRefs: Array.isArray(unisexData[0].measurement_refs) && unisexData[0].measurement_refs.length === 3
+                ? unisexData[0].measurement_refs
+                : ['peito', 'cintura', 'quadril']
+            };
           }
         }
       }
@@ -541,50 +546,61 @@
     }
   }
 
-  // Calcular tamanho recomendado baseado nas medidas do usuário e tabelas de medidas
-  async function calculateRecommendedSize(userMeasurements, shopDomain) {
+  // Estimar valor de uma referência de medida a partir de altura, peso, bodyType e fit
+  function estimateMeasurement(ref, height, weight, bodyType, fit) {
+    const h = parseFloat(height) || 170;
+    const w = parseFloat(weight) || 70;
+    const b = parseFloat(bodyType) || 1;
+    const f = parseFloat(fit) || 1;
+    switch (ref) {
+      case 'peito': return h * 0.45 * b * f;
+      case 'cintura': return h * 0.35 * b * f;
+      case 'quadril': return h * 0.50 * b * f;
+      case 'comprimento': return h * 0.42 * b * f;
+      case 'tornozelo': return Math.min(30, Math.max(18, 20 + (w / 70) * 4));
+      default: return 0;
+    }
+  }
+
+  // Calcular tamanho recomendado: tabela por coleção + gênero, usando as 3 referências configuradas
+  async function calculateRecommendedSize(userMeasurements, shopDomain, collectionHandle) {
     try {
       const { gender, height, weight, bodyType, fit } = userMeasurements;
-      
-      // Buscar tabela de medidas correspondente
-      const sizeChart = await fetchSizeCharts(shopDomain, gender);
-      
-      if (!sizeChart || sizeChart.length === 0) {
-        console.warn('⚠️ Nenhuma tabela de medidas encontrada para este gênero');
+      const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+
+      const chart = await fetchSizeCharts(shopDomain, coll, gender);
+      if (!chart || !chart.sizes || chart.sizes.length === 0) {
+        console.warn('⚠️ Nenhuma tabela de medidas encontrada para esta coleção/gênero');
         return null;
       }
 
-      // Calcular medidas estimadas do usuário
-      // Fórmula básica: usar altura e peso com fatores de tipo de corpo e ajuste
-      const baseChest = height * 0.45 * bodyType * fit;
-      const baseWaist = height * 0.35 * bodyType * fit;
-      const baseHip = height * 0.50 * bodyType * fit;
+      const refs = chart.measurementRefs || ['peito', 'cintura', 'quadril'];
+      const userValues = refs.map(function (ref) {
+        return estimateMeasurement(ref, height, weight, bodyType, fit);
+      });
 
-      // Encontrar o tamanho mais próximo comparando com a tabela
       let bestMatch = null;
       let smallestDifference = Infinity;
 
-      sizeChart.forEach((size) => {
-        const chest = parseFloat(size.peito) || 0;
-        const waist = parseFloat(size.cintura) || 0;
-        const hip = parseFloat(size.quadril) || 0;
+      chart.sizes.forEach(function (size) {
+        const tableValues = refs.map(function (ref) {
+          return parseFloat(size[ref]) || 0;
+        });
+        const allValid = tableValues.every(function (v) { return v > 0; });
+        if (!allValid) return;
 
-        if (chest > 0 && waist > 0 && hip > 0) {
-          // Calcular diferença total (distância euclidiana)
-          const diff = Math.sqrt(
-            Math.pow(chest - baseChest, 2) +
-            Math.pow(waist - baseWaist, 2) +
-            Math.pow(hip - baseHip, 2)
-          );
-
-          if (diff < smallestDifference) {
-            smallestDifference = diff;
-            bestMatch = size.size;
-          }
+        let diff = 0;
+        for (let i = 0; i < refs.length; i++) {
+          diff += Math.pow(tableValues[i] - userValues[i], 2);
+        }
+        diff = Math.sqrt(diff);
+        if (diff < smallestDifference) {
+          smallestDifference = diff;
+          bestMatch = size.size;
         }
       });
 
-      console.log('✅ Tamanho recomendado calculado:', bestMatch, 'Diferença:', smallestDifference);
+      console.log('✅ Tamanho recomendado:', bestMatch, 'Diferença:', smallestDifference);
       return bestMatch;
     } catch (error) {
       console.error('❌ Erro ao calcular tamanho recomendado:', error);
@@ -711,6 +727,8 @@
 
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
+    const rootEl = document.getElementById('omafit-widget-root');
+    const collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
     
     // Limitar imagens na URL - passar apenas as primeiras 3 para evitar URL muito longa
     const limitedImages = allProductImages.slice(0, 3);
@@ -739,6 +757,7 @@
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
+      (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       '&config=' + encodeURIComponent(JSON.stringify(config));
     
     // Se houver imagens, passar apenas as primeiras 3 na URL para evitar URL muito longa

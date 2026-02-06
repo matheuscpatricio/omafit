@@ -1,6 +1,11 @@
 <div
   id="omafit-widget-root"
   data-shop-domain="{% if shop.domain contains '.myshopify.com' %}{{ shop.domain }}{% else %}{{ shop.domain }}.myshopify.com{% endif %}"
+  {% if collection %}
+    data-collection-handle="{{ collection.handle }}"
+  {% elsif product and product.collections.size > 0 %}
+    data-collection-handle="{{ product.collections.first.handle }}"
+  {% endif %}
   {% if product %}
     data-product-id="{{ product.id }}"
     data-product-handle="{{ product.handle }}"

@@ -14,7 +14,8 @@ import {
   Divider,
   Spinner,
   Tabs,
-  Badge
+  Badge,
+  Box
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 
@@ -24,67 +25,67 @@ const GENDER_OPTIONS = [
   { label: 'Unissex', value: 'unisex' }
 ];
 
-const DEFAULT_MEASUREMENTS = [
-  { key: 'peito', label: 'Peito (cm)' },
-  { key: 'cintura', label: 'Cintura (cm)' },
-  { key: 'quadril', label: 'Quadril (cm)' },
-  { key: 'altura', label: 'Altura (cm)' },
-  { key: 'peso', label: 'Peso (kg)' }
+const MEASUREMENT_OPTIONS = [
+  { label: 'Peito (cm)', value: 'peito' },
+  { label: 'Cintura (cm)', value: 'cintura' },
+  { label: 'Quadril (cm)', value: 'quadril' },
+  { label: 'Comprimento (cm)', value: 'comprimento' },
+  { label: 'Tornozelo (cm)', value: 'tornozelo' }
 ];
+
+const DEFAULT_REFS = ['peito', 'cintura', 'quadril'];
+
+function getDefaultSizesForRefs(refs) {
+  return refs.reduce((acc, key) => ({ ...acc, [key]: '' }), { size: '' });
+}
 
 export default function SizeChartPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  
   const shopDomain = getShopDomain(searchParams);
-  
-  // Mostrar erro se shop domain não foi encontrado
+
   useEffect(() => {
     if (!shopDomain) {
-      console.error('[SizeChart] Shop domain não encontrado! Verifique se está acessando pelo Shopify Admin.');
-    } else {
-      console.log('[SizeChart] Shop domain detectado:', shopDomain);
+      console.error('[SizeChart] Shop domain não encontrado!');
     }
   }, [shopDomain]);
-  
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState(null);
   const [selectedTab, setSelectedTab] = useState(0);
 
-  const [sizeCharts, setSizeCharts] = useState({
-    male: { enabled: false, sizes: [] },
-    female: { enabled: false, sizes: [] },
-    unisex: { enabled: false, sizes: [] }
-  });
+  // Lista de handles de coleção (pelo menos uma: padrão)
+  const [collectionHandles, setCollectionHandles] = useState(['']);
+  const [selectedCollectionIndex, setSelectedCollectionIndex] = useState(0);
+
+  // Por coleção e gênero: { enabled, measurementRefs (3), sizes }
+  const [charts, setCharts] = useState({});
+
+  const selectedHandle = collectionHandles[selectedCollectionIndex] ?? '';
 
   useEffect(() => {
-    console.log('[SizeChart] Componente montado, shop_domain:', shopDomain);
-    loadSizeCharts();
+    if (shopDomain) loadSizeCharts();
   }, [shopDomain]);
 
   const loadSizeCharts = async () => {
     try {
       setLoading(true);
-      // Usar window.ENV (exposto pelo loader) com fallback para import.meta.env
       const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       if (!supabaseUrl || !supabaseKey) {
-        console.error('[SizeChart] Variáveis de ambiente do Supabase não configuradas');
-        setError('Supabase não está configurado. Verifique as variáveis de ambiente.');
+        setError('Supabase não está configurado.');
         return;
       }
-
-      console.log('[SizeChart] Carregando tabelas para shop_domain:', shopDomain);
 
       const response = await fetch(
         `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
         {
           headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
             'Content-Type': 'application/json'
           }
         }
@@ -92,34 +93,58 @@ export default function SizeChartPage() {
 
       if (response.ok) {
         const data = await response.json();
-        console.log('[SizeChart] Tabelas carregadas:', data.length);
-        
-        const charts = {
-          male: { enabled: false, sizes: [] },
-          female: { enabled: false, sizes: [] },
-          unisex: { enabled: false, sizes: [] }
-        };
+        const byCollection = {};
+        const handlesSet = new Set(['']);
 
-        data.forEach((chart) => {
-          if (charts[chart.gender]) {
-            charts[chart.gender] = {
-              enabled: true,
-              sizes: chart.sizes || []
+        data.forEach((row) => {
+          const handle = row.collection_handle ?? '';
+          handlesSet.add(handle);
+          if (!byCollection[handle]) {
+            byCollection[handle] = {
+              male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+              female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+              unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
             };
-            console.log('[SizeChart] Tabela', chart.gender, 'carregada com', chart.sizes?.length || 0, 'tamanhos');
           }
+          const refs = Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
+            ? row.measurement_refs
+            : DEFAULT_REFS.slice();
+          byCollection[handle][row.gender] = {
+            enabled: true,
+            measurementRefs: refs,
+            sizes: row.sizes || []
+          };
         });
 
-        setSizeCharts(charts);
-      } else {
-        const errorText = await response.text();
-        console.error('[SizeChart] Erro ao carregar tabelas:', response.status, errorText);
+        setCollectionHandles(Array.from(handlesSet));
+        setCharts(byCollection);
       }
     } catch (err) {
-      console.error('[SizeChart] Erro ao carregar tabelas:', err);
+      console.error('[SizeChart] Erro ao carregar:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const getChart = (handle, gender) => {
+    const coll = charts[handle];
+    if (!coll) return { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] };
+    return coll[gender] ?? { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] };
+  };
+
+  const setChart = (handle, gender, updater) => {
+    setCharts((prev) => {
+      const next = { ...prev };
+      if (!next[handle]) {
+        next[handle] = {
+          male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+          female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+          unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
+        };
+      }
+      next[handle] = { ...next[handle], [gender]: updater(next[handle][gender]) };
+      return next;
+    });
   };
 
   const saveSizeCharts = async () => {
@@ -127,173 +152,140 @@ export default function SizeChartPage() {
       setSaving(true);
       setError(null);
       setSuccess(false);
+      if (!shopDomain) throw new Error('Shop domain não encontrado.');
 
-      // Validar shopDomain primeiro
-      if (!shopDomain) {
-        throw new Error('Shop domain não encontrado. Verifique se está acessando pelo Shopify Admin.');
-      }
-
-      // Usar window.ENV (exposto pelo loader) com fallback para import.meta.env
       const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (!supabaseUrl || !supabaseKey) throw new Error('Supabase não configurado.');
 
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error('Supabase não está configurado. Verifique as variáveis de ambiente.');
-      }
-
-      // Salvar cada tabela que estiver habilitada
-      const chartsToSave = [];
-      
-      Object.entries(sizeCharts).forEach(([gender, chart]) => {
-        if (chart.enabled && chart.sizes.length > 0) {
-          chartsToSave.push({
-            shop_domain: shopDomain,
-            gender: gender,
-            sizes: chart.sizes
-          });
-        }
+      const toSave = [];
+      Object.entries(charts).forEach(([handle, byGender]) => {
+        ['male', 'female', 'unisex'].forEach((gender) => {
+          const c = byGender[gender];
+          if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === 3) {
+            toSave.push({
+              shop_domain: shopDomain,
+              collection_handle: handle,
+              gender,
+              measurement_refs: c.measurementRefs,
+              sizes: c.sizes
+            });
+          }
+        });
       });
 
-      console.log('[SizeChart] Salvando tabelas para shop_domain:', shopDomain);
-      console.log('[SizeChart] Tabelas para salvar:', chartsToSave.length);
+      const deleteUrl = `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`;
+      const deleteRes = await fetch(deleteUrl, {
+        method: 'DELETE',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!deleteRes.ok) console.warn('[SizeChart] Aviso ao deletar:', await deleteRes.text());
 
-      // Deletar tabelas desabilitadas primeiro
-      const deleteResponse = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-        {
-          method: 'DELETE',
+      if (toSave.length > 0) {
+        const insertRes = await fetch(`${supabaseUrl}/rest/v1/size_charts`, {
+          method: 'POST',
           headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates'
+          },
+          body: JSON.stringify(toSave)
+        });
+        if (!insertRes.ok) {
+          const errText = await insertRes.text();
+          let msg = 'Erro ao salvar tabelas.';
+          try {
+            const j = JSON.parse(errText);
+            msg = j.message || j.error || msg;
+          } catch {
+            if (errText.trim()) msg = errText;
           }
+          throw new Error(msg);
         }
-      );
-
-      if (!deleteResponse.ok) {
-        const errorText = await deleteResponse.text();
-        console.warn('[SizeChart] Aviso ao deletar tabelas antigas:', errorText);
       }
-
-      // Inserir/atualizar tabelas
-      if (chartsToSave.length > 0) {
-        const insertResponse = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts`,
-          {
-            method: 'POST',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'resolution=merge-duplicates'
-            },
-            body: JSON.stringify(chartsToSave)
-          }
-        );
-
-        if (!insertResponse.ok) {
-          const errorText = await insertResponse.text();
-          let errorMessage = 'Erro ao salvar tabelas de medidas.';
-          
-          if (errorText && errorText.trim().length > 0) {
-            try {
-              const errorData = JSON.parse(errorText);
-              errorMessage = errorData.message || errorData.error || errorData.details || errorMessage;
-            } catch (e) {
-              // Se não for JSON, usar o texto como mensagem
-              errorMessage = errorText || errorMessage;
-              console.error('[SizeChart] Erro resposta (texto):', errorText);
-            }
-          }
-          
-          console.error('[SizeChart] Status:', insertResponse.status, 'Erro:', errorMessage);
-          throw new Error(errorMessage);
-        } else {
-          const responseText = await insertResponse.text();
-          console.log('[SizeChart] Tabelas salvas com sucesso:', responseText.substring(0, 200));
-          
-          // Recarregar para garantir que temos os dados atualizados
-          await loadSizeCharts();
-        }
-      } else {
-        // Se não há tabelas para salvar, apenas recarregar
-        await loadSizeCharts();
-      }
-
+      await loadSizeCharts();
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      console.error('[SizeChart] Erro ao salvar tabelas:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err) || 'Erro ao salvar tabelas de medidas. Tente novamente.';
-      setError(errorMessage);
-      
-      // Não fazer throw do erro para evitar que o React Router trate como erro não tratado
+      setError(err instanceof Error ? err.message : 'Erro ao salvar.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleAddSize = (gender) => {
-    setSizeCharts((prev) => ({
-      ...prev,
-      [gender]: {
-        ...prev[gender],
-        enabled: true,
-        sizes: [
-          ...prev[gender].sizes,
-          {
-            size: '',
-            peito: '',
-            cintura: '',
-            quadril: '',
-            altura: '',
-            peso: ''
-          }
-        ]
-      }
+  const addCollection = () => {
+    const handle = prompt('Handle da coleção (ex: camisetas, calcas). Deixe vazio para tabela padrão da loja.');
+    if (handle === null) return;
+    const trimmed = (handle || '').trim().toLowerCase().replace(/\s+/g, '-');
+    if (collectionHandles.includes(trimmed)) return;
+    const nextHandles = [...collectionHandles, trimmed].sort((a, b) =>
+      a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)
+    );
+    setCollectionHandles(nextHandles);
+    setSelectedCollectionIndex(nextHandles.indexOf(trimmed));
+  };
+
+  const currentGender = GENDER_OPTIONS[selectedTab]?.value ?? 'male';
+  const currentChart = getChart(selectedHandle, currentGender);
+
+  const handleToggleChart = () => {
+    setChart(selectedHandle, currentGender, (c) => ({
+      ...c,
+      enabled: !c.enabled,
+      sizes: !c.enabled ? c.sizes : []
     }));
   };
 
-  const handleRemoveSize = (gender, index) => {
-    setSizeCharts((prev) => ({
-      ...prev,
-      [gender]: {
-        ...prev[gender],
-        sizes: prev[gender].sizes.filter((_, i) => i !== index)
-      }
+  const setMeasurementRef = (index, value) => {
+    const refs = [...currentChart.measurementRefs];
+    if (refs[index] === value) return;
+    const oldKey = refs[index];
+    const otherIndex = refs.findIndex((r, i) => i !== index && r === value);
+    const isSwap = otherIndex >= 0;
+    if (isSwap) refs[otherIndex] = oldKey;
+    refs[index] = value;
+    setChart(selectedHandle, currentGender, (c) => ({
+      ...c,
+      measurementRefs: refs,
+      sizes: c.sizes.map((row) => {
+        const next = { size: row.size };
+        refs.forEach((key) => {
+          if (key === value) next[key] = row[oldKey] ?? '';
+          else if (key === oldKey && isSwap) next[key] = row[value] ?? '';
+          else next[key] = row[key] ?? '';
+        });
+        return next;
+      })
     }));
   };
 
-  const handleSizeChange = (gender, index, field, value) => {
-    setSizeCharts((prev) => ({
-      ...prev,
-      [gender]: {
-        ...prev[gender],
-        sizes: prev[gender].sizes.map((size, i) =>
-          i === index ? { ...size, [field]: value } : size
-        )
-      }
+  const handleAddSize = () => {
+    const refs = currentChart.measurementRefs;
+    const newRow = getDefaultSizesForRefs(refs);
+    setChart(selectedHandle, currentGender, (c) => ({
+      ...c,
+      enabled: true,
+      sizes: [...c.sizes, newRow]
     }));
   };
 
-  const handleToggleChart = (gender) => {
-    setSizeCharts((prev) => ({
-      ...prev,
-      [gender]: {
-        ...prev[gender],
-        enabled: !prev[gender].enabled,
-        sizes: !prev[gender].enabled ? prev[gender].sizes : []
-      }
+  const handleRemoveSize = (index) => {
+    setChart(selectedHandle, currentGender, (c) => ({
+      ...c,
+      sizes: c.sizes.filter((_, i) => i !== index)
     }));
   };
 
-  const getCurrentGender = () => {
-    const genders = ['male', 'female', 'unisex'];
-    return genders[selectedTab];
-  };
-
-  const getCurrentChart = () => {
-    return sizeCharts[getCurrentGender()];
+  const handleSizeChange = (index, field, value) => {
+    setChart(selectedHandle, currentGender, (c) => ({
+      ...c,
+      sizes: c.sizes.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+    }));
   };
 
   if (loading) {
@@ -304,7 +296,7 @@ export default function SizeChartPage() {
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
-                <Text variant="bodyMd">Carregando tabelas de medidas...</Text>
+                <Text variant="bodyMd">Carregando tabelas...</Text>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -313,165 +305,156 @@ export default function SizeChartPage() {
     );
   }
 
-  const tabs = GENDER_OPTIONS.map((option, index) => ({
-    content: option.label,
-    id: index.toString(),
-    accessibilityLabel: `Tabela ${option.label}`,
-    panelID: `panel-${index}`
+  const tabs = GENDER_OPTIONS.map((opt, i) => ({
+    content: opt.label,
+    id: String(i),
+    accessibilityLabel: `Tabela ${opt.label}`,
+    panelID: `panel-${i}`
   }));
 
-  const currentChart = getCurrentChart();
-  const currentGender = getCurrentGender();
+  const collectionOptions = collectionHandles.map((h) => ({
+    label: h === '' ? 'Padrão (toda a loja)' : h,
+    value: String(collectionHandles.indexOf(h))
+  }));
 
   return (
     <Page
       title="Tabelas de Medidas"
-      subtitle="Configure as tabelas de medidas que serão usadas no cálculo de tamanho do widget"
+      subtitle="Configure tabelas por coleção e gênero (masculina, feminina, unissex). O widget usa a coleção e o gênero para escolher a tabela."
       backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain}`) }}
     >
       <Layout>
         {success && (
           <Layout.Section>
             <Banner tone="success" onDismiss={() => setSuccess(false)}>
-              <p>Tabelas de medidas salvas com sucesso!</p>
+              Tabelas salvas com sucesso.
             </Banner>
           </Layout.Section>
         )}
-
         {error && (
           <Layout.Section>
-            <Banner tone="critical" onDismiss={() => setError(null)}>
-              <p>{error}</p>
-            </Banner>
+            <Banner tone="critical" onDismiss={() => setError(null)}>{error}</Banner>
           </Layout.Section>
         )}
 
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Configurar por coleção</Text>
+              <Text variant="bodyMd" tone="subdued">
+                Cada coleção pode ter 3 tabelas (masculina, feminina, unissex). O widget recebe o handle da coleção e o gênero e busca a tabela correspondente. Use a coleção padrão para produtos fora de uma coleção específica.
+              </Text>
+
+              <InlineStack gap="200" wrap>
+                <Box minWidth="220px">
+                  <Select
+                    label="Coleção"
+                    options={collectionOptions}
+                    value={String(selectedCollectionIndex)}
+                    onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
+                  />
+                </Box>
+                <Box paddingBlockStart="400">
+                  <Button onClick={addCollection}>Nova coleção</Button>
+                </Box>
+              </InlineStack>
+
+              <Divider />
+
               <InlineStack align="space-between">
-                <Text variant="headingMd" as="h2">
-                  Configurar Tabelas de Medidas
+                <Text variant="headingMd" as="h3">
+                  Tabela {GENDER_OPTIONS[selectedTab].label} {selectedHandle ? `· ${selectedHandle}` : '(padrão)'}
                 </Text>
                 <Badge tone={currentChart.enabled ? 'success' : 'info'}>
                   {currentChart.enabled ? 'Ativa' : 'Inativa'}
                 </Badge>
               </InlineStack>
 
-              <Text variant="bodyMd" tone="subdued">
-                Configure até 3 tabelas de medidas (masculina, feminina e unissex). 
-                Essas tabelas serão usadas pelo widget para calcular o tamanho correto 
-                baseado na altura, peso, tipo de corpo e ajuste desejado do cliente.
-              </Text>
-
-              <Divider />
-
-              <Tabs
-                tabs={tabs}
-                selected={selectedTab}
-                onSelect={(selectedTabIndex) => setSelectedTab(parseInt(selectedTabIndex))}
-              >
+              <Tabs tabs={tabs} selected={String(selectedTab)} onSelect={(id) => setSelectedTab(parseInt(id, 10))}>
                 <Card>
                   <BlockStack gap="400">
                     <InlineStack align="space-between">
-                      <Text variant="headingMd" as="h3">
-                        Tabela {GENDER_OPTIONS[selectedTab].label}
-                      </Text>
+                      <Text variant="headingMd" as="h3">Referências de medida (escolha 3)</Text>
                       <Button
-                        onClick={() => handleToggleChart(currentGender)}
                         variant={currentChart.enabled ? 'secondary' : 'primary'}
+                        onClick={handleToggleChart}
                       >
-                        {currentChart.enabled ? 'Desativar Tabela' : 'Ativar Tabela'}
+                        {currentChart.enabled ? 'Desativar tabela' : 'Ativar tabela'}
                       </Button>
                     </InlineStack>
 
-                    {currentChart.enabled ? (
-                      <BlockStack gap="300">
-                        <Text variant="bodyMd" tone="subdued">
-                          Adicione os tamanhos e suas medidas correspondentes. 
-                          O widget usará essas medidas para calcular o tamanho ideal.
-                        </Text>
+                    {currentChart.enabled && (
+                      <>
+                        <InlineStack gap="200" wrap>
+                          {[0, 1, 2].map((i) => (
+                            <Box key={i} minWidth="160px">
+                              <Select
+                                label={`Medida ${i + 1}`}
+                                options={MEASUREMENT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
+                                value={currentChart.measurementRefs[i] ?? DEFAULT_REFS[i]}
+                                onChange={(v) => setMeasurementRef(i, v)}
+                              />
+                            </Box>
+                          ))}
+                        </InlineStack>
 
                         {currentChart.sizes.length === 0 ? (
                           <Card sectioned>
                             <BlockStack gap="200" inlineAlign="center">
-                              <Text variant="bodyMd" tone="subdued">
-                                Nenhum tamanho adicionado ainda.
-                              </Text>
-                              <Button onClick={() => handleAddSize(currentGender)}>
-                                Adicionar Primeiro Tamanho
-                              </Button>
+                              <Text variant="bodyMd" tone="subdued">Nenhum tamanho. Adicione o primeiro.</Text>
+                              <Button onClick={handleAddSize}>Adicionar primeiro tamanho</Button>
                             </BlockStack>
                           </Card>
                         ) : (
                           <BlockStack gap="300">
-                            {currentChart.sizes.map((size, index) => (
+                            {currentChart.sizes.map((row, index) => (
                               <Card key={index} sectioned>
                                 <BlockStack gap="300">
                                   <InlineStack align="space-between">
-                                    <Text variant="headingSm" as="h4">
-                                      Tamanho {index + 1}
-                                    </Text>
-                                    <Button
-                                      onClick={() => handleRemoveSize(currentGender, index)}
-                                      variant="plain"
-                                      tone="critical"
-                                    >
+                                    <Text variant="headingSm" as="h4">Tamanho {index + 1}</Text>
+                                    <Button variant="plain" tone="critical" onClick={() => handleRemoveSize(index)}>
                                       Remover
                                     </Button>
                                   </InlineStack>
-
                                   <InlineStack gap="200" wrap>
-                                    <div style={{ flex: '1 1 150px', minWidth: '150px' }}>
+                                    <div style={{ flex: '1 1 120px', minWidth: '120px' }}>
                                       <TextField
                                         label="Tamanho"
-                                        value={size.size}
-                                        onChange={(value) =>
-                                          handleSizeChange(currentGender, index, 'size', value)
-                                        }
-                                        placeholder="Ex: P, M, G, GG"
+                                        value={row.size ?? ''}
+                                        onChange={(v) => handleSizeChange(index, 'size', v)}
+                                        placeholder="Ex: P, M, G"
                                         autoComplete="off"
                                       />
                                     </div>
-                                    {DEFAULT_MEASUREMENTS.map((measurement) => (
-                                      <div
-                                        key={measurement.key}
-                                        style={{ flex: '1 1 120px', minWidth: '120px' }}
-                                      >
-                                        <TextField
-                                          label={measurement.label}
-                                          type="number"
-                                          value={size[measurement.key] || ''}
-                                          onChange={(value) =>
-                                            handleSizeChange(
-                                              currentGender,
-                                              index,
-                                              measurement.key,
-                                              value
-                                            )
-                                          }
-                                          placeholder="0"
-                                          autoComplete="off"
-                                        />
-                                      </div>
-                                    ))}
+                                    {currentChart.measurementRefs.map((key) => {
+                                      const opt = MEASUREMENT_OPTIONS.find((o) => o.value === key);
+                                      return (
+                                        <div key={key} style={{ flex: '1 1 120px', minWidth: '120px' }}>
+                                          <TextField
+                                            label={opt?.label ?? key}
+                                            type="number"
+                                            value={String(row[key] ?? '')}
+                                            onChange={(v) => handleSizeChange(index, key, v)}
+                                            placeholder="0"
+                                            autoComplete="off"
+                                          />
+                                        </div>
+                                      );
+                                    })}
                                   </InlineStack>
                                 </BlockStack>
                               </Card>
                             ))}
-
-                            <Button onClick={() => handleAddSize(currentGender)}>
-                              Adicionar Tamanho
-                            </Button>
+                            <Button onClick={handleAddSize}>Adicionar tamanho</Button>
                           </BlockStack>
                         )}
-                      </BlockStack>
-                    ) : (
+                      </>
+                    )}
+
+                    {!currentChart.enabled && (
                       <Card sectioned>
                         <BlockStack gap="200" inlineAlign="center">
-                          <Text variant="bodyMd" tone="subdued">
-                            Esta tabela está desativada. Ative para começar a adicionar tamanhos.
-                          </Text>
+                          <Text variant="bodyMd" tone="subdued">Esta tabela está desativada. Ative para configurar.</Text>
                         </BlockStack>
                       </Card>
                     )}
@@ -480,14 +463,9 @@ export default function SizeChartPage() {
               </Tabs>
 
               <Divider />
-
               <InlineStack align="end">
-                <Button
-                  variant="primary"
-                  onClick={saveSizeCharts}
-                  loading={saving}
-                >
-                  Salvar Tabelas de Medidas
+                <Button variant="primary" onClick={saveSizeCharts} loading={saving}>
+                  Salvar tabelas
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -497,25 +475,12 @@ export default function SizeChartPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
-              <Text variant="headingMd" as="h2">
-                Como Funciona
-              </Text>
+              <Text variant="headingMd" as="h2">Como funciona</Text>
               <BlockStack gap="200">
-                <Text variant="bodyMd">
-                  • O cliente informa altura, peso, tipo de corpo e ajuste desejado no widget
-                </Text>
-                <Text variant="bodyMd">
-                  • O sistema calcula as medidas estimadas do cliente usando os fatores de tipo de corpo e ajuste
-                </Text>
-                <Text variant="bodyMd">
-                  • As medidas calculadas são comparadas com as tabelas de medidas que você configurou
-                </Text>
-                <Text variant="bodyMd">
-                  • O tamanho mais adequado é sugerido ao cliente baseado na tabela correspondente ao gênero
-                </Text>
-                <Text variant="bodyMd">
-                  • Você pode configurar até 3 tabelas: masculina, feminina e unissex
-                </Text>
+                <Text variant="bodyMd">• Configure uma ou mais coleções (handle igual ao da Shopify). Use a coleção padrão para toda a loja.</Text>
+                <Text variant="bodyMd">• Por coleção, você tem 3 tabelas: masculina, feminina e unissex.</Text>
+                <Text variant="bodyMd">• Em cada tabela escolha exatamente 3 referências de medida (peito, cintura, quadril, comprimento ou tornozelo).</Text>
+                <Text variant="bodyMd">• O widget recebe a coleção e o gênero e usa a tabela correspondente para sugerir o tamanho.</Text>
               </BlockStack>
             </BlockStack>
           </Card>
@@ -524,4 +489,3 @@ export default function SizeChartPage() {
     </Page>
   );
 }
-

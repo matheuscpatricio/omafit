@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLoaderData } from 'react-router-dom';
 import {
   Page,
   Layout,
@@ -18,6 +18,39 @@ import {
   Box
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
+import { authenticate } from '../shopify.server';
+
+const GET_COLLECTIONS_QUERY = `#graphql
+  query GetCollections {
+    collections(first: 250) {
+      edges {
+        node {
+          id
+          handle
+          title
+        }
+      }
+    }
+  }
+`;
+
+export const loader = async ({ request }) => {
+  try {
+    const { admin } = await authenticate.admin(request);
+    const response = await admin.graphql(GET_COLLECTIONS_QUERY);
+    const json = await response.json();
+    const edges = json?.data?.collections?.edges ?? [];
+    const collections = edges.map(({ node }) => ({
+      id: node.id,
+      handle: node.handle ?? '',
+      title: node.title ?? node.handle ?? ''
+    }));
+    return { collections };
+  } catch (err) {
+    console.error('[SizeChart loader] Erro ao carregar coleções:', err);
+    return { collections: [] };
+  }
+};
 
 const GENDER_OPTIONS = [
   { label: 'Masculina', value: 'male' },
@@ -42,7 +75,10 @@ function getDefaultSizesForRefs(refs) {
 export default function SizeChartPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const loaderData = useLoaderData();
   const shopDomain = getShopDomain(searchParams);
+
+  const shopifyCollections = Array.isArray(loaderData?.collections) ? loaderData.collections : [];
 
   useEffect(() => {
     if (!shopDomain) {
@@ -55,9 +91,6 @@ export default function SizeChartPage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState(null);
   const [selectedTab, setSelectedTab] = useState(0);
-
-  // Coleções da loja (Shopify): [{ handle, title }]. Lista de handles = Padrão + coleções.
-  const [shopifyCollections, setShopifyCollections] = useState([]);
   const [selectedCollectionIndex, setSelectedCollectionIndex] = useState(0);
 
   // Por coleção e gênero: { enabled, measurementRefs (3), sizes }
@@ -72,31 +105,25 @@ export default function SizeChartPage() {
     (async () => {
       try {
         setLoading(true);
-        const [collectionsRes, chartsRes] = await Promise.all([
-          fetch('/api/collections', { credentials: 'include' }),
-          (async () => {
-            const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-            const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-            if (!supabaseUrl || !supabaseKey) return null;
-            return fetch(
-              `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-              {
-                headers: {
-                  apikey: supabaseKey,
-                  Authorization: `Bearer ${supabaseKey}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
-          })()
-        ]);
+        const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+        const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+        if (!supabaseUrl || !supabaseKey) {
+          setLoading(false);
+          return;
+        }
+        const chartsRes = await fetch(
+          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
+          {
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
 
         if (cancelled) return;
-        const collectionsData = await collectionsRes.json().catch(() => ({ collections: [] }));
-        const colls = Array.isArray(collectionsData.collections) ? collectionsData.collections : [];
-        setShopifyCollections(colls);
-
-        if (chartsRes && chartsRes.ok) {
+        if (chartsRes.ok) {
           const data = await chartsRes.json();
           const byCollection = {};
           data.forEach((row) => {
@@ -121,7 +148,7 @@ export default function SizeChartPage() {
           setCharts(byCollection);
         }
       } catch (err) {
-        if (!cancelled) console.error('[SizeChart] Erro ao carregar:', err);
+        if (!cancelled) console.error('[SizeChart] Erro ao carregar tabelas:', err);
       } finally {
         if (!cancelled) setLoading(false);
       }

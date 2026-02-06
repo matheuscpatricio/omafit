@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Page,
@@ -56,75 +56,78 @@ export default function SizeChartPage() {
   const [error, setError] = useState(null);
   const [selectedTab, setSelectedTab] = useState(0);
 
-  // Lista de handles de coleção (pelo menos uma: padrão)
-  const [collectionHandles, setCollectionHandles] = useState(['']);
+  // Coleções da loja (Shopify): [{ handle, title }]. Lista de handles = Padrão + coleções.
+  const [shopifyCollections, setShopifyCollections] = useState([]);
   const [selectedCollectionIndex, setSelectedCollectionIndex] = useState(0);
 
   // Por coleção e gênero: { enabled, measurementRefs (3), sizes }
   const [charts, setCharts] = useState({});
 
+  const collectionHandles = ['', ...shopifyCollections.map((c) => c.handle)];
   const selectedHandle = collectionHandles[selectedCollectionIndex] ?? '';
 
   useEffect(() => {
-    if (shopDomain) loadSizeCharts();
-  }, [shopDomain]);
+    if (!shopDomain) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const [collectionsRes, chartsRes] = await Promise.all([
+          fetch('/api/collections', { credentials: 'include' }),
+          (async () => {
+            const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+            const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+            if (!supabaseUrl || !supabaseKey) return null;
+            return fetch(
+              `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
+              {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+          })()
+        ]);
 
-  const loadSizeCharts = async () => {
-    try {
-      setLoading(true);
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+        if (cancelled) return;
+        const collectionsData = await collectionsRes.json().catch(() => ({ collections: [] }));
+        const colls = Array.isArray(collectionsData.collections) ? collectionsData.collections : [];
+        setShopifyCollections(colls);
 
-      if (!supabaseUrl || !supabaseKey) {
-        setError('Supabase não está configurado.');
-        return;
-      }
-
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-        {
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const byCollection = {};
-        const handlesSet = new Set(['']);
-
-        data.forEach((row) => {
-          const handle = row.collection_handle ?? '';
-          handlesSet.add(handle);
-          if (!byCollection[handle]) {
-            byCollection[handle] = {
-              male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-              female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-              unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
+        if (chartsRes && chartsRes.ok) {
+          const data = await chartsRes.json();
+          const byCollection = {};
+          data.forEach((row) => {
+            const handle = row.collection_handle ?? '';
+            if (!byCollection[handle]) {
+              byCollection[handle] = {
+                male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+                female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+                unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
+              };
+            }
+            const refs =
+              Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
+                ? row.measurement_refs
+                : DEFAULT_REFS.slice();
+            byCollection[handle][row.gender] = {
+              enabled: true,
+              measurementRefs: refs,
+              sizes: row.sizes || []
             };
-          }
-          const refs = Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
-            ? row.measurement_refs
-            : DEFAULT_REFS.slice();
-          byCollection[handle][row.gender] = {
-            enabled: true,
-            measurementRefs: refs,
-            sizes: row.sizes || []
-          };
-        });
-
-        setCollectionHandles(Array.from(handlesSet));
-        setCharts(byCollection);
+          });
+          setCharts(byCollection);
+        }
+      } catch (err) {
+        if (!cancelled) console.error('[SizeChart] Erro ao carregar:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch (err) {
-      console.error('[SizeChart] Erro ao carregar:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    })();
+    return () => { cancelled = true; };
+  }, [shopDomain]);
 
   const getChart = (handle, gender) => {
     const coll = charts[handle];
@@ -218,18 +221,6 @@ export default function SizeChartPage() {
     }
   };
 
-  const addCollection = () => {
-    const handle = prompt('Handle da coleção (ex: camisetas, calcas). Deixe vazio para tabela padrão da loja.');
-    if (handle === null) return;
-    const trimmed = (handle || '').trim().toLowerCase().replace(/\s+/g, '-');
-    if (collectionHandles.includes(trimmed)) return;
-    const nextHandles = [...collectionHandles, trimmed].sort((a, b) =>
-      a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)
-    );
-    setCollectionHandles(nextHandles);
-    setSelectedCollectionIndex(nextHandles.indexOf(trimmed));
-  };
-
   const currentGender = GENDER_OPTIONS[selectedTab]?.value ?? 'male';
   const currentChart = getChart(selectedHandle, currentGender);
 
@@ -312,10 +303,10 @@ export default function SizeChartPage() {
     panelID: `panel-${i}`
   }));
 
-  const collectionOptions = collectionHandles.map((h) => ({
-    label: h === '' ? 'Padrão (toda a loja)' : h,
-    value: String(collectionHandles.indexOf(h))
-  }));
+  const collectionOptions = collectionHandles.map((h, idx) => {
+    const label = h === '' ? 'Padrão (toda a loja)' : (shopifyCollections[idx - 1]?.title || h);
+    return { label, value: String(idx) };
+  });
 
   return (
     <Page
@@ -345,19 +336,14 @@ export default function SizeChartPage() {
                 Cada coleção pode ter 3 tabelas (masculina, feminina, unissex). O widget recebe o handle da coleção e o gênero e busca a tabela correspondente. Use a coleção padrão para produtos fora de uma coleção específica.
               </Text>
 
-              <InlineStack gap="200" wrap>
-                <Box minWidth="220px">
-                  <Select
-                    label="Coleção"
-                    options={collectionOptions}
-                    value={String(selectedCollectionIndex)}
-                    onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
-                  />
-                </Box>
-                <Box paddingBlockStart="400">
-                  <Button onClick={addCollection}>Nova coleção</Button>
-                </Box>
-              </InlineStack>
+              <Box minWidth="280px">
+                <Select
+                  label="Coleção"
+                  options={collectionOptions}
+                  value={String(selectedCollectionIndex)}
+                  onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
+                />
+              </Box>
 
               <Divider />
 
@@ -370,7 +356,9 @@ export default function SizeChartPage() {
                 </Badge>
               </InlineStack>
 
-              <Tabs tabs={tabs} selected={String(selectedTab)} onSelect={(id) => setSelectedTab(parseInt(id, 10))}>
+              <Tabs tabs={tabs} selected={String(selectedTab)} onSelect={(id) => setSelectedTab(parseInt(id, 10))} />
+
+              <Box paddingBlockStart="400">
                 <Card>
                   <BlockStack gap="400">
                     <InlineStack align="space-between">
@@ -460,7 +448,7 @@ export default function SizeChartPage() {
                     )}
                   </BlockStack>
                 </Card>
-              </Tabs>
+              </Box>
 
               <Divider />
               <InlineStack align="end">

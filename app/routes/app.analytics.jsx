@@ -115,11 +115,26 @@ export default function AnalyticsPage() {
       const userId = shopData?.[0]?.user_id ?? null;
       const imagesUsedMonth = shopData?.[0]?.images_used_month ?? 0;
 
+      let ordersData = {};
+      try {
+        const ordersRes = await fetch(`/api/analytics-orders?period=${timeRange}`, { credentials: 'include' });
+        ordersData = ordersRes.ok ? await ordersRes.json().catch(() => ({})) : {};
+      } catch (e) {
+        console.warn('[Analytics] Erro ao buscar pedidos/devoluções:', e);
+      }
+
       if (!userId) {
         setMetrics({
           totalImagesProcessed: imagesUsedMonth,
           avgByGender: { male: { height: null, weight: null }, female: { height: null, weight: null } },
-          byCollectionGender: []
+          byCollectionGender: [],
+          ordersBefore: ordersData.ordersBefore ?? null,
+          ordersAfter: ordersData.ordersAfter ?? null,
+          returnsBefore: ordersData.returnsBefore ?? null,
+          returnsAfter: ordersData.returnsAfter ?? null,
+          conversionBefore: ordersData.conversionBefore ?? null,
+          conversionAfter: ordersData.conversionAfter ?? null,
+          ordersError: ordersData.error ?? null
         });
         setLoading(false);
         return;
@@ -230,7 +245,14 @@ export default function AnalyticsPage() {
       setMetrics({
         totalImagesProcessed,
         avgByGender,
-        byCollectionGender
+        byCollectionGender,
+        ordersBefore: ordersData.ordersBefore ?? null,
+        ordersAfter: ordersData.ordersAfter ?? null,
+        returnsBefore: ordersData.returnsBefore ?? null,
+        returnsAfter: ordersData.returnsAfter ?? null,
+        conversionBefore: ordersData.conversionBefore ?? null,
+        conversionAfter: ordersData.conversionAfter ?? null,
+        ordersError: ordersData.error ?? null
       });
     } catch (err) {
       console.error('[Analytics]', err);
@@ -281,6 +303,14 @@ export default function AnalyticsPage() {
           </Layout.Section>
         )}
 
+        {m.ordersError && (
+          <Layout.Section>
+            <Banner tone="warning">
+              <p>Não foi possível carregar pedidos e devoluções. Confirme se a app tem a permissão &quot;Ler pedidos&quot; (read_orders) e que a loja aceitou as permissões.</p>
+            </Banner>
+          </Layout.Section>
+        )}
+
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
@@ -317,6 +347,68 @@ export default function AnalyticsPage() {
               </Text>
             </BlockStack>
           </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Text variant="headingLg" as="h2">
+            Pedidos devolvidos (antes e depois do Omafit)
+          </Text>
+          <Text variant="bodyMd" tone="subdued">
+            Número de pedidos com devolução no período selecionado. &quot;Antes&quot; = mesmo número de dias antes da instalação do app; &quot;Depois&quot; = últimos dias (após Omafit).
+          </Text>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">Antes do Omafit</Text>
+                  <Text variant="headingXl" as="p">{m.returnsBefore != null ? m.returnsBefore : '—'}</Text>
+                  <Text variant="bodyMd" tone="subdued">pedidos devolvidos</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">Depois do Omafit</Text>
+                  <Text variant="headingXl" as="p">{m.returnsAfter != null ? m.returnsAfter : '—'}</Text>
+                  <Text variant="bodyMd" tone="subdued">pedidos devolvidos</Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Text variant="headingLg" as="h2">
+            Taxa de conversão (pedidos não devolvidos)
+          </Text>
+          <Text variant="bodyMd" tone="subdued">
+            Percentual de pedidos que não foram devolvidos no período. Quanto maior, melhor.
+          </Text>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">Antes do Omafit</Text>
+                  <Text variant="headingXl" as="p">
+                    {m.conversionBefore != null ? `${m.conversionBefore.toFixed(1)}%` : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">pedidos mantidos</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">Depois do Omafit</Text>
+                  <Text variant="headingXl" as="p">
+                    {m.conversionAfter != null ? `${m.conversionAfter.toFixed(1)}%` : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">pedidos mantidos</Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
         </Layout.Section>
 
         <Layout.Section>

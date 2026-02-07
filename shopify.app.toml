@@ -28,8 +28,8 @@ api_version = "2025-10"
   uri = "/webhooks/compliance"
 
 [access_scopes]
-# read_products = ler produtos e coleções (necessário para lista de coleções na tabela de medidas)
-scopes = "read_products"
+# read_products = produtos e coleções; read_orders = pedidos e devoluções (analytics antes/depois do Omafit)
+scopes = "read_products,read_orders"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 

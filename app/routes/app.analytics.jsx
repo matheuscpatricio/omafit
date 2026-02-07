@@ -31,24 +31,29 @@ const FIT_PREFERENCE_NAMES = {
 
 const GENDER_LABELS = { male: 'Masculino', female: 'Feminino' };
 
+function normalizeGender(g) {
+  if (g == null || g === '') return null;
+  const s = String(g).toLowerCase();
+  if (s === 'male' || s === 'masculino' || s === 'm') return 'male';
+  if (s === 'female' || s === 'feminino' || s === 'f') return 'female';
+  return g;
+}
+
 function getMeasurements(session) {
+  let m = null;
   if (session.user_measurements) {
     if (typeof session.user_measurements === 'string') {
       try {
-        return JSON.parse(session.user_measurements);
+        m = JSON.parse(session.user_measurements);
       } catch (e) {
-        return null;
+        m = null;
       }
+    } else {
+      m = session.user_measurements;
     }
-    return session.user_measurements;
   }
-  if (
-    session.gender ||
-    session.recommended_size != null ||
-    session.body_type_index !== undefined ||
-    session.fit_preference_index !== undefined
-  ) {
-    return {
+  if (!m && (session.gender || session.recommended_size != null || session.body_type_index !== undefined || session.fit_preference_index !== undefined)) {
+    m = {
       gender: session.gender,
       recommended_size: session.recommended_size,
       body_type_index: session.body_type_index,
@@ -58,7 +63,18 @@ function getMeasurements(session) {
       collection_handle: session.collection_handle
     };
   }
-  return null;
+  if (!m) return null;
+  const gender = normalizeGender(m.gender ?? session.gender);
+  if (!gender || (gender !== 'male' && gender !== 'female')) return null;
+  return {
+    gender,
+    recommended_size: m.recommended_size ?? m.recommendedSize ?? session.recommended_size,
+    body_type_index: m.body_type_index ?? m.bodyType ?? session.body_type_index,
+    fit_preference_index: m.fit_preference_index ?? m.fitPreference ?? session.fit_preference_index,
+    height: m.height ?? session.height,
+    weight: m.weight ?? session.weight,
+    collection_handle: m.collection_handle ?? m.collectionHandle ?? session.collection_handle
+  };
 }
 
 function getCollectionKey(session) {
@@ -158,6 +174,32 @@ export default function AnalyticsPage() {
       if (sessionsData.length === 0) {
         sessionsRes = await fetch(
           `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc`,
+          {
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        sessionsData = sessionsRes.ok ? await sessionsRes.json() : [];
+      }
+      if (sessionsData.length === 0) {
+        sessionsRes = await fetch(
+          `${supabaseUrl}/rest/v1/session_analytics?shop_domain=eq.${encodeURIComponent(shopDomain)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
+          {
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        sessionsData = sessionsRes.ok ? await sessionsRes.json() : [];
+      }
+      if (sessionsData.length === 0) {
+        sessionsRes = await fetch(
+          `${supabaseUrl}/rest/v1/session_analytics?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=created_at.desc`,
           {
             headers: {
               apikey: supabaseKey,

@@ -4,24 +4,25 @@ O widget na Shopify envia o **produto complementar** para o app em `https://omaf
 
 ---
 
-## 1. Parâmetro na URL do iframe
+## 1. Parâmetros na URL do iframe
 
 Ao abrir o widget, a URL pode incluir:
 
-- **`complementaryProductUrl`** – URL absoluta do produto recomendado (ex: `https://loja.myshopify.com/products/camisa-basica`).
+- **`recommendedProductUrl`** – URL absoluta do produto recomendado (ex: `https://loja.myshopify.com/products/camisa-basica`).
+- **`recommendedProductName`** – Nome/título do produto recomendado.
+- (Também enviados: `complementaryProductUrl` – mesmo valor que `recommendedProductUrl`.)
 
 **No app Netlify (ao montar a página do widget):**
 
 ```javascript
 const params = new URLSearchParams(window.location.search);
-const complementaryProductUrl = params.get('complementaryProductUrl');
-if (complementaryProductUrl) {
-  setComplementaryProductUrl(complementaryProductUrl);
-  // ou setComplementaryProduct({ url: complementaryProductUrl, title: null, ... })
+const recommendedProductUrl = params.get('recommendedProductUrl') || params.get('complementaryProductUrl');
+const recommendedProductName = params.get('recommendedProductName');
+if (recommendedProductUrl) {
+  setRecommendedProductUrl(recommendedProductUrl);
+  if (recommendedProductName) setRecommendedProductName(recommendedProductName);
 }
 ```
-
-Só a URL vem na query string; título e coleção vêm por postMessage.
 
 ---
 
@@ -31,8 +32,9 @@ Logo após o iframe carregar, a loja envia uma mensagem **somente** quando há p
 
 - **Tipo:** `omafit-complementary-product`
 - **Payload:**  
-  `event.data.complementaryProduct` =  
-  `{ title, handle, url, collectionTitle }`
+  - `event.data.complementaryProduct` = `{ title, handle, url, collectionTitle }`  
+  - **`event.data.recommendedProductName`** = título do produto  
+  - **`event.data.recommendedProductUrl`** = URL do produto
 
 **No app Netlify (listener de postMessage):**
 
@@ -45,10 +47,14 @@ useEffect(() => {
     const allowed = /^https:\/\/(.+\.myshopify\.com|.+)$/; // ou lista de origens permitidas
     if (!allowed.test(event.origin)) return;
 
-    if (event.data?.type === 'omafit-complementary-product' && event.data.complementaryProduct) {
-      const { title, handle, url, collectionTitle } = event.data.complementaryProduct;
-      setComplementaryProduct({ title, handle, url, collectionTitle });
-      console.log('📥 Produto complementar recebido:', url);
+    if (event.data?.type === 'omafit-complementary-product') {
+      const url = event.data.recommendedProductUrl || event.data.complementaryProduct?.url;
+      const name = event.data.recommendedProductName || event.data.complementaryProduct?.title;
+      if (url) {
+        setRecommendedProductUrl(url);
+        if (name) setRecommendedProductName(name);
+        console.log('📥 Produto recomendado recebido:', name, url);
+      }
     }
   };
 

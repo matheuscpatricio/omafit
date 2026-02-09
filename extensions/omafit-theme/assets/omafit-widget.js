@@ -194,6 +194,90 @@
     return { productId, productName, productHandle };
   }
 
+  // Buscar um produto complementar de uma coleção diferente
+  async function getComplementaryProduct(currentCollectionHandle) {
+    try {
+      // Se não temos collectionHandle, não podemos buscar produto complementar
+      if (!currentCollectionHandle) {
+        console.log('⚠️ Sem coleção atual, não é possível buscar produto complementar');
+        return null;
+      }
+
+      // Buscar todas as coleções disponíveis
+      try {
+        const collectionsResponse = await fetch('/collections.json');
+        if (!collectionsResponse.ok) {
+          console.warn('⚠️ Não foi possível buscar coleções');
+          return null;
+        }
+
+        const collectionsData = await collectionsResponse.json();
+        const collections = collectionsData.collections || [];
+
+        if (collections.length === 0) {
+          console.log('⚠️ Nenhuma coleção encontrada');
+          return null;
+        }
+
+        // Filtrar coleções diferentes da atual
+        const complementaryCollections = collections.filter(
+          (coll) => coll.handle !== currentCollectionHandle && coll.handle
+        );
+
+        if (complementaryCollections.length === 0) {
+          console.log('⚠️ Nenhuma coleção complementar encontrada');
+          return null;
+        }
+
+        // Selecionar uma coleção complementar aleatória
+        const randomCollection = complementaryCollections[Math.floor(Math.random() * complementaryCollections.length)];
+        console.log('🎲 Coleção complementar selecionada:', randomCollection.handle);
+
+        // Buscar produtos dessa coleção
+        const collectionProductsResponse = await fetch(`/collections/${randomCollection.handle}/products.json?limit=10`);
+        if (!collectionProductsResponse.ok) {
+          console.warn('⚠️ Não foi possível buscar produtos da coleção complementar');
+          return null;
+        }
+
+        const collectionProductsData = await collectionProductsResponse.json();
+        const products = collectionProductsData.products || [];
+
+        if (products.length === 0) {
+          console.log('⚠️ Nenhum produto encontrado na coleção complementar');
+          return null;
+        }
+
+        // Selecionar um produto aleatório
+        const randomProduct = products[Math.floor(Math.random() * products.length)];
+        
+        // Construir URL do produto
+        const productUrl = `/products/${randomProduct.handle}`;
+        const fullProductUrl = window.location.origin + productUrl;
+
+        console.log('✅ Produto complementar encontrado:', {
+          title: randomProduct.title,
+          handle: randomProduct.handle,
+          url: fullProductUrl,
+          collection: randomCollection.title
+        });
+
+        return {
+          title: randomProduct.title,
+          handle: randomProduct.handle,
+          url: fullProductUrl,
+          collectionTitle: randomCollection.title
+        };
+      } catch (error) {
+        console.error('❌ Erro ao buscar produto complementar:', error);
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Erro geral ao buscar produto complementar:', error);
+      return null;
+    }
+  }
+
   // Buscar configuração do Omafit diretamente do Supabase
   async function fetchOmafitConfig() {
     try {
@@ -731,6 +815,9 @@
     const collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
     
+    // Buscar produto complementar de uma coleção diferente
+    const complementaryProduct = await getComplementaryProduct(collectionHandle);
+    
     // Limitar imagens na URL - passar apenas as primeiras 3 para evitar URL muito longa
     const limitedImages = allProductImages.slice(0, 3);
     
@@ -760,6 +847,7 @@
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
+      (complementaryProduct ? '&complementaryProductUrl=' + encodeURIComponent(complementaryProduct.url) : '') +
       '&config=' + encodeURIComponent(JSON.stringify(config));
     
     // Se houver imagens, passar apenas as primeiras 3 na URL para evitar URL muito longa
@@ -840,10 +928,15 @@
         iframe.contentWindow.postMessage({
           type: 'omafit-context',
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
-          defaultGender: typeof defaultGender === 'string' ? defaultGender : ''
+          defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
+          complementaryProduct: complementaryProduct || null
         }, 'https://omafit.netlify.app');
-        if (collectionHandle || defaultGender) {
-          console.log('📤 Contexto enviado via postMessage:', { collectionHandle: collectionHandle || '(vazio)', defaultGender: defaultGender || '(vazio)' });
+        if (collectionHandle || defaultGender || complementaryProduct) {
+          console.log('📤 Contexto enviado via postMessage:', { 
+            collectionHandle: collectionHandle || '(vazio)', 
+            defaultGender: defaultGender || '(vazio)',
+            complementaryProduct: complementaryProduct ? complementaryProduct.url : '(nenhum)'
+          });
         }
 
         // Enviar todas as imagens do produto (não apenas as 3 primeiras)
@@ -885,7 +978,8 @@
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
-              defaultGender: defaultGender || ''
+              defaultGender: defaultGender || '',
+              complementaryProduct: complementaryProduct || null
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (com logo):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
@@ -909,7 +1003,8 @@
               fontFamily: detectedFontFamily,
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
-              defaultGender: defaultGender || ''
+              defaultGender: defaultGender || '',
+              complementaryProduct: complementaryProduct || null
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (sem logo - inválido):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
@@ -928,7 +1023,8 @@
             fontFamily: detectedFontFamily,
             shopDomain: shopDomain,
             collectionHandle: collectionHandle || '',
-            defaultGender: defaultGender || ''
+            defaultGender: defaultGender || '',
+            complementaryProduct: complementaryProduct || null
           }, 'https://omafit.netlify.app');
           console.log('📤 Configuração enviada via postMessage (sem logo):', {
             primaryColor: OMAFIT_CONFIG.colors?.primary,

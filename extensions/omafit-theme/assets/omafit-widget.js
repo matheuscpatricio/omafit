@@ -194,41 +194,39 @@
     return { productId, productName, productHandle };
   }
 
-  // Buscar um produto complementar de uma coleção diferente
+  // Buscar um produto complementar de uma coleção (diferente da atual, ou qualquer se não houver atual)
   async function getComplementaryProduct(currentCollectionHandle) {
     try {
-      // Se não temos collectionHandle, não podemos buscar produto complementar
-      if (!currentCollectionHandle) {
-        console.log('⚠️ Sem coleção atual, não é possível buscar produto complementar');
+      const collectionsResponse = await fetch('/collections.json');
+      if (!collectionsResponse.ok) {
+        console.warn('⚠️ Não foi possível buscar coleções');
         return null;
       }
 
-      // Buscar todas as coleções disponíveis
-      try {
-        const collectionsResponse = await fetch('/collections.json');
-        if (!collectionsResponse.ok) {
-          console.warn('⚠️ Não foi possível buscar coleções');
-          return null;
-        }
+      const collectionsData = await collectionsResponse.json();
+      const collections = collectionsData.collections || [];
 
-        const collectionsData = await collectionsResponse.json();
-        const collections = collectionsData.collections || [];
+      if (collections.length === 0) {
+        console.log('⚠️ Nenhuma coleção encontrada');
+        return null;
+      }
 
-        if (collections.length === 0) {
-          console.log('⚠️ Nenhuma coleção encontrada');
-          return null;
-        }
-
-        // Filtrar coleções diferentes da atual
-        const complementaryCollections = collections.filter(
-          (coll) => coll.handle !== currentCollectionHandle && coll.handle
+      // Coleções candidatas: diferentes da atual; se não há atual, todas
+      let complementaryCollections = collections.filter(function (coll) {
+        return coll.handle;
+      });
+      if (currentCollectionHandle) {
+        complementaryCollections = complementaryCollections.filter(
+          function (coll) { return coll.handle !== currentCollectionHandle; }
         );
+      }
 
-        if (complementaryCollections.length === 0) {
-          console.log('⚠️ Nenhuma coleção complementar encontrada');
-          return null;
-        }
+      if (complementaryCollections.length === 0) {
+        console.log('⚠️ Nenhuma coleção complementar encontrada');
+        return null;
+      }
 
+      try {
         // Selecionar uma coleção complementar aleatória
         const randomCollection = complementaryCollections[Math.floor(Math.random() * complementaryCollections.length)];
         console.log('🎲 Coleção complementar selecionada:', randomCollection.handle);
@@ -812,10 +810,10 @@
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
     const rootEl = document.getElementById('omafit-widget-root');
-    const collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
+    let collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
     
-    // Buscar produto complementar de uma coleção diferente
+    // Buscar produto complementar (usa coleção atual se houver; senão busca de qualquer coleção)
     const complementaryProduct = await getComplementaryProduct(collectionHandle);
     
     // Limitar imagens na URL - passar apenas as primeiras 3 para evitar URL muito longa
@@ -931,6 +929,21 @@
           defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
           complementaryProduct: complementaryProduct || null
         }, 'https://omafit.netlify.app');
+
+        // Enviar produto complementar em mensagem dedicada para o app Netlify garantir recebimento
+        if (complementaryProduct) {
+          iframe.contentWindow.postMessage({
+            type: 'omafit-complementary-product',
+            complementaryProduct: {
+              title: complementaryProduct.title,
+              handle: complementaryProduct.handle,
+              url: complementaryProduct.url,
+              collectionTitle: complementaryProduct.collectionTitle
+            }
+          }, 'https://omafit.netlify.app');
+          console.log('📤 Produto complementar enviado via postMessage (omafit-complementary-product):', complementaryProduct.url);
+        }
+
         if (collectionHandle || defaultGender || complementaryProduct) {
           console.log('📤 Contexto enviado via postMessage:', { 
             collectionHandle: collectionHandle || '(vazio)', 

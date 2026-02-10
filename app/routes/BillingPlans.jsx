@@ -6,44 +6,47 @@ import {
   BlockStack,
   InlineStack,
 } from "@shopify/polaris";
+import { useAppI18n } from "../contexts/AppI18n";
 
 export default function BillingPlans({
   currentPlan,
   plans,
   onSelectPlan,
-  isLoading,
+  billingStartAction,
 }) {
+  const { t } = useAppI18n();
+
   const effectivePlans =
     plans && plans.length
       ? plans
       : [
           {
             name: "Basic",
-            price: "$25/mês",
+            priceKey: "billing.planBasicPrice",
             imagesIncluded: 100,
-            pricePerExtra: "$0,18/imagem",
-            description: "Ideal para lojas que estão começando com provador virtual.",
+            pricePerExtraKey: "billing.planBasicExtra",
+            descriptionKey: "billing.planBasicDesc",
           },
           {
             name: "Growth",
-            price: "$100/mês",
+            priceKey: "billing.planGrowthPrice",
             imagesIncluded: 500,
-            pricePerExtra: "$0,16/imagem",
-            description: "Para marcas que estão em processo de crescimento.",
+            pricePerExtraKey: "billing.planGrowthExtra",
+            descriptionKey: "billing.planGrowthDesc",
           },
           {
             name: "Pro",
-            price: "$180/mês",
+            priceKey: "billing.planProPrice",
             imagesIncluded: 1000,
-            pricePerExtra: "$0,14/imagem",
-            description: "Para lojas com volume maior de imagens geradas.",
+            pricePerExtraKey: "billing.planProExtra",
+            descriptionKey: "billing.planProDesc",
           },
           {
             name: "Enterprise",
-            price: "Sob consulta",
-            imagesIncluded: "Ilimitado*",
-            pricePerExtra: "A combinar",
-            description: "Planos customizados para grandes marcas.",
+            priceKey: "billing.planEnterprisePrice",
+            imagesIncluded: "billing.unlimited",
+            pricePerExtraKey: "billing.planEnterpriseExtra",
+            descriptionKey: "billing.planEnterpriseDesc",
           },
         ];
 
@@ -52,10 +55,10 @@ export default function BillingPlans({
       <Card>
         <BlockStack gap="400">
           <Text as="h2" variant="headingLg">
-            Planos Omafit
+            {t("billing.plansTitle")}
           </Text>
           <Text as="p" tone="subdued">
-            Escolha o plano ideal para sua loja. A cobrança é feita via Shopify.
+            {t("billing.plansSubtitle")}
           </Text>
         </BlockStack>
       </Card>
@@ -74,22 +77,30 @@ export default function BillingPlans({
                     <Text as="h2" variant="headingMd">
                       {plan.name}
                     </Text>
-                    {isCurrent && <Badge tone="success">Plano atual</Badge>}
+                    {isCurrent && (
+                      <Badge tone="success">{t("billing.currentPlanBadge")}</Badge>
+                    )}
                   </InlineStack>
                   <Text as="p" tone="subdued">
-                    {plan.description}
+                    {t(plan.descriptionKey)}
                   </Text>
                   <Text as="p" variant="headingLg">
-                    {plan.price}
+                    {typeof plan.priceKey === "string"
+                      ? t(plan.priceKey)
+                      : plan.priceKey}
                   </Text>
                 </BlockStack>
 
                 <BlockStack gap="200">
                   <Text as="p">
-                    <strong>Imagens incluídas:</strong> {plan.imagesIncluded}
+                    <strong>{t("billing.imagesIncludedLabel")}</strong>{" "}
+                    {typeof plan.imagesIncluded === "number"
+                      ? plan.imagesIncluded
+                      : t(plan.imagesIncluded)}
                   </Text>
                   <Text as="p">
-                    <strong>Imagem adicional:</strong> {plan.pricePerExtra}
+                    <strong>{t("billing.pricePerExtraLabel")}</strong>{" "}
+                    {t(plan.pricePerExtraKey)}
                   </Text>
                 </BlockStack>
 
@@ -99,24 +110,25 @@ export default function BillingPlans({
                     url="mailto:contato@omafit.co"
                     external
                   >
-                    Fale com a gente
+                    {t("billing.contactUs")}
                   </Button>
                 ) : isCurrent ? (
-                  <Button
-                    disabled={true}
-                  >
-                    Plano ativo
-                  </Button>
+                  <Button disabled>{t("billing.planActive")}</Button>
+                ) : billingStartAction ? (
+                  <form method="post" action={billingStartAction}>
+                    <input type="hidden" name="plan" value={plan.name.toLowerCase()} />
+                    <Button variant="primary" submit>
+                      {t("billing.subscribePlan")}
+                    </Button>
+                  </form>
                 ) : (
                   <Button
                     variant="primary"
-                    disabled={isLoading}
-                    loading={isLoading}
                     onClick={() =>
                       onSelectPlan && onSelectPlan(plan.name.toLowerCase())
                     }
                   >
-                    Assinar este plano
+                    {t("billing.subscribePlan")}
                   </Button>
                 )}
               </BlockStack>

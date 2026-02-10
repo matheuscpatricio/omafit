@@ -103,6 +103,11 @@ export const action = async ({ request }) => {
       return Response.json({ error: "No confirmation URL returned from Shopify" }, { status: 502 });
     }
 
+    const url = new URL(request.url);
+    const preferRedirect = url.searchParams.get("redirect") === "1" || !request.headers.get("Accept")?.includes("application/json");
+    if (preferRedirect) {
+      return Response.redirect(confirmationUrl, 302);
+    }
     return Response.json({
       success: true,
       confirmationUrl,
@@ -110,10 +115,15 @@ export const action = async ({ request }) => {
     });
   } catch (err) {
     console.error("[api.billing.start]", err);
-    return Response.json(
-      { error: err.message || "Failed to start subscription" },
-      { status: 500 }
-    );
+    const message = err.message || "Failed to start subscription";
+    const url = new URL(request.url);
+    const preferRedirect = url.searchParams.get("redirect") === "1" || !request.headers.get("Accept")?.includes("application/json");
+    if (preferRedirect) {
+      const appUrl = process.env.SHOPIFY_APP_URL || "";
+      const returnPath = `/app/billing?error=${encodeURIComponent(message)}`;
+      return Response.redirect(`${appUrl.replace(/\/$/, "")}${returnPath}`, 302);
+    }
+    return Response.json({ error: message }, { status: 500 });
   }
 };
 

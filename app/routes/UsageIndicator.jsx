@@ -1,23 +1,21 @@
 /**
  * Indicador de Uso de Imagens
- *
- * Mostra quantas imagens foram usadas no mês atual
- * e quantas ainda restam no plano
+ * Mostra quantas imagens foram usadas no mês atual e quantas ainda restam no plano.
  */
 
 import { Card, Text, BlockStack, ProgressBar, Badge, InlineStack } from '@shopify/polaris';
+import { useAppI18n } from '../contexts/AppI18n';
 
 export function UsageIndicator({ usage }) {
+  const { t } = useAppI18n();
   if (!usage) {
     return null;
   }
 
   const { plan, used, included, remaining, percentage, withinLimit } = usage;
 
-  // Determinar cor baseado na porcentagem
   let progressColor = 'success';
   let badgeTone = 'success';
-
   if (percentage >= 90) {
     progressColor = 'critical';
     badgeTone = 'critical';
@@ -29,20 +27,19 @@ export function UsageIndicator({ usage }) {
     badgeTone = 'attention';
   }
 
-  // Formatar nome do plano de forma segura
-  const planName = plan && typeof plan === 'string' 
+  const planName = plan && typeof plan === 'string'
     ? plan.charAt(0).toUpperCase() + plan.slice(1)
-    : 'Atual';
+    : '';
 
   return (
     <Card>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center">
           <Text variant="headingMd" as="h3">
-            Uso de Imagens - Plano {planName}
+            {t('billing.usageTitle', { plan: planName || '–' })}
           </Text>
           <Badge tone={badgeTone}>
-            {percentage.toFixed(1)}% usado
+            {t('billing.usagePercentUsed', { percent: percentage.toFixed(1) })}
           </Badge>
         </InlineStack>
 
@@ -52,13 +49,12 @@ export function UsageIndicator({ usage }) {
             tone={progressColor}
             size="medium"
           />
-
           <InlineStack align="space-between">
             <Text variant="bodyMd">
-              {used} de {included} imagens usadas
+              {t('billing.usageImagesUsed', { used, included })}
             </Text>
             <Text variant="bodyMd" fontWeight="semibold">
-              {remaining} restantes
+              {t('billing.usageRemaining', { remaining })}
             </Text>
           </InlineStack>
         </BlockStack>
@@ -66,10 +62,10 @@ export function UsageIndicator({ usage }) {
         {!withinLimit && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="critical" fontWeight="semibold">
-              ⚠️ Você ultrapassou o limite incluído
+              ⚠️ {t('billing.usageOverLimit')}
             </Text>
             <Text variant="bodyMd" tone="subdued">
-              Imagens adicionais serão cobradas automaticamente de acordo com seu plano.
+              {t('billing.usageOverLimitNote')}
             </Text>
           </BlockStack>
         )}
@@ -77,10 +73,10 @@ export function UsageIndicator({ usage }) {
         {withinLimit && percentage >= 75 && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="warning" fontWeight="semibold">
-              💡 Você está próximo do limite
+              💡 {t('billing.usageNearLimit')}
             </Text>
             <Text variant="bodyMd" tone="subdued">
-              Considere fazer upgrade do seu plano se precisar de mais imagens.
+              {t('billing.usageNearLimitNote')}
             </Text>
           </BlockStack>
         )}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate, useFetcher } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
 import BillingPlans from './BillingPlans';
 import { UsageIndicator } from './UsageIndicator';
@@ -60,19 +60,11 @@ export default function BillingPage() {
   };
 
   const [billingError, setBillingError] = useState(null);
-  const fetcher = useFetcher();
 
   useEffect(() => {
-    if (fetcher.state !== "idle" || !fetcher.data) return;
-    const data = fetcher.data;
-    if (data.confirmationUrl) {
-      window.top.location.href = data.confirmationUrl;
-      return;
-    }
-    if (data.error) {
-      setBillingError(data.error);
-    }
-  }, [fetcher.state, fetcher.data]);
+    const err = searchParams.get("error");
+    if (err) setBillingError(decodeURIComponent(err));
+  }, [searchParams]);
 
   const handleSelectPlan = (plan) => {
     const planKey = plan.toLowerCase();
@@ -81,13 +73,9 @@ export default function BillingPage() {
       return;
     }
     setBillingError(null);
-    fetcher.submit(
-      { plan: planKey },
-      { method: "post", action: "/api/billing/start" }
-    );
   };
 
-  const isSubmitting = fetcher.state === "submitting" || fetcher.state === "loading";
+  const billingStartUrl = "/api/billing/start?redirect=1";
 
   if (loading) {
     return (
@@ -129,7 +117,7 @@ export default function BillingPage() {
           <BillingPlans
             currentPlan={data?.currentPlan}
             onSelectPlan={handleSelectPlan}
-            isLoading={isSubmitting}
+            billingStartAction={billingStartUrl}
           />
         </Layout.Section>
       </Layout>

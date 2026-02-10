@@ -124,7 +124,6 @@ export default function BillingPlans({
                 ) : (
                   <a
                     href={`/api/billing/start?plan=${planKey}&redirect=1`}
-                    target="_top"
                     rel="noopener noreferrer"
                     data-billing-plan={planKey}
                     style={{

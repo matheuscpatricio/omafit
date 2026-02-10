@@ -122,14 +122,20 @@ export async function loader({ request }) {
   if (plan && redirect === "1") {
     try {
       const { confirmationUrl } = await getConfirmationUrl(request);
-      return Response.redirect(confirmationUrl, 302);
+      const escaped = confirmationUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/</g, "\\u003c");
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecionando</title><script>window.top.location.href="${escaped}";</script></head><body><p>Redirecionando para aprovar o plano…</p><script>window.top.location.href="${escaped}";</script></body></html>`;
+      return new Response(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     } catch (err) {
       if (err instanceof Response) return err;
       console.error("[api.billing.start] loader", err);
       const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
       const message = (err && err.message) || "Failed to start subscription";
       if (appUrl) {
-        return Response.redirect(`${appUrl}/app/billing?error=${encodeURIComponent(message)}`, 302);
+        const errHtml = `<!DOCTYPE html><html><head><script>window.top.location.href="${appUrl}/app/billing?error=${encodeURIComponent(message)}";</script></head><body><p>Erro. Redirecionando…</p></body></html>`;
+        return new Response(errHtml, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
       return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
     }

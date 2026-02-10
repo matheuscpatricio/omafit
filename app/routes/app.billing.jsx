@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
 import BillingPlans from './BillingPlans';
@@ -88,8 +88,8 @@ export default function BillingPage() {
     if (err) setBillingError(decodeURIComponent(err));
   }, [searchParams]);
 
-  const handleSelectPlan = async (plan) => {
-    const planKey = plan.toLowerCase();
+  const handleSelectPlan = useCallback(async (plan) => {
+    const planKey = String(plan).toLowerCase();
     if (planKey === "enterprise") {
       window.open("mailto:contato@omafit.co", "_blank");
       return;
@@ -97,17 +97,15 @@ export default function BillingPage() {
     setBillingError(null);
     setError(null);
     setIsSubmittingPlan(true);
-    console.log('[Billing] Submitting plan:', planKey);
-
+    const apiUrl = typeof window !== "undefined" ? `${window.location.origin}/api/billing/start` : "/api/billing/start";
     try {
-      const res = await fetch("/api/billing/start", {
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan: planKey }),
         credentials: "include",
       });
       const data = await res.json().catch(() => ({}));
-      console.log('[Billing] API response:', res.status, data);
       if (data.confirmationUrl) {
         try {
           if (typeof window.top !== "undefined" && window.top.location) {
@@ -127,7 +125,7 @@ export default function BillingPage() {
     } finally {
       setIsSubmittingPlan(false);
     }
-  };
+  }, []);
 
   const isSubmitting = isSubmittingPlan;
 

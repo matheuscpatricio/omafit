@@ -122,18 +122,27 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <Button
-                    variant="primary"
+                  <button
+                    type="button"
                     disabled={isLoading}
-                    loading={isLoading}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
+                    onClick={() => {
                       if (onSelectPlan) onSelectPlan(plan.name.toLowerCase());
                     }}
+                    style={{
+                      appearance: "none",
+                      background: "var(--p-color-bg-fill-brand, #008060)",
+                      color: "var(--p-color-text-on-fill, #fff)",
+                      border: "none",
+                      borderRadius: "var(--p-border-radius-200, 8px)",
+                      padding: "10px 20px",
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      cursor: isLoading ? "wait" : "pointer",
+                      opacity: isLoading ? 0.7 : 1,
+                    }}
                   >
-                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                  </Button>
+                    {isLoading ? "..." : (hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan"))}
+                  </button>
                 )}
               </BlockStack>
             </Card>

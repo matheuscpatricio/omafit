@@ -79,7 +79,7 @@ async function getConfirmationUrl(request) {
         {
           plan: {
             appRecurringPricingDetails: {
-              price: { amount: String(config.amount), currencyCode: config.currency },
+              price: { amount: config.amount, currencyCode: config.currency },
               interval: "EVERY_30_DAYS",
             },
           },

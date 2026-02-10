@@ -122,13 +122,11 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={isLoading}
-                    onClick={() => {
-                      if (onSelectPlan) onSelectPlan(plan.name.toLowerCase());
-                    }}
+                  <a
+                    href={`/api/billing/start?plan=${planKey}&redirect=1`}
+                    data-billing-plan={planKey}
                     style={{
+                      display: "inline-block",
                       appearance: "none",
                       background: "var(--p-color-bg-fill-brand, #008060)",
                       color: "var(--p-color-text-on-fill, #fff)",
@@ -137,12 +135,13 @@ export default function BillingPlans({
                       padding: "10px 20px",
                       fontSize: "14px",
                       fontWeight: 600,
-                      cursor: isLoading ? "wait" : "pointer",
-                      opacity: isLoading ? 0.7 : 1,
+                      cursor: "pointer",
+                      textDecoration: "none",
+                      textAlign: "center",
                     }}
                   >
-                    {isLoading ? "..." : (hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan"))}
-                  </button>
+                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                  </a>
                 )}
               </BlockStack>
             </Card>

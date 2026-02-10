@@ -21,18 +21,22 @@ const PLAN_FROM_NAME = {
   "omafit basic": "basic",
   "omafit growth": "growth",
   "omafit pro": "pro",
+  "omafit professional": "professional",
+  professional: "professional",
 };
 
 const PLAN_IMAGES = {
   basic: 100,
   growth: 500,
   pro: 1000,
+  professional: 3000,
 };
 
 const PLAN_PRICE_EXTRA = {
   basic: 0.18,
   growth: 0.16,
   pro: 0.14,
+  professional: 0.12,
 };
 
 export const loader = async ({ request }) => {
@@ -44,10 +48,12 @@ export const loader = async ({ request }) => {
     const json = await response.json();
     const subs = json?.data?.currentAppInstallation?.activeSubscriptions || [];
     const active = subs.find((s) => (s.status || "").toUpperCase() === "ACTIVE");
-    const name = (active?.name || "").toLowerCase();
-    const plan = PLAN_FROM_NAME[name] || "basic";
+    const name = (active?.name || "").toLowerCase().trim();
+    const plan = PLAN_FROM_NAME[name] || (name.includes("professional") ? "professional" : "basic");
     const imagesIncluded = PLAN_IMAGES[plan] ?? 100;
     const pricePerExtra = PLAN_PRICE_EXTRA[plan] ?? 0.18;
+
+    console.log("[Billing Return] Shopify subscriptions:", { subs, activeName: active?.name, resolvedPlan: plan, imagesIncluded });
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;

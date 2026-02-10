@@ -181,6 +181,7 @@ export default function DashboardPage() {
       basic: 'Basic',
       growth: 'Growth',
       pro: 'Pro',
+      professional: 'Professional',
       enterprise: 'Enterprise',
       starter: 'Basic'
     };

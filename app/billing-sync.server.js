@@ -82,42 +82,45 @@ export async function syncBillingFromShopify(admin, shop) {
       pricePerExtra,
     });
 
-    const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`;
-    const patchBody = {
+    // Upsert: cria a loja em shopify_shops se não existir (admin “conectado” à Shopify)
+    const upsertUrl = `${supabaseUrl}/rest/v1/shopify_shops`;
+    const upsertBody = {
+      shop_domain: shop,
       plan,
       billing_status: active ? "active" : "inactive",
       images_included: imagesIncluded,
       price_per_extra_image: pricePerExtra,
+      updated_at: new Date().toISOString(),
     };
 
-    console.log("[Billing Sync] PATCH to Supabase:", { patchUrl, patchBody });
+    console.log("[Billing Sync] Upsert to Supabase:", { upsertUrl, shop, plan });
 
-    const patchRes = await fetch(patchUrl, {
-      method: "PATCH",
+    const upsertRes = await fetch(upsertUrl, {
+      method: "POST",
       headers: {
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`,
         "Content-Type": "application/json",
-        Prefer: "return=minimal",
+        Prefer: "resolution=merge-duplicates,return=minimal",
       },
-      body: JSON.stringify(patchBody),
+      body: JSON.stringify(upsertBody),
     });
 
-    if (!patchRes.ok) {
-      const errorText = await patchRes.text();
-      console.error("[Billing Sync] Supabase PATCH failed:", {
-        status: patchRes.status,
-        statusText: patchRes.statusText,
+    if (!upsertRes.ok) {
+      const errorText = await upsertRes.text();
+      console.error("[Billing Sync] Supabase upsert failed:", {
+        status: upsertRes.status,
+        statusText: upsertRes.statusText,
         error: errorText,
       });
       return null;
     }
 
-    console.log("[Billing Sync] Successfully updated Supabase:", {
+    console.log("[Billing Sync] Successfully synced Supabase:", {
       shop,
       plan,
       imagesIncluded,
-      status: patchRes.status,
+      status: upsertRes.status,
     });
 
     return { plan, imagesIncluded, pricePerExtra };

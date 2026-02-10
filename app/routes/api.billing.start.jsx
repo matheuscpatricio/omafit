@@ -1,7 +1,10 @@
 /**
  * POST /api/billing/start
  * Cria assinatura via Shopify Billing API e retorna confirmationUrl.
- * O cliente redireciona o lojista para essa URL; após aprovação, Shopify redireciona para /admin/billing/return.
+ * Após aprovação, a Shopify redireciona para return_url = {SHOPIFY_APP_URL}/billing/confirm?shop=xxx
+ *
+ * Produção (Railway): SHOPIFY_APP_URL=https://omafit-production.up.railway.app
+ * → return_url = https://omafit-production.up.railway.app/billing/confirm?shop=...
  */
 import { authenticate } from "../shopify.server";
 
@@ -76,8 +79,9 @@ export const action = async ({ request }) => {
     }
 
     const config = PLAN_CONFIG[plan];
-    const appUrl = process.env.SHOPIFY_APP_URL || "";
-    const returnUrl = `${appUrl.replace(/\/$/, "")}/admin/billing/return?shop=${encodeURIComponent(session.shop)}`;
+    const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
+    const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
+    console.log("[api.billing.start] return_url:", returnUrl);
 
     const response = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
       variables: {

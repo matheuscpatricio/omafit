@@ -16,11 +16,15 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
   }
 `;
 
-// Apenas planos que existem na app (sem "professional" de 3000)
+// Ordem importa: mais específicos primeiro; "professional" antes de "pro"; "growth"/"basic" antes de "pro"
 const PLAN_MATCHERS = [
-  { pattern: "omafit pro", plan: "pro" },
   { pattern: "omafit growth", plan: "growth" },
   { pattern: "omafit basic", plan: "basic" },
+  { pattern: "omafit pro", plan: "pro" },
+  { pattern: "growth", plan: "growth" },
+  { pattern: "basic", plan: "basic" },
+  { pattern: "professional", plan: "pro" },
+  { pattern: "pro", plan: "pro" },
 ];
 
 function resolvePlanFromSubscriptionName(subscriptionName) {

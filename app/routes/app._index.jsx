@@ -68,31 +68,25 @@ export default function DashboardPage() {
       setLoading(true);
       setError(null);
 
-      // Obter shop domain dos query params (passado pelo Shopify)
       const shop = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
 
-      // Tentar reativar a loja automaticamente se necessário (não bloqueia o carregamento)
       if (shop && shop !== 'demo-shop.myshopify.com') {
         reactivateShop(shop).catch((error) => {
           console.warn('[Dashboard] Erro ao tentar reativar loja (não crítico):', error);
         });
       }
 
-      // Opção 1: Chamar Edge Function que autentica com Shopify
-      // const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/shopify-dashboard`, {
-      //   method: 'POST',
-      //   headers: {
-      //     'Content-Type': 'application/json',
-      //     'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-      //   },
-      //   body: JSON.stringify({ shop })
-      // });
+      // Sincronizar plano da Shopify com Supabase antes de carregar (para refletir assinatura feita fora do admin)
+      try {
+        await fetch('/api/billing/sync', { credentials: 'include' });
+      } catch (syncErr) {
+        console.warn('[Dashboard] Billing sync failed (non-blocking):', syncErr);
+      }
 
-      // Opção 2: Buscar diretamente do Supabase (para desenvolvimento/teste)
       const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${shop}`, {
+      const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`, {
         headers: {
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,

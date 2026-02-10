@@ -30,6 +30,13 @@ export default function BillingPage() {
         return;
       }
 
+      // Sincronizar plano da Shopify com Supabase antes de carregar
+      try {
+        await fetch('/api/billing/sync', { credentials: 'include' });
+      } catch (syncErr) {
+        console.warn('[Billing] Sync failed (non-blocking):', syncErr);
+      }
+
       const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}`, {
         headers: {
           'apikey': supabaseKey,

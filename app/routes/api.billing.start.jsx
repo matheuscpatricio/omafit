@@ -56,7 +56,7 @@ const PLAN_CONFIG = {
 };
 
 async function getConfirmationUrl(request) {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, redirect } = await authenticate.admin(request);
   const url = new URL(request.url);
   let plan = (url.searchParams.get("plan") || "").toLowerCase();
   if (!plan && request.method === "POST") {
@@ -109,7 +109,7 @@ async function getConfirmationUrl(request) {
       { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }
-  return { confirmationUrl, plan };
+  return { confirmationUrl, plan, redirect };
 }
 
 export async function loader({ request }) {
@@ -121,21 +121,18 @@ export async function loader({ request }) {
   const redirect = url.searchParams.get("redirect");
   if (plan && redirect === "1") {
     try {
-      const { confirmationUrl } = await getConfirmationUrl(request);
-      const escaped = confirmationUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/</g, "\\u003c");
-      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecionando</title><script>window.top.location.href="${escaped}";</script></head><body><p>Redirecionando para aprovar o plano…</p><script>window.top.location.href="${escaped}";</script></body></html>`;
-      return new Response(html, {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+      const { confirmationUrl, redirect: doRedirect } = await getConfirmationUrl(request);
+      if (doRedirect) {
+        return doRedirect(confirmationUrl, { target: "_top" });
+      }
+      return Response.redirect(confirmationUrl, 302);
     } catch (err) {
       if (err instanceof Response) return err;
       console.error("[api.billing.start] loader", err);
       const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
       const message = (err && err.message) || "Failed to start subscription";
       if (appUrl) {
-        const errHtml = `<!DOCTYPE html><html><head><script>window.top.location.href="${appUrl}/app/billing?error=${encodeURIComponent(message)}";</script></head><body><p>Erro. Redirecionando…</p></body></html>`;
-        return new Response(errHtml, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+        return Response.redirect(`${appUrl}/app/billing?error=${encodeURIComponent(message)}`, 302);
       }
       return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
     }
@@ -143,25 +140,17 @@ export async function loader({ request }) {
   return Response.json({ error: "Use GET with ?plan=basic|growth|pro&redirect=1" }, { status: 400 });
 }
 
-
-function redirectHtml(confirmationUrl) {
-  const escaped = confirmationUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/</g, "\\u003c");
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecionando</title><script>window.top.location.href="${escaped}";</script></head><body><p>Redirecionando para aprovar o plano…</p><script>window.top.location.href="${escaped}";</script></body></html>`;
-}
-
 export const action = async ({ request }) => {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
   try {
-    const { confirmationUrl, plan } = await getConfirmationUrl(request);
+    const { confirmationUrl, plan, redirect: doRedirect } = await getConfirmationUrl(request);
     const wantRedirect = new URL(request.url).searchParams.get("redirect") === "1";
-    if (wantRedirect) {
-      return new Response(redirectHtml(confirmationUrl), {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+    if (wantRedirect && doRedirect) {
+      return doRedirect(confirmationUrl, { target: "_top" });
     }
+    if (wantRedirect) return Response.redirect(confirmationUrl, 302);
     return Response.json({ success: true, confirmationUrl, plan });
   } catch (err) {
     if (err instanceof Response) return err;

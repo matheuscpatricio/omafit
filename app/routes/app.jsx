@@ -7,6 +7,7 @@ import enTranslations from "@shopify/polaris/locales/en.json";
 import ptBRTranslations from "@shopify/polaris/locales/pt-BR.json";
 import esTranslations from "@shopify/polaris/locales/es.json";
 import { authenticate } from "../shopify.server";
+import { syncBillingFromShopify } from "../billing-sync.server";
 import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
 
 const LOCALE_STORAGE_KEY = "omafit_locale";
@@ -25,7 +26,14 @@ const SHOP_LOCALE_QUERY = `#graphql
 `;
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+
+  // Sincroniza o plano da Shopify com o Supabase ao abrir o admin (assim o app reflete o plano real, mesmo se assinou fora do admin)
+  try {
+    await syncBillingFromShopify(admin, session.shop);
+  } catch (e) {
+    console.warn("[App] Billing sync failed:", e);
+  }
 
   let locale = "en";
   try {

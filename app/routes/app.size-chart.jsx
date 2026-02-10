@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate, useLoaderData } from 'react-router-dom';
 import {
   Page,
@@ -18,6 +18,7 @@ import {
   Box
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
+import { useAppI18n } from '../contexts/AppI18n';
 import { authenticate } from '../shopify.server';
 
 const GET_COLLECTIONS_QUERY = `#graphql
@@ -52,20 +53,6 @@ export const loader = async ({ request }) => {
   }
 };
 
-const GENDER_OPTIONS = [
-  { label: 'Masculina', value: 'male' },
-  { label: 'Feminina', value: 'female' },
-  { label: 'Unissex', value: 'unisex' }
-];
-
-const MEASUREMENT_OPTIONS = [
-  { label: 'Peito (cm)', value: 'peito' },
-  { label: 'Cintura (cm)', value: 'cintura' },
-  { label: 'Quadril (cm)', value: 'quadril' },
-  { label: 'Comprimento (cm)', value: 'comprimento' },
-  { label: 'Tornozelo (cm)', value: 'tornozelo' }
-];
-
 const DEFAULT_REFS = ['peito', 'cintura', 'quadril'];
 
 function getDefaultSizesForRefs(refs) {
@@ -76,9 +63,24 @@ export default function SizeChartPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const loaderData = useLoaderData();
+  const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
 
   const shopifyCollections = Array.isArray(loaderData?.collections) ? loaderData.collections : [];
+
+  const GENDER_OPTIONS = useMemo(() => [
+    { label: t('sizeChart.genderMale'), value: 'male' },
+    { label: t('sizeChart.genderFemale'), value: 'female' },
+    { label: t('sizeChart.genderUnisex'), value: 'unisex' }
+  ], [t]);
+
+  const MEASUREMENT_OPTIONS = useMemo(() => [
+    { label: t('sizeChart.measureChest'), value: 'peito' },
+    { label: t('sizeChart.measureWaist'), value: 'cintura' },
+    { label: t('sizeChart.measureHip'), value: 'quadril' },
+    { label: t('sizeChart.measureLength'), value: 'comprimento' },
+    { label: t('sizeChart.measureAnkle'), value: 'tornozelo' }
+  ], [t]);
 
   useEffect(() => {
     if (!shopDomain) {
@@ -222,7 +224,7 @@ export default function SizeChartPage() {
         });
         if (!insertRes.ok) {
           const errText = await insertRes.text();
-          let msg = 'Erro ao salvar tabelas.';
+          let msg = t('sizeChart.errorSave');
           try {
             const j = JSON.parse(errText);
             msg = j.message || j.error || msg;
@@ -236,7 +238,7 @@ export default function SizeChartPage() {
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao salvar.');
+      setError(err instanceof Error ? err.message : t('sizeChart.errorSave'));
     } finally {
       setSaving(false);
     }
@@ -302,13 +304,13 @@ export default function SizeChartPage() {
 
   if (loading) {
     return (
-      <Page title="Tabelas de Medidas">
+      <Page title={t('sizeChart.title')}>
         <Layout>
           <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
-                <Text variant="bodyMd">Carregando tabelas...</Text>
+                <Text variant="bodyMd">{t('sizeChart.loadingTables')}</Text>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -320,26 +322,26 @@ export default function SizeChartPage() {
   const tabs = GENDER_OPTIONS.map((opt, i) => ({
     content: opt.label,
     id: String(i),
-    accessibilityLabel: `Tabela ${opt.label}`,
+    accessibilityLabel: t('sizeChart.tabLabel', { label: opt.label }),
     panelID: `panel-${i}`
   }));
 
   const collectionOptions = collectionHandles.map((h, idx) => {
-    const label = h === '' ? 'Padrão (toda a loja)' : (shopifyCollections[idx - 1]?.title || h);
+    const label = h === '' ? t('sizeChart.defaultCollection') : (shopifyCollections[idx - 1]?.title || h);
     return { label, value: String(idx) };
   });
 
   return (
     <Page
-      title="Tabelas de Medidas"
-      subtitle="Configure tabelas por coleção e gênero (masculina, feminina, unissex). O widget usa a coleção e o gênero para escolher a tabela."
-      backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain}`) }}
+      title={t('sizeChart.title')}
+      subtitle={t('sizeChart.subtitle')}
+      backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain}`) }}
     >
       <Layout>
         {success && (
           <Layout.Section>
             <Banner tone="success" onDismiss={() => setSuccess(false)}>
-              Tabelas salvas com sucesso.
+              {t('sizeChart.saved')}
             </Banner>
           </Layout.Section>
         )}
@@ -352,14 +354,14 @@ export default function SizeChartPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Configurar por coleção</Text>
+              <Text variant="headingMd" as="h2">{t('sizeChart.configureByCollection')}</Text>
               <Text variant="bodyMd" tone="subdued">
-                Cada coleção pode ter 3 tabelas (masculina, feminina, unissex). O widget recebe o handle da coleção e o gênero e busca a tabela correspondente. Use a coleção padrão para produtos fora de uma coleção específica.
+                {t('sizeChart.configureHelp')}
               </Text>
 
               <Box minWidth="280px">
                 <Select
-                  label="Coleção"
+                  label={t('sizeChart.collection')}
                   options={collectionOptions}
                   value={String(selectedCollectionIndex)}
                   onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
@@ -370,10 +372,10 @@ export default function SizeChartPage() {
 
               <InlineStack align="space-between">
                 <Text variant="headingMd" as="h3">
-                  Tabela {GENDER_OPTIONS[selectedTab].label} {selectedHandle ? `· ${selectedHandle}` : '(padrão)'}
+                  {t('sizeChart.table')} {GENDER_OPTIONS[selectedTab].label} {selectedHandle ? `· ${selectedHandle}` : t('sizeChart.default')}
                 </Text>
                 <Badge tone={currentChart.enabled ? 'success' : 'info'}>
-                  {currentChart.enabled ? 'Ativa' : 'Inativa'}
+                  {currentChart.enabled ? t('common.active') : t('common.inactive')}
                 </Badge>
               </InlineStack>
 
@@ -383,12 +385,12 @@ export default function SizeChartPage() {
                 <Card>
                   <BlockStack gap="400">
                     <InlineStack align="space-between">
-                      <Text variant="headingMd" as="h3">Referências de medida (escolha 3)</Text>
+                      <Text variant="headingMd" as="h3">{t('sizeChart.measureRefs')}</Text>
                       <Button
                         variant={currentChart.enabled ? 'secondary' : 'primary'}
                         onClick={handleToggleChart}
                       >
-                        {currentChart.enabled ? 'Desativar tabela' : 'Ativar tabela'}
+                        {currentChart.enabled ? t('sizeChart.disableTable') : t('sizeChart.enableTable')}
                       </Button>
                     </InlineStack>
 
@@ -398,7 +400,7 @@ export default function SizeChartPage() {
                           {[0, 1, 2].map((i) => (
                             <Box key={i} minWidth="160px">
                               <Select
-                                label={`Medida ${i + 1}`}
+                                label={t('sizeChart.measureN', { n: i + 1 })}
                                 options={MEASUREMENT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
                                 value={currentChart.measurementRefs[i] ?? DEFAULT_REFS[i]}
                                 onChange={(v) => setMeasurementRef(i, v)}
@@ -410,8 +412,8 @@ export default function SizeChartPage() {
                         {currentChart.sizes.length === 0 ? (
                           <Card sectioned>
                             <BlockStack gap="200" inlineAlign="center">
-                              <Text variant="bodyMd" tone="subdued">Nenhum tamanho. Adicione o primeiro.</Text>
-                              <Button onClick={handleAddSize}>Adicionar primeiro tamanho</Button>
+                              <Text variant="bodyMd" tone="subdued">{t('sizeChart.noSizes')}</Text>
+                              <Button onClick={handleAddSize}>{t('sizeChart.addFirstSize')}</Button>
                             </BlockStack>
                           </Card>
                         ) : (
@@ -420,18 +422,18 @@ export default function SizeChartPage() {
                               <Card key={index} sectioned>
                                 <BlockStack gap="300">
                                   <InlineStack align="space-between">
-                                    <Text variant="headingSm" as="h4">Tamanho {index + 1}</Text>
+                                    <Text variant="headingSm" as="h4">{t('sizeChart.sizeN', { n: index + 1 })}</Text>
                                     <Button variant="plain" tone="critical" onClick={() => handleRemoveSize(index)}>
-                                      Remover
+                                      {t('common.remove')}
                                     </Button>
                                   </InlineStack>
                                   <InlineStack gap="200" wrap>
                                     <div style={{ flex: '1 1 120px', minWidth: '120px' }}>
                                       <TextField
-                                        label="Tamanho"
+                                        label={t('sizeChart.size')}
                                         value={row.size ?? ''}
                                         onChange={(v) => handleSizeChange(index, 'size', v)}
-                                        placeholder="Ex: P, M, G"
+                                        placeholder={t('sizeChart.placeholderSize')}
                                         autoComplete="off"
                                       />
                                     </div>
@@ -454,7 +456,7 @@ export default function SizeChartPage() {
                                 </BlockStack>
                               </Card>
                             ))}
-                            <Button onClick={handleAddSize}>Adicionar tamanho</Button>
+                            <Button onClick={handleAddSize}>{t('sizeChart.addSize')}</Button>
                           </BlockStack>
                         )}
                       </>
@@ -463,7 +465,7 @@ export default function SizeChartPage() {
                     {!currentChart.enabled && (
                       <Card sectioned>
                         <BlockStack gap="200" inlineAlign="center">
-                          <Text variant="bodyMd" tone="subdued">Esta tabela está desativada. Ative para configurar.</Text>
+                          <Text variant="bodyMd" tone="subdued">{t('sizeChart.tableDisabledHint')}</Text>
                         </BlockStack>
                       </Card>
                     )}
@@ -474,7 +476,7 @@ export default function SizeChartPage() {
               <Divider />
               <InlineStack align="end">
                 <Button variant="primary" onClick={saveSizeCharts} loading={saving}>
-                  Salvar tabelas
+                  {t('sizeChart.saveTables')}
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -484,12 +486,12 @@ export default function SizeChartPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
-              <Text variant="headingMd" as="h2">Como funciona</Text>
+              <Text variant="headingMd" as="h2">{t('sizeChart.howItWorks')}</Text>
               <BlockStack gap="200">
-                <Text variant="bodyMd">• Configure uma ou mais coleções (handle igual ao da Shopify). Use a coleção padrão para toda a loja.</Text>
-                <Text variant="bodyMd">• Por coleção, você tem 3 tabelas: masculina, feminina e unissex.</Text>
-                <Text variant="bodyMd">• Em cada tabela escolha exatamente 3 referências de medida (peito, cintura, quadril, comprimento ou tornozelo).</Text>
-                <Text variant="bodyMd">• O widget recebe a coleção e o gênero e usa a tabela correspondente para sugerir o tamanho.</Text>
+                <Text variant="bodyMd">{t('sizeChart.howBullet1')}</Text>
+                <Text variant="bodyMd">{t('sizeChart.howBullet2')}</Text>
+                <Text variant="bodyMd">{t('sizeChart.howBullet3')}</Text>
+                <Text variant="bodyMd">{t('sizeChart.howBullet4')}</Text>
               </BlockStack>
             </BlockStack>
           </Card>

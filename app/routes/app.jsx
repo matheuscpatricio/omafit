@@ -1,25 +1,62 @@
 import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
+import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
+import enTranslations from "@shopify/polaris/locales/en.json";
+import ptBRTranslations from "@shopify/polaris/locales/pt-BR.json";
 import { authenticate } from "../shopify.server";
+import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
+
+const SHOP_LOCALE_QUERY = `#graphql
+  query ShopPrimaryLocale {
+    shop {
+      primaryLocale
+    }
+  }
+`;
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
 
-  // eslint-disable-next-line no-undef
-  return { 
+  let locale = "en";
+  try {
+    const response = await admin.graphql(SHOP_LOCALE_QUERY);
+    const json = await response.json();
+    const primaryLocale = json?.data?.shop?.primaryLocale;
+    if (primaryLocale) {
+      locale = primaryLocale;
+    }
+  } catch (e) {
+    console.warn("[App] Could not fetch shop locale, using en:", e);
+  }
+
+  return {
     apiKey: process.env.SHOPIFY_API_KEY || "",
-    // Expor variáveis do Supabase para o frontend (anon key é pública, então é seguro)
     supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "",
-    supabaseKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ""
+    supabaseKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "",
+    locale,
   };
 };
 
-export default function App() {
-  const { apiKey, supabaseUrl, supabaseKey } = useLoaderData();
+function AppNav() {
+  const { t } = useAppI18n();
+  return (
+    <s-app-nav>
+      <s-link href="/app">{t("nav.home")}</s-link>
+      <s-link href="/app/billing">{t("nav.billing")}</s-link>
+      <s-link href="/app/widget">{t("nav.widget")}</s-link>
+      <s-link href="/app/size-chart">{t("nav.sizeChart")}</s-link>
+      <s-link href="/app/analytics">{t("nav.analytics")}</s-link>
+    </s-app-nav>
+  );
+}
 
-  // Expor variáveis do Supabase para o frontend via window.ENV
-  if (typeof window !== 'undefined') {
+export default function App() {
+  const { apiKey, supabaseUrl, supabaseKey, locale } = useLoaderData();
+
+  const polarisLocale = locale && locale.toLowerCase().startsWith("pt") ? ptBRTranslations : enTranslations;
+
+  if (typeof window !== "undefined") {
     window.ENV = window.ENV || {};
     window.ENV.VITE_SUPABASE_URL = supabaseUrl;
     window.ENV.VITE_SUPABASE_ANON_KEY = supabaseKey;
@@ -27,14 +64,12 @@ export default function App() {
 
   return (
     <AppProvider embedded apiKey={apiKey}>
-      <s-app-nav>
-        <s-link href="/app">Home</s-link>
-        <s-link href="/app/billing">Billing</s-link>
-        <s-link href="/app/widget">Widget</s-link>
-        <s-link href="/app/size-chart">Tabelas de Medidas</s-link>
-        <s-link href="/app/analytics">Analytics</s-link>
-      </s-app-nav>
-      <Outlet />
+      <PolarisAppProvider i18n={polarisLocale}>
+        <AppI18nProvider locale={locale}>
+          <AppNav />
+          <Outlet />
+        </AppI18nProvider>
+      </PolarisAppProvider>
     </AppProvider>
   );
 }

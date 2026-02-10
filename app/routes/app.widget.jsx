@@ -15,11 +15,12 @@ import {
   Thumbnail
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
+import { useAppI18n } from '../contexts/AppI18n';
 
 export default function WidgetPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  
+  const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
   
   // Mostrar erro se shop domain não foi encontrado
@@ -39,7 +40,7 @@ export default function WidgetPage() {
   const fileInputRef = useRef(null);
 
   const [config, setConfig] = useState({
-    link_text: 'Experimentar virtualmente',
+    link_text: '',
     store_logo: '',
     primary_color: '#810707',
     widget_enabled: true
@@ -52,6 +53,12 @@ export default function WidgetPage() {
     }
   }, [shopDomain]);
 
+  useEffect(() => {
+    if (!loading && !config.link_text) {
+      setConfig((prev) => ({ ...prev, link_text: t("widget.defaultLinkText") }));
+    }
+  }, [loading, config.link_text, t]);
+
   const loadConfig = async () => {
     try {
       setLoading(true);
@@ -60,8 +67,8 @@ export default function WidgetPage() {
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       if (!supabaseUrl || !supabaseKey) {
-        console.error('[Widget] Supabase não configurado. Verifique as variáveis de ambiente no Railway.');
-        setError('Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Railway.');
+        console.error('[Widget] Supabase não configurado.');
+        setError(t('widget.errorSupabase'));
         setLoading(false);
         return;
       }
@@ -89,16 +96,15 @@ export default function WidgetPage() {
               const loadedConfig = data[0];
               setConfigId(loadedConfig.id);
               setConfig({
-                link_text: loadedConfig.link_text || 'Experimentar virtualmente',
+                link_text: loadedConfig.link_text || t('widget.defaultLinkText'),
                 store_logo: loadedConfig.store_logo || '',
                 primary_color: loadedConfig.primary_color || '#810707',
                 widget_enabled: loadedConfig.widget_enabled !== false
               });
             } else if (data && data.id) {
-              // Se retornar objeto único ao invés de array
               setConfigId(data.id);
               setConfig({
-                link_text: data.link_text || 'Experimentar virtualmente',
+                link_text: data.link_text || t('widget.defaultLinkText'),
                 store_logo: data.store_logo || '',
                 primary_color: data.primary_color || '#810707',
                 widget_enabled: data.widget_enabled !== false
@@ -179,7 +185,7 @@ export default function WidgetPage() {
       });
 
       if (!uploadResponse.ok) {
-        let errorMessage = 'Erro ao fazer upload do logo.';
+        let errorMessage = t('widget.errorUploadLogo');
         
         try {
           const errorData = JSON.parse(uploadResponseText);
@@ -238,7 +244,7 @@ export default function WidgetPage() {
       }
     } catch (err) {
       console.error('[Widget] Erro ao fazer upload do logo:', err);
-      setError(err.message || 'Erro ao fazer upload do logo. Tente novamente.');
+      setError(err.message || t('widget.errorUploadLogo'));
     } finally {
       setSaving(false);
     }
@@ -265,7 +271,7 @@ export default function WidgetPage() {
       
       const payload = {
         shop_domain: shopDomain,
-        link_text: configToSave.link_text || 'Experimentar virtualmente',
+        link_text: configToSave.link_text || t('widget.defaultLinkText'),
         store_logo: storeLogoValue || null, // null ao invés de string vazia
         primary_color: configToSave.primary_color || '#810707',
         widget_enabled: configToSave.widget_enabled !== false
@@ -416,7 +422,7 @@ export default function WidgetPage() {
         setTimeout(() => setSuccess(false), 3000);
       } else {
         const errorText = await response.text();
-        let errorMessage = 'Erro ao salvar configuração.';
+        let errorMessage = t('widget.errorSaveConfig');
         
         if (errorText && errorText.trim().length > 0) {
           try {
@@ -434,7 +440,7 @@ export default function WidgetPage() {
       }
     } catch (err) {
       console.error('[Widget] Erro ao salvar configuração:', err);
-      setError(err.message || 'Erro ao salvar configuração. Tente novamente.');
+      setError(err.message || t('widget.errorSaveConfig'));
     } finally {
       setSaving(false);
     }
@@ -456,13 +462,13 @@ export default function WidgetPage() {
 
   if (loading) {
     return (
-      <Page title="Configuração do Widget">
+      <Page title={t("widget.title")}>
         <Layout>
           <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
-                <Text variant="bodyMd">Carregando configuração...</Text>
+                <Text variant="bodyMd">{t("widget.loadingConfig")}</Text>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -473,15 +479,15 @@ export default function WidgetPage() {
 
   return (
     <Page
-      title="Configuração do Widget"
-      subtitle="Personalize o widget de provador virtual da sua loja"
-      backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain}`) }}
+      title={t("widget.title")}
+      subtitle={t("widget.subtitle")}
+      backAction={{ content: t("common.dashboard"), onAction: () => navigate(`/app?shop=${shopDomain}`) }}
     >
       <Layout>
         {success && (
           <Layout.Section>
             <Banner tone="success" onDismiss={() => setSuccess(false)}>
-              <p>Configuração salva com sucesso!</p>
+              <p>{t("widget.configSaved")}</p>
             </Banner>
           </Layout.Section>
         )}
@@ -498,14 +504,14 @@ export default function WidgetPage() {
           <Card>
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">
-                Personalização do Widget
+                {t("widget.personalization")}
               </Text>
 
               <TextField
-                label="Texto do Link"
+                label={t("widget.linkText")}
                 value={config.link_text}
-                onChange={(value) => handleChange('link_text', value)}
-                helpText="Texto exibido no link que aparece abaixo do botão de adicionar ao carrinho"
+                onChange={(value) => handleChange("link_text", value)}
+                helpText={t("widget.linkTextHelp")}
                 autoComplete="off"
               />
 
@@ -513,26 +519,26 @@ export default function WidgetPage() {
 
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h3">
-                  Logo da Loja
+                  {t("widget.storeLogo")}
                 </Text>
                 <Text variant="bodyMd" tone="subdued">
-                  Faça upload do logo da sua loja para aparecer no widget. Formatos aceitos: JPG, PNG, GIF. Tamanho máximo: 2MB.
+                  {t("widget.storeLogoHelp")}
                 </Text>
-                
+
                 {config.store_logo ? (
                   <BlockStack gap="200">
                     <InlineStack gap="300" align="start">
                       <Thumbnail
                         source={config.store_logo}
-                        alt="Logo da loja"
+                        alt={t("widget.storeLogo")}
                         size="medium"
                       />
                       <BlockStack gap="100">
                         <Button onClick={handleRemoveLogo} variant="plain" tone="critical">
-                          Remover logo
+                          {t("widget.removeLogo")}
                         </Button>
                         <Text variant="bodySm" tone="subdued">
-                          Clique em "Alterar logo" para substituir
+                          {t("widget.changeLogoHint")}
                         </Text>
                       </BlockStack>
                     </InlineStack>
@@ -541,13 +547,13 @@ export default function WidgetPage() {
                       type="file"
                       accept="image/*"
                       onChange={handleLogoUpload}
-                      style={{ display: 'none' }}
+                      style={{ display: "none" }}
                     />
                     <Button
                       onClick={() => fileInputRef.current?.click()}
                       variant="secondary"
                     >
-                      Alterar logo
+                      {t("widget.changeLogo")}
                     </Button>
                   </BlockStack>
                 ) : (
@@ -557,13 +563,13 @@ export default function WidgetPage() {
                       type="file"
                       accept="image/*"
                       onChange={handleLogoUpload}
-                      style={{ display: 'none' }}
+                      style={{ display: "none" }}
                     />
                     <Button
                       onClick={() => fileInputRef.current?.click()}
                       variant="secondary"
                     >
-                      Fazer upload do logo
+                      {t("widget.uploadLogo")}
                     </Button>
                   </BlockStack>
                 )}
@@ -573,26 +579,26 @@ export default function WidgetPage() {
 
               <BlockStack gap="200">
                 <Text variant="headingMd" as="h3">
-                  Cor Predominante
+                  {t("widget.primaryColor")}
                 </Text>
                 <InlineStack gap="300" align="start" blockAlign="center">
                   <input
                     type="color"
                     value={config.primary_color}
-                    onChange={(e) => handleChange('primary_color', e.target.value)}
+                    onChange={(e) => handleChange("primary_color", e.target.value)}
                     style={{
-                      width: '50px',
-                      height: '50px',
-                      padding: '0',
-                      border: '1px solid #ccc',
-                      borderRadius: '8px',
-                      cursor: 'pointer'
+                      width: "50px",
+                      height: "50px",
+                      padding: "0",
+                      border: "1px solid #ccc",
+                      borderRadius: "8px",
+                      cursor: "pointer"
                     }}
                   />
                   <BlockStack gap="100">
                     <Text variant="bodyMd">{config.primary_color}</Text>
                     <Text variant="bodySm" tone="subdued">
-                      Cor usada no link e destaques do widget
+                      {t("widget.primaryColorHelp")}
                     </Text>
                   </BlockStack>
                 </InlineStack>
@@ -602,19 +608,15 @@ export default function WidgetPage() {
 
               <BlockStack gap="200">
                 <Text variant="bodyMd" tone="subdued">
-                  💡 O widget usa automaticamente a fonte da sua loja para manter a consistência visual.
+                  {t("widget.fontHint")}
                 </Text>
               </BlockStack>
 
               <Divider />
 
               <InlineStack align="end">
-                <Button
-                  variant="primary"
-                  onClick={handleSave}
-                  loading={saving}
-                >
-                  Salvar Configuração
+                <Button variant="primary" onClick={handleSave} loading={saving}>
+                  {t("widget.saveConfig")}
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -625,16 +627,16 @@ export default function WidgetPage() {
           <Card>
             <BlockStack gap="300">
               <Text variant="headingMd" as="h2">
-                Instalação do Widget
+                {t("widget.installation")}
               </Text>
               <Text variant="bodyMd" tone="subdued">
-                O widget é instalado automaticamente na sua loja. O link "Experimentar virtualmente" aparecerá automaticamente abaixo do botão "Adicionar ao carrinho" em todas as páginas de produto.
+                {t("widget.installationHelp")}
               </Text>
               <Text variant="bodyMd" tone="subdued">
-                Certifique-se de que o app está habilitado nas configurações do tema.
+                {t("widget.installationHelp2")}
               </Text>
               <Button url={`https://${shopDomain}/admin/themes/current/editor`} external>
-                Abrir Editor de Tema
+                {t("widget.openThemeEditor")}
               </Button>
             </BlockStack>
           </Card>
@@ -644,21 +646,13 @@ export default function WidgetPage() {
           <Card>
             <BlockStack gap="300">
               <Text variant="headingMd" as="h2">
-                Informações Importantes
+                {t("widget.importantInfo")}
               </Text>
               <BlockStack gap="200">
-                <Text variant="bodyMd">
-                  • O link "Experimentar virtualmente" sempre aparece abaixo do botão de adicionar ao carrinho
-                </Text>
-                <Text variant="bodyMd">
-                  • A fonte do widget é herdada automaticamente da sua loja
-                </Text>
-                <Text variant="bodyMd">
-                  • As personalizações são aplicadas automaticamente em todas as páginas de produto
-                </Text>
-                <Text variant="bodyMd">
-                  • As alterações podem levar alguns minutos para aparecer na loja
-                </Text>
+                <Text variant="bodyMd">{t("widget.importantBullet1")}</Text>
+                <Text variant="bodyMd">{t("widget.importantBullet2")}</Text>
+                <Text variant="bodyMd">{t("widget.importantBullet3")}</Text>
+                <Text variant="bodyMd">{t("widget.importantBullet4")}</Text>
               </BlockStack>
             </BlockStack>
           </Card>

@@ -1,86 +1,89 @@
-import { useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+/**
+ * Rota de retorno após o lojista aprovar a assinatura na Shopify.
+ * Loader: autentica, consulta assinatura ativa, atualiza Supabase (plan + billing_status + images_included) e redireciona para /app.
+ */
+import { redirect } from "react-router";
+import { authenticate } from "../shopify.server";
 
-// Query GraphQL para confirmar status da assinatura (opcional, mas recomendado)
-const GET_SUBSCRIPTION_QUERY = `#graphql
-  query GetCurrentAppSubscription {
+const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
+  query GetActiveSubscriptions {
     currentAppInstallation {
       activeSubscriptions {
         id
         name
         status
-        createdAt
-        currentPeriodEnd
-        lineItems {
-          id
-          plan {
-            pricingDetails {
-              __typename
-              ... on AppRecurringPricing {
-                price {
-                  amount
-                  currencyCode
-                }
-                interval
-              }
-            }
-          }
-        }
       }
     }
   }
 `;
 
-export default function BillingReturn() {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
+const PLAN_FROM_NAME = {
+  "omafit basic": "basic",
+  "omafit growth": "growth",
+  "omafit pro": "pro",
+};
 
-  useEffect(() => {
-    handleBillingReturn();
-  }, []);
+const PLAN_IMAGES = {
+  basic: 100,
+  growth: 500,
+  pro: 1000,
+};
 
-  const handleBillingReturn = async () => {
-    try {
-      const shop = searchParams.get('shop');
+const PLAN_PRICE_EXTRA = {
+  basic: 0.18,
+  growth: 0.16,
+  pro: 0.14,
+};
 
-      if (!shop) {
-        console.error('[Billing Return] Shop parameter missing');
-        navigate('/app');
-        return;
+export const loader = async ({ request }) => {
+  try {
+    const { admin, session } = await authenticate.admin(request);
+    const shop = session.shop;
+
+    const response = await admin.graphql(GET_ACTIVE_SUBSCRIPTIONS);
+    const json = await response.json();
+    const subs = json?.data?.currentAppInstallation?.activeSubscriptions || [];
+    const active = subs.find((s) => (s.status || "").toUpperCase() === "ACTIVE");
+    const name = (active?.name || "").toLowerCase();
+    const plan = PLAN_FROM_NAME[name] || "basic";
+    const imagesIncluded = PLAN_IMAGES[plan] ?? 100;
+    const pricePerExtra = PLAN_PRICE_EXTRA[plan] ?? 0.18;
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && supabaseKey) {
+      const patchRes = await fetch(
+        `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`,
+        {
+          method: "PATCH",
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({
+            plan,
+            billing_status: "active",
+            images_included: imagesIncluded,
+            price_per_extra_image: pricePerExtra,
+          }),
+        }
+      );
+      if (!patchRes.ok) {
+        console.error("[Billing Return] Supabase PATCH failed:", patchRes.status, await patchRes.text());
       }
-
-      console.log(`[Billing Return] Processing return for: ${shop}`);
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      const response = await fetch(`${supabaseUrl}/rest/v1/rpc/update_billing_status`, {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          p_shop_domain: shop,
-          p_status: 'active'
-        })
-      });
-
-      if (response.ok) {
-        console.log('[Billing Return] Status updated to active');
-      } else {
-        console.error('[Billing Return] Failed to update status');
-      }
-
-      console.log('[Billing Return] Redirecting to dashboard');
-      navigate('/app');
-
-    } catch (error) {
-      console.error('[Billing Return] Error processing return:', error);
-      navigate('/app');
     }
-  };
 
+    return redirect(`/app?shop=${encodeURIComponent(shop)}`);
+  } catch (err) {
+    console.error("[Billing Return]", err);
+    const shop = new URL(request.url).searchParams.get("shop") || "";
+    return redirect(shop ? `/app?shop=${encodeURIComponent(shop)}` : "/app");
+  }
+};
+
+export default function BillingReturn() {
   return null;
 }

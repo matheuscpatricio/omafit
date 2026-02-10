@@ -1,136 +1,112 @@
 /**
  * POST /api/billing/start
- *
- * Inicia o fluxo de assinatura Shopify para o plano escolhido
- *
- * Body esperado:
- * {
- *   "plan": "basic" | "growth" | "pro" | "enterprise"
- * }
- *
- * Retorna:
- * {
- *   "success": true,
- *   "confirmationUrl": "https://...",
- *   "subscriptionId": "gid://..."
- * }
+ * Cria assinatura via Shopify Billing API e retorna confirmationUrl.
+ * O cliente redireciona o lojista para essa URL; após aprovação, Shopify redireciona para /admin/billing/return.
  */
+import { authenticate } from "../shopify.server";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-// GraphQL mutation para criar assinatura COM usage pricing
-const CREATE_SUBSCRIPTION_MUTATION = `#graphql
-  mutation CreateOmafitSubscription(
-    $name: String!
-    $returnUrl: URL!
-    $recurringAmount: Decimal!
-    $currency: CurrencyCode!
-    $cappedAmount: Decimal!
-    $usageTerms: String!
-  ) {
-    appSubscriptionCreate(
-      name: $name
-      returnUrl: $returnUrl
-      lineItems: [
-        {
-          plan: {
-            appRecurringPricingDetails: {
-              price: { amount: $recurringAmount, currencyCode: $currency }
-              interval: EVERY_30_DAYS
-            }
-          }
-        },
-        {
-          plan: {
-            appUsagePricingDetails: {
-              cappedAmount: { amount: $cappedAmount, currencyCode: $currency }
-              terms: $usageTerms
-            }
-          }
-        }
-      ]
-    ) {
-      appSubscription {
-        id
-        status
-        lineItems {
-          id
-          plan {
-            pricingDetails {
-              __typename
-            }
-          }
-        }
-      }
-      confirmationUrl
+const APP_SUBSCRIPTION_CREATE = `#graphql
+  mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!) {
+    appSubscriptionCreate(name: $name, returnUrl: $returnUrl, lineItems: $lineItems) {
       userErrors {
         field
         message
       }
+      appSubscription {
+        id
+      }
+      confirmationUrl
     }
   }
 `;
 
-export const startBillingSubscription = async (plan, shopDomain = null) => {
+const PLAN_CONFIG = {
+  basic: {
+    name: "Omafit Basic",
+    amount: 25,
+    currency: "USD",
+    imagesIncluded: 100,
+    pricePerExtra: 0.18,
+  },
+  growth: {
+    name: "Omafit Growth",
+    amount: 100,
+    currency: "USD",
+    imagesIncluded: 500,
+    pricePerExtra: 0.16,
+  },
+  pro: {
+    name: "Omafit Pro",
+    amount: 180,
+    currency: "USD",
+    imagesIncluded: 1000,
+    pricePerExtra: 0.14,
+  },
+};
+
+export const action = async ({ request }) => {
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+
   try {
-    if (!shopDomain) {
-      const searchParams = new URLSearchParams(window.location.search);
-      // Import dinâmico para evitar problemas de SSR
-      const getShopDomainModule = await import('../utils/getShopDomain');
-      shopDomain = getShopDomainModule.getShopDomain(searchParams) || 'demo-shop.myshopify.com';
+    const { admin, session } = await authenticate.admin(request);
+    const body = await request.json().catch(() => ({}));
+    const plan = (body.plan || "").toLowerCase();
+
+    if (!["basic", "growth", "pro"].includes(plan)) {
+      return Response.json(
+        { error: plan === "enterprise" ? "Enterprise plan requires direct contact." : "Invalid plan" },
+        { status: 400 }
+      );
     }
 
-    if (!plan) {
-      throw new Error('Plan not specified');
-    }
+    const config = PLAN_CONFIG[plan];
+    const appUrl = process.env.SHOPIFY_APP_URL || "";
+    const returnUrl = `${appUrl.replace(/\/$/, "")}/admin/billing/return?shop=${encodeURIComponent(session.shop)}`;
 
-    if (!['basic', 'growth', 'pro', 'enterprise'].includes(plan)) {
-      throw new Error('Invalid plan');
-    }
-
-    if (plan === 'enterprise') {
-      return {
-        error: 'Enterprise plan requires direct contact. Please contact us.',
-        isEnterprise: true
-      };
-    }
-
-    console.log(`[Billing] Starting subscription for plan: ${plan}`);
-
-    const response = await fetch(`${supabaseUrl}/functions/v1/shopify-billing-start`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseKey}`
+    const response = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
+      variables: {
+        name: config.name,
+        returnUrl,
+        lineItems: [
+          {
+            plan: {
+              appRecurringPricingDetails: {
+                price: { amount: String(config.amount), currencyCode: config.currency },
+                interval: "EVERY_30_DAYS",
+              },
+            },
+          },
+        ],
       },
-      body: JSON.stringify({
-        plan,
-        shopDomain
-      })
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Error creating subscription');
+    const json = await response.json();
+    const data = json?.data?.appSubscriptionCreate;
+    const userErrors = data?.userErrors || [];
+    const confirmationUrl = data?.confirmationUrl;
+
+    if (userErrors.length > 0) {
+      const msg = userErrors.map((e) => e.message).join("; ");
+      return Response.json({ error: msg }, { status: 400 });
     }
 
-    const data = await response.json();
+    if (!confirmationUrl) {
+      return Response.json({ error: "No confirmation URL returned from Shopify" }, { status: 502 });
+    }
 
-    return {
+    return Response.json({
       success: true,
-      confirmationUrl: data.confirmationUrl,
-      subscriptionId: data.subscriptionId,
-      usageLineItemId: data.usageLineItemId,
-      plan: data.plan
-    };
-
-  } catch (error) {
-    console.error('[Billing] Error processing billing:', error);
-    return {
-      success: false,
-      error: error.message
-    };
+      confirmationUrl,
+      plan,
+    });
+  } catch (err) {
+    console.error("[api.billing.start]", err);
+    return Response.json(
+      { error: err.message || "Failed to start subscription" },
+      { status: 500 }
+    );
   }
 };
 

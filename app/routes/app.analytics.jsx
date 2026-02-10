@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Page,
@@ -14,22 +14,7 @@ import {
   Box
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
-
-const BODY_TYPE_NAMES = {
-  0: 'Magro',
-  1: 'Esbelto',
-  2: 'Médio',
-  3: 'Robusto',
-  4: 'Atlético'
-};
-
-const FIT_PREFERENCE_NAMES = {
-  0: 'Justa',
-  1: 'Na medida',
-  2: 'Solta'
-};
-
-const GENDER_LABELS = { male: 'Masculino', female: 'Feminino' };
+import { useAppI18n } from '../contexts/AppI18n';
 
 function normalizeGender(g) {
   if (g == null || g === '') return null;
@@ -86,7 +71,27 @@ function getCollectionKey(session) {
 export default function AnalyticsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
+
+  const BODY_TYPE_NAMES = useMemo(() => ({
+    0: t('analytics.bodyType0'),
+    1: t('analytics.bodyType1'),
+    2: t('analytics.bodyType2'),
+    3: t('analytics.bodyType3'),
+    4: t('analytics.bodyType4')
+  }), [t]);
+
+  const FIT_PREFERENCE_NAMES = useMemo(() => ({
+    0: t('analytics.fit0'),
+    1: t('analytics.fit1'),
+    2: t('analytics.fit2')
+  }), [t]);
+
+  const GENDER_LABELS = useMemo(() => ({
+    male: t('analytics.male'),
+    female: t('analytics.female')
+  }), [t]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -97,10 +102,10 @@ export default function AnalyticsPage() {
     if (shopDomain) {
       loadAnalytics();
     } else {
-      setError('Shop domain não encontrado. Verifique se está acessando pelo Shopify Admin.');
+      setError(t('analytics.errorShopDomain'));
       setLoading(false);
     }
-  }, [timeRange, shopDomain]);
+  }, [timeRange, shopDomain, t]);
 
   const loadAnalytics = async () => {
     try {
@@ -298,7 +303,7 @@ export default function AnalyticsPage() {
       });
     } catch (err) {
       console.error('[Analytics]', err);
-      setError(err?.message || 'Erro ao carregar analytics.');
+      setError(err?.message || t('analytics.errorLoad'));
     } finally {
       setLoading(false);
     }
@@ -306,13 +311,13 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <Page title="Analytics" backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}>
+      <Page title={t('analytics.title')} backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}>
         <Layout>
           <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
-                <Text variant="bodyMd">Carregando analytics...</Text>
+                <Text variant="bodyMd">{t('analytics.loadingAnalytics')}</Text>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -330,11 +335,18 @@ export default function AnalyticsPage() {
     r.mostBodyType != null ? (BODY_TYPE_NAMES[r.mostBodyType.value] ?? r.mostBodyType.value) : '—'
   ]);
 
+  const timeRangeOptions = [
+    { label: t('analytics.last7Days'), value: '7' },
+    { label: t('analytics.last30Days'), value: '30' },
+    { label: t('analytics.last90Days'), value: '90' },
+    { label: t('analytics.lastYear'), value: '365' }
+  ];
+
   return (
     <Page
-      title="Analytics"
-      subtitle="Imagens processadas e estatísticas por gênero"
-      backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}
+      title={t('analytics.title')}
+      subtitle={t('analytics.subtitle')}
+      backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}
     >
       <Layout>
         {error && (
@@ -348,7 +360,7 @@ export default function AnalyticsPage() {
         {m.ordersError && (
           <Layout.Section>
             <Banner tone="warning">
-              <p>Não foi possível carregar pedidos e devoluções. Confirme se a app tem a permissão &quot;Ler pedidos&quot; (read_orders) e que a loja aceitou as permissões.</p>
+              <p>{t('analytics.ordersError')}</p>
             </Banner>
           </Layout.Section>
         )}
@@ -358,17 +370,12 @@ export default function AnalyticsPage() {
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingMd" as="h2">
-                  Período de Análise
+                  {t('analytics.analysisPeriod')}
                 </Text>
                 <Box minWidth="200px">
                   <Select
                     label=""
-                    options={[
-                      { label: 'Últimos 7 dias', value: '7' },
-                      { label: 'Últimos 30 dias', value: '30' },
-                      { label: 'Últimos 90 dias', value: '90' },
-                      { label: 'Último ano', value: '365' }
-                    ]}
+                    options={timeRangeOptions}
                     value={timeRange}
                     onChange={setTimeRange}
                   />
@@ -382,7 +389,7 @@ export default function AnalyticsPage() {
           <Card>
             <BlockStack gap="300">
               <Text variant="bodyMd" tone="subdued">
-                Imagens processadas (total da conta)
+                {t('analytics.imagesProcessed')}
               </Text>
               <Text variant="heading2xl" as="p">
                 {m.totalImagesProcessed ?? 0}
@@ -393,27 +400,27 @@ export default function AnalyticsPage() {
 
         <Layout.Section>
           <Text variant="headingLg" as="h2">
-            Pedidos devolvidos (antes e depois do Omafit)
+            {t('analytics.returnsBeforeAfter')}
           </Text>
           <Text variant="bodyMd" tone="subdued">
-            Número de pedidos com devolução no período selecionado. &quot;Antes&quot; = mesmo número de dias antes da instalação do app; &quot;Depois&quot; = últimos dias (após Omafit).
+            {t('analytics.returnsHelp')}
           </Text>
           <InlineStack gap="400" wrap>
             <div style={{ flex: '1 1 220px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">Antes do Omafit</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.beforeOmafit')}</Text>
                   <Text variant="headingXl" as="p">{m.returnsBefore != null ? m.returnsBefore : '—'}</Text>
-                  <Text variant="bodyMd" tone="subdued">pedidos devolvidos</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.returnsCount')}</Text>
                 </BlockStack>
               </Card>
             </div>
             <div style={{ flex: '1 1 220px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">Depois do Omafit</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.afterOmafit')}</Text>
                   <Text variant="headingXl" as="p">{m.returnsAfter != null ? m.returnsAfter : '—'}</Text>
-                  <Text variant="bodyMd" tone="subdued">pedidos devolvidos</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.returnsCount')}</Text>
                 </BlockStack>
               </Card>
             </div>
@@ -422,31 +429,31 @@ export default function AnalyticsPage() {
 
         <Layout.Section>
           <Text variant="headingLg" as="h2">
-            Taxa de conversão (pedidos não devolvidos)
+            {t('analytics.conversionRate')}
           </Text>
           <Text variant="bodyMd" tone="subdued">
-            Percentual de pedidos que não foram devolvidos no período. Quanto maior, melhor.
+            {t('analytics.conversionHelp')}
           </Text>
           <InlineStack gap="400" wrap>
             <div style={{ flex: '1 1 220px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">Antes do Omafit</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.beforeOmafit')}</Text>
                   <Text variant="headingXl" as="p">
                     {m.conversionBefore != null ? `${m.conversionBefore.toFixed(1)}%` : '—'}
                   </Text>
-                  <Text variant="bodyMd" tone="subdued">pedidos mantidos</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.ordersKept')}</Text>
                 </BlockStack>
               </Card>
             </div>
             <div style={{ flex: '1 1 220px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">Depois do Omafit</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.afterOmafit')}</Text>
                   <Text variant="headingXl" as="p">
                     {m.conversionAfter != null ? `${m.conversionAfter.toFixed(1)}%` : '—'}
                   </Text>
-                  <Text variant="bodyMd" tone="subdued">pedidos mantidos</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.ordersKept')}</Text>
                 </BlockStack>
               </Card>
             </div>
@@ -455,21 +462,19 @@ export default function AnalyticsPage() {
 
         <Layout.Section>
           <Text variant="headingLg" as="h2">
-            Altura e peso médios (por gênero)
+            {t('analytics.avgHeightWeight')}
           </Text>
           <BlockStack gap="300">
             <InlineStack gap="400" wrap>
               <div style={{ flex: '1 1 240px' }}>
                 <Card>
                   <BlockStack gap="200">
-                    <Text variant="headingMd" as="h3">
-                      Masculino
+                    <Text variant="headingMd" as="h3">{t('analytics.male')}</Text>
+                    <Text variant="bodyMd" tone="subdued">
+                      {t('analytics.avgHeight')} {m.avgByGender?.male?.height != null ? `${m.avgByGender.male.height.toFixed(1)} cm` : '—'}
                     </Text>
                     <Text variant="bodyMd" tone="subdued">
-                      Altura média: {m.avgByGender?.male?.height != null ? `${m.avgByGender.male.height.toFixed(1)} cm` : '—'}
-                    </Text>
-                    <Text variant="bodyMd" tone="subdued">
-                      Peso médio: {m.avgByGender?.male?.weight != null ? `${m.avgByGender.male.weight.toFixed(1)} kg` : '—'}
+                      {t('analytics.avgWeight')} {m.avgByGender?.male?.weight != null ? `${m.avgByGender.male.weight.toFixed(1)} kg` : '—'}
                     </Text>
                   </BlockStack>
                 </Card>
@@ -477,14 +482,12 @@ export default function AnalyticsPage() {
               <div style={{ flex: '1 1 240px' }}>
                 <Card>
                   <BlockStack gap="200">
-                    <Text variant="headingMd" as="h3">
-                      Feminino
+                    <Text variant="headingMd" as="h3">{t('analytics.female')}</Text>
+                    <Text variant="bodyMd" tone="subdued">
+                      {t('analytics.avgHeight')} {m.avgByGender?.female?.height != null ? `${m.avgByGender.female.height.toFixed(1)} cm` : '—'}
                     </Text>
                     <Text variant="bodyMd" tone="subdued">
-                      Altura média: {m.avgByGender?.female?.height != null ? `${m.avgByGender.female.height.toFixed(1)} cm` : '—'}
-                    </Text>
-                    <Text variant="bodyMd" tone="subdued">
-                      Peso médio: {m.avgByGender?.female?.weight != null ? `${m.avgByGender.female.weight.toFixed(1)} kg` : '—'}
+                      {t('analytics.avgWeight')} {m.avgByGender?.female?.weight != null ? `${m.avgByGender.female.weight.toFixed(1)} kg` : '—'}
                     </Text>
                   </BlockStack>
                 </Card>
@@ -495,16 +498,16 @@ export default function AnalyticsPage() {
 
         <Layout.Section>
           <Text variant="headingLg" as="h2">
-            Por coleção e gênero
+            {t('analytics.byCollectionGender')}
           </Text>
           <Text variant="bodyMd" tone="subdued">
-            Tamanho mais sugerido, ajuste preferido e corpo mais escolhido em cada coleção.
+            {t('analytics.byCollectionHelp')}
           </Text>
           {rows.length > 0 ? (
             <Card>
               <DataTable
                 columnContentTypes={['text', 'text', 'text', 'text', 'text']}
-                headings={['Coleção', 'Gênero', 'Tamanho mais sugerido', 'Ajuste preferido', 'Corpo mais escolhido']}
+                headings={[t('analytics.headingsCollection'), t('analytics.headingsGender'), t('analytics.headingsMostSize'), t('analytics.headingsFit'), t('analytics.headingsBodyType')]}
                 rows={rows}
               />
             </Card>
@@ -512,7 +515,7 @@ export default function AnalyticsPage() {
             <Card>
               <BlockStack gap="200">
                 <Text variant="bodyMd" tone="subdued">
-                  Nenhum dado por coleção/gênero no período. As sessões passam a ser segregadas por coleção quando o widget envia <code>collection_handle</code> ao salvar a sessão.
+                  {t('analytics.noDataByCollection')}
                 </Text>
               </BlockStack>
             </Card>

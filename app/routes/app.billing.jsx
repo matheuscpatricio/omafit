@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Page, Layout, BlockStack, Spinner, Card, Text } from '@shopify/polaris';
+import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
 import BillingPlans from './BillingPlans';
 import { UsageIndicator } from './UsageIndicator';
 import { getShopDomain } from '../utils/getShopDomain';
+import { useAppI18n } from '../contexts/AppI18n';
 
 export default function BillingPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -57,20 +59,46 @@ export default function BillingPage() {
     }
   };
 
+  const [billingError, setBillingError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleSelectPlan = async (plan) => {
-    // TODO: Implementar lógica de seleção de plano via Shopify Billing API
-    console.log(`Selecionando plano: ${plan}`);
+    const planKey = plan.toLowerCase();
+    if (planKey === "enterprise") {
+      window.open("mailto:contato@omafit.co", "_blank");
+      return;
+    }
+    setBillingError(null);
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/billing/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planKey }),
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.confirmationUrl) {
+        window.top.location.href = data.confirmationUrl;
+        return;
+      }
+      setBillingError(data.error || "Could not start subscription.");
+    } catch (err) {
+      setBillingError(err.message || "Failed to start subscription.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (loading) {
     return (
-      <Page title="Billing">
+      <Page title={t('billing.title')}>
         <Layout>
           <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
-                <Text variant="bodyMd">Loading...</Text>
+                <Text variant="bodyMd">{t('billing.loading')}</Text>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -81,8 +109,8 @@ export default function BillingPage() {
 
   return (
     <Page
-      title="Billing"
-      backAction={{ content: 'Dashboard', onAction: () => navigate(`/app?shop=${shopDomain}`) }}
+      title={t('billing.title')}
+      backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain}`) }}
     >
       <Layout>
         {data?.usage && (
@@ -91,10 +119,18 @@ export default function BillingPage() {
           </Layout.Section>
         )}
 
+        {billingError && (
+          <Layout.Section>
+            <Banner tone="critical" onDismiss={() => setBillingError(null)}>
+              {billingError}
+            </Banner>
+          </Layout.Section>
+        )}
         <Layout.Section>
           <BillingPlans
             currentPlan={data?.currentPlan}
             onSelectPlan={handleSelectPlan}
+            isLoading={isSubmitting}
           />
         </Layout.Section>
       </Layout>

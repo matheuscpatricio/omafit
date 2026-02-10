@@ -18,7 +18,7 @@ export default function BillingPlans({
       ? plans
       : [
           {
-            name: "Starter",
+            name: "Basic",
             price: "$25/mês",
             imagesIncluded: 100,
             pricePerExtra: "$0,18/imagem",

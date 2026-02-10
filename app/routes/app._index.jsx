@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getShopDomain } from '../utils/getShopDomain';
 import { reactivateShop } from '../utils/reactivateShop';
+import { useAppI18n } from '../contexts/AppI18n';
 import {
   Page,
   Layout,
@@ -26,6 +27,7 @@ import {
 export default function DashboardPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { t } = useAppI18n();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -82,7 +84,7 @@ export default function DashboardPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Erro ao buscar dados: ${response.statusText}`);
+        throw new Error(`${t('dashboard.errorLoadData')}: ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -137,33 +139,32 @@ export default function DashboardPage() {
   };
 
   const getBillingStatusBadge = (status) => {
-    if (!status) return { tone: 'critical', label: 'Sem Plano' };
+    if (!status) return { tone: 'critical', label: t('dashboard.noPlan') };
 
     switch (status) {
       case 'active':
-        return { tone: 'success', label: 'Ativo' };
+        return { tone: 'success', label: t('common.active') };
       case 'pending':
-        return { tone: 'warning', label: 'Pendente' };
+        return { tone: 'warning', label: t('dashboard.pending') };
       case 'cancelled':
-        return { tone: 'critical', label: 'Cancelado' };
+        return { tone: 'critical', label: t('dashboard.cancelled') };
       case 'inactive':
-        return { tone: 'critical', label: 'Inativo' };
+        return { tone: 'critical', label: t('common.inactive') };
       case 'manual':
-        return { tone: 'info', label: 'Manual (Enterprise)' };
+        return { tone: 'info', label: t('dashboard.manual') };
       default:
         return { tone: 'info', label: status };
     }
   };
 
   const getPlanDisplayName = (plan) => {
-    if (!plan) return 'Nenhum';
+    if (!plan) return t('common.none');
 
     const planNames = {
       basic: 'Basic',
       growth: 'Growth',
       pro: 'Pro',
       enterprise: 'Enterprise',
-      // Mantém compatibilidade com nomes antigos
       starter: 'Basic'
     };
 
@@ -172,13 +173,13 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <Page title="Dashboard Omafit">
+      <Page title={t('dashboard.title')}>
         <Layout>
           <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
-                <Text variant="bodyMd">Carregando dados...</Text>
+                <Text variant="bodyMd">{t('dashboard.loadingData')}</Text>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -203,14 +204,14 @@ export default function DashboardPage() {
 
   return (
     <Page
-      title="Dashboard Omafit"
-      subtitle="Bem-vindo ao provador virtual Omafit"
+      title={t('dashboard.title')}
+      subtitle={t('dashboard.subtitle')}
     >
       <Layout>
         {error && (
           <Layout.Section>
             <Banner tone="critical">
-              <p>Erro ao carregar dados: {error}</p>
+              <p>{t('dashboard.errorLoadData')}: {error}</p>
             </Banner>
           </Layout.Section>
         )}
@@ -219,13 +220,13 @@ export default function DashboardPage() {
           <Card>
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">
-                Informações da Conta
+                {t('dashboard.accountInfo')}
               </Text>
 
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
                   <Text variant="bodyMd" tone="subdued">
-                    Loja
+                    {t('dashboard.store')}
                   </Text>
                   <Text variant="bodyMd" fontWeight="semibold">
                     {shop}
@@ -234,7 +235,7 @@ export default function DashboardPage() {
 
                 <InlineStack align="space-between" blockAlign="center">
                   <Text variant="bodyMd" tone="subdued">
-                    Plano Atual
+                    {t('dashboard.currentPlan')}
                   </Text>
                   <Text variant="bodyMd" fontWeight="semibold">
                     {getPlanDisplayName(currentPlan)}
@@ -243,7 +244,7 @@ export default function DashboardPage() {
 
                 <InlineStack align="space-between" blockAlign="center">
                   <Text variant="bodyMd" tone="subdued">
-                    Status de Billing
+                    {t('dashboard.billingStatus')}
                   </Text>
                   <Badge tone={statusBadge.tone}>
                     {statusBadge.label}
@@ -259,13 +260,13 @@ export default function DashboardPage() {
             <Card>
               <BlockStack gap="400">
                 <Text variant="headingMd" as="h2">
-                  Uso do Mês
+                  {t('dashboard.monthlyUsage')}
                 </Text>
 
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
                     <Text variant="bodyLg" fontWeight="semibold">
-                      Imagens Geradas
+                      {t('dashboard.imagesGenerated')}
                     </Text>
                     <Text variant="bodyLg" fontWeight="bold">
                       {imagesUsed} / {imagesIncluded}
@@ -279,10 +280,10 @@ export default function DashboardPage() {
 
                   <InlineStack align="space-between" blockAlign="center">
                     <Text variant="bodyMd" tone="subdued">
-                      Restantes
+                      {t('dashboard.remaining')}
                     </Text>
                     <Text variant="bodyMd">
-                      {usage.remaining} imagens
+                      {usage.remaining} {t('dashboard.imagesUnit')}
                     </Text>
                   </InlineStack>
 
@@ -290,16 +291,16 @@ export default function DashboardPage() {
                     <>
                       <InlineStack align="space-between" blockAlign="center">
                         <Text variant="bodyMd" tone="subdued">
-                          Imagens Extras
+                          {t('dashboard.extraImagesLabel')}
                         </Text>
                         <Text variant="bodyMd" fontWeight="semibold">
-                          {extraImages} imagens
+                          {extraImages} {t('dashboard.imagesUnit')}
                         </Text>
                       </InlineStack>
 
                       <InlineStack align="space-between" blockAlign="center">
                         <Text variant="bodyMd" tone="subdued">
-                          Custo Extra Estimado
+                          {t('dashboard.extraCostEstimate')}
                         </Text>
                         <Text variant="bodyMd" fontWeight="semibold">
                           {currency} ${(extraImages * pricePerExtra).toFixed(2)}
@@ -308,8 +309,7 @@ export default function DashboardPage() {
 
                       <Banner tone="info">
                         <p>
-                          Você está usando {extraImages} {extraImages === 1 ? 'imagem' : 'imagens'} além do limite incluído.
-                          Custo adicional: {currency} ${pricePerExtra} por imagem.
+                          {t('dashboard.extraImagesBanner', { count: extraImages, currency, price: pricePerExtra })}
                         </p>
                       </Banner>
                     </>
@@ -324,11 +324,9 @@ export default function DashboardPage() {
           <Layout.Section>
             <Banner
               tone="warning"
-              title="Nenhum plano ativo"
+              title={t('dashboard.noPlanActive')}
             >
-              <p>
-                Você ainda não possui um plano ativo. Escolha um plano para começar a usar o Omafit.
-              </p>
+              <p>{t('dashboard.noPlanMessage')}</p>
             </Banner>
           </Layout.Section>
         )}
@@ -337,7 +335,7 @@ export default function DashboardPage() {
           <Card>
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">
-                Ações Rápidas
+                {t('dashboard.quickActions')}
               </Text>
 
               <BlockStack gap="300">
@@ -346,29 +344,28 @@ export default function DashboardPage() {
                   fullWidth
                   onClick={() => navigate(`/app/billing?shop=${shop}`)}
                 >
-                  {currentPlan ? 'Gerenciar Plano' : 'Escolher Plano'}
+                  {currentPlan ? t('dashboard.managePlan') : t('dashboard.choosePlan')}
                 </Button>
 
                 <Button
                   fullWidth
                   onClick={() => navigate('/app/widget')}
                 >
-                  Configurar Widget
+                  {t('dashboard.configureWidget')}
                 </Button>
 
                 <Button
                   fullWidth
                   onClick={() => navigate(`/app/size-chart?shop=${shop}`)}
                 >
-                  Configurar Tabelas de Medidas
+                  {t('dashboard.configureSizeCharts')}
                 </Button>
-
 
                 <Button
                   fullWidth
                   onClick={() => navigate(`/app/analytics?shop=${shop}`)}
                 >
-                  Ver Analytics
+                  {t('dashboard.viewAnalytics')}
                 </Button>
               </BlockStack>
             </BlockStack>
@@ -379,23 +376,17 @@ export default function DashboardPage() {
           <Card>
             <BlockStack gap="300">
               <Text variant="headingMd" as="h2">
-                Sobre o Omafit
+                {t('dashboard.aboutOmafit')}
               </Text>
               <Text variant="bodyMd" tone="subdued">
-                O Omafit é um provador virtual alimentado por IA que permite que seus clientes experimentem suas roupas virtualmente, aumentando a confiança na compra e reduzindo devoluções.
+                {t('dashboard.aboutDescription')}
               </Text>
               <InlineStack gap="200">
-                <Button
-                  url="https://omafit.co"
-                  external
-                >
-                  Saiba Mais
+                <Button url="https://omafit.co" external>
+                  {t('dashboard.learnMore')}
                 </Button>
-                <Button
-                  url="mailto:contato@omafit.co"
-                  external
-                >
-                  Suporte
+                <Button url="mailto:contato@omafit.co" external>
+                  {t('dashboard.support')}
                 </Button>
               </InlineStack>
             </BlockStack>

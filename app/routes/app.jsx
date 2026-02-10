@@ -5,6 +5,7 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import ptBRTranslations from "@shopify/polaris/locales/pt-BR.json";
+import esTranslations from "@shopify/polaris/locales/es.json";
 import { authenticate } from "../shopify.server";
 import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
 
@@ -65,7 +66,7 @@ export default function App() {
 
   useEffect(() => {
     const stored = typeof window !== "undefined" ? window.localStorage?.getItem(LOCALE_STORAGE_KEY) : null;
-    if (stored === "en" || stored === "pt-BR") setLocaleOverrideState(stored);
+    if (stored === "en" || stored === "pt-BR" || stored === "es") setLocaleOverrideState(stored);
   }, []);
 
   const setLocaleOverride = (value) => {
@@ -74,7 +75,12 @@ export default function App() {
   };
 
   const effectiveLocale = localeOverride ?? locale;
-  const polarisLocale = effectiveLocale && effectiveLocale.toLowerCase().startsWith("pt") ? ptBRTranslations : enTranslations;
+  const polarisLocale =
+    effectiveLocale && effectiveLocale.toLowerCase().startsWith("pt")
+      ? ptBRTranslations
+      : effectiveLocale && effectiveLocale.toLowerCase().startsWith("es")
+        ? esTranslations
+        : enTranslations;
 
   if (typeof window !== "undefined") {
     window.ENV = window.ENV || {};

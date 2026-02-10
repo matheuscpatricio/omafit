@@ -1,8 +1,9 @@
 import { createContext, useContext, useMemo } from "react";
 import en from "../translations/en.json";
 import ptBR from "../translations/pt-BR.json";
+import es from "../translations/es.json";
 
-const translations = { en, "pt-BR": ptBR };
+const translations = { en, "pt-BR": ptBR, es };
 
 const AppI18nContext = createContext({ locale: "en", t: (key) => key });
 
@@ -23,7 +24,7 @@ function interpolate(str, vars) {
 
 export function AppI18nProvider({ locale, children }) {
   const value = useMemo(() => {
-    const lang = locale && locale.toLowerCase().startsWith("pt") ? "pt-BR" : "en";
+    const lang = locale && locale.toLowerCase().startsWith("pt") ? "pt-BR" : locale && locale.toLowerCase().startsWith("es") ? "es" : "en";
     const dict = translations[lang] || translations.en;
 
     const t = (key, vars) => {

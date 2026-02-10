@@ -12,9 +12,11 @@ export default function BillingPlans({
   currentPlan,
   plans,
   onSelectPlan,
-  billingStartAction,
+  fetcher,
+  isLoading,
 }) {
   const { t } = useAppI18n();
+  const Form = fetcher?.Form;
 
   const effectivePlans =
     plans && plans.length
@@ -114,16 +116,18 @@ export default function BillingPlans({
                   </Button>
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
-                ) : billingStartAction ? (
-                  <form method="post" action={billingStartAction}>
+                ) : Form ? (
+                  <Form method="post" action="/api/billing/start">
                     <input type="hidden" name="plan" value={plan.name.toLowerCase()} />
-                    <Button variant="primary" submit>
+                    <Button variant="primary" submit disabled={isLoading} loading={isLoading}>
                       {t("billing.subscribePlan")}
                     </Button>
-                  </form>
+                  </Form>
                 ) : (
                   <Button
                     variant="primary"
+                    disabled={isLoading}
+                    loading={isLoading}
                     onClick={() =>
                       onSelectPlan && onSelectPlan(plan.name.toLowerCase())
                     }

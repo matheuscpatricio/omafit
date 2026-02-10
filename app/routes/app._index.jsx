@@ -207,7 +207,8 @@ export default function DashboardPage() {
 
   const languageOptions = [
     { label: t('common.languageEnglish'), value: 'en' },
-    { label: t('common.languagePortuguese'), value: 'pt-BR' }
+    { label: t('common.languagePortuguese'), value: 'pt-BR' },
+    { label: t('common.languageSpanish'), value: 'es' }
   ];
 
   return (
@@ -223,7 +224,7 @@ export default function DashboardPage() {
               label=""
               labelHidden
               options={languageOptions}
-              value={locale === 'pt-BR' ? 'pt-BR' : 'en'}
+              value={locale === 'pt-BR' ? 'pt-BR' : locale === 'es' ? 'es' : 'en'}
               onChange={(value) => setLocaleOverride(value)}
             />
           </InlineStack>

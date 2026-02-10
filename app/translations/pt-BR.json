@@ -17,7 +17,8 @@
     "none": "Nenhum",
     "language": "Idioma",
     "languageEnglish": "Inglês",
-    "languagePortuguese": "Português"
+    "languagePortuguese": "Português",
+    "languageSpanish": "Espanhol"
   },
   "widget": {
     "title": "Configuração do Widget",

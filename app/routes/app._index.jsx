@@ -49,6 +49,20 @@ export default function DashboardPage() {
     loadDashboardData();
   }, []);
 
+  // Recarregar dados quando a página recebe foco (ex: volta do billing)
+  useEffect(() => {
+    const handleFocus = () => {
+      loadDashboardData();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
+  // Recarregar quando shop muda nos searchParams
+  useEffect(() => {
+    loadDashboardData();
+  }, [searchParams.get('shop')]);
+
   const loadDashboardData = async () => {
     try {
       setLoading(true);

@@ -52,27 +52,51 @@ export const loader = async ({ request }) => {
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && supabaseKey) {
-      const patchRes = await fetch(
-        `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`,
-        {
-          method: "PATCH",
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": "application/json",
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify({
-            plan,
-            billing_status: "active",
-            images_included: imagesIncluded,
-            price_per_extra_image: pricePerExtra,
-          }),
-        }
-      );
+    console.log("[Billing Return] Updating Supabase:", {
+      shop,
+      plan,
+      imagesIncluded,
+      pricePerExtra,
+      supabaseUrl: supabaseUrl ? "configured" : "missing",
+      supabaseKey: supabaseKey ? "configured" : "missing",
+    });
+
+    if (!supabaseUrl || !supabaseKey) {
+      console.error("[Billing Return] Supabase not configured:", {
+        hasUrl: !!supabaseUrl,
+        hasKey: !!supabaseKey,
+      });
+    } else {
+      const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`;
+      const patchBody = {
+        plan,
+        billing_status: "active",
+        images_included: imagesIncluded,
+        price_per_extra_image: pricePerExtra,
+      };
+
+      console.log("[Billing Return] PATCH request:", { patchUrl, patchBody });
+
+      const patchRes = await fetch(patchUrl, {
+        method: "PATCH",
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(patchBody),
+      });
+
       if (!patchRes.ok) {
-        console.error("[Billing Return] Supabase PATCH failed:", patchRes.status, await patchRes.text());
+        const errorText = await patchRes.text();
+        console.error("[Billing Return] Supabase PATCH failed:", {
+          status: patchRes.status,
+          statusText: patchRes.statusText,
+          error: errorText,
+        });
+      } else {
+        console.log("[Billing Return] Supabase updated successfully");
       }
     }
 

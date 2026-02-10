@@ -21,10 +21,16 @@ export default function BillingPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${shopDomain}`, {
+      if (!supabaseUrl || !supabaseKey) {
+        console.error('[Billing] Supabase não configurado:', { supabaseUrl: !!supabaseUrl, supabaseKey: !!supabaseKey });
+        setError('Supabase não configurado');
+        return;
+      }
+
+      const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}`, {
         headers: {
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,
@@ -32,34 +38,42 @@ export default function BillingPage() {
         }
       });
 
-      if (response.ok) {
-        const shopData = await response.json();
-        const shop = shopData[0];
-
-        setData({
-          shop: shopDomain,
-          currentPlan: shop?.plan || null,
-          billingStatus: shop?.billing_status || null,
-          usage: shop ? {
-            plan: shop?.plan || 'basic',
-            used: shop.images_used_month || 0,
-            included: shop.images_included || 0,
-            remaining: Math.max(0, (shop.images_included || 0) - (shop.images_used_month || 0)),
-            percentage: shop.images_included > 0
-              ? Math.min(100, ((shop.images_used_month || 0) / shop.images_included) * 100)
-              : 0,
-            withinLimit: (shop.images_used_month || 0) <= (shop.images_included || 0)
-          } : null
-        });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Billing] Supabase fetch failed:', response.status, errorText);
+        throw new Error(`Erro ao carregar dados: ${response.statusText}`);
       }
+
+      const shopData = await response.json();
+      const shop = shopData[0];
+
+      console.log('[Billing] Shop data loaded:', { shopDomain, plan: shop?.plan, billingStatus: shop?.billing_status, imagesIncluded: shop?.images_included });
+
+      setData({
+        shop: shopDomain,
+        currentPlan: shop?.plan || null,
+        billingStatus: shop?.billing_status || null,
+        usage: shop ? {
+          plan: shop?.plan || 'basic',
+          used: shop.images_used_month || 0,
+          included: shop.images_included || 0,
+          remaining: Math.max(0, (shop.images_included || 0) - (shop.images_used_month || 0)),
+          percentage: shop.images_included > 0
+            ? Math.min(100, ((shop.images_used_month || 0) / shop.images_included) * 100)
+            : 0,
+          withinLimit: (shop.images_used_month || 0) <= (shop.images_included || 0)
+        } : null
+      });
     } catch (error) {
       console.error('[Billing] Error loading data:', error);
+      setError(error.message || 'Erro ao carregar dados');
     } finally {
       setLoading(false);
     }
   };
 
   const [billingError, setBillingError] = useState(null);
+  const [error, setError] = useState(null);
   const fetcher = useFetcher();
 
   useEffect(() => {
@@ -70,11 +84,16 @@ export default function BillingPage() {
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
     const d = fetcher.data;
+    console.log('[Billing] Fetcher response:', d);
     if (d.confirmationUrl) {
+      console.log('[Billing] Redirecting to confirmation URL:', d.confirmationUrl);
       window.top.location.href = d.confirmationUrl;
       return;
     }
-    if (d.error) setBillingError(d.error);
+    if (d.error) {
+      console.error('[Billing] Error from API:', d.error);
+      setBillingError(d.error);
+    }
   }, [fetcher.state, fetcher.data]);
 
   const handleSelectPlan = (plan) => {
@@ -84,6 +103,7 @@ export default function BillingPage() {
       return;
     }
     setBillingError(null);
+    console.log('[Billing] Submitting plan:', planKey);
     fetcher.submit(
       { plan: planKey },
       { method: "post", action: "/api/billing/start" }
@@ -121,10 +141,10 @@ export default function BillingPage() {
           </Layout.Section>
         )}
 
-        {billingError && (
+        {(billingError || error) && (
           <Layout.Section>
-            <Banner tone="critical" onDismiss={() => setBillingError(null)}>
-              {billingError}
+            <Banner tone="critical" onDismiss={() => { setBillingError(null); setError(null); }}>
+              {billingError || error}
             </Banner>
           </Layout.Section>
         )}

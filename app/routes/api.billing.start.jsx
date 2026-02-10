@@ -55,6 +55,8 @@ export const action = async ({ request }) => {
 
   try {
     const { admin, session } = await authenticate.admin(request);
+    console.log("[api.billing.start] Request received:", { shop: session.shop, method: request.method });
+    
     const contentType = request.headers.get("content-type") || "";
     let body = {};
     if (contentType.includes("application/json")) {
@@ -64,6 +66,7 @@ export const action = async ({ request }) => {
       body = Object.fromEntries(formData);
     }
     const plan = (body.plan || "").toLowerCase();
+    console.log("[api.billing.start] Plan requested:", plan);
 
     if (!["basic", "growth", "pro"].includes(plan)) {
       return Response.json(
@@ -98,15 +101,24 @@ export const action = async ({ request }) => {
     const userErrors = data?.userErrors || [];
     const confirmationUrl = data?.confirmationUrl;
 
+    console.log("[api.billing.start] Shopify response:", {
+      hasConfirmationUrl: !!confirmationUrl,
+      userErrors,
+      appSubscriptionId: data?.appSubscription?.id,
+    });
+
     if (userErrors.length > 0) {
       const msg = userErrors.map((e) => e.message).join("; ");
+      console.error("[api.billing.start] User errors:", msg);
       return Response.json({ error: msg }, { status: 400 });
     }
 
     if (!confirmationUrl) {
+      console.error("[api.billing.start] No confirmation URL:", json);
       return Response.json({ error: "No confirmation URL returned from Shopify" }, { status: 502 });
     }
 
+    console.log("[api.billing.start] Success, returning confirmation URL");
     return Response.json({
       success: true,
       confirmationUrl,

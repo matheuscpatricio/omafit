@@ -122,18 +122,18 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <form
-                    method="get"
-                    action="/api/billing/start"
-                    target="_top"
-                    style={{ display: "inline-block" }}
+                  <Button
+                    variant="primary"
+                    disabled={isLoading}
+                    loading={isLoading}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (onSelectPlan) onSelectPlan(plan.name.toLowerCase());
+                    }}
                   >
-                    <input type="hidden" name="plan" value={planKey} />
-                    <input type="hidden" name="redirect" value="1" />
-                    <Button variant="primary" submit>
-                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                    </Button>
-                  </form>
+                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                  </Button>
                 )}
               </BlockStack>
             </Card>

@@ -78,20 +78,22 @@ export default function DashboardPage() {
 
       // Sincronizar plano da Shopify com Supabase antes de carregar (para refletir assinatura feita fora do admin)
       try {
-        await fetch('/api/billing/sync', { credentials: 'include' });
+        await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
       } catch (syncErr) {
         console.warn('[Dashboard] Billing sync failed (non-blocking):', syncErr);
       }
 
       const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const fromBillingRefresh = searchParams.get('billing_refresh') === '1';
 
       const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`, {
         headers: {
           'apikey': supabaseKey,
           'Authorization': `Bearer ${supabaseKey}`,
           'Content-Type': 'application/json'
-        }
+        },
+        cache: fromBillingRefresh ? 'no-store' : 'default'
       });
 
       if (!response.ok) {

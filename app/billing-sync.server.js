@@ -64,10 +64,25 @@ export async function syncBillingFromShopify(admin, shop) {
 
   try {
     console.log("[Billing Sync] Fetching subscriptions for shop:", shop);
-    const response = await admin.graphql(GET_ACTIVE_SUBSCRIPTIONS);
-    const json = await response.json();
-    const subs = json?.data?.currentAppInstallation?.activeSubscriptions || [];
-    const active = subs.find((s) => (s.status || "").toUpperCase() === "ACTIVE");
+    let active = null;
+    const fetchActive = async () => {
+      const response = await admin.graphql(GET_ACTIVE_SUBSCRIPTIONS);
+      const json = await response.json();
+      const subs = json?.data?.currentAppInstallation?.activeSubscriptions || [];
+      return subs.find((s) => (s.status || "").toUpperCase() === "ACTIVE") || null;
+    };
+    active = await fetchActive();
+    if (!active) {
+      console.log("[Billing Sync] No ACTIVE yet, retrying in 2s...");
+      await new Promise((r) => setTimeout(r, 2000));
+      active = await fetchActive();
+    }
+    if (!active) {
+      await new Promise((r) => setTimeout(r, 2000));
+      active = await fetchActive();
+      if (active) console.log("[Billing Sync] ACTIVE on second retry:", active.name);
+    }
+
     const subscriptionName = active?.name || "";
     const plan = resolvePlanFromSubscriptionName(subscriptionName);
     const imagesIncluded = PLAN_IMAGES[plan] ?? 100;
@@ -75,7 +90,6 @@ export async function syncBillingFromShopify(admin, shop) {
 
     console.log("[Billing Sync] Resolved:", {
       shop,
-      subscriptions: subs.map((s) => ({ name: s.name, status: s.status })),
       activeName: subscriptionName,
       resolvedPlan: plan,
       imagesIncluded,
@@ -108,20 +122,32 @@ export async function syncBillingFromShopify(admin, shop) {
 
     if (!upsertRes.ok) {
       const errorText = await upsertRes.text();
-      console.error("[Billing Sync] Supabase upsert failed:", {
-        status: upsertRes.status,
-        statusText: upsertRes.statusText,
-        error: errorText,
+      console.warn("[Billing Sync] Supabase upsert failed:", upsertRes.status, errorText);
+      const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`;
+      const patchRes = await fetch(patchUrl, {
+        method: "PATCH",
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          plan,
+          billing_status: active ? "active" : "inactive",
+          images_included: imagesIncluded,
+          price_per_extra_image: pricePerExtra,
+          updated_at: new Date().toISOString(),
+        }),
       });
-      return null;
+      if (!patchRes.ok) {
+        console.error("[Billing Sync] PATCH failed:", patchRes.status, await patchRes.text());
+        return null;
+      }
+      console.log("[Billing Sync] Updated via PATCH (row existed).");
+    } else {
+      console.log("[Billing Sync] Successfully synced Supabase:", { shop, plan, imagesIncluded });
     }
-
-    console.log("[Billing Sync] Successfully synced Supabase:", {
-      shop,
-      plan,
-      imagesIncluded,
-      status: upsertRes.status,
-    });
 
     return { plan, imagesIncluded, pricePerExtra };
   } catch (err) {

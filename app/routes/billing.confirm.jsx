@@ -35,11 +35,11 @@ export async function loader({ request }) {
       console.warn("[Billing Confirm] Sync returned null for shop:", shop);
     }
 
-    return redirect(`/app?shop=${encodeURIComponent(shop)}`);
+    return redirect(`/app?shop=${encodeURIComponent(shop)}&billing_refresh=1`);
   } catch (err) {
     console.error("[Billing Confirm] Error:", err);
     const fallbackShop = shopFromQuery || "";
-    return redirect(fallbackShop ? `/app?shop=${encodeURIComponent(fallbackShop)}` : "/app");
+    return redirect(fallbackShop ? `/app?shop=${encodeURIComponent(fallbackShop)}&billing_refresh=1` : "/app");
   }
 }
 

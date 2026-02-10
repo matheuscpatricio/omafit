@@ -99,16 +99,8 @@ export default function BillingPage() {
     setIsSubmittingPlan(true);
     console.log('[Billing] Submitting plan:', planKey);
 
-    const baseUrl = (typeof window !== "undefined" && (window.ENV?.APP_URL || window.location.origin)) || "";
-    if (!baseUrl) {
-      setBillingError("URL do app não configurada. Defina SHOPIFY_APP_URL no servidor.");
-      setIsSubmittingPlan(false);
-      return;
-    }
-    const url = `${baseUrl.replace(/\/$/, "")}/api/billing/start`;
-
     try {
-      const res = await fetch(url, {
+      const res = await fetch("/api/billing/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan: planKey }),
@@ -128,11 +120,7 @@ export default function BillingPage() {
         }
         return;
       }
-      if (data.error) {
-        setBillingError(data.error);
-        return;
-      }
-      setBillingError("Resposta inesperada do servidor.");
+      setBillingError(data.error || (res.ok ? "Resposta inesperada do servidor." : `Erro ${res.status}`));
     } catch (err) {
       console.error('[Billing] Fetch error:', err);
       setBillingError(err.message || "Erro ao iniciar assinatura.");
@@ -185,7 +173,6 @@ export default function BillingPage() {
             billingStatus={data?.billingStatus}
             onSelectPlan={handleSelectPlan}
             isLoading={isSubmitting}
-            apiBillingStartPath="/api/billing/start?redirect=1"
           />
         </Layout.Section>
       </Layout>

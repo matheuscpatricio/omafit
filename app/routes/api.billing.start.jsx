@@ -136,8 +136,12 @@ export const action = async ({ request }) => {
     });
   } catch (err) {
     console.error("[api.billing.start]", err);
-    const message = err.message || "Failed to start subscription";
-    return Response.json({ error: message }, { status: 500 });
+    const message =
+      (err && err.message) ||
+      (err && err.stack)?.split("\n")?.[0] ||
+      (typeof err === "string" ? err : null) ||
+      "Failed to start subscription";
+    return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
   }
 };
 

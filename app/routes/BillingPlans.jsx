@@ -14,7 +14,6 @@ export default function BillingPlans({
   plans,
   onSelectPlan,
   isLoading,
-  apiBillingStartPath = "/api/billing/start?redirect=1",
 }) {
   const { t } = useAppI18n();
   const hasActivePlan = Boolean((currentPlan || "").trim() || billingStatus === "active");
@@ -123,17 +122,14 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <form
-                    method="post"
-                    action={apiBillingStartPath}
-                    target="_top"
-                    style={{ display: "inline-block" }}
+                  <Button
+                    variant="primary"
+                    disabled={isLoading}
+                    loading={isLoading}
+                    onClick={() => onSelectPlan && onSelectPlan(plan.name.toLowerCase())}
                   >
-                    <input type="hidden" name="plan" value={planKey} />
-                    <Button variant="primary" submit>
-                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                    </Button>
-                  </form>
+                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                  </Button>
                 )}
               </BlockStack>
             </Card>

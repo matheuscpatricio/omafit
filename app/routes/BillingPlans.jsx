@@ -8,11 +8,13 @@ import {
 } from "@shopify/polaris";
 import { useAppI18n } from "../contexts/AppI18n";
 
+function noop() {}
+
 export default function BillingPlans({
   currentPlan,
   billingStatus,
   plans,
-  onSelectPlan,
+  onSelectPlan = noop,
   isLoading,
   billingFormUrl = "",
 }) {

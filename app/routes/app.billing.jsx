@@ -207,7 +207,7 @@ export default function BillingPage() {
           <BillingPlans
             currentPlan={data?.currentPlan}
             billingStatus={data?.billingStatus}
-            onSelectPlan={handleSelectPlan}
+            onSelectPlan={handleSelectPlan ?? (() => {})}
             isLoading={isSubmitting}
             billingFormUrl={buildBillingFormUrl()}
           />

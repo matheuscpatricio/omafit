@@ -1,2 +1,2 @@
-export { BillingPlans } from './BillingPlans.jsx';
-export { UsageIndicator } from './UsageIndicator.jsx';
+export { BillingPlans } from './routes/BillingPlans.jsx';
+export { UsageIndicator } from './routes/UsageIndicator.jsx';

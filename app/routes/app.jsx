@@ -1,3 +1,4 @@
+import { createContext, useContext, useState, useEffect } from "react";
 import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
@@ -6,6 +7,13 @@ import enTranslations from "@shopify/polaris/locales/en.json";
 import ptBRTranslations from "@shopify/polaris/locales/pt-BR.json";
 import { authenticate } from "../shopify.server";
 import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
+
+const LOCALE_STORAGE_KEY = "omafit_locale";
+const LocaleOverrideContext = createContext({ setLocaleOverride: () => {} });
+
+export function useLocaleOverride() {
+  return useContext(LocaleOverrideContext);
+}
 
 const SHOP_LOCALE_QUERY = `#graphql
   query ShopPrimaryLocale {
@@ -53,8 +61,20 @@ function AppNav() {
 
 export default function App() {
   const { apiKey, supabaseUrl, supabaseKey, locale } = useLoaderData();
+  const [localeOverride, setLocaleOverrideState] = useState(null);
 
-  const polarisLocale = locale && locale.toLowerCase().startsWith("pt") ? ptBRTranslations : enTranslations;
+  useEffect(() => {
+    const stored = typeof window !== "undefined" ? window.localStorage?.getItem(LOCALE_STORAGE_KEY) : null;
+    if (stored === "en" || stored === "pt-BR") setLocaleOverrideState(stored);
+  }, []);
+
+  const setLocaleOverride = (value) => {
+    if (typeof window !== "undefined" && value) window.localStorage?.setItem(LOCALE_STORAGE_KEY, value);
+    setLocaleOverrideState(value);
+  };
+
+  const effectiveLocale = localeOverride ?? locale;
+  const polarisLocale = effectiveLocale && effectiveLocale.toLowerCase().startsWith("pt") ? ptBRTranslations : enTranslations;
 
   if (typeof window !== "undefined") {
     window.ENV = window.ENV || {};
@@ -65,10 +85,12 @@ export default function App() {
   return (
     <AppProvider embedded apiKey={apiKey}>
       <PolarisAppProvider i18n={polarisLocale}>
-        <AppI18nProvider locale={locale}>
-          <AppNav />
-          <Outlet />
-        </AppI18nProvider>
+        <LocaleOverrideContext.Provider value={{ setLocaleOverride }}>
+          <AppI18nProvider locale={effectiveLocale}>
+            <AppNav />
+            <Outlet />
+          </AppI18nProvider>
+        </LocaleOverrideContext.Provider>
       </PolarisAppProvider>
     </AppProvider>
   );

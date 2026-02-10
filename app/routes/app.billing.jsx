@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useFetcher } from 'react-router-dom';
 import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
 import BillingPlans from './BillingPlans';
 import { UsageIndicator } from './UsageIndicator';
@@ -60,35 +60,34 @@ export default function BillingPage() {
   };
 
   const [billingError, setBillingError] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fetcher = useFetcher();
 
-  const handleSelectPlan = async (plan) => {
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    const data = fetcher.data;
+    if (data.confirmationUrl) {
+      window.top.location.href = data.confirmationUrl;
+      return;
+    }
+    if (data.error) {
+      setBillingError(data.error);
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  const handleSelectPlan = (plan) => {
     const planKey = plan.toLowerCase();
     if (planKey === "enterprise") {
       window.open("mailto:contato@omafit.co", "_blank");
       return;
     }
     setBillingError(null);
-    setIsSubmitting(true);
-    try {
-      const res = await fetch("/api/billing/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planKey }),
-        credentials: "include",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.confirmationUrl) {
-        window.top.location.href = data.confirmationUrl;
-        return;
-      }
-      setBillingError(data.error || "Could not start subscription.");
-    } catch (err) {
-      setBillingError(err.message || "Failed to start subscription.");
-    } finally {
-      setIsSubmitting(false);
-    }
+    fetcher.submit(
+      { plan: planKey },
+      { method: "post", action: "/api/billing/start" }
+    );
   };
+
+  const isSubmitting = fetcher.state === "submitting" || fetcher.state === "loading";
 
   if (loading) {
     return (

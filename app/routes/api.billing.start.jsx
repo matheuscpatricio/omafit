@@ -51,7 +51,14 @@ export const action = async ({ request }) => {
 
   try {
     const { admin, session } = await authenticate.admin(request);
-    const body = await request.json().catch(() => ({}));
+    const contentType = request.headers.get("content-type") || "";
+    let body = {};
+    if (contentType.includes("application/json")) {
+      body = await request.json().catch(() => ({}));
+    } else {
+      const formData = await request.formData();
+      body = Object.fromEntries(formData);
+    }
     const plan = (body.plan || "").toLowerCase();
 
     if (!["basic", "growth", "pro"].includes(plan)) {

@@ -14,7 +14,10 @@
     "remove": "Remove",
     "active": "Active",
     "inactive": "Inactive",
-    "none": "None"
+    "none": "None",
+    "language": "Language",
+    "languageEnglish": "English",
+    "languagePortuguese": "Portuguese"
   },
   "widget": {
     "title": "Widget Configuration",

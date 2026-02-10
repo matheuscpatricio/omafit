@@ -128,7 +128,7 @@ export default function BillingPlans({
                       if (onSelectPlan) onSelectPlan(plan.name.toLowerCase());
                     }}
                   >
-                    {t("billing.subscribePlan")}
+                    {normalizedCurrent ? t("billing.switchPlan") : t("billing.subscribePlan")}
                   </Button>
                 )}
               </BlockStack>

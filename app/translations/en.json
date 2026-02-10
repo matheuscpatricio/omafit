@@ -204,6 +204,7 @@
     "contactUs": "Contact us",
     "planActive": "Active plan",
     "subscribePlan": "Subscribe to this plan",
+    "switchPlan": "Switch to this plan",
     "usageTitle": "Image usage – {plan} plan",
     "usagePercentUsed": "{percent}% used",
     "usageImagesUsed": "{used} of {included} images used",

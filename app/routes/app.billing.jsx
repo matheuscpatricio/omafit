@@ -99,8 +99,13 @@ export default function BillingPage() {
     setIsSubmittingPlan(true);
     console.log('[Billing] Submitting plan:', planKey);
 
-    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-    const url = `${baseUrl}/api/billing/start`;
+    const baseUrl = (typeof window !== "undefined" && (window.ENV?.APP_URL || window.location.origin)) || "";
+    if (!baseUrl) {
+      setBillingError("URL do app não configurada. Defina SHOPIFY_APP_URL no servidor.");
+      setIsSubmittingPlan(false);
+      return;
+    }
+    const url = `${baseUrl.replace(/\/$/, "")}/api/billing/start`;
 
     try {
       const res = await fetch(url, {
@@ -112,7 +117,15 @@ export default function BillingPage() {
       const data = await res.json().catch(() => ({}));
       console.log('[Billing] API response:', res.status, data);
       if (data.confirmationUrl) {
-        window.top.location.href = data.confirmationUrl;
+        try {
+          if (typeof window.top !== "undefined" && window.top.location) {
+            window.top.location.href = data.confirmationUrl;
+          } else {
+            window.location.href = data.confirmationUrl;
+          }
+        } catch (e) {
+          window.location.href = data.confirmationUrl;
+        }
         return;
       }
       if (data.error) {

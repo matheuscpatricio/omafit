@@ -204,6 +204,7 @@
     "contactUs": "Fale com a gente",
     "planActive": "Plano ativo",
     "subscribePlan": "Assinar este plano",
+    "switchPlan": "Mudar para este plano",
     "usageTitle": "Uso de imagens – Plano {plan}",
     "usagePercentUsed": "{percent}% usado",
     "usageImagesUsed": "{used} de {included} imagens usadas",

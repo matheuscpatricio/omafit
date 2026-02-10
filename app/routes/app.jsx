@@ -47,10 +47,12 @@ export const loader = async ({ request }) => {
     console.warn("[App] Could not fetch shop locale, using en:", e);
   }
 
+  const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
   return {
     apiKey: process.env.SHOPIFY_API_KEY || "",
     supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "",
     supabaseKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "",
+    appUrl: appUrl || "",
     locale,
   };
 };
@@ -69,7 +71,7 @@ function AppNav() {
 }
 
 export default function App() {
-  const { apiKey, supabaseUrl, supabaseKey, locale } = useLoaderData();
+  const { apiKey, supabaseUrl, supabaseKey, appUrl, locale } = useLoaderData();
   const [localeOverride, setLocaleOverrideState] = useState(null);
 
   useEffect(() => {
@@ -94,6 +96,7 @@ export default function App() {
     window.ENV = window.ENV || {};
     window.ENV.VITE_SUPABASE_URL = supabaseUrl;
     window.ENV.VITE_SUPABASE_ANON_KEY = supabaseKey;
+    window.ENV.APP_URL = appUrl;
   }
 
   return (

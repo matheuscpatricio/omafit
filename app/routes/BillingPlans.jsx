@@ -122,27 +122,30 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <a
-                    href={`/api/billing/start?plan=${planKey}&redirect=1`}
-                    rel="noopener noreferrer"
-                    data-billing-plan={planKey}
-                    style={{
-                      display: "inline-block",
-                      appearance: "none",
-                      background: "var(--p-color-bg-fill-brand, #008060)",
-                      color: "var(--p-color-text-on-fill, #fff)",
-                      border: "none",
-                      borderRadius: "var(--p-border-radius-200, 8px)",
-                      padding: "10px 20px",
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      textDecoration: "none",
-                      textAlign: "center",
-                    }}
+                  <form
+                    method="post"
+                    action={`/api/billing/start?redirect=1`}
+                    target="_self"
+                    style={{ display: "inline-block" }}
                   >
-                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                  </a>
+                    <input type="hidden" name="plan" value={planKey} />
+                    <button
+                      type="submit"
+                      style={{
+                        appearance: "none",
+                        background: "var(--p-color-bg-fill-brand, #008060)",
+                        color: "var(--p-color-text-on-fill, #fff)",
+                        border: "none",
+                        borderRadius: "var(--p-border-radius-200, 8px)",
+                        padding: "10px 20px",
+                        fontSize: "14px",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                    </button>
+                  </form>
                 )}
               </BlockStack>
             </Card>

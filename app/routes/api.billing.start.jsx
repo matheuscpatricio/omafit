@@ -143,6 +143,12 @@ export async function loader({ request }) {
   return Response.json({ error: "Use GET with ?plan=basic|growth|pro&redirect=1" }, { status: 400 });
 }
 
+
+function redirectHtml(confirmationUrl) {
+  const escaped = confirmationUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/</g, "\\u003c");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecionando</title><script>window.top.location.href="${escaped}";</script></head><body><p>Redirecionando para aprovar o plano…</p><script>window.top.location.href="${escaped}";</script></body></html>`;
+}
+
 export const action = async ({ request }) => {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -150,7 +156,12 @@ export const action = async ({ request }) => {
   try {
     const { confirmationUrl, plan } = await getConfirmationUrl(request);
     const wantRedirect = new URL(request.url).searchParams.get("redirect") === "1";
-    if (wantRedirect) return Response.redirect(confirmationUrl, 302);
+    if (wantRedirect) {
+      return new Response(redirectHtml(confirmationUrl), {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
     return Response.json({ success: true, confirmationUrl, plan });
   } catch (err) {
     if (err instanceof Response) return err;

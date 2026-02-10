@@ -109,7 +109,20 @@ async function getConfirmationUrl(request) {
       { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }
-  return { confirmationUrl, plan, redirect };
+  return { confirmationUrl, plan, redirect, session };
+}
+
+const EXIT_IFRAME_PATH = "/auth/exit-iframe";
+
+function redirectToExitIframe(request, confirmationUrl, shop) {
+  const url = new URL(request.url);
+  const host = url.searchParams.get("host") || "";
+  const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
+  const exitUrl = new URL(EXIT_IFRAME_PATH, appUrl || request.url);
+  exitUrl.searchParams.set("shop", shop);
+  exitUrl.searchParams.set("host", host);
+  exitUrl.searchParams.set("exitIframe", confirmationUrl);
+  return Response.redirect(exitUrl.toString(), 302);
 }
 
 export async function loader({ request }) {
@@ -121,7 +134,11 @@ export async function loader({ request }) {
   const redirect = url.searchParams.get("redirect");
   if (plan && redirect === "1") {
     try {
-      const { confirmationUrl, redirect: doRedirect } = await getConfirmationUrl(request);
+      const { confirmationUrl, redirect: doRedirect, session } = await getConfirmationUrl(request);
+      const isEmbedded = url.searchParams.get("embedded") === "1";
+      if (isEmbedded) {
+        return redirectToExitIframe(request, confirmationUrl, session.shop);
+      }
       if (doRedirect) {
         return doRedirect(confirmationUrl, { target: "_top" });
       }
@@ -145,8 +162,13 @@ export const action = async ({ request }) => {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
   try {
-    const { confirmationUrl, plan, redirect: doRedirect } = await getConfirmationUrl(request);
-    const wantRedirect = new URL(request.url).searchParams.get("redirect") === "1";
+    const requestUrl = new URL(request.url);
+    const { confirmationUrl, plan, redirect: doRedirect, session } = await getConfirmationUrl(request);
+    const wantRedirect = requestUrl.searchParams.get("redirect") === "1";
+    const isEmbedded = requestUrl.searchParams.get("embedded") === "1";
+    if (wantRedirect && isEmbedded) {
+      return redirectToExitIframe(request, confirmationUrl, session.shop);
+    }
     if (wantRedirect && doRedirect) {
       return doRedirect(confirmationUrl, { target: "_top" });
     }

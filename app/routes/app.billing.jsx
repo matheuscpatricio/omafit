@@ -171,6 +171,9 @@ export default function BillingPage() {
             billingStatus={data?.billingStatus}
             onSelectPlan={handleSelectPlan}
             isLoading={isSubmitting}
+            shop={shopDomain}
+            host={searchParams.get("host") || ""}
+            idToken={searchParams.get("id_token") || ""}
           />
         </Layout.Section>
       </Layout>

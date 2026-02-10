@@ -14,6 +14,9 @@ export default function BillingPlans({
   plans,
   onSelectPlan,
   isLoading,
+  shop = "",
+  host = "",
+  idToken = "",
 }) {
   const { t } = useAppI18n();
   const hasActivePlan = Boolean((currentPlan || "").trim() || billingStatus === "active");
@@ -124,7 +127,7 @@ export default function BillingPlans({
                 ) : (
                   <form
                     method="post"
-                    action={`/api/billing/start?redirect=1`}
+                    action={`/api/billing/start?redirect=1&shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&embedded=1${idToken ? `&id_token=${encodeURIComponent(idToken)}` : ""}`}
                     target="_self"
                     style={{ display: "inline-block" }}
                   >

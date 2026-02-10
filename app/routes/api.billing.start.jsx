@@ -122,6 +122,12 @@ export const action = async ({ request }) => {
       return Response.json({ error: "No confirmation URL returned from Shopify" }, { status: 502 });
     }
 
+    const wantRedirect = new URL(request.url).searchParams.get("redirect") === "1";
+    if (wantRedirect) {
+      console.log("[api.billing.start] Redirecting to confirmation URL");
+      return Response.redirect(confirmationUrl, 302);
+    }
+
     console.log("[api.billing.start] Success, returning confirmation URL");
     return Response.json({
       success: true,

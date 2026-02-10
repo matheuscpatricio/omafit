@@ -182,8 +182,10 @@ export default function BillingPage() {
         <Layout.Section>
           <BillingPlans
             currentPlan={data?.currentPlan}
+            billingStatus={data?.billingStatus}
             onSelectPlan={handleSelectPlan}
             isLoading={isSubmitting}
+            apiBillingStartPath="/api/billing/start?redirect=1"
           />
         </Layout.Section>
       </Layout>

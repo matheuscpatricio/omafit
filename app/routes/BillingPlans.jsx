@@ -10,11 +10,14 @@ import { useAppI18n } from "../contexts/AppI18n";
 
 export default function BillingPlans({
   currentPlan,
+  billingStatus,
   plans,
   onSelectPlan,
   isLoading,
+  apiBillingStartPath = "/api/billing/start?redirect=1",
 }) {
   const { t } = useAppI18n();
+  const hasActivePlan = Boolean((currentPlan || "").trim() || billingStatus === "active");
 
   const effectivePlans =
     plans && plans.length
@@ -120,16 +123,17 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <Button
-                    variant="primary"
-                    disabled={isLoading}
-                    loading={isLoading}
-                    onClick={() => {
-                      if (onSelectPlan) onSelectPlan(plan.name.toLowerCase());
-                    }}
+                  <form
+                    method="post"
+                    action={apiBillingStartPath}
+                    target="_top"
+                    style={{ display: "inline-block" }}
                   >
-                    {normalizedCurrent ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                  </Button>
+                    <input type="hidden" name="plan" value={planKey} />
+                    <Button variant="primary" submit>
+                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                    </Button>
+                  </form>
                 )}
               </BlockStack>
             </Card>

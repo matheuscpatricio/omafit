@@ -2,19 +2,19 @@
  * POST /api/billing/start  ou  GET /api/billing/start?plan=basic|growth|pro&redirect=1
  *
  * Cria assinatura via Shopify Billing API (appSubscriptionCreate) e retorna confirmationUrl
- * ou redireciona (302) para a página de aprovação da Shopify.
+ * ou redireciona para a página de aprovação da Shopify.
+ *
+ * Em app embutido:
+ * - Se a requisição tem header Authorization (fetch/XHR): retorna 401 com
+ *   X-Shopify-API-Request-Failure-Reauthorize-Url para o App Bridge redirecionar.
+ * - Se é POST com embedded=1 (form): redireciona para /auth/exit-iframe.
  *
  * Documentação: https://shopify.dev/docs/api/admin-graphql/latest/mutations/appSubscriptionCreate
- * Fluxo: https://shopify.dev/docs/apps/launch/billing/subscription-billing/create-time-based-subscriptions
- *
- * Argumentos obrigatórios (conforme API):
- * - name (String!)
- * - returnUrl (URL!) → após aprovação a Shopify redireciona para {SHOPIFY_APP_URL}/billing/confirm?shop=xxx
- * - lineItems ([AppSubscriptionLineItemInput!]!) → plan.appRecurringPricingDetails: price (amount, currencyCode), interval (EVERY_30_DAYS | ANNUAL)
- *
  * Produção: SHOPIFY_APP_URL=https://omafit-production.up.railway.app
  */
 import { authenticate } from "../shopify.server";
+
+const REAUTH_URL_HEADER = "X-Shopify-API-Request-Failure-Reauthorize-Url";
 
 const APP_SUBSCRIPTION_CREATE = `#graphql
   mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!) {
@@ -165,7 +165,14 @@ export const action = async ({ request }) => {
     const requestUrl = new URL(request.url);
     const { confirmationUrl, plan, redirect: doRedirect, session } = await getConfirmationUrl(request);
     const wantRedirect = requestUrl.searchParams.get("redirect") === "1";
+    const isXhr = Boolean(request.headers.get("authorization"));
     const isEmbedded = requestUrl.searchParams.get("embedded") === "1";
+
+    if (wantRedirect && isXhr) {
+      const headers = new Headers({ [REAUTH_URL_HEADER]: confirmationUrl });
+      headers.set("Access-Control-Expose-Headers", REAUTH_URL_HEADER);
+      return new Response(null, { status: 401, statusText: "Unauthorized", headers });
+    }
     if (wantRedirect && isEmbedded) {
       return redirectToExitIframe(request, confirmationUrl, session.shop);
     }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useLocation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
@@ -59,13 +59,15 @@ export const loader = async ({ request }) => {
 
 function AppNav() {
   const { t } = useAppI18n();
+  const location = useLocation();
+  const search = location.search || "";
   return (
     <s-app-nav>
-      <s-link href="/app">{t("nav.home")}</s-link>
-      <s-link href="/app/billing">{t("nav.billing")}</s-link>
-      <s-link href="/app/widget">{t("nav.widget")}</s-link>
-      <s-link href="/app/size-chart">{t("nav.sizeChart")}</s-link>
-      <s-link href="/app/analytics">{t("nav.analytics")}</s-link>
+      <s-link href={`/app${search}`}>{t("nav.home")}</s-link>
+      <s-link href={`/app/billing${search}`}>{t("nav.billing")}</s-link>
+      <s-link href={`/app/widget${search}`}>{t("nav.widget")}</s-link>
+      <s-link href={`/app/size-chart${search}`}>{t("nav.sizeChart")}</s-link>
+      <s-link href={`/app/analytics${search}`}>{t("nav.analytics")}</s-link>
     </s-app-nav>
   );
 }

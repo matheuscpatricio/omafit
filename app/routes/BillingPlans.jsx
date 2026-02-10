@@ -14,9 +14,6 @@ export default function BillingPlans({
   plans,
   onSelectPlan,
   isLoading,
-  shop = "",
-  host = "",
-  idToken = "",
 }) {
   const { t } = useAppI18n();
   const hasActivePlan = Boolean((currentPlan || "").trim() || billingStatus === "active");
@@ -125,30 +122,13 @@ export default function BillingPlans({
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
-                  <form
-                    method="post"
-                    action={`/api/billing/start?redirect=1&shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&embedded=1${idToken ? `&id_token=${encodeURIComponent(idToken)}` : ""}`}
-                    target="_self"
-                    style={{ display: "inline-block" }}
+                  <Button
+                    variant="primary"
+                    loading={isLoading}
+                    onClick={() => onSelectPlan(planKey)}
                   >
-                    <input type="hidden" name="plan" value={planKey} />
-                    <button
-                      type="submit"
-                      style={{
-                        appearance: "none",
-                        background: "var(--p-color-bg-fill-brand, #008060)",
-                        color: "var(--p-color-text-on-fill, #fff)",
-                        border: "none",
-                        borderRadius: "var(--p-border-radius-200, 8px)",
-                        padding: "10px 20px",
-                        fontSize: "14px",
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                    </button>
-                  </form>
+                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                  </Button>
                 )}
               </BlockStack>
             </Card>

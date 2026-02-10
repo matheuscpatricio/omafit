@@ -88,44 +88,55 @@ export default function BillingPage() {
     if (err) setBillingError(decodeURIComponent(err));
   }, [searchParams]);
 
-  const handleSelectPlan = useCallback(async (plan) => {
-    const planKey = String(plan).toLowerCase();
-    if (planKey === "enterprise") {
-      window.open("mailto:contato@omafit.co", "_blank");
-      return;
-    }
-    setBillingError(null);
-    setError(null);
-    setIsSubmittingPlan(true);
-    const apiUrl = typeof window !== "undefined" ? `${window.location.origin}/api/billing/start` : "/api/billing/start";
-    try {
-      const res = await fetch(apiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planKey }),
-        credentials: "include",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.confirmationUrl) {
-        try {
-          if (typeof window.top !== "undefined" && window.top.location) {
-            window.top.location.href = data.confirmationUrl;
-          } else {
-            window.location.href = data.confirmationUrl;
-          }
-        } catch (e) {
-          window.location.href = data.confirmationUrl;
-        }
+  const handleSelectPlan = useCallback(
+    async (plan) => {
+      const planKey = String(plan).toLowerCase();
+      if (planKey === "enterprise") {
+        window.open("mailto:contato@omafit.co", "_blank");
         return;
       }
-      setBillingError(data.error || (res.ok ? "Resposta inesperada do servidor." : `Erro ${res.status}`));
-    } catch (err) {
-      console.error('[Billing] Fetch error:', err);
-      setBillingError(err.message || "Erro ao iniciar assinatura.");
-    } finally {
-      setIsSubmittingPlan(false);
-    }
-  }, []);
+      setBillingError(null);
+      setError(null);
+      setIsSubmittingPlan(true);
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const qs = new URLSearchParams(searchParams);
+      qs.set("redirect", "1");
+      if (!qs.has("embedded")) qs.set("embedded", "1");
+      const apiUrl = `${base}/api/billing/start?${qs.toString()}`;
+      const idToken = searchParams.get("id_token") || "";
+      const headers = { "Content-Type": "application/json" };
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      try {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ plan: planKey }),
+          credentials: "include",
+        });
+        if (res.status === 401) {
+          const reauthUrl = res.headers.get("X-Shopify-API-Request-Failure-Reauthorize-Url");
+          if (reauthUrl) {
+            if (typeof window.top !== "undefined" && window.top.location) window.top.location.href = reauthUrl;
+            else window.location.href = reauthUrl;
+            return;
+          }
+        }
+        const data = await res.json().catch(() => ({}));
+        if (data.confirmationUrl) {
+          if (typeof window.top !== "undefined" && window.top.location) window.top.location.href = data.confirmationUrl;
+          else window.location.href = data.confirmationUrl;
+          return;
+        }
+        setBillingError(data.error || (res.ok ? "Resposta inesperada do servidor." : `Erro ${res.status}`));
+      } catch (err) {
+        console.error("[Billing] Fetch error:", err);
+        setBillingError(err.message || "Erro ao iniciar assinatura.");
+      } finally {
+        setIsSubmittingPlan(false);
+      }
+    },
+    [searchParams]
+  );
 
   const isSubmitting = isSubmittingPlan;
 
@@ -171,9 +182,6 @@ export default function BillingPage() {
             billingStatus={data?.billingStatus}
             onSelectPlan={handleSelectPlan}
             isLoading={isSubmitting}
-            shop={shopDomain}
-            host={searchParams.get("host") || ""}
-            idToken={searchParams.get("id_token") || ""}
           />
         </Layout.Section>
       </Layout>

@@ -53,9 +53,13 @@ const PLAN_PRICE_EXTRA = {
 export async function syncBillingFromShopify(admin, shop) {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) return null;
+  if (!supabaseUrl || !supabaseKey) {
+    console.warn("[Billing Sync] Supabase not configured");
+    return null;
+  }
 
   try {
+    console.log("[Billing Sync] Fetching subscriptions for shop:", shop);
     const response = await admin.graphql(GET_ACTIVE_SUBSCRIPTIONS);
     const json = await response.json();
     const subs = json?.data?.currentAppInstallation?.activeSubscriptions || [];
@@ -65,33 +69,56 @@ export async function syncBillingFromShopify(admin, shop) {
     const imagesIncluded = PLAN_IMAGES[plan] ?? 100;
     const pricePerExtra = PLAN_PRICE_EXTRA[plan] ?? 0.18;
 
-    const patchRes = await fetch(
-      `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`,
-      {
-        method: "PATCH",
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          "Content-Type": "application/json",
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify({
-          plan,
-          billing_status: active ? "active" : "inactive",
-          images_included: imagesIncluded,
-          price_per_extra_image: pricePerExtra,
-        }),
-      }
-    );
+    console.log("[Billing Sync] Resolved:", {
+      shop,
+      subscriptions: subs.map((s) => ({ name: s.name, status: s.status })),
+      activeName: subscriptionName,
+      resolvedPlan: plan,
+      imagesIncluded,
+      pricePerExtra,
+    });
+
+    const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`;
+    const patchBody = {
+      plan,
+      billing_status: active ? "active" : "inactive",
+      images_included: imagesIncluded,
+      price_per_extra_image: pricePerExtra,
+    };
+
+    console.log("[Billing Sync] PATCH to Supabase:", { patchUrl, patchBody });
+
+    const patchRes = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(patchBody),
+    });
 
     if (!patchRes.ok) {
-      console.warn("[Billing Sync] Supabase PATCH failed:", patchRes.status, await patchRes.text());
+      const errorText = await patchRes.text();
+      console.error("[Billing Sync] Supabase PATCH failed:", {
+        status: patchRes.status,
+        statusText: patchRes.statusText,
+        error: errorText,
+      });
       return null;
     }
 
+    console.log("[Billing Sync] Successfully updated Supabase:", {
+      shop,
+      plan,
+      imagesIncluded,
+      status: patchRes.status,
+    });
+
     return { plan, imagesIncluded, pricePerExtra };
   } catch (err) {
-    console.warn("[Billing Sync]", err);
+    console.error("[Billing Sync] Error:", err);
     return null;
   }
 }

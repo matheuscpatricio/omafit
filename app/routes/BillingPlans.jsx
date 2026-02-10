@@ -65,9 +65,14 @@ export default function BillingPlans({
 
       <BlockStack gap="400">
         {effectivePlans.map((plan) => {
-          const isCurrent =
-            currentPlan && currentPlan === plan.name.toLowerCase();
-          const isEnterprise = plan.name.toLowerCase() === "enterprise";
+          const planKey = plan.name.toLowerCase();
+          const normalizedCurrent = (currentPlan || "").toLowerCase().trim();
+          const isCurrent = Boolean(
+            normalizedCurrent &&
+              (normalizedCurrent === planKey ||
+                (planKey === "pro" && normalizedCurrent === "professional"))
+          );
+          const isEnterprise = planKey === "enterprise";
 
           return (
             <Card key={plan.name}>

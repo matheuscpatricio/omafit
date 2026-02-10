@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate, useFetcher } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
 import BillingPlans from './BillingPlans';
 import { UsageIndicator } from './UsageIndicator';
@@ -74,43 +74,54 @@ export default function BillingPage() {
 
   const [billingError, setBillingError] = useState(null);
   const [error, setError] = useState(null);
-  const fetcher = useFetcher();
+  const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
 
   useEffect(() => {
     const err = searchParams.get("error");
     if (err) setBillingError(decodeURIComponent(err));
   }, [searchParams]);
 
-  useEffect(() => {
-    if (fetcher.state !== "idle" || !fetcher.data) return;
-    const d = fetcher.data;
-    console.log('[Billing] Fetcher response:', d);
-    if (d.confirmationUrl) {
-      console.log('[Billing] Redirecting to confirmation URL:', d.confirmationUrl);
-      window.top.location.href = d.confirmationUrl;
-      return;
-    }
-    if (d.error) {
-      console.error('[Billing] Error from API:', d.error);
-      setBillingError(d.error);
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  const handleSelectPlan = (plan) => {
+  const handleSelectPlan = async (plan) => {
     const planKey = plan.toLowerCase();
     if (planKey === "enterprise") {
       window.open("mailto:contato@omafit.co", "_blank");
       return;
     }
     setBillingError(null);
+    setError(null);
+    setIsSubmittingPlan(true);
     console.log('[Billing] Submitting plan:', planKey);
-    fetcher.submit(
-      { plan: planKey },
-      { method: "post", action: "/api/billing/start" }
-    );
+
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const url = `${baseUrl}/api/billing/start`;
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planKey }),
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      console.log('[Billing] API response:', res.status, data);
+      if (data.confirmationUrl) {
+        window.top.location.href = data.confirmationUrl;
+        return;
+      }
+      if (data.error) {
+        setBillingError(data.error);
+        return;
+      }
+      setBillingError("Resposta inesperada do servidor.");
+    } catch (err) {
+      console.error('[Billing] Fetch error:', err);
+      setBillingError(err.message || "Erro ao iniciar assinatura.");
+    } finally {
+      setIsSubmittingPlan(false);
+    }
   };
 
-  const isSubmitting = fetcher.state === "submitting" || fetcher.state === "loading";
+  const isSubmitting = isSubmittingPlan;
 
   if (loading) {
     return (
@@ -152,7 +163,6 @@ export default function BillingPage() {
           <BillingPlans
             currentPlan={data?.currentPlan}
             onSelectPlan={handleSelectPlan}
-            fetcher={fetcher}
             isLoading={isSubmitting}
           />
         </Layout.Section>

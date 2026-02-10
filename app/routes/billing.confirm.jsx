@@ -15,31 +15,38 @@
  * Se esta rota não existir ou falhar, o app não refletirá o plano ativo.
  */
 import { redirect } from "react-router";
-import { authenticate } from "../shopify.server";
+import { authenticate, unauthenticated } from "../shopify.server";
 import { syncBillingFromShopify } from "../billing-sync.server";
 
 export async function loader({ request }) {
   const url = new URL(request.url);
-  const shopFromQuery = url.searchParams.get("shop");
+  const shopFromQuery = url.searchParams.get("shop") || "";
 
-  try {
-    const { admin, session } = await authenticate.admin(request);
-    const shop = session.shop;
-
-    // Sincroniza: busca assinatura ativa na Shopify e grava no Supabase
+  async function syncAndRedirect(admin, shop) {
     const result = await syncBillingFromShopify(admin, shop);
-
     if (result) {
       console.log("[Billing Confirm] Synced:", { shop, plan: result.plan, imagesIncluded: result.imagesIncluded });
     } else {
       console.warn("[Billing Confirm] Sync returned null for shop:", shop);
     }
-
     return redirect(`/app?shop=${encodeURIComponent(shop)}&billing_refresh=1`);
-  } catch (err) {
-    console.error("[Billing Confirm] Error:", err);
-    const fallbackShop = shopFromQuery || "";
-    return redirect(fallbackShop ? `/app?shop=${encodeURIComponent(fallbackShop)}&billing_refresh=1` : "/app");
+  }
+
+  try {
+    const { admin, session } = await authenticate.admin(request);
+    return syncAndRedirect(admin, session.shop);
+  } catch (authErr) {
+    if (!shopFromQuery) {
+      console.error("[Billing Confirm] No shop in URL:", authErr);
+      return redirect("/app");
+    }
+    try {
+      const { admin } = await unauthenticated.admin(shopFromQuery);
+      return syncAndRedirect(admin, shopFromQuery);
+    } catch (unauthErr) {
+      console.error("[Billing Confirm] Unauthenticated sync failed:", unauthErr);
+      return redirect(`/app?shop=${encodeURIComponent(shopFromQuery)}&billing_refresh=1`);
+    }
   }
 }
 

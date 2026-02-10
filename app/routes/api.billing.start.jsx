@@ -1,20 +1,11 @@
 /**
  * POST /api/billing/start  ou  GET /api/billing/start?plan=basic|growth|pro&redirect=1
  *
- * Cria assinatura via Shopify Billing API (appSubscriptionCreate) e retorna confirmationUrl
- * ou redireciona para a página de aprovação da Shopify.
- *
- * Em app embutido:
- * - Se a requisição tem header Authorization (fetch/XHR): retorna 401 com
- *   X-Shopify-API-Request-Failure-Reauthorize-Url para o App Bridge redirecionar.
- * - Se é POST com embedded=1 (form): redireciona para /auth/exit-iframe.
- *
- * Documentação: https://shopify.dev/docs/api/admin-graphql/latest/mutations/appSubscriptionCreate
- * Produção: SHOPIFY_APP_URL=https://omafit-production.up.railway.app
+ * Cria assinatura via Shopify Billing API e redireciona para aprovação.
+ * Em app embutido: sempre 302 para /auth/exit-iframe?exitIframe=<confirmationUrl>
+ * para o cliente abrir no topo (evita "refused to connect" no iframe).
  */
 import { authenticate } from "../shopify.server";
-
-const REAUTH_URL_HEADER = "X-Shopify-API-Request-Failure-Reauthorize-Url";
 
 const APP_SUBSCRIPTION_CREATE = `#graphql
   mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!) {
@@ -122,7 +113,10 @@ function redirectToExitIframe(request, confirmationUrl, shop) {
   exitUrl.searchParams.set("shop", shop);
   exitUrl.searchParams.set("host", host);
   exitUrl.searchParams.set("exitIframe", confirmationUrl);
-  return Response.redirect(exitUrl.toString(), 302);
+  const location = exitUrl.toString();
+  const headers = new Headers({ Location: location });
+  headers.set("Access-Control-Expose-Headers", "Location");
+  return new Response(null, { status: 302, headers });
 }
 
 export async function loader({ request }) {
@@ -166,14 +160,9 @@ export const action = async ({ request }) => {
     const { confirmationUrl, plan, redirect: doRedirect, session } = await getConfirmationUrl(request);
     const wantRedirect = requestUrl.searchParams.get("redirect") === "1";
     const isXhr = Boolean(request.headers.get("authorization"));
-    const isEmbedded = requestUrl.searchParams.get("embedded") === "1";
+    const hasEmbeddedOrHost = requestUrl.searchParams.get("embedded") === "1" || requestUrl.searchParams.get("host");
 
-    if (wantRedirect && isXhr) {
-      const headers = new Headers({ [REAUTH_URL_HEADER]: confirmationUrl });
-      headers.set("Access-Control-Expose-Headers", REAUTH_URL_HEADER);
-      return new Response(null, { status: 401, statusText: "Unauthorized", headers });
-    }
-    if (wantRedirect && isEmbedded) {
+    if (wantRedirect && (hasEmbeddedOrHost || isXhr)) {
       return redirectToExitIframe(request, confirmationUrl, session.shop);
     }
     if (wantRedirect && doRedirect) {

@@ -14,6 +14,7 @@ export default function BillingPlans({
   plans,
   onSelectPlan,
   isLoading,
+  billingFormUrl = "",
 }) {
   const { t } = useAppI18n();
   const hasActivePlan = Boolean((currentPlan || "").trim() || billingStatus === "active");
@@ -121,6 +122,18 @@ export default function BillingPlans({
                   </Button>
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
+                ) : billingFormUrl ? (
+                  <form
+                    method="post"
+                    action={billingFormUrl}
+                    target="_top"
+                    style={{ display: "inline-block" }}
+                  >
+                    <input type="hidden" name="plan" value={planKey} />
+                    <Button variant="primary" submit>
+                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                    </Button>
+                  </form>
                 ) : (
                   <Button
                     variant="primary"

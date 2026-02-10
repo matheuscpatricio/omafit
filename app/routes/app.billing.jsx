@@ -83,6 +83,20 @@ export default function BillingPage() {
   const [error, setError] = useState(null);
   const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
 
+  function buildBillingFormUrl() {
+    const idToken = searchParams.get("id_token");
+    if (!idToken) return "";
+    const appUrl = typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "";
+    if (!appUrl || !shopDomain) return "";
+    const qs = new URLSearchParams();
+    qs.set("redirect", "1");
+    qs.set("shop", shopDomain);
+    qs.set("host", searchParams.get("host") || "");
+    qs.set("embedded", "1");
+    qs.set("id_token", idToken);
+    return `${appUrl}/api/billing/start?${qs.toString()}`;
+  }
+
   useEffect(() => {
     const err = searchParams.get("error");
     if (err) setBillingError(decodeURIComponent(err));
@@ -112,7 +126,20 @@ export default function BillingPage() {
           headers,
           body: JSON.stringify({ plan: planKey }),
           credentials: "include",
+          redirect: "manual",
         });
+        if (res.type === "opaqueredirect" || res.status === 0) {
+          setBillingError("Redirecionamento bloqueado. Abra o app em nova aba ou tente novamente.");
+          return;
+        }
+        if (res.status === 302) {
+          const location = res.headers.get("Location");
+          if (location) {
+            if (typeof window.top !== "undefined" && window.top.location) window.top.location.href = location;
+            else window.location.href = location;
+            return;
+          }
+        }
         if (res.status === 401) {
           const reauthUrl = res.headers.get("X-Shopify-API-Request-Failure-Reauthorize-Url");
           if (reauthUrl) {
@@ -182,6 +209,7 @@ export default function BillingPage() {
             billingStatus={data?.billingStatus}
             onSelectPlan={handleSelectPlan}
             isLoading={isSubmitting}
+            billingFormUrl={buildBillingFormUrl()}
           />
         </Layout.Section>
       </Layout>

@@ -1,10 +1,18 @@
 /**
- * POST /api/billing/start
- * Cria assinatura via Shopify Billing API e retorna confirmationUrl.
- * Após aprovação, a Shopify redireciona para return_url = {SHOPIFY_APP_URL}/billing/confirm?shop=xxx
+ * POST /api/billing/start  ou  GET /api/billing/start?plan=basic|growth|pro&redirect=1
  *
- * Produção (Railway): SHOPIFY_APP_URL=https://omafit-production.up.railway.app
- * → return_url = https://omafit-production.up.railway.app/billing/confirm?shop=...
+ * Cria assinatura via Shopify Billing API (appSubscriptionCreate) e retorna confirmationUrl
+ * ou redireciona (302) para a página de aprovação da Shopify.
+ *
+ * Documentação: https://shopify.dev/docs/api/admin-graphql/latest/mutations/appSubscriptionCreate
+ * Fluxo: https://shopify.dev/docs/apps/launch/billing/subscription-billing/create-time-based-subscriptions
+ *
+ * Argumentos obrigatórios (conforme API):
+ * - name (String!)
+ * - returnUrl (URL!) → após aprovação a Shopify redireciona para {SHOPIFY_APP_URL}/billing/confirm?shop=xxx
+ * - lineItems ([AppSubscriptionLineItemInput!]!) → plan.appRecurringPricingDetails: price (amount, currencyCode), interval (EVERY_30_DAYS | ANNUAL)
+ *
+ * Produção: SHOPIFY_APP_URL=https://omafit-production.up.railway.app
  */
 import { authenticate } from "../shopify.server";
 
@@ -114,21 +122,14 @@ export async function loader({ request }) {
   if (plan && redirect === "1") {
     try {
       const { confirmationUrl } = await getConfirmationUrl(request);
-      const escaped = confirmationUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/</g, "\\u003c");
-      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecionando</title><script>window.top.location.href="${escaped}";</script></head><body><p>Redirecionando para aprovar o plano…</p><script>window.top.location.href="${escaped}";</script></body></html>`;
-      return new Response(html, {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+      return Response.redirect(confirmationUrl, 302);
     } catch (err) {
       if (err instanceof Response) return err;
       console.error("[api.billing.start] loader", err);
       const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
       const message = (err && err.message) || "Failed to start subscription";
       if (appUrl) {
-        const escapedErr = String(message).replace(/"/g, "&quot;").slice(0, 200);
-        const errHtml = `<!DOCTYPE html><html><head><script>window.top.location.href="${appUrl}/app/billing?error=${encodeURIComponent(message)}";</script></head><body><p>Erro: ${escapedErr}</p></body></html>`;
-        return new Response(errHtml, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+        return Response.redirect(`${appUrl}/app/billing?error=${encodeURIComponent(message)}`, 302);
       }
       return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
     }

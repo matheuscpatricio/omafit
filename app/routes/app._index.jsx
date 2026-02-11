@@ -374,7 +374,11 @@ export default function DashboardPage() {
                 <Button
                   variant="primary"
                   fullWidth
-                  onClick={() => navigate(`/app/billing?shop=${shop}`)}
+                  onClick={() => {
+                  const qs = new URLSearchParams(searchParams);
+                  if (shop) qs.set("shop", shop);
+                  navigate(`/app/billing?${qs.toString()}`);
+                }}
                 >
                   {currentPlan ? t('dashboard.managePlan') : t('dashboard.choosePlan')}
                 </Button>

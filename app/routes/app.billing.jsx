@@ -84,8 +84,6 @@ export default function BillingPage() {
   const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
 
   function buildBillingFormUrl() {
-    const idToken = searchParams.get("id_token");
-    if (!idToken) return "";
     const appUrl = typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "";
     if (!appUrl || !shopDomain) return "";
     const qs = new URLSearchParams();
@@ -93,7 +91,8 @@ export default function BillingPage() {
     qs.set("shop", shopDomain);
     qs.set("host", searchParams.get("host") || "");
     qs.set("embedded", "1");
-    qs.set("id_token", idToken);
+    const idToken = searchParams.get("id_token");
+    if (idToken) qs.set("id_token", idToken);
     return `${appUrl}/api/billing/start?${qs.toString()}`;
   }
 
@@ -187,7 +186,11 @@ export default function BillingPage() {
   return (
     <Page
       title={t('billing.title')}
-      backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain}`) }}
+      backAction={{ content: t('common.dashboard'), onAction: () => {
+        const qs = new URLSearchParams(searchParams);
+        qs.set("shop", shopDomain);
+        navigate(`/app?${qs.toString()}`);
+      }}}
     >
       <Layout>
         {data?.usage && (

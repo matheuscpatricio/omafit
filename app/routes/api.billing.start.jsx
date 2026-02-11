@@ -142,9 +142,13 @@ export async function loader({ request }) {
       console.error("[api.billing.start] loader", err);
       const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
       const message = (err && err.message) || "Failed to start subscription";
-      if (appUrl) {
-        return Response.redirect(`${appUrl}/app/billing?error=${encodeURIComponent(message)}`, 302);
-      }
+      const errUrl = new URL("/app/billing", appUrl || "https://localhost");
+      errUrl.searchParams.set("error", message);
+      const shop = url.searchParams.get("shop");
+      const host = url.searchParams.get("host");
+      if (shop) errUrl.searchParams.set("shop", shop);
+      if (host) errUrl.searchParams.set("host", host);
+      if (appUrl) return Response.redirect(errUrl.toString(), 302);
       return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
     }
   }
@@ -178,6 +182,15 @@ export const action = async ({ request }) => {
       (err && err.stack)?.split("\n")?.[0] ||
       (typeof err === "string" ? err : null) ||
       "Failed to start subscription";
+    const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
+    const requestUrl = new URL(request.url);
+    const errUrl = new URL("/app/billing", appUrl || requestUrl.origin);
+    errUrl.searchParams.set("error", message);
+    const shop = requestUrl.searchParams.get("shop");
+    const host = requestUrl.searchParams.get("host");
+    if (shop) errUrl.searchParams.set("shop", shop);
+    if (host) errUrl.searchParams.set("host", host);
+    if (appUrl) return Response.redirect(errUrl.toString(), 302);
     return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
   }
 };

@@ -197,56 +197,118 @@ export default function AnalyticsPage() {
       const dateFilter = new Date();
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange, 10));
 
-      let sessionsRes = await fetch(
-        `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
-        {
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
+      // Tenta buscar dados de session_analytics ou tryon_sessions
+      let sessionsData = [];
+      const tableNames = ['session_analytics', 'tryon_sessions'];
+      
+      for (const tableName of tableNames) {
+        try {
+          // Tenta com user_id primeiro
+          let sessionsRes = await fetch(
+            `${supabaseUrl}/rest/v1/${tableName}?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
+            {
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+          
+          if (sessionsRes.ok) {
+            sessionsData = await sessionsRes.json();
+            console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (user_id)`);
+            break;
+          } else if (sessionsRes.status === 404) {
+            // Tabela não existe, tenta próxima
+            console.log(`[Analytics] Table ${tableName} not found (404), trying next...`);
+            continue;
+          } else if (sessionsRes.status === 400) {
+            // Erro de query, pode ser coluna não existe, tenta sem filtro de data
+            console.log(`[Analytics] Query error for ${tableName} (400), trying without date filter...`);
+            sessionsRes = await fetch(
+              `${supabaseUrl}/rest/v1/${tableName}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc`,
+              {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            if (sessionsRes.ok) {
+              sessionsData = await sessionsRes.json();
+              console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (user_id, no date filter)`);
+              break;
+            }
+          }
+          
+          // Se ainda não encontrou, tenta com shop_domain
+          if (sessionsData.length === 0) {
+            sessionsRes = await fetch(
+              `${supabaseUrl}/rest/v1/${tableName}?shop_domain=eq.${encodeURIComponent(shopDomain)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
+              {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            
+            if (sessionsRes.ok) {
+              sessionsData = await sessionsRes.json();
+              console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (shop_domain)`);
+              break;
+            } else if (sessionsRes.status === 400) {
+              // Tenta sem filtro de data
+              sessionsRes = await fetch(
+                `${supabaseUrl}/rest/v1/${tableName}?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=created_at.desc`,
+                {
+                  headers: {
+                    apikey: supabaseKey,
+                    Authorization: `Bearer ${supabaseKey}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+              if (sessionsRes.ok) {
+                sessionsData = await sessionsRes.json();
+                console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (shop_domain, no date filter)`);
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`[Analytics] Error querying ${tableName}:`, err);
+          continue;
+        }
+      }
+      
+      // Se ainda não encontrou dados, tenta buscar todas as sessões sem filtros
+      if (sessionsData.length === 0) {
+        console.log('[Analytics] No sessions found with filters, trying to list all tables...');
+        for (const tableName of tableNames) {
+          try {
+            const sessionsRes = await fetch(
+              `${supabaseUrl}/rest/v1/${tableName}?select=*&limit=10&order=created_at.desc`,
+              {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            if (sessionsRes.ok) {
+              const allData = await sessionsRes.json();
+              console.log(`[Analytics] Table ${tableName} exists with ${allData.length} total records (sample)`);
+              // Não usa esses dados, apenas confirma que a tabela existe
+            }
+          } catch (err) {
+            console.warn(`[Analytics] Cannot access ${tableName}:`, err);
           }
         }
-      );
-
-      let sessionsData = sessionsRes.ok ? await sessionsRes.json() : [];
-      if (sessionsData.length === 0) {
-        sessionsRes = await fetch(
-          `${supabaseUrl}/rest/v1/session_analytics?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc`,
-          {
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        sessionsData = sessionsRes.ok ? await sessionsRes.json() : [];
-      }
-      if (sessionsData.length === 0) {
-        sessionsRes = await fetch(
-          `${supabaseUrl}/rest/v1/session_analytics?shop_domain=eq.${encodeURIComponent(shopDomain)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
-          {
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        sessionsData = sessionsRes.ok ? await sessionsRes.json() : [];
-      }
-      if (sessionsData.length === 0) {
-        sessionsRes = await fetch(
-          `${supabaseUrl}/rest/v1/session_analytics?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=created_at.desc`,
-          {
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        sessionsData = sessionsRes.ok ? await sessionsRes.json() : [];
       }
 
       const totalImagesProcessed = imagesUsedMonth ?? 0;
@@ -426,11 +488,54 @@ export default function AnalyticsPage() {
         returnsAfter: ordersData.returnsAfter ?? null,
         conversionBefore: ordersData.conversionBefore ?? null,
         conversionAfter: ordersData.conversionAfter ?? null,
-        ordersError: ordersData.error ?? null
+        ordersError: ordersData.error ?? null,
+        tableError: sessionsData.length === 0 ? 'No sessions found or table does not exist' : null
       });
     } catch (err) {
       console.error('[Analytics]', err);
-      setError(err?.message || t('analytics.errorLoad'));
+      // Não define erro crítico se for apenas problema de tabela não encontrada
+      if (err?.message?.includes('400') || err?.message?.includes('session_analytics') || err?.message?.includes('Failed to load resource')) {
+        // Tenta obter imagesUsedMonth novamente se necessário
+        let imagesUsedMonthFallback = 0;
+        try {
+          const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+          const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+          if (supabaseUrl && supabaseKey && shopDomain) {
+            const shopRes = await fetch(
+              `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=images_used_month`,
+              {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            if (shopRes.ok) {
+              const shopData = await shopRes.json();
+              imagesUsedMonthFallback = shopData?.[0]?.images_used_month ?? 0;
+            }
+          }
+        } catch (e) {
+          console.warn('[Analytics] Could not fetch imagesUsedMonth:', e);
+        }
+        
+        setMetrics({
+          totalImagesProcessed: imagesUsedMonthFallback,
+          avgByGender: { male: { height: null, weight: null }, female: { height: null, weight: null } },
+          byCollectionGender: [],
+          ordersBefore: null,
+          ordersAfter: null,
+          returnsBefore: null,
+          returnsAfter: null,
+          conversionBefore: null,
+          conversionAfter: null,
+          ordersError: null,
+          tableError: 'A tabela session_analytics pode não existir no Supabase. Execute o script SQL: supabase_create_session_analytics.sql'
+        });
+      } else {
+        setError(err?.message || t('analytics.errorLoad'));
+      }
     } finally {
       setLoading(false);
     }
@@ -644,6 +749,13 @@ export default function AnalyticsPage() {
                 <Text variant="bodyMd" tone="subdued">
                   {t('analytics.noDataByCollection')}
                 </Text>
+                {m.tableError && (
+                  <Banner tone="warning">
+                    <Text variant="bodyMd">
+                      {m.tableError}
+                    </Text>
+                  </Banner>
+                )}
               </BlockStack>
             </Card>
           )}

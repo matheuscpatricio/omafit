@@ -16,9 +16,11 @@ import {
 export async function loader({ request }) {
   const url = new URL(request.url);
   const plan = (url.searchParams.get("plan") || "").toLowerCase();
-  console.log("[app.billing.start] Loader called:", { plan, url: url.toString() });
+  // Normaliza "basic" para "starter" mas aceita ambos
+  const normalizedPlan = plan === "basic" ? "starter" : plan;
+  console.log("[app.billing.start] Loader called:", { plan, normalizedPlan, url: url.toString() });
   
-  if (!["basic", "growth", "pro"].includes(plan)) {
+  if (!["starter", "growth", "pro", "basic"].includes(plan)) {
     console.warn("[app.billing.start] Invalid plan:", plan);
     const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
     const errUrl = new URL("/app/billing", appUrl || url.origin);
@@ -32,10 +34,10 @@ export async function loader({ request }) {
   try {
     console.log("[app.billing.start] Authenticating...");
     const { admin, session } = await authenticate.admin(request);
-    console.log("[app.billing.start] Authenticated, creating subscription for plan:", plan);
+    console.log("[app.billing.start] Authenticated, creating subscription for plan:", normalizedPlan);
     const { confirmationUrl } = await createSubscriptionAndGetConfirmationUrl(
       { admin, session },
-      plan
+      normalizedPlan
     );
     console.log("[app.billing.start] Got confirmationUrl, redirecting to exit-iframe:", confirmationUrl);
     const redirectResponse = buildExitIframeRedirect(request, confirmationUrl, session.shop);

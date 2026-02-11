@@ -16,36 +16,42 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
   }
 `;
 
-// Ordem importa: mais específicos primeiro; "professional" antes de "pro"; "growth"/"basic" antes de "pro"
+// Ordem importa: mais específicos primeiro; "professional" antes de "pro"; "starter"/"basic" antes de outros
 const PLAN_MATCHERS = [
+  { pattern: "omafit starter", plan: "starter" },
   { pattern: "omafit growth", plan: "growth" },
-  { pattern: "omafit basic", plan: "basic" },
   { pattern: "omafit pro", plan: "pro" },
+  { pattern: "omafit basic", plan: "starter" }, // Compatibilidade: basic → starter
+  { pattern: "starter", plan: "starter" },
   { pattern: "growth", plan: "growth" },
-  { pattern: "basic", plan: "basic" },
+  { pattern: "basic", plan: "starter" }, // Compatibilidade: basic → starter
   { pattern: "professional", plan: "pro" },
   { pattern: "pro", plan: "pro" },
 ];
 
 function resolvePlanFromSubscriptionName(subscriptionName) {
   const name = (subscriptionName || "").toLowerCase().trim();
-  if (!name) return "basic";
+  if (!name) return "starter";
   for (const { pattern, plan } of PLAN_MATCHERS) {
     if (name.includes(pattern)) return plan;
   }
-  return "basic";
+  return "starter";
 }
 
 const PLAN_IMAGES = {
-  basic: 100,
+  starter: 100,
   growth: 500,
   pro: 1000,
+  // Compatibilidade com nomes antigos
+  basic: 100,
 };
 
 const PLAN_PRICE_EXTRA = {
-  basic: 0.18,
+  starter: 0.18,
   growth: 0.16,
   pro: 0.14,
+  // Compatibilidade com nomes antigos
+  basic: 0.18,
 };
 
 /**
@@ -90,20 +96,22 @@ export async function syncBillingFromShopify(admin, shop) {
 
     const subscriptionName = active?.name || "";
     const plan = resolvePlanFromSubscriptionName(subscriptionName);
-    const imagesIncluded = PLAN_IMAGES[plan] ?? 100;
-    const pricePerExtra = PLAN_PRICE_EXTRA[plan] ?? 0.18;
+    // Normaliza "basic" para "starter"
+    const normalizedPlan = plan === "basic" ? "starter" : plan;
+    const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES[plan] ?? 100;
+    const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA[plan] ?? 0.18;
 
     console.log("[Billing Sync] Resolved:", {
       shop,
       activeName: subscriptionName,
-      resolvedPlan: plan,
+      resolvedPlan: normalizedPlan,
       imagesIncluded,
       pricePerExtra,
     });
 
     // Upsert: cria a loja em shopify_shops se não existir (admin “conectado” à Shopify)
     const payload = {
-      plan,
+      plan: normalizedPlan,
       billing_status: active ? "active" : "inactive",
       images_included: imagesIncluded,
       price_per_extra_image: pricePerExtra,
@@ -123,8 +131,8 @@ export async function syncBillingFromShopify(admin, shop) {
     });
 
     if (insertRes.ok) {
-      console.log("[Billing Sync] Inserted new row:", { shop, plan, imagesIncluded });
-      return { plan, imagesIncluded, pricePerExtra };
+      console.log("[Billing Sync] Inserted new row:", { shop, plan: normalizedPlan, imagesIncluded });
+      return { plan: normalizedPlan, imagesIncluded, pricePerExtra };
     }
 
     if (insertRes.status === 409) {
@@ -140,8 +148,8 @@ export async function syncBillingFromShopify(admin, shop) {
         body: JSON.stringify(payload),
       });
       if (patchRes.ok) {
-        console.log("[Billing Sync] Updated via PATCH (row already existed):", { shop, plan });
-        return { plan, imagesIncluded, pricePerExtra };
+        console.log("[Billing Sync] Updated via PATCH (row already existed):", { shop, plan: normalizedPlan });
+        return { plan: normalizedPlan, imagesIncluded, pricePerExtra };
       }
       console.error("[Billing Sync] PATCH failed after 409:", patchRes.status, await patchRes.text());
       return null;

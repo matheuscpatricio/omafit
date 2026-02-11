@@ -19,26 +19,38 @@ const APP_SUBSCRIPTION_CREATE = `#graphql
 `;
 
 const PLAN_CONFIG = {
-  basic: {
-    name: "Omafit Basic",
-    amount: 25,
+  starter: {
+    name: "Omafit Starter",
+    amount: 30,
     currency: "USD",
     imagesIncluded: 100,
     pricePerExtra: 0.18,
+    cappedAmount: 1000, // Limite máximo de cobrança adicional por período (USD)
   },
   growth: {
     name: "Omafit Growth",
-    amount: 100,
+    amount: 120,
     currency: "USD",
     imagesIncluded: 500,
     pricePerExtra: 0.16,
+    cappedAmount: 2000, // Limite máximo de cobrança adicional por período (USD)
   },
   pro: {
     name: "Omafit Pro",
-    amount: 180,
+    amount: 220,
     currency: "USD",
     imagesIncluded: 1000,
     pricePerExtra: 0.14,
+    cappedAmount: 5000, // Limite máximo de cobrança adicional por período (USD)
+  },
+  // Mantém compatibilidade com nomes antigos
+  basic: {
+    name: "Omafit Starter",
+    amount: 30,
+    currency: "USD",
+    imagesIncluded: 100,
+    pricePerExtra: 0.18,
+    cappedAmount: 1000,
   },
 };
 
@@ -51,15 +63,17 @@ const PLAN_CONFIG = {
 export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const { admin, session } = auth;
   const key = (planKey || "").toLowerCase();
-  if (!["basic", "growth", "pro"].includes(key)) {
+  // Normaliza "basic" para "starter" mas aceita ambos
+  const normalizedKey = key === "basic" ? "starter" : key;
+  if (!["starter", "growth", "pro"].includes(normalizedKey)) {
     throw new Response(
       JSON.stringify({
-        error: key === "enterprise" ? "Enterprise plan requires direct contact." : "Invalid plan",
+        error: normalizedKey === "enterprise" ? "Enterprise plan requires direct contact." : "Invalid plan",
       }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
-  const config = PLAN_CONFIG[key];
+  const config = PLAN_CONFIG[normalizedKey];
   const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
   const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
   const response = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
@@ -72,6 +86,10 @@ export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
             appRecurringPricingDetails: {
               price: { amount: config.amount, currencyCode: config.currency },
               interval: "EVERY_30_DAYS",
+              cappedAmount: {
+                amount: config.cappedAmount,
+                currencyCode: config.currency,
+              },
             },
           },
         },
@@ -95,7 +113,7 @@ export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
       { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }
-  return { confirmationUrl, plan: key };
+  return { confirmationUrl, plan: normalizedKey };
 }
 
 const EXIT_IFRAME_PATH = "/auth/exit-iframe";

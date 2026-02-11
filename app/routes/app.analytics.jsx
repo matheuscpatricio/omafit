@@ -49,8 +49,27 @@ function getMeasurements(session) {
     };
   }
   if (!m) return null;
+  
+  // Normaliza o gênero de múltiplas fontes
   const gender = normalizeGender(m.gender ?? session.gender);
-  if (!gender || (gender !== 'male' && gender !== 'female')) return null;
+  if (!gender || (gender !== 'male' && gender !== 'female')) {
+    // Se não conseguiu normalizar, tenta outras variações
+    const altGender = normalizeGender(session.gender);
+    if (!altGender || (altGender !== 'male' && altGender !== 'female')) {
+      return null;
+    }
+    // Usa o gênero alternativo se encontrado
+    return {
+      gender: altGender,
+      recommended_size: m.recommended_size ?? m.recommendedSize ?? session.recommended_size,
+      body_type_index: m.body_type_index ?? m.bodyType ?? session.body_type_index,
+      fit_preference_index: m.fit_preference_index ?? m.fitPreference ?? session.fit_preference_index,
+      height: m.height ?? session.height,
+      weight: m.weight ?? session.weight,
+      collection_handle: m.collection_handle ?? m.collectionHandle ?? session.collection_handle
+    };
+  }
+  
   return {
     gender,
     recommended_size: m.recommended_size ?? m.recommendedSize ?? session.recommended_size,
@@ -63,8 +82,22 @@ function getMeasurements(session) {
 }
 
 function getCollectionKey(session) {
+  // Tenta obter collection_handle de múltiplas fontes
   const m = getMeasurements(session);
-  const handle = m?.collection_handle ?? session.collection_handle ?? '';
+  let handle = m?.collection_handle ?? session.collection_handle ?? '';
+  
+  // Se não encontrou, tenta em user_measurements se for objeto
+  if (!handle && session.user_measurements) {
+    try {
+      const um = typeof session.user_measurements === 'string' 
+        ? JSON.parse(session.user_measurements) 
+        : session.user_measurements;
+      handle = um?.collection_handle ?? um?.collectionHandle ?? '';
+    } catch (e) {
+      // Ignora erro de parse
+    }
+  }
+  
   return handle || 'geral';
 }
 
@@ -247,9 +280,49 @@ export default function AnalyticsPage() {
 
       // Por coleção e gênero: tamanho mais sugerido, ajuste mais escolhido, corpo mais escolhido
       const byKey = {};
+      let sessionsWithValidGender = 0;
+      let sessionsProcessed = 0;
+      
       sessionsData.forEach((session) => {
         const m = getMeasurements(session);
-        if (!m || !m.gender || (m.gender !== 'male' && m.gender !== 'female')) return;
+        if (!m) {
+          // Tenta usar dados diretos da sessão se getMeasurements retornou null
+          const directGender = normalizeGender(session.gender);
+          if (directGender && (directGender === 'male' || directGender === 'female')) {
+            sessionsWithValidGender++;
+            const coll = getCollectionKey(session);
+            const key = `${coll}|${directGender}`;
+            if (!byKey[key]) {
+              byKey[key] = {
+                collection: coll === 'geral' ? 'Geral' : coll,
+                gender: directGender,
+                sizes: {},
+                fits: {},
+                bodyTypes: {}
+              };
+            }
+            const row = byKey[key];
+            if (session.recommended_size != null && session.recommended_size !== '') {
+              row.sizes[session.recommended_size] = (row.sizes[session.recommended_size] || 0) + 1;
+            }
+            if (session.fit_preference_index !== undefined && session.fit_preference_index !== null) {
+              const f = Number(session.fit_preference_index);
+              row.fits[f] = (row.fits[f] || 0) + 1;
+            }
+            if (session.body_type_index !== undefined && session.body_type_index !== null) {
+              const b = Number(session.body_type_index);
+              row.bodyTypes[b] = (row.bodyTypes[b] || 0) + 1;
+            }
+            sessionsProcessed++;
+          }
+          return;
+        }
+        
+        if (!m.gender || (m.gender !== 'male' && m.gender !== 'female')) {
+          return;
+        }
+        
+        sessionsWithValidGender++;
         const coll = getCollectionKey(session);
         const key = `${coll}|${m.gender}`;
         if (!byKey[key]) {
@@ -273,6 +346,23 @@ export default function AnalyticsPage() {
           const b = Number(m.body_type_index);
           row.bodyTypes[b] = (row.bodyTypes[b] || 0) + 1;
         }
+        sessionsProcessed++;
+      });
+      
+      console.log('[Analytics] Sessions processed:', {
+        total: sessionsData.length,
+        withValidGender: sessionsWithValidGender,
+        processed: sessionsProcessed,
+        byCollectionGender: Object.keys(byKey).length,
+        keys: Object.keys(byKey),
+        sampleSession: sessionsData.length > 0 ? {
+          gender: sessionsData[0].gender,
+          collection_handle: sessionsData[0].collection_handle,
+          user_measurements: sessionsData[0].user_measurements ? (typeof sessionsData[0].user_measurements === 'string' ? 'string' : 'object') : 'null',
+          recommended_size: sessionsData[0].recommended_size,
+          body_type_index: sessionsData[0].body_type_index,
+          fit_preference_index: sessionsData[0].fit_preference_index
+        } : null
       });
 
       const mostFreq = (obj) => {
@@ -281,13 +371,50 @@ export default function AnalyticsPage() {
         return { value: ent[0], count: ent[1] };
       };
 
-      const byCollectionGender = Object.entries(byKey).map(([, v]) => ({
-        collection: v.collection,
-        gender: v.gender,
-        mostSize: mostFreq(v.sizes),
-        mostFit: mostFreq(v.fits),
-        mostBodyType: mostFreq(v.bodyTypes)
-      }));
+      const byCollectionGender = Object.entries(byKey)
+        .map(([, v]) => {
+          const mostSize = mostFreq(v.sizes);
+          const mostFit = mostFreq(v.fits);
+          const mostBodyType = mostFreq(v.bodyTypes);
+          
+          // Debug log
+          console.log('[Analytics] Processing collection/gender:', {
+            collection: v.collection,
+            gender: v.gender,
+            sizes: Object.keys(v.sizes).length,
+            fits: Object.keys(v.fits).length,
+            bodyTypes: Object.keys(v.bodyTypes).length,
+            mostSize,
+            mostFit,
+            mostBodyType
+          });
+          
+          return {
+            collection: v.collection,
+            gender: v.gender,
+            mostSize,
+            mostFit,
+            mostBodyType
+          };
+        })
+        .filter((item) => {
+          // Inclui se tiver pelo menos um dado (size, fit ou bodyType)
+          const hasSize = item.mostSize !== null;
+          const hasFit = item.mostFit !== null;
+          const hasBodyType = item.mostBodyType !== null;
+          const shouldInclude = hasSize || hasFit || hasBodyType;
+          
+          if (!shouldInclude) {
+            console.log('[Analytics] Filtering out item (no data):', item);
+          }
+          
+          return shouldInclude;
+        });
+      
+      console.log('[Analytics] Final byCollectionGender:', {
+        count: byCollectionGender.length,
+        items: byCollectionGender
+      });
 
       setMetrics({
         totalImagesProcessed,

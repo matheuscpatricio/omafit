@@ -60,19 +60,25 @@ export default function BillingPage() {
 
       console.log('[Billing] Shop data loaded:', { shopDomain, plan: shop?.plan, billingStatus: shop?.billing_status, imagesIncluded: shop?.images_included });
 
+      const imagesUsed = shop?.images_used_month || 0;
+      const imagesIncluded = shop?.images_included || 0;
+      const extraImages = Math.max(0, imagesUsed - imagesIncluded);
+      
       setData({
         shop: shopDomain,
         currentPlan: shop?.plan || null,
         billingStatus: shop?.billing_status || null,
         usage: shop ? {
           plan: shop?.plan || 'basic',
-          used: shop.images_used_month || 0,
-          included: shop.images_included || 0,
-          remaining: Math.max(0, (shop.images_included || 0) - (shop.images_used_month || 0)),
-          percentage: shop.images_included > 0
-            ? Math.min(100, ((shop.images_used_month || 0) / shop.images_included) * 100)
+          used: imagesUsed,
+          included: imagesIncluded,
+          remaining: Math.max(0, imagesIncluded - imagesUsed),
+          extraImages: extraImages,
+          percentage: imagesIncluded > 0
+            ? Math.min(100, (imagesUsed / imagesIncluded) * 100)
             : 0,
-          withinLimit: (shop.images_used_month || 0) <= (shop.images_included || 0)
+          withinLimit: imagesUsed <= imagesIncluded,
+          pricePerExtra: shop?.price_per_extra_image || 0.18
         } : null
       });
     } catch (error) {

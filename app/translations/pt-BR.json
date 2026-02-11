@@ -213,6 +213,9 @@
     "usageOverLimitNote": "Imagens adicionais serão cobradas automaticamente de acordo com seu plano.",
     "usageNearLimit": "Você está próximo do limite",
     "usageNearLimitNote": "Considere fazer upgrade do seu plano se precisar de mais imagens.",
+    "extraImagesTitle": "Imagens adicionais",
+    "extraImagesCount": "{count} imagem{plural}",
+    "extraImagesDescription": "{count} imagem{plural} adicional{plural} gerada{plural} este mês. Valor estimado: ${price}",
     "needToChangePlan": "Precisa trocar de plano?",
     "clickButtonBelow": "Clique no botão abaixo",
     "wantToChangePlan": "Quero alterar meu plano"

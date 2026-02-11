@@ -12,7 +12,7 @@ export function UsageIndicator({ usage }) {
     return null;
   }
 
-  const { plan, used, included, remaining, percentage, withinLimit } = usage;
+  const { plan, used, included, remaining, percentage, withinLimit, extraImages = 0, pricePerExtra = 0.18 } = usage;
 
   let progressColor = 'success';
   let badgeTone = 'success';
@@ -59,7 +59,34 @@ export function UsageIndicator({ usage }) {
           </InlineStack>
         </BlockStack>
 
-        {!withinLimit && (
+        {extraImages > 0 && (
+          <BlockStack gap="200">
+            <Card background="bg-surface-critical-subdued">
+              <BlockStack gap="200">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="bodyMd" tone="critical" fontWeight="semibold">
+                    {t('billing.extraImagesTitle')}
+                  </Text>
+                  <Badge tone="critical">
+                    {t('billing.extraImagesCount', { 
+                      count: extraImages,
+                      plural: extraImages > 1 ? 's' : ''
+                    })}
+                  </Badge>
+                </InlineStack>
+                <Text variant="bodyMd" tone="subdued">
+                  {t('billing.extraImagesDescription', { 
+                    count: extraImages,
+                    plural: extraImages > 1 ? 's' : '',
+                    price: (extraImages * pricePerExtra).toFixed(2) 
+                  })}
+                </Text>
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        )}
+
+        {!withinLimit && extraImages === 0 && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="critical" fontWeight="semibold">
               ⚠️ {t('billing.usageOverLimit')}

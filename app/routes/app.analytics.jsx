@@ -197,23 +197,48 @@ export default function AnalyticsPage() {
       const dateFilter = new Date();
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange, 10));
 
-      // Tenta buscar dados de session_analytics ou tryon_sessions
-      // Prioridade: session_analytics (tem todos os campos) > tryon_sessions (precisa combinar com user_measurements)
+      // Prioridade 1: API no servidor (usa service role, ignora RLS)
       let sessionsData = [];
-      const tableNames = ['session_analytics', 'tryon_sessions'];
-      
+      const apiParams = new URLSearchParams({
+        shop_domain: shopDomain,
+        ...(userId ? { user_id: userId } : {}),
+        ...(dateFilter ? { since: dateFilter.toISOString() } : {})
+      });
       console.log('[Analytics] Starting data fetch:', {
         userId,
         shopDomain,
         timeRange,
         dateFilter: dateFilter.toISOString()
       });
-      
-      for (const tableName of tableNames) {
+
+      try {
+        const apiRes = await fetch(`/api/analytics/sessions?${apiParams.toString()}`, { credentials: 'include' });
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          const list = Array.isArray(json.sessions) ? json.sessions : [];
+          if (list.length > 0) {
+            sessionsData = list;
+            console.log(`[Analytics] ✅ Loaded ${sessionsData.length} sessions via server API (session_analytics)`);
+          } else {
+            console.log('[Analytics] Server API OK but 0 sessions returned (shop_domain/user_id may have no data yet)');
+          }
+        } else {
+          const body = await apiRes.text().catch(() => '');
+          console.log('[Analytics] Server API returned', apiRes.status, body);
+          if (apiRes.status === 500 && body.includes('Supabase not configured')) {
+            console.warn('[Analytics] Configure SUPABASE_SERVICE_ROLE_KEY on the server to load session_analytics (avoids RLS).');
+          }
+        }
+      } catch (e) {
+        console.warn('[Analytics] Server API error:', e);
+      }
+
+      // Fallback: buscar direto no Supabase (pode retornar 0 por RLS em session_analytics)
+      if (sessionsData.length === 0) {
+        // session_analytics: user_id + created_at
         try {
-          // Tenta com user_id primeiro
           let sessionsRes = await fetch(
-            `${supabaseUrl}/rest/v1/${tableName}?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
+            `${supabaseUrl}/rest/v1/session_analytics?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=created_at.desc&limit=500`,
             {
               headers: {
                 apikey: supabaseKey,
@@ -222,99 +247,25 @@ export default function AnalyticsPage() {
               }
             }
           );
-          
           if (sessionsRes.ok) {
             const fetchedData = await sessionsRes.json();
-            console.log(`[Analytics] Found ${fetchedData.length} sessions in ${tableName} (user_id)`);
-            if (fetchedData.length > 0) {
+            const byShop = fetchedData.filter((r) => r.shop_domain === shopDomain || !r.shop_domain);
+            if (byShop.length > 0) {
+              sessionsData = byShop;
+              console.log(`[Analytics] Found ${sessionsData.length} sessions in session_analytics (fallback shop_domain)`);
+            } else if (fetchedData.length > 0) {
               sessionsData = fetchedData;
-              break;
-            }
-          } else if (sessionsRes.status === 404) {
-            // Tabela não existe, tenta próxima
-            console.log(`[Analytics] Table ${tableName} not found (404), trying next...`);
-            continue;
-          } else if (sessionsRes.status === 400) {
-            // Erro de query, pode ser coluna não existe, tenta sem filtro de data
-            console.log(`[Analytics] Query error for ${tableName} (400), trying without date filter...`);
-            sessionsRes = await fetch(
-              `${supabaseUrl}/rest/v1/${tableName}?user_id=eq.${encodeURIComponent(userId)}&select=*&order=created_at.desc`,
-              {
-                headers: {
-                  apikey: supabaseKey,
-                  Authorization: `Bearer ${supabaseKey}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
-            if (sessionsRes.ok) {
-              sessionsData = await sessionsRes.json();
-              console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (user_id, no date filter)`);
-              break;
-            }
-          }
-          
-          // Se ainda não encontrou, tenta com shop_domain
-          if (sessionsData.length === 0) {
-            sessionsRes = await fetch(
-              `${supabaseUrl}/rest/v1/${tableName}?shop_domain=eq.${encodeURIComponent(shopDomain)}&created_at=gte.${encodeURIComponent(dateFilter.toISOString())}&select=*&order=created_at.desc`,
-              {
-                headers: {
-                  apikey: supabaseKey,
-                  Authorization: `Bearer ${supabaseKey}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
-            
-            if (sessionsRes.ok) {
-              const fetchedData = await sessionsRes.json();
-              console.log(`[Analytics] Found ${fetchedData.length} sessions in ${tableName} (shop_domain)`);
-              if (fetchedData.length > 0) {
-                sessionsData = fetchedData;
-                break;
-              }
-            } else if (sessionsRes.status === 400) {
-              // Tenta sem filtro de data
-              sessionsRes = await fetch(
-                `${supabaseUrl}/rest/v1/${tableName}?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=created_at.desc`,
-                {
-                  headers: {
-                    apikey: supabaseKey,
-                    Authorization: `Bearer ${supabaseKey}`,
-                    'Content-Type': 'application/json'
-                  }
-                }
-              );
-            if (sessionsRes.ok) {
-              const fetchedData = await sessionsRes.json();
-              console.log(`[Analytics] Found ${fetchedData.length} sessions in ${tableName} (shop_domain, no date filter)`);
-              if (fetchedData.length > 0) {
-                sessionsData = fetchedData;
-                break;
-              }
-            }
+              console.log(`[Analytics] Using all ${fetchedData.length} from session_analytics (fallback)`);
             }
           }
         } catch (err) {
-          console.warn(`[Analytics] Error querying ${tableName}:`, err);
-          continue;
+          console.warn(`[Analytics] Error querying session_analytics:`, err);
         }
-      }
-      
-      // Se ainda não encontrou dados, tenta buscar todas as sessões sem filtros para diagnóstico
-      if (sessionsData.length === 0) {
-        console.log('[Analytics] No sessions found with filters, trying to list all tables...');
-        console.log('[Analytics] Searching params:', { userId, shopDomain, dateFilter: dateFilter.toISOString() });
-        
-        // Prioriza session_analytics pois tem todos os campos necessários
-        for (const tableName of ['session_analytics', 'tryon_sessions']) {
+        // tryon_sessions: sem user_id/shop_domain na URL para evitar 400 se colunas não existirem
+        if (sessionsData.length === 0) {
           try {
-            // Tenta buscar sem filtros para ver se há dados
-            // Usa created_at ou session_start_time dependendo da tabela
-            const orderBy = tableName === 'tryon_sessions' ? 'session_start_time' : 'created_at';
-            const sessionsRes = await fetch(
-              `${supabaseUrl}/rest/v1/${tableName}?select=*&limit=100&order=${orderBy}.desc`,
+            let sessionsRes = await fetch(
+              `${supabaseUrl}/rest/v1/tryon_sessions?select=*&order=session_start_time.desc&limit=500`,
               {
                 headers: {
                   apikey: supabaseKey,
@@ -324,13 +275,44 @@ export default function AnalyticsPage() {
               }
             );
             if (sessionsRes.ok) {
-              const allData = await sessionsRes.json();
-              console.log(`[Analytics] Table ${tableName} exists with ${allData.length} total records`);
+              const fetchedData = await sessionsRes.json();
+              const byShop = fetchedData.filter((r) => r.shop_domain === shopDomain || r.user_id === userId || (!r.shop_domain && !r.user_id));
+              if (byShop.length > 0) {
+                sessionsData = byShop;
+                console.log(`[Analytics] Found ${sessionsData.length} sessions in tryon_sessions (fallback)`);
+              } else if (fetchedData.length > 0) {
+                sessionsData = fetchedData;
+                console.log(`[Analytics] Using all ${fetchedData.length} from tryon_sessions (no shop filter)`);
+              }
+            }
+          } catch (err) {
+            console.warn(`[Analytics] Error querying tryon_sessions:`, err);
+          }
+        }
+      }
+
+      // Último fallback: buscar session_analytics sem filtros (pode retornar 0 por RLS)
+      if (sessionsData.length === 0) {
+        console.log('[Analytics] No sessions from API or filtered Supabase, trying unfiltered session_analytics...');
+        try {
+          const sessionsRes = await fetch(
+            `${supabaseUrl}/rest/v1/session_analytics?select=*&order=created_at.desc&limit=100`,
+            {
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+          if (sessionsRes.ok) {
+            const allData = await sessionsRes.json();
+            console.log(`[Analytics] Table session_analytics exists with ${allData.length} total records`);
               
               if (allData.length > 0) {
                 // Mostra amostra dos dados para diagnóstico
                 const sampleRecord = allData[0];
-                console.log(`[Analytics] Sample data from ${tableName}:`, {
+                console.log(`[Analytics] Sample data from session_analytics:`, {
                   firstRecord: sampleRecord,
                   columns: Object.keys(sampleRecord || {}),
                   hasUserId: allData.some(r => r.user_id),
@@ -370,9 +352,8 @@ export default function AnalyticsPage() {
                 });
                 
                 if (matchingData.length > 0) {
-                  console.log(`[Analytics] ✅ Found ${matchingData.length} matching sessions in ${tableName} (without date filter)`);
+                  console.log(`[Analytics] ✅ Found ${matchingData.length} matching sessions in session_analytics (without date filter)`);
                   sessionsData = matchingData;
-                  break;
                 } else if (allData.length > 0) {
                   // Se há dados mas não há correspondência exata, usa todos para análise
                   // Isso permite ver os dados mesmo que shop_domain/user_id não correspondam exatamente
@@ -381,18 +362,17 @@ export default function AnalyticsPage() {
                   console.log(`[Analytics] Debug: searchUserId="${userId}", foundUserIds=${JSON.stringify([...new Set(allData.map(r => String(r.user_id)).filter(Boolean))])}`);
                   console.log(`[Analytics] Debug: searchShopDomain="${shopDomain}", foundShopDomains=${JSON.stringify([...new Set(allData.map(r => r.shop_domain).filter(Boolean))])}`);
                   sessionsData = allData;
-                  break;
                 } else {
                   console.log(`[Analytics] ⚠️ No exact match found and no data available.`);
                   console.log(`[Analytics] 💡 Dica: Verifique se a edge function está salvando shop_domain corretamente.`);
                   console.log(`[Analytics] 💡 Execute o SQL: supabase_check_session_data.sql para verificar os dados salvos.`);
                 }
               } else {
-                console.log(`[Analytics] Table ${tableName} exists but is empty`);
+                console.log(`[Analytics] Table session_analytics exists but is empty`);
               }
             } else {
               const errorText = await sessionsRes.text().catch(() => '');
-              console.log(`[Analytics] Cannot access ${tableName}:`, sessionsRes.status, sessionsRes.statusText, errorText);
+              console.log(`[Analytics] Cannot access session_analytics:`, sessionsRes.status, sessionsRes.statusText, errorText);
             }
           } catch (err) {
             console.warn(`[Analytics] Error accessing ${tableName}:`, err);

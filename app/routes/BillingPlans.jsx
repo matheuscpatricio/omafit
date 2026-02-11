@@ -127,37 +127,46 @@ export default function BillingPlans({
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (() => {
                   const startUrl = buildBillingStartGetUrl?.(planKey);
-                  return startUrl ? (
-                  <a
-                    href={startUrl}
-                    target="_top"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: "inline-block",
-                      appearance: "none",
-                      background: "var(--p-color-bg-fill-brand, #008060)",
-                      color: "var(--p-color-text-on-fill, #fff)",
-                      border: "none",
-                      borderRadius: "var(--p-border-radius-200, 8px)",
-                      padding: "10px 20px",
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      textDecoration: "none",
-                    }}
-                  >
-                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                  </a>
-                  ) : null;
-                })() ?? (
-                  <Button
-                    variant="primary"
-                    loading={isLoading}
-                    onClick={() => onSelectPlan(planKey)}
-                  >
-                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                  </Button>
-                )}
+                  const buttonLabel = hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan");
+                  if (startUrl) {
+                    return (
+                      <form
+                        method="get"
+                        action={startUrl}
+                        target="_top"
+                        style={{ display: "inline-block" }}
+                      >
+                        <button
+                          type="submit"
+                          style={{
+                            display: "inline-block",
+                            appearance: "none",
+                            background: "var(--p-color-bg-fill-brand, #008060)",
+                            color: "var(--p-color-text-on-fill, #fff)",
+                            border: "none",
+                            borderRadius: "var(--p-border-radius-200, 8px)",
+                            padding: "10px 20px",
+                            fontSize: "14px",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            textDecoration: "none",
+                          }}
+                        >
+                          {buttonLabel}
+                        </button>
+                      </form>
+                    );
+                  }
+                  return (
+                    <Button
+                      variant="primary"
+                      loading={isLoading}
+                      onClick={() => onSelectPlan(planKey)}
+                    >
+                      {buttonLabel}
+                    </Button>
+                  );
+                })()}
               </BlockStack>
             </Card>
           );

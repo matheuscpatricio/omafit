@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams, useNavigate, useMatches } from 'react-router-dom';
 import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
 import BillingPlans from './BillingPlans';
 import { UsageIndicator } from './UsageIndicator';
@@ -9,8 +9,13 @@ import { useAppI18n } from '../contexts/AppI18n';
 export default function BillingPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const matches = useMatches();
   const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
+  const appUrlFromLayout = useMemo(() => {
+    const m = matches.find((match) => match?.data && "appUrl" in (match.data || {}));
+    return (m?.data?.appUrl ?? "") || (typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "");
+  }, [matches]);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
 
@@ -84,7 +89,7 @@ export default function BillingPage() {
   const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
 
   function buildBillingFormUrl() {
-    const appUrl = typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "";
+    const appUrl = appUrlFromLayout || (typeof window !== "undefined" ? window.location?.origin : "");
     if (!appUrl || !shopDomain) return "";
     const qs = new URLSearchParams();
     qs.set("redirect", "1");
@@ -97,7 +102,7 @@ export default function BillingPage() {
   }
 
   function buildBillingStartGetUrl(planKey) {
-    const appUrl = typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "";
+    const appUrl = appUrlFromLayout || (typeof window !== "undefined" ? window.location?.origin : "");
     if (!appUrl || !shopDomain) return "";
     const qs = new URLSearchParams();
     qs.set("plan", planKey);

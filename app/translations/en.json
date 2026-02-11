@@ -212,6 +212,9 @@
     "usageOverLimit": "You have exceeded the included limit",
     "usageOverLimitNote": "Extra images will be charged automatically according to your plan.",
     "usageNearLimit": "You are close to the limit",
-    "usageNearLimitNote": "Consider upgrading your plan if you need more images."
+    "usageNearLimitNote": "Consider upgrading your plan if you need more images.",
+    "needToChangePlan": "Need to change plan?",
+    "clickButtonBelow": "Click the button below",
+    "wantToChangePlan": "I want to change my plan"
   }
 }

@@ -1,10 +1,10 @@
 {
   "nav": {
-    "home": "Home",
-    "billing": "Billing",
+    "home": "Início",
+    "billing": "Plano",
     "widget": "Widget",
     "sizeChart": "Tabelas de Medidas",
-    "analytics": "Analytics"
+    "analytics": "Dados"
   },
   "common": {
     "dashboard": "Dashboard",
@@ -61,7 +61,7 @@
     "accountInfo": "Informações da Conta",
     "store": "Loja",
     "currentPlan": "Plano Atual",
-    "billingStatus": "Status de Billing",
+    "billingStatus": "Status do Plano",
     "noPlan": "Sem Plano",
     "pending": "Pendente",
     "cancelled": "Cancelado",
@@ -71,7 +71,7 @@
     "of": "de",
     "includedInPlan": "incluídas no plano",
     "extraImages": "Imagens extras este mês",
-    "goToBilling": "Ir para Billing",
+    "goToBilling": "Ir para Plano",
     "goToWidget": "Configurar widget",
     "goToSizeCharts": "Tabelas de medidas",
     "monthlyUsage": "Uso do Mês",
@@ -88,7 +88,7 @@
     "choosePlan": "Escolher Plano",
     "configureWidget": "Configurar Widget",
     "configureSizeCharts": "Configurar Tabelas de Medidas",
-    "viewAnalytics": "Ver Analytics",
+    "viewAnalytics": "Ver Dados",
     "aboutOmafit": "Sobre o Omafit",
     "aboutDescription": "O Omafit é um provador virtual alimentado por IA que permite que seus clientes experimentem suas roupas virtualmente, aumentando a confiança na compra e reduzindo devoluções.",
     "learnMore": "Saiba Mais",
@@ -138,11 +138,11 @@
     "errorSave": "Erro ao salvar tabelas."
   },
   "analytics": {
-    "title": "Analytics",
+    "title": "Dados",
     "subtitle": "Imagens processadas e estatísticas por gênero",
-    "loadingAnalytics": "Carregando analytics...",
+    "loadingAnalytics": "Carregando dados...",
     "errorShopDomain": "Shop domain não encontrado. Verifique se está acessando pelo Shopify Admin.",
-    "errorLoad": "Erro ao carregar analytics.",
+    "errorLoad": "Erro ao carregar dados.",
     "ordersError": "Não foi possível carregar pedidos e devoluções. Confirme se a app tem a permissão \"Ler pedidos\" (read_orders) e que a loja aceitou as permissões.",
     "analysisPeriod": "Período de Análise",
     "last7Days": "Últimos 7 dias",
@@ -181,7 +181,7 @@
     "fit2": "Solta"
   },
   "billing": {
-    "title": "Billing",
+    "title": "Plano",
     "loading": "Carregando...",
     "plansTitle": "Planos Omafit",
     "plansSubtitle": "Escolha o plano ideal para sua loja. A cobrança é feita via Shopify.",
@@ -212,6 +212,9 @@
     "usageOverLimit": "Você ultrapassou o limite incluído",
     "usageOverLimitNote": "Imagens adicionais serão cobradas automaticamente de acordo com seu plano.",
     "usageNearLimit": "Você está próximo do limite",
-    "usageNearLimitNote": "Considere fazer upgrade do seu plano se precisar de mais imagens."
+    "usageNearLimitNote": "Considere fazer upgrade do seu plano se precisar de mais imagens.",
+    "needToChangePlan": "Precisa trocar de plano?",
+    "clickButtonBelow": "Clique no botão abaixo",
+    "wantToChangePlan": "Quero alterar meu plano"
   }
 }

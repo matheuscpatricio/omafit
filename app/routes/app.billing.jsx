@@ -146,10 +146,10 @@ export default function BillingPage() {
           <Card>
             <BlockStack gap="400">
               <Text as="h2" variant="headingMd">
-                {t('billing.managePlan') || 'Gerenciar Plano'}
+                {t('billing.needToChangePlan')}
               </Text>
               <Text as="p" tone="subdued">
-                {t('billing.managePlanDescription') || 'Altere seu plano de assinatura diretamente na Shopify Admin.'}
+                {t('billing.clickButtonBelow')}
               </Text>
               <Button
                 variant="primary"
@@ -168,7 +168,7 @@ export default function BillingPage() {
                   }
                 }}
               >
-                {t('billing.changePlan') || 'Quero alterar meu plano'}
+                {t('billing.wantToChangePlan')}
               </Button>
             </BlockStack>
           </Card>

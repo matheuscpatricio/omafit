@@ -96,6 +96,20 @@ export default function BillingPage() {
     return `${appUrl}/api/billing/start?${qs.toString()}`;
   }
 
+  function buildBillingStartGetUrl(planKey) {
+    const appUrl = typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "";
+    if (!appUrl || !shopDomain) return "";
+    const qs = new URLSearchParams();
+    qs.set("plan", planKey);
+    qs.set("redirect", "1");
+    qs.set("shop", shopDomain);
+    qs.set("host", searchParams.get("host") || "");
+    qs.set("embedded", "1");
+    const idToken = searchParams.get("id_token");
+    if (idToken) qs.set("id_token", idToken);
+    return `${appUrl}/api/billing/start?${qs.toString()}`;
+  }
+
   useEffect(() => {
     const err = searchParams.get("error");
     if (err) setBillingError(decodeURIComponent(err));
@@ -213,6 +227,7 @@ export default function BillingPage() {
             onSelectPlan={handleSelectPlan ?? (() => {})}
             isLoading={isSubmitting}
             billingFormUrl={buildBillingFormUrl()}
+            buildBillingStartGetUrl={buildBillingStartGetUrl}
           />
         </Layout.Section>
       </Layout>

@@ -17,6 +17,7 @@ export default function BillingPlans({
   onSelectPlan = noop,
   isLoading,
   billingFormUrl = "",
+  buildBillingStartGetUrl,
 }) {
   const { t } = useAppI18n();
   const hasActivePlan = Boolean((currentPlan || "").trim() || billingStatus === "active");
@@ -124,19 +125,31 @@ export default function BillingPlans({
                   </Button>
                 ) : isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
-                ) : billingFormUrl ? (
-                  <form
-                    method="post"
-                    action={billingFormUrl}
+                ) : (() => {
+                  const startUrl = buildBillingStartGetUrl?.(planKey);
+                  return startUrl ? (
+                  <a
+                    href={startUrl}
                     target="_top"
-                    style={{ display: "inline-block" }}
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-block",
+                      appearance: "none",
+                      background: "var(--p-color-bg-fill-brand, #008060)",
+                      color: "var(--p-color-text-on-fill, #fff)",
+                      border: "none",
+                      borderRadius: "var(--p-border-radius-200, 8px)",
+                      padding: "10px 20px",
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      textDecoration: "none",
+                    }}
                   >
-                    <input type="hidden" name="plan" value={planKey} />
-                    <Button variant="primary" submit>
-                      {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
-                    </Button>
-                  </form>
-                ) : (
+                    {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
+                  </a>
+                  ) : null;
+                })() ?? (
                   <Button
                     variant="primary"
                     loading={isLoading}

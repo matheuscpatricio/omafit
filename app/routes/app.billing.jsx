@@ -105,11 +105,17 @@ export default function BillingPage() {
     return `${appUrl}/api/billing/start?${qs.toString()}`;
   }
 
-  // Rota de PÁGINA (não API) para o form target="_top" fazer navegação e receber 302
+  // Rota de PÁGINA (não API) para o link target="_top" fazer navegação e receber 302
   function buildBillingStartGetUrl(planKey) {
-    if (!shopDomain) return "";
+    if (!shopDomain) {
+      console.warn("[Billing] buildBillingStartGetUrl: shopDomain missing");
+      return "";
+    }
     const base = appUrl || (typeof window !== "undefined" ? window.location?.origin : "");
-    if (!base) return "";
+    if (!base) {
+      console.warn("[Billing] buildBillingStartGetUrl: appUrl missing, base:", base);
+      return "";
+    }
     const qs = new URLSearchParams();
     qs.set("plan", planKey);
     qs.set("shop", shopDomain);
@@ -117,7 +123,9 @@ export default function BillingPage() {
     qs.set("embedded", "1");
     const idToken = searchParams.get("id_token");
     if (idToken) qs.set("id_token", idToken);
-    return `${base}/app/billing/start?${qs.toString()}`;
+    const finalUrl = `${base}/app/billing/start?${qs.toString()}`;
+    console.log("[Billing] buildBillingStartGetUrl:", { planKey, base, shopDomain, finalUrl });
+    return finalUrl;
   }
 
   useEffect(() => {

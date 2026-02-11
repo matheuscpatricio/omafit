@@ -16,7 +16,10 @@ import {
 export async function loader({ request }) {
   const url = new URL(request.url);
   const plan = (url.searchParams.get("plan") || "").toLowerCase();
+  console.log("[app.billing.start] Loader called:", { plan, url: url.toString() });
+  
   if (!["basic", "growth", "pro"].includes(plan)) {
+    console.warn("[app.billing.start] Invalid plan:", plan);
     const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
     const errUrl = new URL("/app/billing", appUrl || url.origin);
     errUrl.searchParams.set("error", plan === "enterprise" ? "Enterprise: contact us." : "Invalid plan");
@@ -27,15 +30,23 @@ export async function loader({ request }) {
   }
 
   try {
+    console.log("[app.billing.start] Authenticating...");
     const { admin, session } = await authenticate.admin(request);
+    console.log("[app.billing.start] Authenticated, creating subscription for plan:", plan);
     const { confirmationUrl } = await createSubscriptionAndGetConfirmationUrl(
       { admin, session },
       plan
     );
-    return buildExitIframeRedirect(request, confirmationUrl, session.shop);
+    console.log("[app.billing.start] Got confirmationUrl, redirecting to exit-iframe:", confirmationUrl);
+    const redirectResponse = buildExitIframeRedirect(request, confirmationUrl, session.shop);
+    console.log("[app.billing.start] Redirect response:", redirectResponse.status, redirectResponse.headers.get("Location"));
+    return redirectResponse;
   } catch (err) {
-    if (err instanceof Response) return err;
-    console.error("[app.billing.start]", err);
+    if (err instanceof Response) {
+      console.error("[app.billing.start] Response error:", err.status, err.statusText);
+      return err;
+    }
+    console.error("[app.billing.start] Error:", err);
     const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
     const errUrl = new URL("/app/billing", appUrl || url.origin);
     errUrl.searchParams.set("error", (err && err.message) || "Failed to start subscription");

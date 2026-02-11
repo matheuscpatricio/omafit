@@ -130,31 +130,37 @@ export default function BillingPlans({
                   const buttonLabel = hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan");
                   if (startUrl) {
                     return (
-                      <form
-                        method="get"
-                        action={startUrl}
+                      <a
+                        href={startUrl}
                         target="_top"
-                        style={{ display: "inline-block" }}
+                        rel="noopener noreferrer"
+                        style={{
+                          display: "inline-block",
+                          appearance: "none",
+                          background: "var(--p-color-bg-fill-brand, #008060)",
+                          color: "var(--p-color-text-on-fill, #fff)",
+                          border: "none",
+                          borderRadius: "var(--p-border-radius-200, 8px)",
+                          padding: "10px 20px",
+                          fontSize: "14px",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          textDecoration: "none",
+                          textAlign: "center",
+                        }}
+                        onClick={(e) => {
+                          // Log para debug
+                          console.log("[BillingPlans] Clicked plan button:", { planKey, startUrl });
+                          // Se target="_top" não funcionar, força via JavaScript
+                          if (typeof window !== "undefined" && window.top && window.top !== window.self) {
+                            e.preventDefault();
+                            console.log("[BillingPlans] Forcing top navigation to:", startUrl);
+                            window.top.location.href = startUrl;
+                          }
+                        }}
                       >
-                        <button
-                          type="submit"
-                          style={{
-                            display: "inline-block",
-                            appearance: "none",
-                            background: "var(--p-color-bg-fill-brand, #008060)",
-                            color: "var(--p-color-text-on-fill, #fff)",
-                            border: "none",
-                            borderRadius: "var(--p-border-radius-200, 8px)",
-                            padding: "10px 20px",
-                            fontSize: "14px",
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            textDecoration: "none",
-                          }}
-                        >
-                          {buttonLabel}
-                        </button>
-                      </form>
+                        {buttonLabel}
+                      </a>
                     );
                   }
                   return (

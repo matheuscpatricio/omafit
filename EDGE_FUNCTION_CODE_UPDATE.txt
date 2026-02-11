@@ -1,0 +1,59 @@
+================================================================================
+CÓDIGO ATUALIZADO PARA A EDGE FUNCTION `tryon`
+================================================================================
+
+Localize esta seção no código da edge function (aproximadamente linha 200-210):
+
+    await supabaseClient
+      .from('session_analytics')
+      .insert([
+        {
+          tryon_session_id: session.id,
+          user_id: effectiveUserId,
+          duration_seconds: 0,
+          completed: false,
+          shared: false,
+          processing_time_seconds: 0,
+          images_processed: 1,
+        }
+      ]);
+
+SUBSTITUA POR:
+
+    // Preparar dados completos para session_analytics
+    const analyticsData: any = {
+      tryon_session_id: session.id,
+      user_id: effectiveUserId,
+      shop_domain: isShopifyWidget ? widgetKeyData.shop_domain : null,
+      product_id: product_id || null,
+      product_name: product_name || null,
+      collection_handle: user_measurements?.collection_handle || null,
+      gender: user_measurements?.gender || null,
+      height: user_measurements?.height || null,
+      weight: user_measurements?.weight || null,
+      recommended_size: user_measurements?.recommended_size || null,
+      body_type_index: user_measurements?.body_type_index ?? null,
+      fit_preference_index: user_measurements?.fit_preference_index ?? null,
+      user_measurements: user_measurements ? JSON.stringify(user_measurements) : null,
+      duration_seconds: 0,
+      completed: false,
+      shared: false,
+      processing_time_seconds: 0,
+      images_processed: 1,
+    };
+
+    await supabaseClient
+      .from('session_analytics')
+      .insert([analyticsData]);
+
+================================================================================
+IMPORTANTE:
+================================================================================
+
+1. Execute o SQL `supabase_create_session_analytics.sql` no Supabase primeiro
+   para garantir que todas as colunas existem.
+
+2. Após atualizar a edge function, faça deploy:
+   supabase functions deploy tryon
+
+3. Teste o widget e verifique se os dados aparecem na página de Analytics.

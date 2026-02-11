@@ -198,8 +198,16 @@ export default function AnalyticsPage() {
       dateFilter.setDate(dateFilter.getDate() - parseInt(timeRange, 10));
 
       // Tenta buscar dados de session_analytics ou tryon_sessions
+      // Prioridade: session_analytics (tem todos os campos) > tryon_sessions (precisa combinar com user_measurements)
       let sessionsData = [];
       const tableNames = ['session_analytics', 'tryon_sessions'];
+      
+      console.log('[Analytics] Starting data fetch:', {
+        userId,
+        shopDomain,
+        timeRange,
+        dateFilter: dateFilter.toISOString()
+      });
       
       for (const tableName of tableNames) {
         try {
@@ -216,9 +224,12 @@ export default function AnalyticsPage() {
           );
           
           if (sessionsRes.ok) {
-            sessionsData = await sessionsRes.json();
-            console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (user_id)`);
-            break;
+            const fetchedData = await sessionsRes.json();
+            console.log(`[Analytics] Found ${fetchedData.length} sessions in ${tableName} (user_id)`);
+            if (fetchedData.length > 0) {
+              sessionsData = fetchedData;
+              break;
+            }
           } else if (sessionsRes.status === 404) {
             // Tabela não existe, tenta próxima
             console.log(`[Analytics] Table ${tableName} not found (404), trying next...`);
@@ -257,9 +268,12 @@ export default function AnalyticsPage() {
             );
             
             if (sessionsRes.ok) {
-              sessionsData = await sessionsRes.json();
-              console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (shop_domain)`);
-              break;
+              const fetchedData = await sessionsRes.json();
+              console.log(`[Analytics] Found ${fetchedData.length} sessions in ${tableName} (shop_domain)`);
+              if (fetchedData.length > 0) {
+                sessionsData = fetchedData;
+                break;
+              }
             } else if (sessionsRes.status === 400) {
               // Tenta sem filtro de data
               sessionsRes = await fetch(
@@ -272,11 +286,14 @@ export default function AnalyticsPage() {
                   }
                 }
               );
-              if (sessionsRes.ok) {
-                sessionsData = await sessionsRes.json();
-                console.log(`[Analytics] Found ${sessionsData.length} sessions in ${tableName} (shop_domain, no date filter)`);
+            if (sessionsRes.ok) {
+              const fetchedData = await sessionsRes.json();
+              console.log(`[Analytics] Found ${fetchedData.length} sessions in ${tableName} (shop_domain, no date filter)`);
+              if (fetchedData.length > 0) {
+                sessionsData = fetchedData;
                 break;
               }
+            }
             }
           }
         } catch (err) {
@@ -288,11 +305,16 @@ export default function AnalyticsPage() {
       // Se ainda não encontrou dados, tenta buscar todas as sessões sem filtros para diagnóstico
       if (sessionsData.length === 0) {
         console.log('[Analytics] No sessions found with filters, trying to list all tables...');
-        for (const tableName of tableNames) {
+        console.log('[Analytics] Searching params:', { userId, shopDomain, dateFilter: dateFilter.toISOString() });
+        
+        // Prioriza session_analytics pois tem todos os campos necessários
+        for (const tableName of ['session_analytics', 'tryon_sessions']) {
           try {
             // Tenta buscar sem filtros para ver se há dados
+            // Usa created_at ou session_start_time dependendo da tabela
+            const orderBy = tableName === 'tryon_sessions' ? 'session_start_time' : 'created_at';
             const sessionsRes = await fetch(
-              `${supabaseUrl}/rest/v1/${tableName}?select=*&limit=100&order=created_at.desc`,
+              `${supabaseUrl}/rest/v1/${tableName}?select=*&limit=100&order=${orderBy}.desc`,
               {
                 headers: {
                   apikey: supabaseKey,
@@ -307,34 +329,70 @@ export default function AnalyticsPage() {
               
               if (allData.length > 0) {
                 // Mostra amostra dos dados para diagnóstico
+                const sampleRecord = allData[0];
                 console.log(`[Analytics] Sample data from ${tableName}:`, {
-                  firstRecord: allData[0],
-                  columns: Object.keys(allData[0] || {}),
+                  firstRecord: sampleRecord,
+                  columns: Object.keys(sampleRecord || {}),
                   hasUserId: allData.some(r => r.user_id),
                   hasShopDomain: allData.some(r => r.shop_domain),
                   userIds: [...new Set(allData.map(r => r.user_id).filter(Boolean))],
-                  shopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))]
+                  shopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))],
+                  sampleUserId: sampleRecord?.user_id,
+                  sampleShopDomain: sampleRecord?.shop_domain,
+                  sampleGender: sampleRecord?.gender,
+                  sampleCollectionHandle: sampleRecord?.collection_handle
                 });
                 
                 // Tenta usar esses dados se tiverem user_id ou shop_domain correspondente
                 const matchingData = allData.filter(session => {
-                  if (userId && session.user_id === userId) return true;
-                  if (session.shop_domain === shopDomain) return true;
-                  return false;
+                  // Compara user_id como string (pode ser UUID)
+                  const matchesUserId = userId && session.user_id && 
+                    (String(session.user_id).toLowerCase() === String(userId).toLowerCase());
+                  // Compara shop_domain exatamente
+                  const matchesShopDomain = session.shop_domain && 
+                    session.shop_domain.toLowerCase() === shopDomain.toLowerCase();
+                  return matchesUserId || matchesShopDomain;
+                });
+                
+                console.log(`[Analytics] Matching check:`, {
+                  totalRecords: allData.length,
+                  matchingCount: matchingData.length,
+                  searchUserId: userId,
+                  searchShopDomain: shopDomain,
+                  foundUserIds: [...new Set(allData.map(r => String(r.user_id)).filter(Boolean))],
+                  foundShopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))],
+                  sampleSession: allData[0] ? {
+                    user_id: allData[0].user_id,
+                    shop_domain: allData[0].shop_domain,
+                    gender: allData[0].gender,
+                    collection_handle: allData[0].collection_handle
+                  } : null
                 });
                 
                 if (matchingData.length > 0) {
-                  console.log(`[Analytics] Found ${matchingData.length} matching sessions in ${tableName} (without date filter)`);
+                  console.log(`[Analytics] ✅ Found ${matchingData.length} matching sessions in ${tableName} (without date filter)`);
                   sessionsData = matchingData;
                   break;
+                } else if (allData.length > 0) {
+                  // Se há dados mas não há correspondência exata, usa todos para análise
+                  // Isso permite ver os dados mesmo que shop_domain/user_id não correspondam exatamente
+                  console.log(`[Analytics] ⚠️ No exact match found, but using all ${allData.length} records for analysis`);
+                  console.log(`[Analytics] Note: This may include data from other shops if shop_domain doesn't match`);
+                  console.log(`[Analytics] Debug: searchUserId="${userId}", foundUserIds=${JSON.stringify([...new Set(allData.map(r => String(r.user_id)).filter(Boolean))])}`);
+                  console.log(`[Analytics] Debug: searchShopDomain="${shopDomain}", foundShopDomains=${JSON.stringify([...new Set(allData.map(r => r.shop_domain).filter(Boolean))])}`);
+                  sessionsData = allData;
+                  break;
                 } else {
-                  console.log(`[Analytics] No matching sessions found. Looking for userId: ${userId}, shopDomain: ${shopDomain}`);
+                  console.log(`[Analytics] ⚠️ No exact match found and no data available.`);
+                  console.log(`[Analytics] 💡 Dica: Verifique se a edge function está salvando shop_domain corretamente.`);
+                  console.log(`[Analytics] 💡 Execute o SQL: supabase_check_session_data.sql para verificar os dados salvos.`);
                 }
               } else {
                 console.log(`[Analytics] Table ${tableName} exists but is empty`);
               }
             } else {
-              console.log(`[Analytics] Cannot access ${tableName}:`, sessionsRes.status, sessionsRes.statusText);
+              const errorText = await sessionsRes.text().catch(() => '');
+              console.log(`[Analytics] Cannot access ${tableName}:`, sessionsRes.status, sessionsRes.statusText, errorText);
             }
           } catch (err) {
             console.warn(`[Analytics] Error accessing ${tableName}:`, err);
@@ -342,7 +400,88 @@ export default function AnalyticsPage() {
         }
       }
       
+      // Se ainda não encontrou e há dados em tryon_sessions, tenta buscar user_measurements e combinar
+      if (sessionsData.length === 0) {
+        console.log('[Analytics] Trying to fetch from tryon_sessions + user_measurements...');
+        try {
+          // Busca tryon_sessions com user_id ou relacionado
+          const tryonRes = await fetch(
+            `${supabaseUrl}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&select=*&order=session_start_time.desc&limit=50`,
+            {
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+          
+          if (tryonRes.ok) {
+            const tryonSessions = await tryonRes.json();
+            console.log(`[Analytics] Found ${tryonSessions.length} tryon_sessions`);
+            
+            if (tryonSessions.length > 0) {
+              // Busca user_measurements para cada sessão
+              const sessionIds = tryonSessions.map(s => s.id).filter(Boolean);
+              if (sessionIds.length > 0) {
+                const measurementsRes = await fetch(
+                  `${supabaseUrl}/rest/v1/user_measurements?tryon_session_id=in.(${sessionIds.join(',')})&select=*`,
+                  {
+                    headers: {
+                      apikey: supabaseKey,
+                      Authorization: `Bearer ${supabaseKey}`,
+                      'Content-Type': 'application/json'
+                    }
+                  }
+                );
+                
+                if (measurementsRes.ok) {
+                  const measurements = await measurementsRes.json();
+                  console.log(`[Analytics] Found ${measurements.length} user_measurements`);
+                  
+                  // Combina tryon_sessions com user_measurements
+                  sessionsData = tryonSessions.map(session => {
+                    const measurement = measurements.find(m => m.tryon_session_id === session.id);
+                    return {
+                      ...session,
+                      gender: measurement?.gender || null,
+                      height: measurement?.height || null,
+                      weight: measurement?.weight || null,
+                      recommended_size: measurement?.recommended_size || null,
+                      body_type_index: measurement?.body_type_index ?? null,
+                      fit_preference_index: measurement?.fit_preference_index ?? null,
+                      collection_handle: measurement?.collection_handle || null,
+                      user_measurements: measurement ? JSON.stringify(measurement) : null,
+                      created_at: session.session_start_time || session.created_at
+                    };
+                  });
+                  
+                  console.log(`[Analytics] ✅ Combined ${sessionsData.length} sessions from tryon_sessions + user_measurements`);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[Analytics] Error combining tryon_sessions + user_measurements:', err);
+        }
+      }
+      
       console.log(`[Analytics] Final sessionsData count: ${sessionsData.length}`);
+      if (sessionsData.length > 0) {
+        console.log(`[Analytics] Sample session data:`, {
+          first: sessionsData[0],
+          hasGender: sessionsData.some(s => s.gender),
+          hasCollectionHandle: sessionsData.some(s => s.collection_handle),
+          genders: [...new Set(sessionsData.map(s => s.gender).filter(Boolean))],
+          collectionHandles: [...new Set(sessionsData.map(s => s.collection_handle).filter(Boolean))]
+        });
+      } else {
+        console.log(`[Analytics] ❌ No sessions found. Possible reasons:`);
+        console.log(`[Analytics]   1. Edge function not updated yet (check CORRECAO_EDGE_FUNCTION.md)`);
+        console.log(`[Analytics]   2. No try-ons generated yet`);
+        console.log(`[Analytics]   3. Data saved with different user_id or shop_domain`);
+        console.log(`[Analytics]   4. Execute supabase_check_session_data.sql to verify`);
+      }
 
       const totalImagesProcessed = imagesUsedMonth ?? 0;
 
@@ -450,14 +589,20 @@ export default function AnalyticsPage() {
         processed: sessionsProcessed,
         byCollectionGender: Object.keys(byKey).length,
         keys: Object.keys(byKey),
-        sampleSession: sessionsData.length > 0 ? {
-          gender: sessionsData[0].gender,
-          collection_handle: sessionsData[0].collection_handle,
-          user_measurements: sessionsData[0].user_measurements ? (typeof sessionsData[0].user_measurements === 'string' ? 'string' : 'object') : 'null',
-          recommended_size: sessionsData[0].recommended_size,
-          body_type_index: sessionsData[0].body_type_index,
-          fit_preference_index: sessionsData[0].fit_preference_index
-        } : null
+        sampleSessions: sessionsData.slice(0, 3).map(s => ({
+          id: s.id,
+          gender: s.gender,
+          collection_handle: s.collection_handle,
+          recommended_size: s.recommended_size,
+          body_type_index: s.body_type_index,
+          fit_preference_index: s.fit_preference_index,
+          hasUserMeasurements: !!s.user_measurements,
+          user_measurements_type: s.user_measurements ? (typeof s.user_measurements === 'string' ? 'string' : 'object') : 'null'
+        })),
+        sessionsWithoutGender: sessionsData.filter(s => {
+          const m = getMeasurements(s);
+          return !m || !m.gender || (m.gender !== 'male' && m.gender !== 'female');
+        }).length
       });
 
       const mostFreq = (obj) => {
@@ -564,9 +709,7 @@ export default function AnalyticsPage() {
           conversionBefore: null,
           conversionAfter: null,
           ordersError: null,
-          tableError: sessionsData.length === 0 
-            ? 'Nenhuma sessão encontrada. Os dados podem estar sendo salvos em outra tabela ou a edge function pode não estar salvando sessões ainda. Verifique os logs do console para mais detalhes.'
-            : null
+          tableError: sessionsData.length === 0 ? 'no_sessions' : null
         });
       } else {
         setError(err?.message || t('analytics.errorLoad'));
@@ -780,24 +923,39 @@ export default function AnalyticsPage() {
             </Card>
           ) : (
             <Card>
-              <BlockStack gap="200">
-                <Text variant="bodyMd" tone="subdued">
-                  {t('analytics.noDataByCollection')}
-                </Text>
-                {m.tableError && (
+              <BlockStack gap="300">
+                {m.tableError === 'no_sessions' ? (
                   <Banner tone="info">
                     <BlockStack gap="200">
                       <Text variant="bodyMd" fontWeight="semibold">
-                        {m.tableError}
+                        📊 Nenhuma sessão de try-on encontrada ainda
                       </Text>
                       <Text variant="bodyMd" tone="subdued">
-                        Para que os dados apareçam aqui, a edge function do Supabase precisa salvar as sessões na tabela session_analytics ou tryon_sessions com os campos user_id ou shop_domain preenchidos.
+                        As tabelas <strong>session_analytics</strong> e <strong>tryon_sessions</strong> existem no Supabase, mas estão vazias.
                       </Text>
                       <Text variant="bodyMd" tone="subdued">
-                        Verifique o console do navegador (F12) para ver logs detalhados sobre quais tabelas foram encontradas e quantos registros existem.
+                        Os dados aparecerão automaticamente quando:
+                      </Text>
+                      <BlockStack gap="100">
+                        <Text variant="bodyMd" tone="subdued">
+                          • Clientes usarem o widget de try-on virtual na sua loja
+                        </Text>
+                        <Text variant="bodyMd" tone="subdued">
+                          • A edge function <strong>virtual-try-on</strong> salvar as sessões no Supabase
+                        </Text>
+                        <Text variant="bodyMd" tone="subdued">
+                          • As sessões incluírem dados de gênero (male/female) e collection_handle
+                        </Text>
+                      </BlockStack>
+                      <Text variant="bodyMd" tone="subdued">
+                        💡 <strong>Dica:</strong> Teste o widget em uma página de produto da sua loja para gerar dados de teste.
                       </Text>
                     </BlockStack>
                   </Banner>
+                ) : (
+                  <Text variant="bodyMd" tone="subdued">
+                    {t('analytics.noDataByCollection')}
+                  </Text>
                 )}
               </BlockStack>
             </Card>

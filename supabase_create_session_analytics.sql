@@ -8,6 +8,7 @@
 -- 1) Criar tabela session_analytics se não existir
 CREATE TABLE IF NOT EXISTS session_analytics (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  tryon_session_id UUID,
   user_id UUID,
   shop_domain TEXT,
   public_id TEXT,
@@ -21,6 +22,11 @@ CREATE TABLE IF NOT EXISTS session_analytics (
   body_type_index INTEGER,
   fit_preference_index INTEGER,
   user_measurements JSONB,
+  duration_seconds INTEGER DEFAULT 0,
+  completed BOOLEAN DEFAULT false,
+  shared BOOLEAN DEFAULT false,
+  processing_time_seconds INTEGER DEFAULT 0,
+  images_processed INTEGER DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -176,6 +182,62 @@ BEGIN
   ) THEN
     ALTER TABLE session_analytics ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
     RAISE NOTICE 'Coluna updated_at adicionada.';
+  END IF;
+  
+  -- Adicionar tryon_session_id se não existir
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'session_analytics' 
+    AND column_name = 'tryon_session_id'
+  ) THEN
+    ALTER TABLE session_analytics ADD COLUMN tryon_session_id UUID;
+    RAISE NOTICE 'Coluna tryon_session_id adicionada.';
+  END IF;
+  
+  -- Adicionar campos de controle se não existirem
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'session_analytics' 
+    AND column_name = 'duration_seconds'
+  ) THEN
+    ALTER TABLE session_analytics ADD COLUMN duration_seconds INTEGER DEFAULT 0;
+    RAISE NOTICE 'Coluna duration_seconds adicionada.';
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'session_analytics' 
+    AND column_name = 'completed'
+  ) THEN
+    ALTER TABLE session_analytics ADD COLUMN completed BOOLEAN DEFAULT false;
+    RAISE NOTICE 'Coluna completed adicionada.';
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'session_analytics' 
+    AND column_name = 'shared'
+  ) THEN
+    ALTER TABLE session_analytics ADD COLUMN shared BOOLEAN DEFAULT false;
+    RAISE NOTICE 'Coluna shared adicionada.';
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'session_analytics' 
+    AND column_name = 'processing_time_seconds'
+  ) THEN
+    ALTER TABLE session_analytics ADD COLUMN processing_time_seconds INTEGER DEFAULT 0;
+    RAISE NOTICE 'Coluna processing_time_seconds adicionada.';
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'session_analytics' 
+    AND column_name = 'images_processed'
+  ) THEN
+    ALTER TABLE session_analytics ADD COLUMN images_processed INTEGER DEFAULT 1;
+    RAISE NOTICE 'Coluna images_processed adicionada.';
   END IF;
 END $$;
 

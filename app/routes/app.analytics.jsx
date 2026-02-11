@@ -126,6 +126,14 @@ export default function AnalyticsPage() {
     female: t('analytics.female')
   }), [t]);
 
+  const supabaseUrl = typeof window !== 'undefined' ? (window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '') : '';
+  const MANNEQUINS_BUCKET = 'Manequins';
+  const getMannequinImageUrl = (bodyTypeIndex, gender) => {
+    if (!supabaseUrl || bodyTypeIndex == null) return null;
+    const base = supabaseUrl.replace(/\/$/, '') + `/storage/v1/object/public/${encodeURIComponent(MANNEQUINS_BUCKET)}`;
+    return `${base}/${Number(bodyTypeIndex)}.png`;
+  };
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('30');
@@ -701,13 +709,30 @@ export default function AnalyticsPage() {
   }
 
   const m = metrics ?? {};
-  const rows = (m.byCollectionGender || []).map((r) => [
-    r.collection,
-    GENDER_LABELS[r.gender] || r.gender,
-    r.mostSize ? r.mostSize.value : '—',
-    r.mostFit != null ? (FIT_PREFERENCE_NAMES[r.mostFit.value] ?? r.mostFit.value) : '—',
-    r.mostBodyType != null ? (BODY_TYPE_NAMES[r.mostBodyType.value] ?? r.mostBodyType.value) : '—'
-  ]);
+  const rows = (m.byCollectionGender || []).map((r) => {
+    const bodyLabel = r.mostBodyType != null ? (BODY_TYPE_NAMES[r.mostBodyType.value] ?? r.mostBodyType.value) : null;
+    const mannequinUrl = bodyLabel != null ? getMannequinImageUrl(r.mostBodyType.value, r.gender) : null;
+    const bodyTypeCell = bodyLabel != null ? (
+      <InlineStack gap="200" blockAlign="center" wrap={false}>
+        {mannequinUrl && (
+          <img
+            src={mannequinUrl}
+            alt=""
+            style={{ width: 40, height: 56, objectFit: 'contain', flexShrink: 0 }}
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+        )}
+        <Text as="span" variant="bodyMd">{bodyLabel}</Text>
+      </InlineStack>
+    ) : '—';
+    return [
+      r.collection,
+      GENDER_LABELS[r.gender] || r.gender,
+      r.mostSize ? r.mostSize.value : '—',
+      r.mostFit != null ? (FIT_PREFERENCE_NAMES[r.mostFit.value] ?? r.mostFit.value) : '—',
+      bodyTypeCell
+    ];
+  });
 
   const timeRangeOptions = [
     { label: t('analytics.last7Days'), value: '7' },

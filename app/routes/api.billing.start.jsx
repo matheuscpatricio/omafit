@@ -37,15 +37,23 @@ function redirectToExitIframe(request, confirmationUrl, shop) {
 
 export async function loader({ request }) {
   if (request.method !== "GET") {
-    return Response.json({ error: "Use GET with ?plan=...&redirect=1" }, { status: 405 });
+    return Response.json({ error: "Use GET with ?plan=..." }, { status: 405 });
   }
   const url = new URL(request.url);
   const plan = url.searchParams.get("plan");
-  const redirect = url.searchParams.get("redirect");
-  if (plan && redirect === "1") {
-    try {
-      const { confirmationUrl, redirect: doRedirect, session } = await getConfirmationUrl(request);
-      const isEmbedded = url.searchParams.get("embedded") === "1";
+  const wantRedirect = url.searchParams.get("redirect") === "1";
+  const isEmbedded = url.searchParams.get("embedded") === "1";
+  
+  if (!plan) {
+    return Response.json({ error: "Missing plan parameter" }, { status: 400 });
+  }
+  
+  try {
+    const { confirmationUrl, redirect: doRedirect, session } = await getConfirmationUrl(request);
+    console.log("[api.billing.start] Got confirmationUrl:", confirmationUrl);
+    
+    // Se quer redirect explícito ou está embedded, retorna 302
+    if (wantRedirect || isEmbedded) {
       if (isEmbedded) {
         return redirectToExitIframe(request, confirmationUrl, session.shop);
       }
@@ -53,22 +61,17 @@ export async function loader({ request }) {
         return doRedirect(confirmationUrl, { target: "_top" });
       }
       return Response.redirect(confirmationUrl, 302);
-    } catch (err) {
-      if (err instanceof Response) return err;
-      console.error("[api.billing.start] loader", err);
-      const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
-      const message = (err && err.message) || "Failed to start subscription";
-      const errUrl = new URL("/app/billing", appUrl || "https://localhost");
-      errUrl.searchParams.set("error", message);
-      const shop = url.searchParams.get("shop");
-      const host = url.searchParams.get("host");
-      if (shop) errUrl.searchParams.set("shop", shop);
-      if (host) errUrl.searchParams.set("host", host);
-      if (appUrl) return Response.redirect(errUrl.toString(), 302);
-      return Response.json({ error: String(message).slice(0, 500) }, { status: 500 });
     }
+    
+    // Caso contrário, retorna JSON com a confirmationUrl para o cliente redirecionar
+    return Response.json({ success: true, confirmationUrl, plan });
+  } catch (err) {
+    if (err instanceof Response) return err;
+    console.error("[api.billing.start] loader", err);
+    return Response.json({ 
+      error: (err && err.message) || "Failed to start subscription" 
+    }, { status: 500 });
   }
-  return Response.json({ error: "Use GET with ?plan=basic|growth|pro&redirect=1" }, { status: 400 });
 }
 
 export const action = async ({ request }) => {

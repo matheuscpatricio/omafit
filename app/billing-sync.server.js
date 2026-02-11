@@ -56,7 +56,12 @@ const PLAN_PRICE_EXTRA = {
  */
 export async function syncBillingFromShopify(admin, shop) {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+  // Prefer service role no servidor: ignora RLS e garante que plan/billing_status sejam gravados.
+  // Se RLS bloquear anon, o plano nunca atualiza na página de billing.
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseKey) {
     console.warn("[Billing Sync] Supabase not configured");
     return null;

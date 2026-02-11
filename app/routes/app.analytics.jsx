@@ -126,12 +126,34 @@ export default function AnalyticsPage() {
     female: t('analytics.female')
   }), [t]);
 
-  const supabaseUrl = typeof window !== 'undefined' ? (window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '') : '';
-  const MANNEQUINS_BUCKET = 'Manequins';
+  const MANNEQUIN_IMAGES = useMemo(() => ({
+    male: {
+      0: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/Manequim%20Levemente%20Magro.jpg',
+      1: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimmasatletico.jpg',
+      2: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimmasgordinho.jpg',
+      3: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimmasforte.jpg',
+      4: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimmasgordo.jpg'
+    },
+    female: {
+      0: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimfemmagra.jpg',
+      1: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimfemombrolargo.jpg',
+      2: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimfemquadrillargo.jpg',
+      3: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimfemcinturalarga.jpg',
+      4: 'https://lhkgnirolvbmomeduoaj.supabase.co/storage/v1/object/public/Manequins/manequimfembustolargo.jpg'
+    }
+  }), []);
+
   const getMannequinImageUrl = (bodyTypeIndex, gender) => {
-    if (!supabaseUrl || bodyTypeIndex == null) return null;
-    const base = supabaseUrl.replace(/\/$/, '') + `/storage/v1/object/public/${encodeURIComponent(MANNEQUINS_BUCKET)}`;
-    return `${base}/${Number(bodyTypeIndex)}.png`;
+    const normalizedGender = normalizeGender(gender);
+    const index = Number(bodyTypeIndex);
+    if (
+      bodyTypeIndex == null ||
+      Number.isNaN(index) ||
+      (normalizedGender !== 'male' && normalizedGender !== 'female')
+    ) {
+      return null;
+    }
+    return MANNEQUIN_IMAGES[normalizedGender]?.[index] ?? null;
   };
 
   const [loading, setLoading] = useState(true);

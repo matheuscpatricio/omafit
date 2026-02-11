@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate, useMatches } from 'react-router-dom';
-import { Page, Layout, BlockStack, Spinner, Card, Text, Banner } from '@shopify/polaris';
-import BillingPlans from './BillingPlans';
+import { Page, Layout, BlockStack, Spinner, Card, Text, Banner, Button } from '@shopify/polaris';
 import { UsageIndicator } from './UsageIndicator';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
@@ -84,119 +83,24 @@ export default function BillingPage() {
     }
   };
 
-  const [billingError, setBillingError] = useState(null);
   const [error, setError] = useState(null);
-  const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
-
-  const appUrl =
-    appUrlFromLayout ||
-    (typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "") ||
-    "";
-
-  function buildBillingFormUrl() {
-    if (!appUrl || !shopDomain) return "";
-    const qs = new URLSearchParams();
-    qs.set("redirect", "1");
-    qs.set("shop", shopDomain);
-    qs.set("host", searchParams.get("host") || "");
-    qs.set("embedded", "1");
-    const idToken = searchParams.get("id_token");
-    if (idToken) qs.set("id_token", idToken);
-    return `${appUrl}/api/billing/start?${qs.toString()}`;
-  }
-
-  // Rota de PÁGINA (não API) para o link target="_top" fazer navegação e receber 302
-  function buildBillingStartGetUrl(planKey) {
-    if (!shopDomain) {
-      console.warn("[Billing] buildBillingStartGetUrl: shopDomain missing");
-      return "";
-    }
-    const base = appUrl || (typeof window !== "undefined" ? window.location?.origin : "");
-    if (!base) {
-      console.warn("[Billing] buildBillingStartGetUrl: appUrl missing, base:", base);
-      return "";
-    }
-    const qs = new URLSearchParams();
-    qs.set("plan", planKey);
-    qs.set("shop", shopDomain);
-    qs.set("host", searchParams.get("host") || "");
-    qs.set("embedded", "1");
-    const idToken = searchParams.get("id_token");
-    if (idToken) qs.set("id_token", idToken);
-    const finalUrl = `${base}/app/billing/start?${qs.toString()}`;
-    console.log("[Billing] buildBillingStartGetUrl:", { planKey, base, shopDomain, finalUrl });
-    return finalUrl;
-  }
 
   useEffect(() => {
     const err = searchParams.get("error");
-    if (err) setBillingError(decodeURIComponent(err));
+    if (err) setError(decodeURIComponent(err));
   }, [searchParams]);
 
-  const handleSelectPlan = useCallback(
-    async (plan) => {
-      const planKey = String(plan).toLowerCase();
-      if (planKey === "enterprise") {
-        window.open("mailto:contato@omafit.co", "_blank");
-        return;
-      }
-      setBillingError(null);
-      setError(null);
-      setIsSubmittingPlan(true);
-      const base = typeof window !== "undefined" ? window.location.origin : "";
-      const qs = new URLSearchParams(searchParams);
-      qs.set("redirect", "1");
-      if (!qs.has("embedded")) qs.set("embedded", "1");
-      const apiUrl = `${base}/api/billing/start?${qs.toString()}`;
-      const idToken = searchParams.get("id_token") || "";
-      const headers = { "Content-Type": "application/json" };
-      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
-      try {
-        const res = await fetch(apiUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ plan: planKey }),
-          credentials: "include",
-          redirect: "manual",
-        });
-        if (res.type === "opaqueredirect" || res.status === 0) {
-          setBillingError("Redirecionamento bloqueado. Abra o app em nova aba ou tente novamente.");
-          return;
-        }
-        if (res.status === 302) {
-          const location = res.headers.get("Location");
-          if (location) {
-            if (typeof window.top !== "undefined" && window.top.location) window.top.location.href = location;
-            else window.location.href = location;
-            return;
-          }
-        }
-        if (res.status === 401) {
-          const reauthUrl = res.headers.get("X-Shopify-API-Request-Failure-Reauthorize-Url");
-          if (reauthUrl) {
-            if (typeof window.top !== "undefined" && window.top.location) window.top.location.href = reauthUrl;
-            else window.location.href = reauthUrl;
-            return;
-          }
-        }
-        const data = await res.json().catch(() => ({}));
-        if (data.confirmationUrl) {
-          if (typeof window.top !== "undefined" && window.top.location) window.top.location.href = data.confirmationUrl;
-          else window.location.href = data.confirmationUrl;
-          return;
-        }
-        setBillingError(data.error || (res.ok ? "Resposta inesperada do servidor." : `Erro ${res.status}`));
-      } catch (err) {
-        console.error("[Billing] Fetch error:", err);
-        setBillingError(err.message || "Erro ao iniciar assinatura.");
-      } finally {
-        setIsSubmittingPlan(false);
-      }
-    },
-    [searchParams]
-  );
-
-  const isSubmitting = isSubmittingPlan;
+  // URL da página de pricing plans da Shopify Admin
+  // Formato: https://admin.shopify.com/store/{shop}/charges/{app-handle}/pricing_plans
+  const getPricingPlansUrl = () => {
+    if (!shopDomain || shopDomain === 'demo-shop.myshopify.com') return null;
+    // Remove .myshopify.com se presente, ou usa o shop domain diretamente
+    const shopName = shopDomain.replace('.myshopify.com', '');
+    // App handle: geralmente o nome do app em lowercase com hífens
+    // Pode ser configurado via env ou usar padrão
+    const appHandle = 'omafit-1'; // TODO: tornar configurável via env se necessário
+    return `https://admin.shopify.com/store/${shopName}/charges/${appHandle}/pricing_plans`;
+  };
 
   if (loading) {
     return (
@@ -231,22 +135,43 @@ export default function BillingPage() {
           </Layout.Section>
         )}
 
-        {(billingError || error) && (
+        {error && (
           <Layout.Section>
-            <Banner tone="critical" onDismiss={() => { setBillingError(null); setError(null); }}>
-              {billingError || error}
+            <Banner tone="critical" onDismiss={() => setError(null)}>
+              {error}
             </Banner>
           </Layout.Section>
         )}
         <Layout.Section>
-          <BillingPlans
-            currentPlan={data?.currentPlan}
-            billingStatus={data?.billingStatus}
-            onSelectPlan={handleSelectPlan ?? (() => {})}
-            isLoading={isSubmitting}
-            billingFormUrl={buildBillingFormUrl()}
-            buildBillingStartGetUrl={buildBillingStartGetUrl}
-          />
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                {t('billing.managePlan') || 'Gerenciar Plano'}
+              </Text>
+              <Text as="p" tone="subdued">
+                {t('billing.managePlanDescription') || 'Altere seu plano de assinatura diretamente na Shopify Admin.'}
+              </Text>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const url = getPricingPlansUrl();
+                  if (url) {
+                    console.log('[Billing] Opening pricing plans URL:', url);
+                    // Força navegação no topo para sair do iframe
+                    if (typeof window !== "undefined" && window.top && window.top !== window.self) {
+                      window.top.location.href = url;
+                    } else {
+                      window.location.href = url;
+                    }
+                  } else {
+                    console.warn('[Billing] Pricing plans URL not available');
+                  }
+                }}
+              >
+                {t('billing.changePlan') || 'Quero alterar meu plano'}
+              </Button>
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>

@@ -355,18 +355,35 @@
       const supabaseUrl = 'https://lhkgnirolvbmomeduoaj.supabase.co';
       const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI';
 
-      // Buscar widget_configurations, shopify_shops e widget_keys para obter publicId válido
-      const [configResponse, shopResponse, widgetKeyResponse] = await Promise.all([
-        fetch(
-          `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,created_at,updated_at`,
-          {
-            headers: {
-              'apikey': supabaseAnonKey,
-              'Authorization': `Bearer ${supabaseAnonKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        ),
+      // Buscar widget_configurations com fallback para bancos sem excluded_collections
+      const configHeaders = {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      };
+      let configResponse = await fetch(
+        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,created_at,updated_at`,
+        { headers: configHeaders }
+      );
+      if (!configResponse.ok) {
+        const configErrorText = await configResponse.text().catch(function () { return ''; });
+        const missingExcludedColumn =
+          configResponse.status === 400 &&
+          configErrorText &&
+          configErrorText.indexOf('excluded_collections') !== -1;
+        if (missingExcludedColumn) {
+          console.warn('⚠️ Coluna excluded_collections não encontrada no banco. Repetindo busca sem essa coluna.');
+          configResponse = await fetch(
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,created_at,updated_at`,
+            { headers: configHeaders }
+          );
+        } else {
+          console.warn('⚠️ Não foi possível buscar configuração do Supabase. Status:', configResponse.status, configErrorText);
+        }
+      }
+
+      // Buscar shopify_shops e widget_keys para obter publicId válido
+      const [shopResponse, widgetKeyResponse] = await Promise.all([
         fetch(
           `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,id`,
           {
@@ -510,9 +527,15 @@
 
       const excludedCollections = normalizeExcludedCollections(config && config.excluded_collections);
       const currentCollectionHandle = rootElement && rootElement.dataset ? (rootElement.dataset.collectionHandle || '') : '';
+      const productCollectionHandles = rootElement && rootElement.dataset && rootElement.dataset.collectionHandles
+        ? rootElement.dataset.collectionHandles.split(',').map(function (item) { return item.trim(); }).filter(Boolean)
+        : [];
+      const hasExcludedProductCollection = productCollectionHandles.some(function (handle) {
+        return excludedCollections.indexOf(handle) !== -1;
+      });
       const isCollectionExcluded =
-        !!currentCollectionHandle &&
-        excludedCollections.indexOf(currentCollectionHandle) !== -1;
+        (!!currentCollectionHandle && excludedCollections.indexOf(currentCollectionHandle) !== -1) ||
+        hasExcludedProductCollection;
 
       // Verificar se widget está habilitado na configuração
       // Se não houver configuração, considerar habilitado por padrão
@@ -530,6 +553,7 @@
         widgetEnabledInConfig: widgetEnabled,
         isActiveInWidgetKeys: widgetKeyFound ? isWidgetActive : 'N/A (não encontrado)',
         currentCollectionHandle: currentCollectionHandle || '(vazio)',
+        productCollectionHandles: productCollectionHandles,
         excludedCollections: excludedCollections,
         isCollectionExcluded: isCollectionExcluded,
         finalStatus: finalWidgetEnabled ? '✅ HABILITADO' : '❌ DESABILITADO',

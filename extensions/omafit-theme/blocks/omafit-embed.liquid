@@ -6,6 +6,9 @@
   {% elsif product and product.collections.size > 0 %}
     data-collection-handle="{{ product.collections.first.handle }}"
   {% endif %}
+  {% if product and product.collections.size > 0 %}
+    data-collection-handles="{{ product.collections | map: 'handle' | join: ',' }}"
+  {% endif %}
   {% if product %}
     data-product-id="{{ product.id }}"
     data-product-handle="{{ product.handle }}"

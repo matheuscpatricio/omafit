@@ -2,52 +2,16 @@
  * POST /api/billing/start  ou  GET /api/billing/start?plan=basic|growth|pro&redirect=1
  *
  * Cria assinatura via Shopify Billing API e redireciona para aprovação.
- * Em app embutido: sempre 302 para /auth/exit-iframe?exitIframe=<confirmationUrl>
- * para o cliente abrir no topo (evita "refused to connect" no iframe).
+ * Em app embutido: 302 para /auth/exit-iframe. Preferir navegação para /app/billing/start (rota de página).
  */
 import { authenticate } from "../shopify.server";
-
-const APP_SUBSCRIPTION_CREATE = `#graphql
-  mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!) {
-    appSubscriptionCreate(name: $name, returnUrl: $returnUrl, lineItems: $lineItems) {
-      userErrors {
-        field
-        message
-      }
-      appSubscription {
-        id
-      }
-      confirmationUrl
-    }
-  }
-`;
-
-const PLAN_CONFIG = {
-  basic: {
-    name: "Omafit Basic",
-    amount: 25,
-    currency: "USD",
-    imagesIncluded: 100,
-    pricePerExtra: 0.18,
-  },
-  growth: {
-    name: "Omafit Growth",
-    amount: 100,
-    currency: "USD",
-    imagesIncluded: 500,
-    pricePerExtra: 0.16,
-  },
-  pro: {
-    name: "Omafit Pro",
-    amount: 180,
-    currency: "USD",
-    imagesIncluded: 1000,
-    pricePerExtra: 0.14,
-  },
-};
+import {
+  createSubscriptionAndGetConfirmationUrl,
+  buildExitIframeRedirect,
+} from "../billing-create.server";
 
 async function getConfirmationUrl(request) {
-  const { admin, session, redirect } = await authenticate.admin(request);
+  const auth = await authenticate.admin(request);
   const url = new URL(request.url);
   let plan = (url.searchParams.get("plan") || "").toLowerCase();
   if (!plan && request.method === "POST") {
@@ -61,62 +25,14 @@ async function getConfirmationUrl(request) {
     }
     plan = (body.plan || "").toLowerCase();
   }
-  if (!["basic", "growth", "pro"].includes(plan)) {
-    throw new Response(
-      JSON.stringify({ error: plan === "enterprise" ? "Enterprise plan requires direct contact." : "Invalid plan" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
-  }
-  const config = PLAN_CONFIG[plan];
-  const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
-  const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
-  const response = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
-    variables: {
-      name: config.name,
-      returnUrl,
-      lineItems: [
-        {
-          plan: {
-            appRecurringPricingDetails: {
-              price: { amount: config.amount, currencyCode: config.currency },
-              interval: "EVERY_30_DAYS",
-            },
-          },
-        },
-      ],
-    },
-  });
-  const json = await response.json();
-  const data = json?.data?.appSubscriptionCreate;
-  const userErrors = data?.userErrors || [];
-  const confirmationUrl = data?.confirmationUrl;
-  if (userErrors.length > 0) {
-    const msg = userErrors.map((e) => e.message).join("; ");
-    throw new Response(JSON.stringify({ error: msg }), { status: 400, headers: { "Content-Type": "application/json" } });
-  }
-  if (!confirmationUrl) {
-    throw new Response(
-      JSON.stringify({ error: "No confirmation URL returned from Shopify" }),
-      { status: 502, headers: { "Content-Type": "application/json" } }
-    );
-  }
-  return { confirmationUrl, plan, redirect, session };
+  const result = await createSubscriptionAndGetConfirmationUrl(auth, plan);
+  return { ...result, redirect: auth.redirect, session: auth.session };
 }
 
-const EXIT_IFRAME_PATH = "/auth/exit-iframe";
-
 function redirectToExitIframe(request, confirmationUrl, shop) {
-  const url = new URL(request.url);
-  const host = url.searchParams.get("host") || "";
-  const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
-  const exitUrl = new URL(EXIT_IFRAME_PATH, appUrl || request.url);
-  exitUrl.searchParams.set("shop", shop);
-  exitUrl.searchParams.set("host", host);
-  exitUrl.searchParams.set("exitIframe", confirmationUrl);
-  const location = exitUrl.toString();
-  const headers = new Headers({ Location: location });
-  headers.set("Access-Control-Expose-Headers", "Location");
-  return new Response(null, { status: 302, headers });
+  const res = buildExitIframeRedirect(request, confirmationUrl, shop);
+  res.headers.set("Access-Control-Expose-Headers", "Location");
+  return res;
 }
 
 export async function loader({ request }) {

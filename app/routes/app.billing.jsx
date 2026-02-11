@@ -88,8 +88,12 @@ export default function BillingPage() {
   const [error, setError] = useState(null);
   const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
 
+  const appUrl =
+    appUrlFromLayout ||
+    (typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "") ||
+    "";
+
   function buildBillingFormUrl() {
-    const appUrl = appUrlFromLayout || (typeof window !== "undefined" ? window.location?.origin : "");
     if (!appUrl || !shopDomain) return "";
     const qs = new URLSearchParams();
     qs.set("redirect", "1");
@@ -101,18 +105,19 @@ export default function BillingPage() {
     return `${appUrl}/api/billing/start?${qs.toString()}`;
   }
 
+  // Rota de PÁGINA (não API) para o form target="_top" fazer navegação e receber 302
   function buildBillingStartGetUrl(planKey) {
-    const appUrl = appUrlFromLayout || (typeof window !== "undefined" ? window.location?.origin : "");
-    if (!appUrl || !shopDomain) return "";
+    if (!shopDomain) return "";
+    const base = appUrl || (typeof window !== "undefined" ? window.location?.origin : "");
+    if (!base) return "";
     const qs = new URLSearchParams();
     qs.set("plan", planKey);
-    qs.set("redirect", "1");
     qs.set("shop", shopDomain);
     qs.set("host", searchParams.get("host") || "");
     qs.set("embedded", "1");
     const idToken = searchParams.get("id_token");
     if (idToken) qs.set("id_token", idToken);
-    return `${appUrl}/api/billing/start?${qs.toString()}`;
+    return `${base}/app/billing/start?${qs.toString()}`;
   }
 
   useEffect(() => {

@@ -251,3 +251,36 @@ ORDER BY ordinal_position;
 
 -- 5) Verificar se há dados
 SELECT COUNT(*) as total_sessions FROM session_analytics;
+
+-- 6) Verificar dados de exemplo (se houver)
+SELECT 
+  id,
+  user_id,
+  shop_domain,
+  gender,
+  collection_handle,
+  recommended_size,
+  created_at
+FROM session_analytics
+ORDER BY created_at DESC
+LIMIT 5;
+
+-- 7) Verificar distribuição por shop_domain
+SELECT 
+  shop_domain,
+  COUNT(*) as count,
+  COUNT(DISTINCT user_id) as unique_users
+FROM session_analytics
+WHERE shop_domain IS NOT NULL
+GROUP BY shop_domain
+ORDER BY count DESC;
+
+-- 8) Verificar distribuição por user_id
+SELECT 
+  user_id,
+  COUNT(*) as count,
+  COUNT(DISTINCT shop_domain) as unique_shops
+FROM session_analytics
+WHERE user_id IS NOT NULL
+GROUP BY user_id
+ORDER BY count DESC;

@@ -285,13 +285,14 @@ export default function AnalyticsPage() {
         }
       }
       
-      // Se ainda não encontrou dados, tenta buscar todas as sessões sem filtros
+      // Se ainda não encontrou dados, tenta buscar todas as sessões sem filtros para diagnóstico
       if (sessionsData.length === 0) {
         console.log('[Analytics] No sessions found with filters, trying to list all tables...');
         for (const tableName of tableNames) {
           try {
+            // Tenta buscar sem filtros para ver se há dados
             const sessionsRes = await fetch(
-              `${supabaseUrl}/rest/v1/${tableName}?select=*&limit=10&order=created_at.desc`,
+              `${supabaseUrl}/rest/v1/${tableName}?select=*&limit=100&order=created_at.desc`,
               {
                 headers: {
                   apikey: supabaseKey,
@@ -302,14 +303,46 @@ export default function AnalyticsPage() {
             );
             if (sessionsRes.ok) {
               const allData = await sessionsRes.json();
-              console.log(`[Analytics] Table ${tableName} exists with ${allData.length} total records (sample)`);
-              // Não usa esses dados, apenas confirma que a tabela existe
+              console.log(`[Analytics] Table ${tableName} exists with ${allData.length} total records`);
+              
+              if (allData.length > 0) {
+                // Mostra amostra dos dados para diagnóstico
+                console.log(`[Analytics] Sample data from ${tableName}:`, {
+                  firstRecord: allData[0],
+                  columns: Object.keys(allData[0] || {}),
+                  hasUserId: allData.some(r => r.user_id),
+                  hasShopDomain: allData.some(r => r.shop_domain),
+                  userIds: [...new Set(allData.map(r => r.user_id).filter(Boolean))],
+                  shopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))]
+                });
+                
+                // Tenta usar esses dados se tiverem user_id ou shop_domain correspondente
+                const matchingData = allData.filter(session => {
+                  if (userId && session.user_id === userId) return true;
+                  if (session.shop_domain === shopDomain) return true;
+                  return false;
+                });
+                
+                if (matchingData.length > 0) {
+                  console.log(`[Analytics] Found ${matchingData.length} matching sessions in ${tableName} (without date filter)`);
+                  sessionsData = matchingData;
+                  break;
+                } else {
+                  console.log(`[Analytics] No matching sessions found. Looking for userId: ${userId}, shopDomain: ${shopDomain}`);
+                }
+              } else {
+                console.log(`[Analytics] Table ${tableName} exists but is empty`);
+              }
+            } else {
+              console.log(`[Analytics] Cannot access ${tableName}:`, sessionsRes.status, sessionsRes.statusText);
             }
           } catch (err) {
-            console.warn(`[Analytics] Cannot access ${tableName}:`, err);
+            console.warn(`[Analytics] Error accessing ${tableName}:`, err);
           }
         }
       }
+      
+      console.log(`[Analytics] Final sessionsData count: ${sessionsData.length}`);
 
       const totalImagesProcessed = imagesUsedMonth ?? 0;
 
@@ -531,7 +564,9 @@ export default function AnalyticsPage() {
           conversionBefore: null,
           conversionAfter: null,
           ordersError: null,
-          tableError: 'A tabela session_analytics pode não existir no Supabase. Execute o script SQL: supabase_create_session_analytics.sql'
+          tableError: sessionsData.length === 0 
+            ? 'Nenhuma sessão encontrada. Os dados podem estar sendo salvos em outra tabela ou a edge function pode não estar salvando sessões ainda. Verifique os logs do console para mais detalhes.'
+            : null
         });
       } else {
         setError(err?.message || t('analytics.errorLoad'));
@@ -750,10 +785,18 @@ export default function AnalyticsPage() {
                   {t('analytics.noDataByCollection')}
                 </Text>
                 {m.tableError && (
-                  <Banner tone="warning">
-                    <Text variant="bodyMd">
-                      {m.tableError}
-                    </Text>
+                  <Banner tone="info">
+                    <BlockStack gap="200">
+                      <Text variant="bodyMd" fontWeight="semibold">
+                        {m.tableError}
+                      </Text>
+                      <Text variant="bodyMd" tone="subdued">
+                        Para que os dados apareçam aqui, a edge function do Supabase precisa salvar as sessões na tabela session_analytics ou tryon_sessions com os campos user_id ou shop_domain preenchidos.
+                      </Text>
+                      <Text variant="bodyMd" tone="subdued">
+                        Verifique o console do navegador (F12) para ver logs detalhados sobre quais tabelas foram encontradas e quantos registros existem.
+                      </Text>
+                    </BlockStack>
                   </Banner>
                 )}
               </BlockStack>

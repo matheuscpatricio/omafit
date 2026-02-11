@@ -358,7 +358,7 @@
       // Buscar widget_configurations, shopify_shops e widget_keys para obter publicId válido
       const [configResponse, shopResponse, widgetKeyResponse] = await Promise.all([
         fetch(
-          `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,created_at,updated_at`,
+          `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,created_at,updated_at`,
           {
             headers: {
               'apikey': supabaseAnonKey,
@@ -491,6 +491,29 @@
         });
       }
       
+      const normalizeExcludedCollections = (value) => {
+        if (Array.isArray(value)) {
+          return value.map(function (item) { return String(item || '').trim(); }).filter(Boolean);
+        }
+        if (typeof value === 'string' && value.trim()) {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+              return parsed.map(function (item) { return String(item || '').trim(); }).filter(Boolean);
+            }
+          } catch (_err) {
+            return value.split(',').map(function (item) { return item.trim(); }).filter(Boolean);
+          }
+        }
+        return [];
+      };
+
+      const excludedCollections = normalizeExcludedCollections(config && config.excluded_collections);
+      const currentCollectionHandle = rootElement && rootElement.dataset ? (rootElement.dataset.collectionHandle || '') : '';
+      const isCollectionExcluded =
+        !!currentCollectionHandle &&
+        excludedCollections.indexOf(currentCollectionHandle) !== -1;
+
       // Verificar se widget está habilitado na configuração
       // Se não houver configuração, considerar habilitado por padrão
       const widgetEnabled = config ? (config.widget_enabled !== false) : true;
@@ -499,17 +522,21 @@
       // 1. widget_enabled explicitamente false NA CONFIGURAÇÃO, OU
       // 2. widget_keys foi encontrado E is_active é explicitamente false
       // Se widget_keys não foi encontrado, permitir funcionar (primeira instalação)
-      const finalWidgetEnabled = widgetEnabled && (widgetKeyFound ? isWidgetActive : true);
+      const finalWidgetEnabled = widgetEnabled && (widgetKeyFound ? isWidgetActive : true) && !isCollectionExcluded;
       
       console.log('📊 Status do widget:', {
         configExists: !!config,
         widgetKeysFound: widgetKeyFound,
         widgetEnabledInConfig: widgetEnabled,
         isActiveInWidgetKeys: widgetKeyFound ? isWidgetActive : 'N/A (não encontrado)',
+        currentCollectionHandle: currentCollectionHandle || '(vazio)',
+        excludedCollections: excludedCollections,
+        isCollectionExcluded: isCollectionExcluded,
         finalStatus: finalWidgetEnabled ? '✅ HABILITADO' : '❌ DESABILITADO',
         motivo: !finalWidgetEnabled ? 
           (!widgetEnabled ? 'widget_enabled=false na configuração' : 
-           (widgetKeyFound && !isWidgetActive ? 'is_active=false em widget_keys' : 'desconhecido')) : 
+           (widgetKeyFound && !isWidgetActive ? 'is_active=false em widget_keys' :
+            (isCollectionExcluded ? 'coleção atual está na lista de exclusão' : 'desconhecido'))) : 
           'Widget habilitado'
       });
       
@@ -528,7 +555,8 @@
         },
         shopDomain: shopDomain,
         widgetEnabled: finalWidgetEnabled,
-        isActive: isWidgetActive
+        isActive: isWidgetActive,
+        excludedCollections: excludedCollections
       };
       
       console.log('✅ Configuração mapeada:', {

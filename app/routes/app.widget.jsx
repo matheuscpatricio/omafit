@@ -12,7 +12,8 @@ import {
   Banner,
   Divider,
   Spinner,
-  Thumbnail
+  Thumbnail,
+  Checkbox
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
@@ -43,13 +44,18 @@ export default function WidgetPage() {
     link_text: '',
     store_logo: '',
     primary_color: '#810707',
-    widget_enabled: true
+    widget_enabled: true,
+    excluded_collections: []
   });
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
+  const [collectionsError, setCollectionsError] = useState(null);
+  const [collections, setCollections] = useState([]);
 
   useEffect(() => {
     if (shopDomain) {
       console.log('[Widget] Componente montado, shop_domain:', shopDomain);
       loadConfig();
+      loadCollections();
     }
   }, [shopDomain]);
 
@@ -58,6 +64,31 @@ export default function WidgetPage() {
       setConfig((prev) => ({ ...prev, link_text: t("widget.defaultLinkText") }));
     }
   }, [loading, config.link_text, t]);
+
+  const normalizeExcludedCollections = (value) => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
+    }
+
+    if (typeof value === 'string') {
+      if (!value.trim()) return [];
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+        }
+      } catch (_err) {
+        return value
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+    }
+
+    return [];
+  };
 
   const loadConfig = async () => {
     try {
@@ -99,7 +130,8 @@ export default function WidgetPage() {
                 link_text: loadedConfig.link_text || t('widget.defaultLinkText'),
                 store_logo: loadedConfig.store_logo || '',
                 primary_color: loadedConfig.primary_color || '#810707',
-                widget_enabled: loadedConfig.widget_enabled !== false
+                widget_enabled: loadedConfig.widget_enabled !== false,
+                excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections)
               });
             } else if (data && data.id) {
               setConfigId(data.id);
@@ -107,7 +139,8 @@ export default function WidgetPage() {
                 link_text: data.link_text || t('widget.defaultLinkText'),
                 store_logo: data.store_logo || '',
                 primary_color: data.primary_color || '#810707',
-                widget_enabled: data.widget_enabled !== false
+                widget_enabled: data.widget_enabled !== false,
+                excluded_collections: normalizeExcludedCollections(data.excluded_collections)
               });
             }
           } catch (e) {
@@ -119,6 +152,34 @@ export default function WidgetPage() {
       console.error('[Widget] Erro ao carregar configuração:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCollections = async () => {
+    try {
+      setCollectionsLoading(true);
+      setCollectionsError(null);
+
+      const response = await fetch('/api/collections', {
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error('Não foi possível carregar as coleções.');
+      }
+
+      const data = await response.json();
+      const fetchedCollections = Array.isArray(data?.collections) ? data.collections : [];
+      setCollections(
+        fetchedCollections
+          .filter((item) => item?.handle)
+          .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')))
+      );
+    } catch (err) {
+      console.error('[Widget] Erro ao carregar coleções:', err);
+      setCollectionsError('Não foi possível carregar as coleções da loja.');
+    } finally {
+      setCollectionsLoading(false);
     }
   };
 
@@ -274,7 +335,8 @@ export default function WidgetPage() {
         link_text: configToSave.link_text || t('widget.defaultLinkText'),
         store_logo: storeLogoValue || null, // null ao invés de string vazia
         primary_color: configToSave.primary_color || '#810707',
-        widget_enabled: configToSave.widget_enabled !== false
+        widget_enabled: configToSave.widget_enabled !== false,
+        excluded_collections: normalizeExcludedCollections(configToSave.excluded_collections)
       };
       
       console.log('[Widget] Payload a ser enviado:', {
@@ -292,26 +354,28 @@ export default function WidgetPage() {
 
       let response;
       
-      // Se já temos um configId, usar PATCH para atualizar
-      if (configId) {
-        console.log('[Widget] Atualizando configuração existente (PATCH)');
-        response = await fetch(
-          `${supabaseUrl}/rest/v1/widget_configurations?id=eq.${configId}`,
-          {
-            method: 'PATCH',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            body: JSON.stringify(payload)
-          }
-        );
-      } else {
+      const savePayload = async (dataToSave) => {
+        // Se já temos um configId, usar PATCH para atualizar
+        if (configId) {
+          console.log('[Widget] Atualizando configuração existente (PATCH)');
+          return fetch(
+            `${supabaseUrl}/rest/v1/widget_configurations?id=eq.${configId}`,
+            {
+              method: 'PATCH',
+              headers: {
+                'apikey': supabaseKey,
+                'Authorization': `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+              },
+              body: JSON.stringify(dataToSave)
+            }
+          );
+        }
+
         // Se não temos configId, tentar UPSERT via POST
         console.log('[Widget] Criando/atualizando configuração (UPSERT)');
-        response = await fetch(
+        return fetch(
           `${supabaseUrl}/rest/v1/widget_configurations`,
           {
             method: 'POST',
@@ -321,9 +385,31 @@ export default function WidgetPage() {
               'Content-Type': 'application/json',
               'Prefer': 'resolution=merge-duplicates'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(dataToSave)
           }
         );
+      };
+
+      response = await savePayload(payload);
+
+      // Compatibilidade: se a coluna excluded_collections ainda não existir, salva sem ela
+      if (!response.ok) {
+        const initialErrorText = await response.text().catch(() => '');
+        const hasMissingColumnError =
+          initialErrorText.includes('excluded_collections') &&
+          (initialErrorText.includes('column') || initialErrorText.includes('42703'));
+
+        if (hasMissingColumnError) {
+          console.warn('[Widget] Coluna excluded_collections não encontrada. Repetindo salvamento sem esse campo.');
+          const { excluded_collections, ...payloadWithoutExcluded } = payload;
+          response = await savePayload(payloadWithoutExcluded);
+          if (response.ok) {
+            setError('As coleções excluídas não foram salvas porque a coluna "excluded_collections" ainda não existe no banco.');
+          }
+        } else {
+          // Reconstituir response-like flow preservando a mensagem para o bloco de erro abaixo
+          throw new Error(initialErrorText || t('widget.errorSaveConfig'));
+        }
       }
 
       if (response.ok) {
@@ -452,6 +538,16 @@ export default function WidgetPage() {
 
   const handleChange = useCallback((field, value) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleToggleExcludedCollection = useCallback((collectionHandle, checked) => {
+    setConfig((prev) => {
+      const current = normalizeExcludedCollections(prev.excluded_collections);
+      const next = checked
+        ? [...new Set([...current, collectionHandle])]
+        : current.filter((handle) => handle !== collectionHandle);
+      return { ...prev, excluded_collections: next };
+    });
   }, []);
 
   const handleRemoveLogo = async () => {
@@ -602,6 +698,62 @@ export default function WidgetPage() {
                     </Text>
                   </BlockStack>
                 </InlineStack>
+              </BlockStack>
+
+              <Divider />
+
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h3">
+                  Coleções onde o widget NÃO deve aparecer
+                </Text>
+                <Text variant="bodyMd" tone="subdued">
+                  Marque as coleções para ocultar o widget Omafit nessas páginas de produto.
+                </Text>
+
+                {collectionsLoading ? (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Spinner size="small" />
+                    <Text variant="bodySm" tone="subdued">
+                      Carregando coleções...
+                    </Text>
+                  </InlineStack>
+                ) : collectionsError ? (
+                  <Banner tone="critical" onDismiss={() => setCollectionsError(null)}>
+                    <p>{collectionsError}</p>
+                  </Banner>
+                ) : collections.length === 0 ? (
+                  <Text variant="bodySm" tone="subdued">
+                    Nenhuma coleção encontrada.
+                  </Text>
+                ) : (
+                  <div
+                    style={{
+                      border: '1px solid #E1E3E5',
+                      borderRadius: 8,
+                      padding: 12,
+                      maxHeight: 260,
+                      overflowY: 'auto'
+                    }}
+                  >
+                    <BlockStack gap="200">
+                      {collections.map((item) => {
+                        const isChecked = normalizeExcludedCollections(config.excluded_collections).includes(item.handle);
+                        const checkboxLabel = item.title
+                          ? `${item.title} (${item.handle})`
+                          : item.handle;
+
+                        return (
+                          <Checkbox
+                            key={item.id || item.handle}
+                            label={checkboxLabel}
+                            checked={isChecked}
+                            onChange={(checked) => handleToggleExcludedCollection(item.handle, checked)}
+                          />
+                        );
+                      })}
+                    </BlockStack>
+                  </div>
+                )}
               </BlockStack>
 
               <Divider />

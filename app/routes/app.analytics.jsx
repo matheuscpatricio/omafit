@@ -308,78 +308,62 @@ export default function AnalyticsPage() {
           if (sessionsRes.ok) {
             const allData = await sessionsRes.json();
             console.log(`[Analytics] Table session_analytics exists with ${allData.length} total records`);
-              
-              if (allData.length > 0) {
-                // Mostra amostra dos dados para diagnóstico
-                const sampleRecord = allData[0];
-                console.log(`[Analytics] Sample data from session_analytics:`, {
-                  firstRecord: sampleRecord,
-                  columns: Object.keys(sampleRecord || {}),
-                  hasUserId: allData.some(r => r.user_id),
-                  hasShopDomain: allData.some(r => r.shop_domain),
-                  userIds: [...new Set(allData.map(r => r.user_id).filter(Boolean))],
-                  shopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))],
-                  sampleUserId: sampleRecord?.user_id,
-                  sampleShopDomain: sampleRecord?.shop_domain,
-                  sampleGender: sampleRecord?.gender,
-                  sampleCollectionHandle: sampleRecord?.collection_handle
-                });
-                
-                // Tenta usar esses dados se tiverem user_id ou shop_domain correspondente
-                const matchingData = allData.filter(session => {
-                  // Compara user_id como string (pode ser UUID)
-                  const matchesUserId = userId && session.user_id && 
-                    (String(session.user_id).toLowerCase() === String(userId).toLowerCase());
-                  // Compara shop_domain exatamente
-                  const matchesShopDomain = session.shop_domain && 
-                    session.shop_domain.toLowerCase() === shopDomain.toLowerCase();
-                  return matchesUserId || matchesShopDomain;
-                });
-                
-                console.log(`[Analytics] Matching check:`, {
-                  totalRecords: allData.length,
-                  matchingCount: matchingData.length,
-                  searchUserId: userId,
-                  searchShopDomain: shopDomain,
-                  foundUserIds: [...new Set(allData.map(r => String(r.user_id)).filter(Boolean))],
-                  foundShopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))],
-                  sampleSession: allData[0] ? {
-                    user_id: allData[0].user_id,
-                    shop_domain: allData[0].shop_domain,
-                    gender: allData[0].gender,
-                    collection_handle: allData[0].collection_handle
-                  } : null
-                });
-                
-                if (matchingData.length > 0) {
-                  console.log(`[Analytics] ✅ Found ${matchingData.length} matching sessions in session_analytics (without date filter)`);
-                  sessionsData = matchingData;
-                } else if (allData.length > 0) {
-                  // Se há dados mas não há correspondência exata, usa todos para análise
-                  // Isso permite ver os dados mesmo que shop_domain/user_id não correspondam exatamente
-                  console.log(`[Analytics] ⚠️ No exact match found, but using all ${allData.length} records for analysis`);
-                  console.log(`[Analytics] Note: This may include data from other shops if shop_domain doesn't match`);
-                  console.log(`[Analytics] Debug: searchUserId="${userId}", foundUserIds=${JSON.stringify([...new Set(allData.map(r => String(r.user_id)).filter(Boolean))])}`);
-                  console.log(`[Analytics] Debug: searchShopDomain="${shopDomain}", foundShopDomains=${JSON.stringify([...new Set(allData.map(r => r.shop_domain).filter(Boolean))])}`);
-                  sessionsData = allData;
-                } else {
-                  console.log(`[Analytics] ⚠️ No exact match found and no data available.`);
-                  console.log(`[Analytics] 💡 Dica: Verifique se a edge function está salvando shop_domain corretamente.`);
-                  console.log(`[Analytics] 💡 Execute o SQL: supabase_check_session_data.sql para verificar os dados salvos.`);
-                }
+            if (allData.length > 0) {
+              const sampleRecord = allData[0];
+              console.log(`[Analytics] Sample data from session_analytics:`, {
+                firstRecord: sampleRecord,
+                columns: Object.keys(sampleRecord || {}),
+                hasUserId: allData.some(r => r.user_id),
+                hasShopDomain: allData.some(r => r.shop_domain),
+                userIds: [...new Set(allData.map(r => r.user_id).filter(Boolean))],
+                shopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))],
+                sampleUserId: sampleRecord?.user_id,
+                sampleShopDomain: sampleRecord?.shop_domain,
+                sampleGender: sampleRecord?.gender,
+                sampleCollectionHandle: sampleRecord?.collection_handle
+              });
+              const matchingData = allData.filter(session => {
+                const matchesUserId = userId && session.user_id &&
+                  (String(session.user_id).toLowerCase() === String(userId).toLowerCase());
+                const matchesShopDomain = session.shop_domain &&
+                  session.shop_domain.toLowerCase() === shopDomain.toLowerCase();
+                return matchesUserId || matchesShopDomain;
+              });
+              console.log(`[Analytics] Matching check:`, {
+                totalRecords: allData.length,
+                matchingCount: matchingData.length,
+                searchUserId: userId,
+                searchShopDomain: shopDomain,
+                foundUserIds: [...new Set(allData.map(r => String(r.user_id)).filter(Boolean))],
+                foundShopDomains: [...new Set(allData.map(r => r.shop_domain).filter(Boolean))],
+                sampleSession: allData[0] ? {
+                  user_id: allData[0].user_id,
+                  shop_domain: allData[0].shop_domain,
+                  gender: allData[0].gender,
+                  collection_handle: allData[0].collection_handle
+                } : null
+              });
+              if (matchingData.length > 0) {
+                sessionsData = matchingData;
+                console.log(`[Analytics] ✅ Found ${sessionsData.length} matching sessions in session_analytics (without date filter)`);
+              } else if (allData.length > 0) {
+                sessionsData = allData;
+                console.log(`[Analytics] ⚠️ No exact match found, but using all ${allData.length} records for analysis`);
               } else {
-                console.log(`[Analytics] Table session_analytics exists but is empty`);
+                console.log(`[Analytics] ⚠️ No exact match found and no data available.`);
               }
             } else {
-              const errorText = await sessionsRes.text().catch(() => '');
-              console.log(`[Analytics] Cannot access session_analytics:`, sessionsRes.status, sessionsRes.statusText, errorText);
+              console.log(`[Analytics] Table session_analytics exists but is empty`);
             }
-          } catch (err) {
-            console.warn(`[Analytics] Error accessing ${tableName}:`, err);
+          } else {
+            const errorText = await sessionsRes.text().catch(() => '');
+            console.log(`[Analytics] Cannot access session_analytics:`, sessionsRes.status, sessionsRes.statusText, errorText);
           }
+        } catch (err) {
+          console.warn('[Analytics] Error accessing session_analytics:', err);
         }
       }
-      
+
       // Se ainda não encontrou e há dados em tryon_sessions, tenta buscar user_measurements e combinar
       if (sessionsData.length === 0) {
         console.log('[Analytics] Trying to fetch from tryon_sessions + user_measurements...');

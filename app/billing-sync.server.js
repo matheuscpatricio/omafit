@@ -102,9 +102,7 @@ export async function syncBillingFromShopify(admin, shop) {
     });
 
     // Upsert: cria a loja em shopify_shops se não existir (admin “conectado” à Shopify)
-    const upsertUrl = `${supabaseUrl}/rest/v1/shopify_shops`;
-    const upsertBody = {
-      shop_domain: shop,
+    const payload = {
       plan,
       billing_status: active ? "active" : "inactive",
       images_included: imagesIncluded,
@@ -112,22 +110,24 @@ export async function syncBillingFromShopify(admin, shop) {
       updated_at: new Date().toISOString(),
     };
 
-    console.log("[Billing Sync] Upsert to Supabase:", { upsertUrl, shop, plan });
-
-    const upsertRes = await fetch(upsertUrl, {
+    const insertUrl = `${supabaseUrl}/rest/v1/shopify_shops`;
+    const insertRes = await fetch(insertUrl, {
       method: "POST",
       headers: {
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`,
         "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal",
+        Prefer: "return=minimal",
       },
-      body: JSON.stringify(upsertBody),
+      body: JSON.stringify({ shop_domain: shop, ...payload }),
     });
 
-    if (!upsertRes.ok) {
-      const errorText = await upsertRes.text();
-      console.warn("[Billing Sync] Supabase upsert failed:", upsertRes.status, errorText);
+    if (insertRes.ok) {
+      console.log("[Billing Sync] Inserted new row:", { shop, plan, imagesIncluded });
+      return { plan, imagesIncluded, pricePerExtra };
+    }
+
+    if (insertRes.status === 409) {
       const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`;
       const patchRes = await fetch(patchUrl, {
         method: "PATCH",
@@ -137,24 +137,18 @@ export async function syncBillingFromShopify(admin, shop) {
           "Content-Type": "application/json",
           Prefer: "return=minimal",
         },
-        body: JSON.stringify({
-          plan,
-          billing_status: active ? "active" : "inactive",
-          images_included: imagesIncluded,
-          price_per_extra_image: pricePerExtra,
-          updated_at: new Date().toISOString(),
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!patchRes.ok) {
-        console.error("[Billing Sync] PATCH failed:", patchRes.status, await patchRes.text());
-        return null;
+      if (patchRes.ok) {
+        console.log("[Billing Sync] Updated via PATCH (row already existed):", { shop, plan });
+        return { plan, imagesIncluded, pricePerExtra };
       }
-      console.log("[Billing Sync] Updated via PATCH (row existed).");
-    } else {
-      console.log("[Billing Sync] Successfully synced Supabase:", { shop, plan, imagesIncluded });
+      console.error("[Billing Sync] PATCH failed after 409:", patchRes.status, await patchRes.text());
+      return null;
     }
 
-    return { plan, imagesIncluded, pricePerExtra };
+    console.error("[Billing Sync] INSERT failed:", insertRes.status, await insertRes.text());
+    return null;
   } catch (err) {
     console.error("[Billing Sync] Error:", err);
     return null;

@@ -55,10 +55,17 @@ export const loader = async ({ request }) => {
 
 const DEFAULT_REFS = ['peito', 'cintura', 'quadril'];
 const DEFAULT_COLLECTION_TYPE = 'upper';
+const DEFAULT_COLLECTION_ELASTICITY = 'structured';
 const COLLECTION_TYPE_OPTIONS = [
   { label: 'Parte de cima (camisas, jaquetas, regatas...)', value: 'upper' },
   { label: 'Parte de baixo (calças, shorts, bermudas...)', value: 'lower' },
   { label: 'Corpo inteiro (vestidos, conjuntos...)', value: 'full' }
+];
+const COLLECTION_ELASTICITY_OPTIONS = [
+  { label: 'Estruturado (alfaiataria, jeans rígido, sem elastano)', value: 'structured' },
+  { label: 'Leve flexibilidade (até 3% elastano)', value: 'light_flex' },
+  { label: 'Flexível (malha, tecidos com stretch)', value: 'flexible' },
+  { label: 'Alta elasticidade (ribana, knit, peças muito ajustáveis)', value: 'high_elasticity' }
 ];
 
 function getDefaultSizesForRefs(refs) {
@@ -68,6 +75,7 @@ function getDefaultSizesForRefs(refs) {
 function createEmptyCollectionCharts() {
   return {
     collectionType: DEFAULT_COLLECTION_TYPE,
+    collectionElasticity: DEFAULT_COLLECTION_ELASTICITY,
     male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
     female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
     unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
@@ -142,6 +150,9 @@ export default function SizeChartPage() {
         if (row.collection_type && ['upper', 'lower', 'full'].includes(row.collection_type)) {
           byCollection[handle].collectionType = row.collection_type;
         }
+        if (row.collection_elasticity && ['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(row.collection_elasticity)) {
+          byCollection[handle].collectionElasticity = row.collection_elasticity;
+        }
         const refs =
           Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
             ? row.measurement_refs
@@ -188,6 +199,24 @@ export default function SizeChartPage() {
     });
   };
 
+  const getCollectionElasticity = (handle) => {
+    const elasticity = charts[handle]?.collectionElasticity;
+    return COLLECTION_ELASTICITY_OPTIONS.some((opt) => opt.value === elasticity)
+      ? elasticity
+      : DEFAULT_COLLECTION_ELASTICITY;
+  };
+
+  const setCollectionElasticity = (handle, collectionElasticity) => {
+    setCharts((prev) => {
+      const next = { ...prev };
+      if (!next[handle]) {
+        next[handle] = createEmptyCollectionCharts();
+      }
+      next[handle] = { ...next[handle], collectionElasticity };
+      return next;
+    });
+  };
+
   const setChart = (handle, gender, updater) => {
     setCharts((prev) => {
       const next = { ...prev };
@@ -220,6 +249,7 @@ export default function SizeChartPage() {
               collection_handle: handle,
               gender,
               collection_type: getCollectionType(handle),
+              collection_elasticity: getCollectionElasticity(handle),
               measurement_refs: c.measurementRefs,
               sizes: c.sizes
             });
@@ -254,15 +284,15 @@ export default function SizeChartPage() {
         let insertErrText = '';
         if (!insertRes.ok) {
           insertErrText = await insertRes.text();
-          const missingCollectionTypeColumn =
-            insertErrText.includes('collection_type') &&
+          const missingCollectionMetaColumn =
+            (insertErrText.includes('collection_type') || insertErrText.includes('collection_elasticity')) &&
             (insertErrText.includes('column') || insertErrText.includes('42703'));
 
-          if (missingCollectionTypeColumn) {
-            const fallbackPayload = toSave.map(({ collection_type, ...rest }) => rest);
+          if (missingCollectionMetaColumn) {
+            const fallbackPayload = toSave.map(({ collection_type, collection_elasticity, ...rest }) => rest);
             insertRes = await doInsert(fallbackPayload);
             if (insertRes.ok) {
-              setError('As tabelas foram salvas, mas o tipo da coleção ainda não foi persistido. Execute a migration de collection_type no Supabase.');
+              setError('As tabelas foram salvas, mas tipo/elasticidade da coleção ainda não foram persistidos. Execute as migrations no Supabase.');
             } else {
               insertErrText = await insertRes.text();
             }
@@ -420,6 +450,15 @@ export default function SizeChartPage() {
                   options={COLLECTION_TYPE_OPTIONS}
                   value={getCollectionType(selectedHandle)}
                   onChange={(v) => setCollectionType(selectedHandle, v)}
+                />
+              </Box>
+
+              <Box minWidth="280px">
+                <Select
+                  label="Como o tecido dessa coleção se comporta no corpo?"
+                  options={COLLECTION_ELASTICITY_OPTIONS}
+                  value={getCollectionElasticity(selectedHandle)}
+                  onChange={(v) => setCollectionElasticity(selectedHandle, v)}
                 />
               </Box>
 

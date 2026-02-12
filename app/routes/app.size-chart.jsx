@@ -54,9 +54,24 @@ export const loader = async ({ request }) => {
 };
 
 const DEFAULT_REFS = ['peito', 'cintura', 'quadril'];
+const DEFAULT_COLLECTION_TYPE = 'upper';
+const COLLECTION_TYPE_OPTIONS = [
+  { label: 'Parte de cima (camisas, jaquetas, regatas...)', value: 'upper' },
+  { label: 'Parte de baixo (calças, shorts, bermudas...)', value: 'lower' },
+  { label: 'Corpo inteiro (vestidos, conjuntos...)', value: 'full' }
+];
 
 function getDefaultSizesForRefs(refs) {
   return refs.reduce((acc, key) => ({ ...acc, [key]: '' }), { size: '' });
+}
+
+function createEmptyCollectionCharts() {
+  return {
+    collectionType: DEFAULT_COLLECTION_TYPE,
+    male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+    female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
+    unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
+  };
 }
 
 export default function SizeChartPage() {
@@ -122,11 +137,10 @@ export default function SizeChartPage() {
       data.forEach((row) => {
         const handle = row.collection_handle ?? '';
         if (!byCollection[handle]) {
-          byCollection[handle] = {
-            male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-            female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-            unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
-          };
+          byCollection[handle] = createEmptyCollectionCharts();
+        }
+        if (row.collection_type && ['upper', 'lower', 'full'].includes(row.collection_type)) {
+          byCollection[handle].collectionType = row.collection_type;
         }
         const refs =
           Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
@@ -158,15 +172,27 @@ export default function SizeChartPage() {
     return coll[gender] ?? { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] };
   };
 
+  const getCollectionType = (handle) => {
+    const type = charts[handle]?.collectionType;
+    return COLLECTION_TYPE_OPTIONS.some((opt) => opt.value === type) ? type : DEFAULT_COLLECTION_TYPE;
+  };
+
+  const setCollectionType = (handle, collectionType) => {
+    setCharts((prev) => {
+      const next = { ...prev };
+      if (!next[handle]) {
+        next[handle] = createEmptyCollectionCharts();
+      }
+      next[handle] = { ...next[handle], collectionType };
+      return next;
+    });
+  };
+
   const setChart = (handle, gender, updater) => {
     setCharts((prev) => {
       const next = { ...prev };
       if (!next[handle]) {
-        next[handle] = {
-          male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-          female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-          unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
-        };
+        next[handle] = createEmptyCollectionCharts();
       }
       next[handle] = { ...next[handle], [gender]: updater(next[handle][gender]) };
       return next;
@@ -193,6 +219,7 @@ export default function SizeChartPage() {
               shop_domain: shopDomain,
               collection_handle: handle,
               gender,
+              collection_type: getCollectionType(handle),
               measurement_refs: c.measurementRefs,
               sizes: c.sizes
             });
@@ -212,7 +239,7 @@ export default function SizeChartPage() {
       if (!deleteRes.ok) console.warn('[SizeChart] Aviso ao deletar:', await deleteRes.text());
 
       if (toSave.length > 0) {
-        const insertRes = await fetch(`${supabaseUrl}/rest/v1/size_charts`, {
+        const doInsert = async (payload) => fetch(`${supabaseUrl}/rest/v1/size_charts`, {
           method: 'POST',
           headers: {
             apikey: supabaseKey,
@@ -220,10 +247,29 @@ export default function SizeChartPage() {
             'Content-Type': 'application/json',
             Prefer: 'resolution=merge-duplicates'
           },
-          body: JSON.stringify(toSave)
+          body: JSON.stringify(payload)
         });
+
+        let insertRes = await doInsert(toSave);
+        let insertErrText = '';
         if (!insertRes.ok) {
-          const errText = await insertRes.text();
+          insertErrText = await insertRes.text();
+          const missingCollectionTypeColumn =
+            insertErrText.includes('collection_type') &&
+            (insertErrText.includes('column') || insertErrText.includes('42703'));
+
+          if (missingCollectionTypeColumn) {
+            const fallbackPayload = toSave.map(({ collection_type, ...rest }) => rest);
+            insertRes = await doInsert(fallbackPayload);
+            if (insertRes.ok) {
+              setError('As tabelas foram salvas, mas o tipo da coleção ainda não foi persistido. Execute a migration de collection_type no Supabase.');
+            } else {
+              insertErrText = await insertRes.text();
+            }
+          }
+        }
+        if (!insertRes.ok) {
+          const errText = insertErrText;
           let msg = t('sizeChart.errorSave');
           try {
             const j = JSON.parse(errText);
@@ -365,6 +411,15 @@ export default function SizeChartPage() {
                   options={collectionOptions}
                   value={String(selectedCollectionIndex)}
                   onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
+                />
+              </Box>
+
+              <Box minWidth="280px">
+                <Select
+                  label="Tipo da coleção"
+                  options={COLLECTION_TYPE_OPTIONS}
+                  value={getCollectionType(selectedHandle)}
+                  onChange={(v) => setCollectionType(selectedHandle, v)}
                 />
               </Box>
 

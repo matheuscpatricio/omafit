@@ -627,7 +627,7 @@
       if (gender !== 'male' && gender !== 'female') genderToFetch = 'unisex';
 
       const response = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.${genderToFetch}&select=sizes,measurement_refs`,
+        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.${genderToFetch}&select=sizes,measurement_refs,collection_type`,
         {
           headers: {
             'apikey': supabaseAnonKey,
@@ -640,8 +640,9 @@
       if (response.ok) {
         const data = await response.json();
         if (data && data.length > 0 && data[0].sizes) {
-          return {
+            return {
             sizes: data[0].sizes,
+              collectionType: data[0].collection_type || '',
             measurementRefs: Array.isArray(data[0].measurement_refs) && data[0].measurement_refs.length === 3
               ? data[0].measurement_refs
               : ['peito', 'cintura', 'quadril']
@@ -651,7 +652,7 @@
 
       if (genderToFetch !== 'unisex') {
         const unisexResponse = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.unisex&select=sizes,measurement_refs`,
+          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.unisex&select=sizes,measurement_refs,collection_type`,
           {
             headers: {
               'apikey': supabaseAnonKey,
@@ -665,6 +666,7 @@
           if (unisexData && unisexData.length > 0 && unisexData[0].sizes) {
             return {
               sizes: unisexData[0].sizes,
+              collectionType: unisexData[0].collection_type || '',
               measurementRefs: Array.isArray(unisexData[0].measurement_refs) && unisexData[0].measurement_refs.length === 3
                 ? unisexData[0].measurement_refs
                 : ['peito', 'cintura', 'quadril']
@@ -677,6 +679,64 @@
     } catch (error) {
       console.error('❌ Erro ao buscar tabelas de medidas:', error);
       return null;
+    }
+  }
+
+  async function fetchCollectionType(shopDomain, collectionHandle) {
+    try {
+      if (!shopDomain) return '';
+      const supabaseUrl = 'https://lhkgnirolvbmomeduoaj.supabase.co';
+      const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI';
+      const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+
+      const headers = {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      };
+
+      const parseCollectionType = function (rows) {
+        if (!Array.isArray(rows) || rows.length === 0) return '';
+        const validTypes = ['upper', 'lower', 'full'];
+        for (const row of rows) {
+          if (row && validTypes.indexOf(row.collection_type) !== -1) {
+            return row.collection_type;
+          }
+        }
+        return '';
+      };
+
+      let response = await fetch(
+        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&select=collection_type`,
+        { headers: headers }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(function () { return ''; });
+        const missingColumn = errorText.indexOf('collection_type') !== -1 && (errorText.indexOf('column') !== -1 || errorText.indexOf('42703') !== -1);
+        if (missingColumn) return '';
+        return '';
+      }
+
+      let data = await response.json();
+      let collectionType = parseCollectionType(data);
+      if (collectionType) return collectionType;
+
+      if (coll) {
+        response = await fetch(
+          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent('')}&select=collection_type`,
+          { headers: headers }
+        );
+        if (response.ok) {
+          data = await response.json();
+          collectionType = parseCollectionType(data);
+          if (collectionType) return collectionType;
+        }
+      }
+
+      return '';
+    } catch (_error) {
+      return '';
     }
   }
 
@@ -864,6 +924,7 @@
     const rootEl = document.getElementById('omafit-widget-root');
     let collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
+    const collectionType = await fetchCollectionType(shopDomain, collectionHandle);
     
     // Buscar produto complementar (usa coleção atual se houver; senão busca de qualquer coleção)
     const complementaryProduct = await getComplementaryProduct(collectionHandle);
@@ -897,6 +958,7 @@
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
+      (collectionType ? '&collectionType=' + encodeURIComponent(collectionType) : '') +
       (complementaryProduct ? '&complementaryProductUrl=' + encodeURIComponent(complementaryProduct.url) : '') +
       (complementaryProduct ? '&recommendedProductUrl=' + encodeURIComponent(complementaryProduct.url) : '') +
       (complementaryProduct ? '&recommendedProductName=' + encodeURIComponent(complementaryProduct.title) : '') +
@@ -981,6 +1043,7 @@
           type: 'omafit-context',
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
           defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
+          collectionType: typeof collectionType === 'string' ? collectionType : '',
           complementaryProduct: complementaryProduct || null,
           recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
           recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
@@ -1006,6 +1069,7 @@
           console.log('📤 Contexto enviado via postMessage:', { 
             collectionHandle: collectionHandle || '(vazio)', 
             defaultGender: defaultGender || '(vazio)',
+            collectionType: collectionType || '(vazio)',
             complementaryProduct: complementaryProduct ? complementaryProduct.url : '(nenhum)'
           });
         }
@@ -1050,6 +1114,7 @@
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
               defaultGender: defaultGender || '',
+              collectionType: collectionType || '',
               complementaryProduct: complementaryProduct || null,
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
               recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
@@ -1077,6 +1142,7 @@
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
               defaultGender: defaultGender || '',
+              collectionType: collectionType || '',
               complementaryProduct: complementaryProduct || null,
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
               recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
@@ -1099,6 +1165,7 @@
             shopDomain: shopDomain,
             collectionHandle: collectionHandle || '',
             defaultGender: defaultGender || '',
+            collectionType: collectionType || '',
             complementaryProduct: complementaryProduct || null,
             recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
             recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''

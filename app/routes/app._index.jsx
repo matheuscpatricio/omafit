@@ -83,16 +83,10 @@ export default function DashboardPage() {
         console.warn('[Dashboard] Billing sync failed (non-blocking):', syncErr);
       }
 
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
       const fromBillingRefresh = searchParams.get('billing_refresh') === '1';
 
-      const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`, {
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        },
+      const response = await fetch(`/api/shopify-shop?shop=${encodeURIComponent(shop)}`, {
+        credentials: 'include',
         cache: fromBillingRefresh ? 'no-store' : 'default'
       });
 
@@ -101,7 +95,7 @@ export default function DashboardPage() {
       }
 
       const data = await response.json();
-      const shopData = data[0] || null;
+      const shopData = data?.shop || null;
 
       if (!shopData) {
         // Loja não encontrada, criar registro básico

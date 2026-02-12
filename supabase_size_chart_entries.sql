@@ -47,14 +47,14 @@ BEGIN
         measurements_val := '{}'::jsonb;
       END IF;
 
-      INSERT INTO size_chart_entries (size_chart_id, size_name, measurements)
-      VALUES (NEW.id, size_label_val, measurements_val);
+      INSERT INTO size_chart_entries (size_chart_id, size_label, size_name, measurements)
+      VALUES (NEW.id, size_label_val, size_label_val, measurements_val);
     END LOOP;
   END IF;
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- 4) Trigger: após INSERT ou UPDATE em size_charts, preencher size_chart_entries
 DROP TRIGGER IF EXISTS trigger_sync_size_chart_entries ON size_charts;
@@ -68,3 +68,20 @@ CREATE TRIGGER trigger_sync_size_chart_entries
 UPDATE size_charts SET sizes = sizes WHERE 1=1;
 
 COMMENT ON TABLE size_chart_entries IS 'Uma linha por tamanho (P, M, G...) de cada size_chart; preenchida por trigger a partir de size_charts.sizes';
+
+-- 6) RLS para permitir escrita/leitura pelo app (anon/authenticated)
+ALTER TABLE size_chart_entries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all operations on size_chart_entries" ON size_chart_entries;
+DROP POLICY IF EXISTS "Allow public read/write on size_chart_entries" ON size_chart_entries;
+DROP POLICY IF EXISTS "Enable read access for all users on size_chart_entries" ON size_chart_entries;
+DROP POLICY IF EXISTS "Enable insert for all users on size_chart_entries" ON size_chart_entries;
+DROP POLICY IF EXISTS "Enable update for all users on size_chart_entries" ON size_chart_entries;
+DROP POLICY IF EXISTS "Enable delete for all users on size_chart_entries" ON size_chart_entries;
+
+CREATE POLICY "Allow all operations on size_chart_entries"
+ON size_chart_entries
+FOR ALL
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);

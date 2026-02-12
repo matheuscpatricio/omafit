@@ -1,5 +1,24 @@
 import { authenticate } from "../shopify.server";
 
+function normalizeUpstreamError(text, fallback) {
+  const raw = String(text || "").trim();
+  if (!raw) return fallback;
+  if (raw.includes("Error code 522") || raw.includes("Connection timed out")) {
+    return "Supabase temporarily unavailable (522 timeout)";
+  }
+  return raw.length > 220 ? `${raw.slice(0, 220)}...` : raw;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const loader = async ({ request }) => {
   try {
     await authenticate.admin(request);
@@ -16,7 +35,7 @@ export const loader = async ({ request }) => {
       return Response.json({ error: "Supabase not configured" }, { status: 500 });
     }
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`,
       {
         headers: {
@@ -30,7 +49,7 @@ export const loader = async ({ request }) => {
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       return Response.json(
-        { error: "Failed to fetch shopify_shops", status: response.status, body },
+        { error: normalizeUpstreamError(body, "Failed to fetch shopify_shops"), status: response.status },
         { status: 502 },
       );
     }
@@ -39,6 +58,9 @@ export const loader = async ({ request }) => {
     return Response.json({ shop: data?.[0] || null });
   } catch (err) {
     console.error("[api.shopify-shop] Error:", err);
+    if (err?.name === "AbortError") {
+      return Response.json({ error: "Supabase request timed out" }, { status: 504 });
+    }
     return Response.json({ error: "Internal error" }, { status: 500 });
   }
 };

@@ -6,6 +6,25 @@ function buildPublicId(shopDomain) {
   return `wgt_pub_${hash.substring(0, 24)}`;
 }
 
+function normalizeUpstreamError(text, fallback) {
+  const raw = String(text || "").trim();
+  if (!raw) return fallback;
+  if (raw.includes("Error code 522") || raw.includes("Connection timed out")) {
+    return "Supabase temporarily unavailable (522 timeout)";
+  }
+  return raw.length > 220 ? `${raw.slice(0, 220)}...` : raw;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const action = async ({ request }) => {
   try {
     await authenticate.admin(request);
@@ -28,20 +47,23 @@ export const action = async ({ request }) => {
       "Content-Type": "application/json",
     };
 
-    const checkResponse = await fetch(
+    const checkResponse = await fetchWithTimeout(
       `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=is_active,public_id`,
       { headers },
     );
 
     if (!checkResponse.ok) {
       const errorText = await checkResponse.text().catch(() => "");
-      return Response.json({ success: false, error: errorText || "check failed" }, { status: 502 });
+      return Response.json(
+        { success: false, error: normalizeUpstreamError(errorText, "Failed to read widget_keys") },
+        { status: 502 },
+      );
     }
 
     const shopData = await checkResponse.json();
     if (!shopData || shopData.length === 0) {
       const publicId = buildPublicId(shopDomain);
-      const createResponse = await fetch(`${supabaseUrl}/rest/v1/widget_keys`, {
+      const createResponse = await fetchWithTimeout(`${supabaseUrl}/rest/v1/widget_keys`, {
         method: "POST",
         headers: {
           ...headers,
@@ -56,7 +78,10 @@ export const action = async ({ request }) => {
 
       if (!createResponse.ok) {
         const errorText = await createResponse.text().catch(() => "");
-        return Response.json({ success: false, error: errorText || "create failed" }, { status: 502 });
+        return Response.json(
+          { success: false, error: normalizeUpstreamError(errorText, "Failed to create widget_keys") },
+          { status: 502 },
+        );
       }
 
       return Response.json({ success: true, created: true, publicId });
@@ -67,7 +92,7 @@ export const action = async ({ request }) => {
       return Response.json({ success: true, alreadyActive: true, publicId: row.public_id || null });
     }
 
-    const patchResponse = await fetch(
+    const patchResponse = await fetchWithTimeout(
       `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
       {
         method: "PATCH",
@@ -84,7 +109,10 @@ export const action = async ({ request }) => {
 
     if (!patchResponse.ok) {
       const errorText = await patchResponse.text().catch(() => "");
-      return Response.json({ success: false, error: errorText || "reactivate failed" }, { status: 502 });
+      return Response.json(
+        { success: false, error: normalizeUpstreamError(errorText, "Failed to reactivate widget_keys") },
+        { status: 502 },
+      );
     }
 
     const updated = await patchResponse.json().catch(() => []);
@@ -95,6 +123,9 @@ export const action = async ({ request }) => {
     });
   } catch (err) {
     console.error("[api.widget-keys.reactivate] Error:", err);
+    if (err?.name === "AbortError") {
+      return Response.json({ success: false, error: "Supabase request timed out" }, { status: 504 });
+    }
     return Response.json({ success: false, error: "Internal error" }, { status: 500 });
   }
 };

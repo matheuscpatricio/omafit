@@ -10,6 +10,12 @@ export async function reactivateShop(shopDomain) {
   }
 
   try {
+    const shorten = (msg) => {
+      const text = String(msg || '').trim();
+      if (!text) return '';
+      return text.length > 180 ? `${text.slice(0, 180)}...` : text;
+    };
+
     const response = await fetch('/api/widget-keys/reactivate', {
       method: 'POST',
       credentials: 'include',
@@ -21,13 +27,15 @@ export async function reactivateShop(shopDomain) {
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.error('[ReactivateShop] Erro ao reativar via API:', data?.error || response.status);
-      return { success: false, error: data?.error || `Erro HTTP: ${response.status}` };
+      const conciseError = shorten(data?.error) || `Erro HTTP: ${response.status}`;
+      console.warn('[ReactivateShop] Falha não crítica ao reativar:', conciseError);
+      return { success: false, error: conciseError };
     }
     return data;
   } catch (error) {
-    console.error('[ReactivateShop] Erro inesperado:', error);
-    return { success: false, error: error.message };
+    const conciseError = error?.message ? String(error.message) : 'Erro inesperado';
+    console.warn('[ReactivateShop] Erro inesperado (não crítico):', conciseError);
+    return { success: false, error: conciseError };
   }
 }
 

@@ -15,7 +15,8 @@ import {
   Spinner,
   Tabs,
   Badge,
-  Box
+  Box,
+  Checkbox
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
@@ -199,6 +200,12 @@ export default function SizeChartPage() {
     });
   };
 
+  const handleCollectionTypeCheckbox = (handle, optionValue, checked) => {
+    // Mantem seleção única: só altera quando marcar
+    if (!checked) return;
+    setCollectionType(handle, optionValue);
+  };
+
   const getCollectionElasticity = (handle) => {
     const elasticity = charts[handle]?.collectionElasticity;
     return COLLECTION_ELASTICITY_OPTIONS.some((opt) => opt.value === elasticity)
@@ -215,6 +222,12 @@ export default function SizeChartPage() {
       next[handle] = { ...next[handle], collectionElasticity };
       return next;
     });
+  };
+
+  const handleCollectionElasticityCheckbox = (handle, optionValue, checked) => {
+    // Mantem seleção única: só altera quando marcar
+    if (!checked) return;
+    setCollectionElasticity(handle, optionValue);
   };
 
   const setChart = (handle, gender, updater) => {
@@ -444,23 +457,43 @@ export default function SizeChartPage() {
                 />
               </Box>
 
-              <Box minWidth="280px">
-                <Select
-                  label="Tipo da coleção"
-                  options={COLLECTION_TYPE_OPTIONS}
-                  value={getCollectionType(selectedHandle)}
-                  onChange={(v) => setCollectionType(selectedHandle, v)}
-                />
-              </Box>
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">
+                  Tipo da coleção
+                </Text>
+                <Text variant="bodySm" tone="subdued">
+                  Marque apenas uma opção.
+                </Text>
+                <BlockStack gap="100">
+                  {COLLECTION_TYPE_OPTIONS.map((option) => (
+                    <Checkbox
+                      key={option.value}
+                      label={option.label}
+                      checked={getCollectionType(selectedHandle) === option.value}
+                      onChange={(checked) => handleCollectionTypeCheckbox(selectedHandle, option.value, checked)}
+                    />
+                  ))}
+                </BlockStack>
+              </BlockStack>
 
-              <Box minWidth="280px">
-                <Select
-                  label="Como o tecido dessa coleção se comporta no corpo?"
-                  options={COLLECTION_ELASTICITY_OPTIONS}
-                  value={getCollectionElasticity(selectedHandle)}
-                  onChange={(v) => setCollectionElasticity(selectedHandle, v)}
-                />
-              </Box>
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">
+                  Como o tecido dessa coleção se comporta no corpo?
+                </Text>
+                <Text variant="bodySm" tone="subdued">
+                  Marque apenas uma opção.
+                </Text>
+                <BlockStack gap="100">
+                  {COLLECTION_ELASTICITY_OPTIONS.map((option) => (
+                    <Checkbox
+                      key={option.value}
+                      label={option.label}
+                      checked={getCollectionElasticity(selectedHandle) === option.value}
+                      onChange={(checked) => handleCollectionElasticityCheckbox(selectedHandle, option.value, checked)}
+                    />
+                  ))}
+                </BlockStack>
+              </BlockStack>
 
               <Divider />
 

@@ -150,6 +150,13 @@ export default function BillingPage() {
                   const url = getPricingPlansUrl();
                   if (url) {
                     console.log('[Billing] Opening pricing plans URL:', url);
+                    // Marca localmente que estamos iniciando escolha de plano (Managed Pricing).
+                    // Ao voltar para o admin, o dashboard usa esse sinal para fazer re-sync agressivo.
+                    try {
+                      window.sessionStorage?.setItem('omafit_pending_billing_activation_at', String(Date.now()));
+                    } catch (_err) {
+                      // non-blocking
+                    }
                     // Força navegação no topo para sair do iframe
                     if (typeof window !== "undefined" && window.top && window.top !== window.self) {
                       window.top.location.href = url;

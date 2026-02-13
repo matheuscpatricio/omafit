@@ -44,6 +44,8 @@ export default function DashboardPage() {
     currency: 'USD',
     usage: null
   });
+  const BILLING_PENDING_KEY = 'omafit_pending_billing_activation_at';
+  const BILLING_PENDING_MAX_AGE_MS = 10 * 60 * 1000;
 
   useEffect(() => {
     loadDashboardData();
@@ -77,6 +79,25 @@ export default function DashboardPage() {
       }
 
       const fromBillingRefresh = searchParams.get('billing_refresh') === '1';
+      const pendingBillingActivation = (() => {
+        try {
+          const raw = window.sessionStorage?.getItem(BILLING_PENDING_KEY);
+          if (!raw) return false;
+          const ts = Number(raw);
+          if (!Number.isFinite(ts)) {
+            window.sessionStorage?.removeItem(BILLING_PENDING_KEY);
+            return false;
+          }
+          const fresh = Date.now() - ts <= BILLING_PENDING_MAX_AGE_MS;
+          if (!fresh) {
+            window.sessionStorage?.removeItem(BILLING_PENDING_KEY);
+          }
+          return fresh;
+        } catch (_err) {
+          return false;
+        }
+      })();
+      const shouldUseAggressiveBillingSync = fromBillingRefresh || pendingBillingActivation;
 
       const syncBillingWithRetry = async (attempts = 3, delayMs = 2000) => {
         for (let i = 0; i < attempts; i++) {
@@ -106,12 +127,12 @@ export default function DashboardPage() {
       };
 
       // Sincronizar plano antes de carregar dados
-      await syncBillingWithRetry(fromBillingRefresh ? 4 : 2, fromBillingRefresh ? 2500 : 1500);
+      await syncBillingWithRetry(shouldUseAggressiveBillingSync ? 4 : 2, shouldUseAggressiveBillingSync ? 2500 : 1500);
 
-      let shopData = await fetchShopData(fromBillingRefresh);
+      let shopData = await fetchShopData(shouldUseAggressiveBillingSync);
 
       // Em lojas novas, pode levar alguns segundos para a assinatura ficar visível na Shopify
-      if (fromBillingRefresh && (!shopData || !shopData.plan || shopData.billing_status !== 'active')) {
+      if (shouldUseAggressiveBillingSync && (!shopData || !shopData.plan || shopData.billing_status !== 'active')) {
         console.log('[Dashboard] Plano ainda não ativo após retorno de billing; tentando sincronizar novamente...');
         await syncBillingWithRetry(3, 2500);
         shopData = await fetchShopData(true);
@@ -156,6 +177,14 @@ export default function DashboardPage() {
           remaining
         }
       });
+
+      if (shopData?.plan && shopData?.billing_status === 'active') {
+        try {
+          window.sessionStorage?.removeItem(BILLING_PENDING_KEY);
+        } catch (_err) {
+          // non-blocking
+        }
+      }
 
     } catch (err) {
       console.error('[Dashboard] Erro ao carregar dados:', err);

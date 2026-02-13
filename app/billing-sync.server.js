@@ -72,6 +72,22 @@ function parseSupabaseError(text) {
   }
 }
 
+function inferValueForMissingColumn(columnName, shop, payload) {
+  const key = String(columnName || "").toLowerCase();
+  if (!key) return "";
+  if (key.includes("shop") || key.includes("domain")) return shop;
+  if (key.includes("url")) return buildStoreUrl(shop);
+  if (key === "plan" || key.includes("plan_")) return payload.plan || "starter";
+  if (key.includes("billing_status") || key === "status") return payload.billing_status || "inactive";
+  if (key.includes("images_included")) return payload.images_included ?? 100;
+  if (key.includes("price_per_extra")) return payload.price_per_extra_image ?? 0.18;
+  if (key.includes("currency")) return payload.currency || "USD";
+  if (key.includes("images_used") || key.includes("usage")) return 0;
+  if (key.includes("is_active")) return (payload.billing_status || "").toLowerCase() === "active";
+  if (key.includes("created_at") || key.includes("updated_at")) return new Date().toISOString();
+  return "";
+}
+
 async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
   const headers = {
     apikey: supabaseKey,
@@ -94,43 +110,60 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
 
   let lastError = "";
 
-  for (const insertBody of candidateInsertBodies) {
-    const insertRes = await fetch(insertUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(insertBody),
-    });
+  for (const initialBody of candidateInsertBodies) {
+    let bodyToInsert = { ...initialBody };
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const insertRes = await fetch(insertUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(bodyToInsert),
+      });
 
-    if (insertRes.ok) return true;
+      if (insertRes.ok) return true;
 
-    const errorText = await insertRes.text().catch(() => "");
-    lastError = errorText || `HTTP ${insertRes.status}`;
-    const parsed = parseSupabaseError(errorText);
-    const code = parsed?.code;
-    const message = String(parsed?.message || errorText || "");
+      const errorText = await insertRes.text().catch(() => "");
+      lastError = errorText || `HTTP ${insertRes.status}`;
+      const parsed = parseSupabaseError(errorText);
+      const code = parsed?.code;
+      const message = String(parsed?.message || errorText || "");
 
-    if (insertRes.status === 409) {
-      // Linha já existe; tenta patch pelos identificadores mais comuns.
-      for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
-        const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}`;
-        const patchRes = await fetch(patchUrl, {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify(payload),
-        });
-        if (patchRes.ok) return true;
+      if (insertRes.status === 409) {
+        // Linha já existe; tenta patch pelos identificadores mais comuns.
+        for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
+          const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}`;
+          const patchRes = await fetch(patchUrl, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify(payload),
+          });
+          if (patchRes.ok) return true;
+        }
+        break;
       }
-      continue;
-    }
 
-    // Schema legado: coluna não existe / payload não compatível. Tenta próximo candidato.
-    if (code === "42703" || message.includes("column") || message.includes("Could not find")) {
-      continue;
-    }
+      // Schema legado: remova coluna desconhecida e tente de novo.
+      if (code === "42703") {
+        const unknownColumn =
+          message.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1] ||
+          parsed?.details?.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1];
+        if (unknownColumn && unknownColumn in bodyToInsert) {
+          delete bodyToInsert[unknownColumn];
+          continue;
+        }
+      }
 
-    // NOT NULL normalmente indica que o identificador desta tentativa não atende o schema.
-    if (code === "23502") {
-      continue;
+      // Coluna NOT NULL faltando: preenche dinamicamente e tenta de novo.
+      if (code === "23502") {
+        const missingColumn =
+          message.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1] ||
+          parsed?.details?.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1];
+        if (missingColumn) {
+          bodyToInsert[missingColumn] = inferValueForMissingColumn(missingColumn, shop, payload);
+          continue;
+        }
+      }
+
+      break;
     }
   }
 

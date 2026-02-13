@@ -1,6 +1,8 @@
 import { authenticate } from "../shopify.server";
 import { syncBillingFromShopify, writeBillingToSupabase } from "../billing-sync.server";
 
+const SHOP_IDENTIFIER_COLUMNS = ["shop_domain", "shop", "domain"];
+
 function normalizeUpstreamError(text, fallback) {
   const raw = String(text || "").trim();
   if (!raw) return fallback;
@@ -40,23 +42,51 @@ export const loader = async ({ request }) => {
       return Response.json({ error: "Supabase not configured" }, { status: 500 });
     }
 
+    const headers = {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+      "Content-Type": "application/json",
+    };
+
     const fetchShopRow = async () => {
-      const response = await fetchWithTimeout(
-        `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`,
-        {
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      if (!response.ok) {
+      for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
+        const response = await fetchWithTimeout(
+          `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}&select=*`,
+          { headers },
+        );
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data) && data.length > 0) return data[0];
+          continue;
+        }
         const body = await response.text().catch(() => "");
-        throw new Error(normalizeUpstreamError(body, `Failed to fetch shopify_shops (${response.status})`));
+        const normalized = normalizeUpstreamError(body, `Failed to fetch shopify_shops (${response.status})`);
+        // Se a coluna não existir no schema, tenta a próxima.
+        if (normalized.includes("column") || normalized.includes("Could not find")) {
+          continue;
+        }
       }
-      const data = await response.json();
-      return data?.[0] || null;
+
+      // Fallback: leitura ampla para schema legado (ex.: coluna store_url).
+      const fallbackRes = await fetchWithTimeout(
+        `${supabaseUrl}/rest/v1/shopify_shops?select=*&limit=200&order=updated_at.desc`,
+        { headers },
+      );
+      if (!fallbackRes.ok) {
+        const body = await fallbackRes.text().catch(() => "");
+        throw new Error(normalizeUpstreamError(body, `Failed to fetch shopify_shops (${fallbackRes.status})`));
+      }
+      const rows = await fallbackRes.json();
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const shopLower = shop.toLowerCase();
+      return (
+        rows.find((row) =>
+          [row?.shop_domain, row?.shop, row?.domain, row?.store_url]
+            .filter(Boolean)
+            .map((v) => String(v).toLowerCase())
+            .some((v) => v.includes(shopLower)),
+        ) || null
+      );
     };
 
     let shopRow = null;
@@ -69,10 +99,14 @@ export const loader = async ({ request }) => {
       );
     }
 
-    // Garantia para loja nova:
-    // 1) tenta sincronizar assinatura real da Shopify
-    // 2) se ainda não existir linha, cria linha mínima inativa
-    if (!shopRow) {
+    // Se não encontrou linha, tenta criar/sincronizar.
+    // Se encontrou sem plano ativo, tenta sincronizar novamente (caso de propagação após assinatura).
+    const shouldForceSync =
+      !shopRow ||
+      !shopRow.plan ||
+      String(shopRow.billing_status || "").toLowerCase() !== "active";
+
+    if (shouldForceSync) {
       try {
         await syncBillingFromShopify(admin, shop);
       } catch (err) {

@@ -54,39 +54,87 @@ const PLAN_PRICE_EXTRA = {
   basic: 0.18,
 };
 
+const SHOP_IDENTIFIER_COLUMNS = ["shop_domain", "shop", "domain"];
+
+function buildStoreUrl(shop) {
+  if (!shop) return null;
+  if (String(shop).startsWith("http://") || String(shop).startsWith("https://")) {
+    return String(shop);
+  }
+  return `https://${shop}`;
+}
+
+function parseSupabaseError(text) {
+  try {
+    return JSON.parse(text || "{}");
+  } catch (_err) {
+    return {};
+  }
+}
+
 async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
+  const headers = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`,
+    "Content-Type": "application/json",
+    Prefer: "return=minimal",
+  };
   const insertUrl = `${supabaseUrl}/rest/v1/shopify_shops`;
-  const insertRes = await fetch(insertUrl, {
-    method: "POST",
-    headers: {
-      apikey: supabaseKey,
-      Authorization: `Bearer ${supabaseKey}`,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({ shop_domain: shop, ...payload }),
-  });
+  const basePayload = {
+    ...payload,
+    store_url: buildStoreUrl(shop),
+    images_used_month: 0,
+    currency: "USD",
+  };
 
-  if (insertRes.ok) return true;
+  const candidateInsertBodies = SHOP_IDENTIFIER_COLUMNS.map((identifierKey) => ({
+    [identifierKey]: shop,
+    ...basePayload,
+  }));
 
-  if (insertRes.status === 409) {
-    const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`;
-    const patchRes = await fetch(patchUrl, {
-      method: "PATCH",
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify(payload),
+  let lastError = "";
+
+  for (const insertBody of candidateInsertBodies) {
+    const insertRes = await fetch(insertUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(insertBody),
     });
-    if (patchRes.ok) return true;
-    console.error("[Billing Sync] PATCH failed after 409:", patchRes.status, await patchRes.text());
-    return false;
+
+    if (insertRes.ok) return true;
+
+    const errorText = await insertRes.text().catch(() => "");
+    lastError = errorText || `HTTP ${insertRes.status}`;
+    const parsed = parseSupabaseError(errorText);
+    const code = parsed?.code;
+    const message = String(parsed?.message || errorText || "");
+
+    if (insertRes.status === 409) {
+      // Linha já existe; tenta patch pelos identificadores mais comuns.
+      for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
+        const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}`;
+        const patchRes = await fetch(patchUrl, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        if (patchRes.ok) return true;
+      }
+      continue;
+    }
+
+    // Schema legado: coluna não existe / payload não compatível. Tenta próximo candidato.
+    if (code === "42703" || message.includes("column") || message.includes("Could not find")) {
+      continue;
+    }
+
+    // NOT NULL normalmente indica que o identificador desta tentativa não atende o schema.
+    if (code === "23502") {
+      continue;
+    }
   }
 
-  console.error("[Billing Sync] INSERT failed:", insertRes.status, await insertRes.text());
+  console.error("[Billing Sync] Upsert failed for all strategies:", lastError);
   return false;
 }
 

@@ -15,6 +15,15 @@ function normalizeUpstreamError(text, fallback) {
   return raw.length > 220 ? `${raw.slice(0, 220)}...` : raw;
 }
 
+function extractSupabaseCode(errorText) {
+  try {
+    const parsed = JSON.parse(errorText);
+    return parsed?.code || null;
+  } catch (_err) {
+    return null;
+  }
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -82,6 +91,12 @@ export const action = async ({ request }) => {
 
       if (!createResponse.ok) {
         const errorText = await createResponse.text().catch(() => "");
+        const code = extractSupabaseCode(errorText);
+        if (code === "23502" || code === "42501") {
+          // Não bloquear o admin por diferença de schema/RLS em widget_keys.
+          // Billing da loja usa shopify_shops e segue funcionando.
+          return Response.json({ success: false, nonCritical: true, skipped: true, error: normalizeUpstreamError(errorText, "Skipped widget_keys create") });
+        }
         return Response.json(
           { success: false, error: normalizeUpstreamError(errorText, "Failed to create widget_keys") },
           { status: 502 },
@@ -113,6 +128,10 @@ export const action = async ({ request }) => {
 
     if (!patchResponse.ok) {
       const errorText = await patchResponse.text().catch(() => "");
+      const code = extractSupabaseCode(errorText);
+      if (code === "23502" || code === "42501") {
+        return Response.json({ success: false, nonCritical: true, skipped: true, error: normalizeUpstreamError(errorText, "Skipped widget_keys reactivate") });
+      }
       return Response.json(
         { success: false, error: normalizeUpstreamError(errorText, "Failed to reactivate widget_keys") },
         { status: 502 },

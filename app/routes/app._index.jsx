@@ -8,7 +8,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getShopDomain } from '../utils/getShopDomain';
-import { reactivateShop } from '../utils/reactivateShop';
 import { useAppI18n } from '../contexts/AppI18n';
 import { useLocaleOverride } from './app';
 import {
@@ -71,12 +70,6 @@ export default function DashboardPage() {
       setError(null);
 
       const shop = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
-
-      if (shop && shop !== 'demo-shop.myshopify.com') {
-        reactivateShop(shop).catch((error) => {
-          console.warn('[Dashboard] Erro ao tentar reativar loja (não crítico):', error);
-        });
-      }
 
       const fromBillingRefresh = searchParams.get('billing_refresh') === '1';
       const pendingBillingActivation = (() => {

@@ -27,9 +27,17 @@ export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
 
     const url = new URL(request.url);
-    const shop = (url.searchParams.get("shop") || session?.shop || "").trim();
+    const requestedShop = (url.searchParams.get("shop") || "").trim();
+    const sessionShop = String(session?.shop || "").trim();
+    const shop = sessionShop || requestedShop;
     if (!shop) {
       return Response.json({ error: "shop is required" }, { status: 400 });
+    }
+    if (requestedShop && sessionShop && requestedShop !== sessionShop) {
+      console.warn("[api.shopify-shop] Ignoring mismatched shop query param", {
+        requestedShop,
+        sessionShop,
+      });
     }
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";

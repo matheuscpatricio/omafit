@@ -10,7 +10,7 @@ export default function BillingPage() {
   const navigate = useNavigate();
   const matches = useMatches();
   const { t } = useAppI18n();
-  const shopDomain = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
+  const shopDomain = getShopDomain(searchParams) || '';
   const appUrlFromLayout = useMemo(() => {
     const m = matches.find((match) => match?.data && "appUrl" in (match.data || {}));
     return (m?.data?.appUrl ?? "") || (typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "");
@@ -33,7 +33,7 @@ export default function BillingPage() {
         console.warn('[Billing] Sync failed (non-blocking):', syncErr);
       }
 
-      const response = await fetch(`/api/shopify-shop?shop=${encodeURIComponent(shopDomain)}`, {
+      const response = await fetch('/api/shopify-shop', {
         credentials: 'include',
         cache: 'no-store'
       });

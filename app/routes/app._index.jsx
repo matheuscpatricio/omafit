@@ -69,7 +69,7 @@ export default function DashboardPage() {
       setLoading(true);
       setError(null);
 
-      const shop = getShopDomain(searchParams) || 'demo-shop.myshopify.com';
+      const shop = getShopDomain(searchParams) || null;
 
       const fromBillingRefresh = searchParams.get('billing_refresh') === '1';
       const pendingBillingActivation = (() => {
@@ -108,7 +108,7 @@ export default function DashboardPage() {
       };
 
       const fetchShopData = async (noStore = false) => {
-        const response = await fetch(`/api/shopify-shop?shop=${encodeURIComponent(shop)}`, {
+        const response = await fetch('/api/shopify-shop', {
           credentials: 'include',
           cache: noStore ? 'no-store' : 'default'
         });
@@ -135,7 +135,7 @@ export default function DashboardPage() {
 
       // Fallback extra para lojas novas sem billing_refresh explícito:
       // dá uma janela curta adicional para Shopify propagar ACTIVE.
-      if (!shouldUseAggressiveBillingSync && hasNoActivePlan && shop && shop !== 'demo-shop.myshopify.com') {
+      if (!shouldUseAggressiveBillingSync && hasNoActivePlan && shop) {
         console.log('[Dashboard] Loja sem plano ativo; executando fallback extra de sincronização...');
         await syncBillingWithRetry(4, 2500);
         shopData = await fetchShopData(true);
@@ -144,7 +144,7 @@ export default function DashboardPage() {
       if (!shopData) {
         // Loja não encontrada, criar registro básico
         setDashboardData({
-          shop,
+          shop: shop || '',
           currentPlan: null,
           billingStatus: 'inactive',
           imagesIncluded: 0,

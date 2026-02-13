@@ -21,6 +21,10 @@ api_version = "2025-10"
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "/webhooks/app/subscriptions_update"
+
   # Webhooks de conformidade obrigatórios para App Store
   # IMPORTANTE: compliance_topics deve ser usado em vez de topics para webhooks de conformidade
   [[webhooks.subscriptions]]

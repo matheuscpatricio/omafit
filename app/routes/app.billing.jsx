@@ -25,38 +25,25 @@ export default function BillingPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      if (!supabaseUrl || !supabaseKey) {
-        console.error('[Billing] Supabase não configurado:', { supabaseUrl: !!supabaseUrl, supabaseKey: !!supabaseKey });
-        setError('Supabase não configurado');
-        return;
-      }
 
       // Sincronizar plano da Shopify com Supabase antes de carregar
       try {
-        await fetch('/api/billing/sync', { credentials: 'include' });
+        await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
       } catch (syncErr) {
         console.warn('[Billing] Sync failed (non-blocking):', syncErr);
       }
 
-      const response = await fetch(`${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}`, {
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        }
+      const response = await fetch(`/api/shopify-shop?shop=${encodeURIComponent(shopDomain)}`, {
+        credentials: 'include',
+        cache: 'no-store'
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[Billing] Supabase fetch failed:', response.status, errorText);
         throw new Error(`Erro ao carregar dados: ${response.statusText}`);
       }
 
       const shopData = await response.json();
-      const shop = shopData[0];
+      const shop = shopData?.shop || null;
 
       console.log('[Billing] Shop data loaded:', { shopDomain, plan: shop?.plan, billingStatus: shop?.billing_status, imagesIncluded: shop?.images_included });
 

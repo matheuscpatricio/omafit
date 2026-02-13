@@ -76,26 +76,46 @@ export default function DashboardPage() {
         });
       }
 
-      // Sincronizar plano da Shopify com Supabase antes de carregar (para refletir assinatura feita fora do admin)
-      try {
-        await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
-      } catch (syncErr) {
-        console.warn('[Dashboard] Billing sync failed (non-blocking):', syncErr);
-      }
-
       const fromBillingRefresh = searchParams.get('billing_refresh') === '1';
 
-      const response = await fetch(`/api/shopify-shop?shop=${encodeURIComponent(shop)}`, {
-        credentials: 'include',
-        cache: fromBillingRefresh ? 'no-store' : 'default'
-      });
+      const syncBillingWithRetry = async (attempts = 3, delayMs = 2000) => {
+        for (let i = 0; i < attempts; i++) {
+          try {
+            const res = await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
+            if (res.ok) return true;
+          } catch (_err) {
+            // ignora e tenta de novo
+          }
+          if (i < attempts - 1) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+        return false;
+      };
 
-      if (!response.ok) {
-        throw new Error(`${t('dashboard.errorLoadData')}: ${response.statusText}`);
+      const fetchShopData = async (noStore = false) => {
+        const response = await fetch(`/api/shopify-shop?shop=${encodeURIComponent(shop)}`, {
+          credentials: 'include',
+          cache: noStore ? 'no-store' : 'default'
+        });
+        if (!response.ok) {
+          throw new Error(`${t('dashboard.errorLoadData')}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return data?.shop || null;
+      };
+
+      // Sincronizar plano antes de carregar dados
+      await syncBillingWithRetry(fromBillingRefresh ? 4 : 2, fromBillingRefresh ? 2500 : 1500);
+
+      let shopData = await fetchShopData(fromBillingRefresh);
+
+      // Em lojas novas, pode levar alguns segundos para a assinatura ficar visível na Shopify
+      if (fromBillingRefresh && (!shopData || !shopData.plan || shopData.billing_status !== 'active')) {
+        console.log('[Dashboard] Plano ainda não ativo após retorno de billing; tentando sincronizar novamente...');
+        await syncBillingWithRetry(3, 2500);
+        shopData = await fetchShopData(true);
       }
-
-      const data = await response.json();
-      const shopData = data?.shop || null;
 
       if (!shopData) {
         // Loja não encontrada, criar registro básico

@@ -4,6 +4,7 @@
  * Requer scope read_orders.
  */
 import { authenticate } from '../shopify.server';
+import { ensureShopHasActiveBilling } from "../billing-access.server";
 
 export const loader = async ({ request }) => {
   const fallback = {
@@ -22,6 +23,11 @@ export const loader = async ({ request }) => {
     const shop = session?.shop;
     if (!shop) {
       return Response.json({ ...fallback, error: 'Shop não encontrado' }, { status: 200 });
+    }
+
+    const check = await ensureShopHasActiveBilling(admin, shop);
+    if (!check.active) {
+      return Response.json({ ...fallback, error: "billing_inactive" }, { status: 200 });
     }
 
     const url = new URL(request.url);

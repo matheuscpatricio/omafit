@@ -3,6 +3,7 @@
  * Retorna as coleções da loja (handle e title) para uso na página de tabelas de medidas.
  */
 import { authenticate } from '../shopify.server';
+import { ensureShopHasActiveBilling } from "../billing-access.server";
 
 const GET_COLLECTIONS_QUERY = `#graphql
   query GetCollections {
@@ -20,7 +21,11 @@ const GET_COLLECTIONS_QUERY = `#graphql
 
 export const loader = async ({ request }) => {
   try {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
+    const check = await ensureShopHasActiveBilling(admin, session.shop);
+    if (!check.active) {
+      return Response.json({ error: "billing_inactive" }, { status: 402 });
+    }
     const response = await admin.graphql(GET_COLLECTIONS_QUERY);
     const json = await response.json();
     const edges = json?.data?.collections?.edges ?? [];

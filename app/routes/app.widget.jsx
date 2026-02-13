@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { redirect } from "react-router";
 import {
   Page,
   Layout,
@@ -17,6 +18,17 @@ import {
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
+import { authenticate } from "../shopify.server";
+import { ensureShopHasActiveBilling } from "../billing-access.server";
+
+export const loader = async ({ request }) => {
+  const { admin, session } = await authenticate.admin(request);
+  const check = await ensureShopHasActiveBilling(admin, session.shop);
+  if (!check.active) {
+    return redirect(`/app/billing?shop=${encodeURIComponent(session.shop)}`);
+  }
+  return null;
+};
 
 export default function WidgetPage() {
   const [searchParams] = useSearchParams();

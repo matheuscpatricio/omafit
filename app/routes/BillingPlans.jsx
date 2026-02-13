@@ -129,53 +129,7 @@ export default function BillingPlans({
                   <Button
                     variant="primary"
                     loading={isLoading}
-                    onClick={async () => {
-                      console.log("[BillingPlans] Button clicked for plan:", planKey);
-                      try {
-                        // Constrói URL da API sem redirect=1 para obter JSON
-                        const startUrl = buildBillingStartGetUrl?.(planKey);
-                        if (!startUrl) {
-                          console.error("[BillingPlans] No startUrl, using fallback");
-                          onSelectPlan(planKey);
-                          return;
-                        }
-                        const apiUrl = startUrl.replace("/app/billing/start", "/api/billing/start");
-                        console.log("[BillingPlans] Fetching confirmationUrl from:", apiUrl);
-                        
-                        const response = await fetch(apiUrl, {
-                          method: "GET",
-                          credentials: "include",
-                        });
-                        
-                        console.log("[BillingPlans] Response status:", response.status, response.headers.get("Content-Type"));
-                        
-                        if (!response.ok) {
-                          const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-                          console.error("[BillingPlans] API error:", errorData);
-                          alert(errorData.error || "Erro ao iniciar assinatura");
-                          return;
-                        }
-                        
-                        const data = await response.json();
-                        console.log("[BillingPlans] Got response:", data);
-                        
-                        if (data.confirmationUrl) {
-                          console.log("[BillingPlans] Redirecting to confirmationUrl:", data.confirmationUrl);
-                          // Força navegação no topo (sai do iframe)
-                          if (typeof window !== "undefined" && window.top) {
-                            window.top.location.href = data.confirmationUrl;
-                          } else {
-                            window.location.href = data.confirmationUrl;
-                          }
-                        } else {
-                          console.error("[BillingPlans] No confirmationUrl in response:", data);
-                          alert("Resposta inesperada do servidor");
-                        }
-                      } catch (err) {
-                        console.error("[BillingPlans] Fetch error:", err);
-                        alert("Erro ao conectar com o servidor: " + (err.message || String(err)));
-                      }
-                    }}
+                    onClick={() => onSelectPlan(planKey)}
                   >
                     {hasActivePlan ? t("billing.switchPlan") : t("billing.subscribePlan")}
                   </Button>

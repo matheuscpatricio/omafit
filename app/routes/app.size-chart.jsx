@@ -21,6 +21,8 @@ import {
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
 import { authenticate } from '../shopify.server';
+import { redirect } from "react-router";
+import { ensureShopHasActiveBilling } from "../billing-access.server";
 
 const GET_COLLECTIONS_QUERY = `#graphql
   query GetCollections {
@@ -38,7 +40,11 @@ const GET_COLLECTIONS_QUERY = `#graphql
 
 export const loader = async ({ request }) => {
   try {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
+    const check = await ensureShopHasActiveBilling(admin, session.shop);
+    if (!check.active) {
+      return redirect(`/app/billing?shop=${encodeURIComponent(session.shop)}`);
+    }
     const response = await admin.graphql(GET_COLLECTIONS_QUERY);
     const json = await response.json();
     const edges = json?.data?.collections?.edges ?? [];

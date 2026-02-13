@@ -4,6 +4,7 @@
  * Query: shop_domain, user_id (opcional), since (ISO date opcional).
  */
 import { authenticate } from "../shopify.server";
+import { ensureShopHasActiveBilling } from "../billing-access.server";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY =
@@ -12,7 +13,11 @@ const SUPABASE_SERVICE_KEY =
 
 export async function loader({ request }) {
   try {
-    await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
+    const check = await ensureShopHasActiveBilling(admin, session.shop);
+    if (!check.active) {
+      return Response.json({ error: "billing_inactive" }, { status: 402 });
+    }
     const url = new URL(request.url);
     const shopDomain = url.searchParams.get("shop_domain");
     const userId = url.searchParams.get("user_id");

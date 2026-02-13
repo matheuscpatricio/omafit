@@ -131,10 +131,20 @@ export default function DashboardPage() {
 
       let shopData = await fetchShopData(shouldUseAggressiveBillingSync);
 
+      const hasNoActivePlan = !shopData || !shopData.plan || shopData.billing_status !== 'active';
+
       // Em lojas novas, pode levar alguns segundos para a assinatura ficar visível na Shopify
-      if (shouldUseAggressiveBillingSync && (!shopData || !shopData.plan || shopData.billing_status !== 'active')) {
+      if (shouldUseAggressiveBillingSync && hasNoActivePlan) {
         console.log('[Dashboard] Plano ainda não ativo após retorno de billing; tentando sincronizar novamente...');
         await syncBillingWithRetry(3, 2500);
+        shopData = await fetchShopData(true);
+      }
+
+      // Fallback extra para lojas novas sem billing_refresh explícito:
+      // dá uma janela curta adicional para Shopify propagar ACTIVE.
+      if (!shouldUseAggressiveBillingSync && hasNoActivePlan && shop && shop !== 'demo-shop.myshopify.com') {
+        console.log('[Dashboard] Loja sem plano ativo; executando fallback extra de sincronização...');
+        await syncBillingWithRetry(4, 2500);
         shopData = await fetchShopData(true);
       }
 

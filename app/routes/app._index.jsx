@@ -107,6 +107,20 @@ export default function DashboardPage() {
         return false;
       };
 
+      const waitForActivePlan = async (attempts = 5, delayMs = 2500) => {
+        for (let i = 0; i < attempts; i++) {
+          await syncBillingWithRetry(1, 0);
+          const latest = await fetchShopData(true);
+          if (latest?.plan && latest?.billing_status === 'active') {
+            return latest;
+          }
+          if (i < attempts - 1) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+        return null;
+      };
+
       const fetchShopData = async (noStore = false) => {
         const response = await fetch('/api/shopify-shop', {
           credentials: 'include',
@@ -135,10 +149,19 @@ export default function DashboardPage() {
 
       // Fallback extra para lojas novas sem billing_refresh explícito:
       // dá uma janela curta adicional para Shopify propagar ACTIVE.
-      if (!shouldUseAggressiveBillingSync && hasNoActivePlan && shop) {
+      if (!shouldUseAggressiveBillingSync && hasNoActivePlan) {
         console.log('[Dashboard] Loja sem plano ativo; executando fallback extra de sincronização...');
         await syncBillingWithRetry(4, 2500);
         shopData = await fetchShopData(true);
+      }
+
+      // Último fallback para lojas novas: aguarda propagação da assinatura ACTIVE.
+      if (!shopData || !shopData.plan || shopData.billing_status !== 'active') {
+        console.log('[Dashboard] Aguardando propagação final do plano ativo...');
+        const activeShopData = await waitForActivePlan(5, 2500);
+        if (activeShopData) {
+          shopData = activeShopData;
+        }
       }
 
       if (!shopData) {

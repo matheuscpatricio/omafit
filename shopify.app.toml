@@ -33,7 +33,7 @@ api_version = "2025-10"
 
 [access_scopes]
 # read_products = produtos e coleções; read_orders = pedidos e devoluções (analytics antes/depois do Omafit)
-scopes = "read_products,read_orders"
+scopes = "read_products,read_orders,read_own_subscription,write_own_subscription"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 

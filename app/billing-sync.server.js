@@ -223,6 +223,14 @@ export async function syncBillingFromShopify(admin, shop) {
     const fetchActive = async () => {
       const response = await admin.graphql(GET_ACTIVE_SUBSCRIPTIONS);
       const json = await response.json();
+      const gqlErrors = Array.isArray(json?.errors) ? json.errors : [];
+      if (gqlErrors.length > 0) {
+        const message = gqlErrors
+          .map((err) => err?.message)
+          .filter(Boolean)
+          .join("; ") || "Unknown GraphQL error while fetching subscriptions";
+        throw new Error(`[Billing Sync] Shopify GraphQL error: ${message}`);
+      }
       const subs = json?.data?.currentAppInstallation?.activeSubscriptions || [];
       return subs.find((s) => (s.status || "").toUpperCase() === "ACTIVE") || null;
     };
@@ -238,6 +246,7 @@ export async function syncBillingFromShopify(admin, shop) {
       if (active) console.log("[Billing Sync] ACTIVE on second retry:", active.name);
     }
 
+    const hasActiveSubscription = Boolean(active);
     const subscriptionName = active?.name || "";
     const plan = resolvePlanFromSubscriptionName(subscriptionName);
     // Normaliza "basic" para "starter"
@@ -248,6 +257,7 @@ export async function syncBillingFromShopify(admin, shop) {
     console.log("[Billing Sync] Resolved:", {
       shop,
       activeName: subscriptionName,
+      hasActiveSubscription,
       resolvedPlan: normalizedPlan,
       imagesIncluded,
       pricePerExtra,
@@ -255,7 +265,7 @@ export async function syncBillingFromShopify(admin, shop) {
 
     const saved = await writeBillingToSupabase(shop, {
       plan: normalizedPlan,
-      billingStatus: active ? "active" : "inactive",
+      billingStatus: hasActiveSubscription ? "active" : "inactive",
     });
     if (saved) {
       console.log("[Billing Sync] Upserted billing row:", { shop, plan: saved.plan, imagesIncluded: saved.imagesIncluded });

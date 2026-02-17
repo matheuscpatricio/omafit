@@ -72,11 +72,62 @@ function parseSupabaseError(text) {
   }
 }
 
-function inferValueForMissingColumn(columnName, shop, payload) {
+async function findExistingUserId(shop, supabaseUrl, supabaseKey) {
+  const headers = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`,
+    "Content-Type": "application/json",
+  };
+
+  // 1) Primeiro tenta a tabela widget_keys (quando user_id já foi provisionado lá).
+  try {
+    const widgetRes = await fetch(
+      `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shop)}&select=user_id&limit=1`,
+      { headers },
+    );
+    if (widgetRes.ok) {
+      const rows = await widgetRes.json();
+      const userId = rows?.[0]?.user_id;
+      if (userId) return userId;
+    }
+  } catch (_err) {
+    // non-blocking
+  }
+
+  // 2) Fallback: tenta encontrar user_id na própria shopify_shops por colunas legadas.
+  for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
+    try {
+      const response = await fetch(
+        `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}&select=user_id&limit=1`,
+        { headers },
+      );
+      if (!response.ok) continue;
+      const rows = await response.json();
+      const userId = rows?.[0]?.user_id;
+      if (userId) return userId;
+    } catch (_err) {
+      // non-blocking
+    }
+  }
+
+  return null;
+}
+
+async function inferValueForMissingColumn(columnName, shop, payload, context = {}) {
   const key = String(columnName || "").toLowerCase();
   if (!key) return "";
   if (key.includes("shop") || key.includes("domain")) return shop;
   if (key.includes("url")) return buildStoreUrl(shop);
+  if (key === "user_id") {
+    if (context.cachedUserId === undefined) {
+      context.cachedUserId = await findExistingUserId(
+        shop,
+        context.supabaseUrl,
+        context.supabaseKey,
+      );
+    }
+    return context.cachedUserId || null;
+  }
   if (key === "plan" || key.includes("plan_")) return payload.plan || "starter";
   if (key.includes("billing_status") || key === "status") return payload.billing_status || "inactive";
   if (key.includes("images_included")) return payload.images_included ?? 100;
@@ -102,6 +153,7 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
     images_used_month: 0,
     currency: "USD",
   };
+  const inferContext = { supabaseUrl, supabaseKey, cachedUserId: undefined };
 
   const candidateInsertBodies = SHOP_IDENTIFIER_COLUMNS.map((identifierKey) => ({
     [identifierKey]: shop,
@@ -110,12 +162,36 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
 
   let lastError = "";
 
+  const patchExistingRow = async (patchPayload) => {
+    for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
+      const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}`;
+      const patchRes = await fetch(patchUrl, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(patchPayload),
+      });
+      if (patchRes.ok) return true;
+    }
+    return false;
+  };
+
+  // Primeiro tenta atualizar uma linha existente (evita problemas de NOT NULL em schemas legados no INSERT).
+  if (await patchExistingRow(payload)) return true;
+
   for (const initialBody of candidateInsertBodies) {
     let bodyToInsert = { ...initialBody };
     for (let attempt = 0; attempt < 8; attempt++) {
-      const insertRes = await fetch(insertUrl, {
+      const identifierKey = SHOP_IDENTIFIER_COLUMNS.find((key) => key in bodyToInsert);
+      const upsertUrl = identifierKey
+        ? `${insertUrl}?on_conflict=${encodeURIComponent(identifierKey)}`
+        : insertUrl;
+      const upsertHeaders = {
+        ...headers,
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      };
+      const insertRes = await fetch(upsertUrl, {
         method: "POST",
-        headers,
+        headers: upsertHeaders,
         body: JSON.stringify(bodyToInsert),
       });
 
@@ -129,16 +205,18 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
 
       if (insertRes.status === 409) {
         // Linha já existe; tenta patch pelos identificadores mais comuns.
-        for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
-          const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}`;
-          const patchRes = await fetch(patchUrl, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify(payload),
-          });
-          if (patchRes.ok) return true;
-        }
+        if (await patchExistingRow(payload)) return true;
         break;
+      }
+
+      // on_conflict inválido (coluna sem UNIQUE): tenta sem on_conflict.
+      if (code === "42P10" || message.toLowerCase().includes("there is no unique")) {
+        const plainInsertRes = await fetch(insertUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(bodyToInsert),
+        });
+        if (plainInsertRes.ok) return true;
       }
 
       // Schema legado: remova coluna desconhecida e tente de novo.
@@ -158,13 +236,48 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
           message.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1] ||
           parsed?.details?.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1];
         if (missingColumn) {
-          bodyToInsert[missingColumn] = inferValueForMissingColumn(missingColumn, shop, payload);
+          bodyToInsert[missingColumn] = await inferValueForMissingColumn(
+            missingColumn,
+            shop,
+            payload,
+            inferContext,
+          );
+          continue;
+        }
+      }
+
+      // Erro de tipo inválido (ex.: UUID): tenta limpar o valor e repetir.
+      if (code === "22P02") {
+        const typedColumn =
+          message.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1] ||
+          parsed?.details?.match(/column ["']?([a-zA-Z0-9_]+)["']?/i)?.[1];
+        if (typedColumn && typedColumn in bodyToInsert) {
+          bodyToInsert[typedColumn] = null;
           continue;
         }
       }
 
       break;
     }
+  }
+
+  // Último fallback: tenta pelo menos persistir uma linha mínima para a loja.
+  try {
+    const minimalBody = { shop_domain: shop, updated_at: new Date().toISOString() };
+    const minimalRes = await fetch(`${insertUrl}?on_conflict=shop_domain`, {
+      method: "POST",
+      headers: {
+        ...headers,
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify(minimalBody),
+    });
+    if (minimalRes.ok) {
+      await patchExistingRow(payload);
+      return true;
+    }
+  } catch (_err) {
+    // non-blocking
   }
 
   console.error("[Billing Sync] Upsert failed for all strategies:", lastError);

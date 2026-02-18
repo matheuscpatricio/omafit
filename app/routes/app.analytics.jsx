@@ -196,20 +196,56 @@ export default function AnalyticsPage() {
         throw new Error('Supabase não configurado.');
       }
 
-      const shopRes = await fetch(
-        `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month`,
-        {
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
-          }
+      // Para lojas novas, força um sync rápido para garantir bootstrap de shopify_shops.
+      try {
+        await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
+      } catch (_syncErr) {
+        // non-blocking
+      }
+
+      // Preferir endpoint interno (mais resiliente a schema legado e RLS).
+      let userId = null;
+      let imagesUsedMonth = 0;
+
+      try {
+        const internalShopRes = await fetch(
+          `/api/shopify-shop?shop=${encodeURIComponent(shopDomain)}`,
+          { credentials: 'include', cache: 'no-store' }
+        );
+        if (internalShopRes.ok) {
+          const internalShopData = await internalShopRes.json().catch(() => ({}));
+          const row = internalShopData?.shop || null;
+          userId = row?.user_id ?? null;
+          imagesUsedMonth = row?.images_used_month ?? 0;
         }
-      );
-      if (!shopRes.ok) throw new Error('Erro ao buscar loja.');
-      const shopData = await shopRes.json();
-      const userId = shopData?.[0]?.user_id ?? null;
-      const imagesUsedMonth = shopData?.[0]?.images_used_month ?? 0;
+      } catch (_internalErr) {
+        // fallback abaixo
+      }
+
+      // Fallback para leitura direta no Supabase se endpoint interno não retornou linha.
+      if (userId == null && imagesUsedMonth === 0) {
+        try {
+          const shopRes = await fetch(
+            `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month`,
+            {
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+          if (shopRes.ok) {
+            const shopData = await shopRes.json();
+            userId = shopData?.[0]?.user_id ?? null;
+            imagesUsedMonth = shopData?.[0]?.images_used_month ?? 0;
+          } else {
+            console.warn('[Analytics] shopify_shops read failed:', shopRes.status);
+          }
+        } catch (shopErr) {
+          console.warn('[Analytics] erro ao buscar shopify_shops direto:', shopErr);
+        }
+      }
 
       let ordersData = {};
       try {
@@ -715,7 +751,7 @@ export default function AnalyticsPage() {
           conversionBefore: null,
           conversionAfter: null,
           ordersError: null,
-          tableError: sessionsData.length === 0 ? 'no_sessions' : null
+          tableError: 'no_sessions'
         });
       } else {
         setError(err?.message || t('analytics.errorLoad'));

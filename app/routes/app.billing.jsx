@@ -122,6 +122,9 @@ export default function BillingPage() {
   }
 
   const shouldShowChoosePlanLabel = (data?.billingStatus || '').toLowerCase() !== 'active';
+  const sectionTitle = shouldShowChoosePlanLabel
+    ? 'Escolha aqui o seu plano'
+    : t('billing.needToChangePlan');
   const primaryButtonLabel = shouldShowChoosePlanLabel
     ? t('dashboard.choosePlan')
     : t('billing.wantToChangePlan');
@@ -160,7 +163,7 @@ export default function BillingPage() {
           <Card>
             <BlockStack gap="400">
               <Text as="h2" variant="headingMd">
-                {t('billing.needToChangePlan')}
+                {sectionTitle}
               </Text>
               <Text as="p" tone="subdued">
                 {t('billing.clickButtonBelow')}

@@ -63,6 +63,23 @@ export default function WidgetPage() {
   const [collectionsError, setCollectionsError] = useState(null);
   const [collections, setCollections] = useState([]);
 
+  const toFriendlyWidgetConfigError = (rawMessage) => {
+    const message = String(rawMessage || '').trim();
+    if (!message) return t('widget.errorSaveConfig');
+
+    const lower = message.toLowerCase();
+    const isRlsWidgetConfigError =
+      message.includes('"code":"42501"') ||
+      lower.includes('row-level security policy') ||
+      lower.includes('row level security policy');
+
+    if (isRlsWidgetConfigError && lower.includes('widget_configurations')) {
+      return 'Permissão negada no Supabase (RLS) para salvar configuração do widget. Execute o SQL: supabase_fix_widget_configurations_rls.sql';
+    }
+
+    return message;
+  };
+
   useEffect(() => {
     if (shopDomain) {
       console.log('[Widget] Componente montado, shop_domain:', shopDomain);
@@ -538,7 +555,7 @@ export default function WidgetPage() {
       }
     } catch (err) {
       console.error('[Widget] Erro ao salvar configuração:', err);
-      setError(err.message || t('widget.errorSaveConfig'));
+      setError(toFriendlyWidgetConfigError(err.message));
     } finally {
       setSaving(false);
     }

@@ -128,6 +128,23 @@ export default function SizeChartPage() {
   // Por coleção e gênero: { enabled, measurementRefs (3), sizes }
   const [charts, setCharts] = useState({});
 
+  const toFriendlySizeChartsError = useCallback((rawMessage) => {
+    const message = String(rawMessage || '').trim();
+    if (!message) return t('sizeChart.errorSave');
+
+    const lower = message.toLowerCase();
+    const isRlsError =
+      message.includes('"code":"42501"') ||
+      lower.includes('row-level security policy') ||
+      lower.includes('row level security policy');
+
+    if (isRlsError && lower.includes('size_charts')) {
+      return 'Permissão negada no Supabase (RLS) para salvar tabelas de medidas. Execute o SQL: supabase_fix_size_charts_rls.sql';
+    }
+
+    return message;
+  }, [t]);
+
   const collectionHandles = ['', ...shopifyCollections.map((c) => c.handle)];
   const selectedHandle = collectionHandles[selectedCollectionIndex] ?? '';
 
@@ -333,7 +350,8 @@ export default function SizeChartPage() {
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('sizeChart.errorSave'));
+      const raw = err instanceof Error ? err.message : t('sizeChart.errorSave');
+      setError(toFriendlySizeChartsError(raw));
     } finally {
       setSaving(false);
     }

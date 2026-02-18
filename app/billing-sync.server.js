@@ -4,6 +4,8 @@
  * Apenas planos oficiais: basic (100), growth (500), pro (1000).
  */
 
+import { createHash } from "node:crypto";
+
 const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
   query GetActiveSubscriptions {
     currentAppInstallation {
@@ -87,6 +89,14 @@ const PLAN_PRICE_EXTRA = {
 
 const SHOP_IDENTIFIER_COLUMNS = ["shop_domain", "shop", "domain"];
 
+function buildSyntheticUuidFromShop(shop) {
+  const hash = createHash("sha256")
+    .update(`omafit:${shop || "unknown"}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+}
+
 function buildStoreUrl(shop) {
   if (!shop) return null;
   if (String(shop).startsWith("http://") || String(shop).startsWith("https://")) {
@@ -157,7 +167,7 @@ async function inferValueForMissingColumn(columnName, shop, payload, context = {
         context.supabaseKey,
       );
     }
-    return context.cachedUserId || null;
+    return context.cachedUserId || buildSyntheticUuidFromShop(shop);
   }
   if (key === "plan" || key.includes("plan_")) return payload.plan || "starter";
   if (key.includes("billing_status") || key === "status") return payload.billing_status || "inactive";

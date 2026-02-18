@@ -31,6 +31,7 @@ export default function BillingPage() {
             syncBody?.activeSubscriptionStatus ? `subscription=${syncBody.activeSubscriptionStatus}` : null,
             syncBody?.diagnostics?.bootstrapStrategy ? `bootstrap=${syncBody.diagnostics.bootstrapStrategy}` : null,
             syncBody?.diagnostics?.bootstrapErrors?.[0] ? `supabase=${syncBody.diagnostics.bootstrapErrors[0]}` : null,
+            syncBody?.resolutionHint ? `fix=${syncBody.resolutionHint}` : null,
           ].filter(Boolean).join(" | ");
           const baseMsg = syncBody?.error || `Falha ao sincronizar billing (${syncRes.status})`;
           const msg = details ? `${baseMsg} [${details}]` : baseMsg;

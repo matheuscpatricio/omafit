@@ -7,6 +7,28 @@ import { authenticate } from "../shopify.server";
 import { syncBillingFromShopify } from "../billing-sync.server";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
+import { createHash } from "node:crypto";
+
+function buildSyntheticUuidFromShop(shop) {
+  const hash = createHash("sha256")
+    .update(`omafit:${shop || "unknown"}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+}
+
+function formatSupabaseBootstrapError(identifier, status, text) {
+  const raw = String(text || "").trim();
+  if (!raw) return `${identifier}: HTTP ${status}`;
+  try {
+    const parsed = JSON.parse(raw);
+    const message = parsed?.message || raw;
+    const details = parsed?.details ? ` (${parsed.details})` : "";
+    return `${identifier}: HTTP ${status} - ${message}${details}`;
+  } catch (_err) {
+    return `${identifier}: HTTP ${status} - ${raw.slice(0, 220)}`;
+  }
+}
 
 export async function loader({ request }) {
   try {
@@ -48,6 +70,13 @@ export async function loader({ request }) {
         for (const identifier of identifiers) {
           const body = {
             [identifier]: session.shop,
+            user_id: buildSyntheticUuidFromShop(session.shop),
+            plan: "starter",
+            billing_status: "inactive",
+            images_included: 100,
+            price_per_extra_image: 0.18,
+            images_used_month: 0,
+            currency: "USD",
             updated_at: new Date().toISOString(),
           };
           try {
@@ -65,9 +94,7 @@ export async function loader({ request }) {
               break;
             }
             const text = await res.text().catch(() => "");
-            diagnostics.bootstrapErrors.push(
-              `${identifier}: HTTP ${res.status}${text ? ` - ${text.slice(0, 220)}` : ""}`,
-            );
+            diagnostics.bootstrapErrors.push(formatSupabaseBootstrapError(identifier, res.status, text));
           } catch (err) {
             diagnostics.bootstrapErrors.push(`${identifier}: ${err?.message || "unknown error"}`);
           }
@@ -102,6 +129,17 @@ export async function loader({ request }) {
           activeSubscriptionStatus = `graphql_check_failed: ${checkErr?.message || "unknown"}`;
         }
 
+        const bootstrapErrorText = (diagnostics.bootstrapErrors || []).join(" | ");
+        const needsPgcrypto = bootstrapErrorText.includes("gen_random_bytes");
+        const needsUserIdNullable =
+          bootstrapErrorText.includes("null value in column \"user_id\"") ||
+          bootstrapErrorText.includes("user_id");
+        const resolutionHint = needsPgcrypto
+          ? "Detected missing gen_random_bytes in DB runtime. Run SQL file: supabase_compat_gen_random_bytes.sql (then retry sync)."
+          : needsUserIdNullable
+            ? "Detected schema requiring user_id on shopify_shops. Run SQL file: supabase_fix_shopify_shops_user_id_nullable.sql"
+            : null;
+
         return Response.json(
           {
             ok: false,
@@ -110,6 +148,7 @@ export async function loader({ request }) {
             shop: session.shop,
             activeSubscriptionStatus,
             diagnostics,
+            resolutionHint,
           },
           { status: 500 },
         );

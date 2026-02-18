@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, useNavigate, useMatches } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Page, Layout, BlockStack, Spinner, Card, Text, Banner, Button } from '@shopify/polaris';
 import { UsageIndicator } from './UsageIndicator';
 import { getShopDomain } from '../utils/getShopDomain';
@@ -8,14 +8,10 @@ import { useAppI18n } from '../contexts/AppI18n';
 export default function BillingPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const matches = useMatches();
   const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams) || '';
-  const appUrlFromLayout = useMemo(() => {
-    const m = matches.find((match) => match?.data && "appUrl" in (match.data || {}));
-    return (m?.data?.appUrl ?? "") || (typeof window !== "undefined" ? (window.ENV?.APP_URL || window.location?.origin) : "");
-  }, [matches]);
   const [loading, setLoading] = useState(true);
+  const [syncingNow, setSyncingNow] = useState(false);
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -169,6 +165,27 @@ export default function BillingPage() {
                 }}
               >
                 {t('billing.wantToChangePlan')}
+              </Button>
+              <Button
+                loading={syncingNow}
+                onClick={async () => {
+                  try {
+                    setSyncingNow(true);
+                    await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
+                    await loadData();
+                    const qs = new URLSearchParams(searchParams);
+                    if (shopDomain) qs.set("shop", shopDomain);
+                    qs.set("billing_refresh", "1");
+                    navigate(`/app?${qs.toString()}`);
+                  } catch (err) {
+                    console.error('[Billing] Manual sync failed:', err);
+                    setError('Nao foi possivel sincronizar o plano agora. Tente novamente em alguns segundos.');
+                  } finally {
+                    setSyncingNow(false);
+                  }
+                }}
+              >
+                Sincronizar plano agora
               </Button>
             </BlockStack>
           </Card>

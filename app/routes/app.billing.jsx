@@ -52,6 +52,7 @@ export default function BillingPage() {
 
       const shopData = await response.json();
       const shop = shopData?.shop || null;
+      const isBillingActive = String(shop?.billing_status || '').toLowerCase() === 'active';
 
       console.log('[Billing] Shop data loaded:', { shopDomain, plan: shop?.plan, billingStatus: shop?.billing_status, imagesIncluded: shop?.images_included });
 
@@ -61,10 +62,10 @@ export default function BillingPage() {
       
       setData({
         shop: shopDomain,
-        currentPlan: shop?.plan || null,
+        currentPlan: isBillingActive ? (shop?.plan || null) : null,
         billingStatus: shop?.billing_status || null,
-        usage: shop ? {
-          plan: shop?.plan || 'basic',
+        usage: isBillingActive && shop ? {
+          plan: shop?.plan || 'starter',
           used: imagesUsed,
           included: imagesIncluded,
           remaining: Math.max(0, imagesIncluded - imagesUsed),
@@ -145,6 +146,13 @@ export default function BillingPage() {
           <Layout.Section>
             <Banner tone="critical" onDismiss={() => setError(null)}>
               {error}
+            </Banner>
+          </Layout.Section>
+        )}
+        {data && String(data.billingStatus || '').toLowerCase() !== 'active' && (
+          <Layout.Section>
+            <Banner tone="warning">
+              {t('dashboard.noPlanMessage')}
             </Banner>
           </Layout.Section>
         )}

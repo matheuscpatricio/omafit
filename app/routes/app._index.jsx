@@ -221,7 +221,7 @@ export default function DashboardPage() {
 
       setDashboardData({
         shop: shopData.shop_domain,
-        currentPlan: shopData.plan,
+        currentPlan: String(shopData.billing_status || '').toLowerCase() === 'active' ? shopData.plan : null,
         billingStatus: shopData.billing_status,
         imagesIncluded,
         imagesUsed,

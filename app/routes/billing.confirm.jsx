@@ -15,12 +15,29 @@
  * Se esta rota não existir ou falhar, o app não refletirá o plano ativo.
  */
 import { redirect } from "react-router";
+import { Buffer } from "node:buffer";
 import { authenticate, unauthenticated } from "../shopify.server";
 import { syncBillingFromShopify } from "../billing-sync.server";
 
 export async function loader({ request }) {
   const url = new URL(request.url);
   const shopFromQuery = url.searchParams.get("shop") || "";
+  const hostFromQuery = url.searchParams.get("host") || "";
+
+  function deriveHostFromShop(shop) {
+    if (!shop) return "";
+    const shopHandle = String(shop).replace(/\.myshopify\.com$/i, "");
+    return Buffer.from(`admin.shopify.com/store/${shopHandle}`, "utf8").toString("base64");
+  }
+
+  function buildAppRedirect(shop) {
+    const qs = new URLSearchParams();
+    if (shop) qs.set("shop", shop);
+    const host = hostFromQuery || deriveHostFromShop(shop);
+    if (host) qs.set("host", host);
+    qs.set("billing_refresh", "1");
+    return `/app?${qs.toString()}`;
+  }
 
   async function syncAndRedirect(admin, shop) {
     const result = await syncBillingFromShopify(admin, shop);
@@ -29,7 +46,7 @@ export async function loader({ request }) {
     } else {
       console.warn("[Billing Confirm] Sync returned null for shop:", shop);
     }
-    return redirect(`/app?shop=${encodeURIComponent(shop)}&billing_refresh=1`);
+    return redirect(buildAppRedirect(shop));
   }
 
   try {
@@ -45,7 +62,7 @@ export async function loader({ request }) {
       return syncAndRedirect(admin, shopFromQuery);
     } catch (unauthErr) {
       console.error("[Billing Confirm] Unauthenticated sync failed:", unauthErr);
-      return redirect(`/app?shop=${encodeURIComponent(shopFromQuery)}&billing_refresh=1`);
+      return redirect(buildAppRedirect(shopFromQuery));
     }
   }
 }

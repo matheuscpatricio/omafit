@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { t, locale } = useAppI18n();
   const { setLocaleOverride } = useLocaleOverride();
+  const baseQueryString = searchParams.toString();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -454,21 +455,21 @@ export default function DashboardPage() {
 
                 <Button
                   fullWidth
-                  onClick={() => navigate('/app/widget')}
+                  onClick={() => navigate(baseQueryString ? `/app/widget?${baseQueryString}` : '/app/widget')}
                 >
                   {t('dashboard.configureWidget')}
                 </Button>
 
                 <Button
                   fullWidth
-                  onClick={() => navigate(`/app/size-chart?shop=${shop}`)}
+                  onClick={() => navigate(baseQueryString ? `/app/size-chart?${baseQueryString}` : `/app/size-chart?shop=${shop}`)}
                 >
                   {t('dashboard.configureSizeCharts')}
                 </Button>
 
                 <Button
                   fullWidth
-                  onClick={() => navigate(`/app/analytics?shop=${shop}`)}
+                  onClick={() => navigate(baseQueryString ? `/app/analytics?${baseQueryString}` : `/app/analytics?shop=${shop}`)}
                 >
                   {t('dashboard.viewAnalytics')}
                 </Button>

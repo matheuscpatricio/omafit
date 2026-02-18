@@ -196,12 +196,20 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
   const patchExistingRow = async (patchPayload) => {
     for (const identifierKey of SHOP_IDENTIFIER_COLUMNS) {
       const patchUrl = `${supabaseUrl}/rest/v1/shopify_shops?${identifierKey}=eq.${encodeURIComponent(shop)}`;
+      const patchHeaders = {
+        ...headers,
+        // Em PostgREST, PATCH pode retornar 204 mesmo sem atualizar linhas.
+        // Com return=representation conseguimos validar se alguma linha foi realmente alterada.
+        Prefer: "return=representation",
+      };
       const patchRes = await fetch(patchUrl, {
         method: "PATCH",
-        headers,
+        headers: patchHeaders,
         body: JSON.stringify(patchPayload),
       });
-      if (patchRes.ok) return true;
+      if (!patchRes.ok) continue;
+      const rows = await patchRes.json().catch(() => []);
+      if (Array.isArray(rows) && rows.length > 0) return true;
     }
     return false;
   };

@@ -101,8 +101,10 @@ export default function DashboardPage() {
             if (res.ok) return { ok: true, message: "" };
             const body = await res.json().catch(() => ({}));
             const msg = body?.error || `billing sync failed (${res.status})`;
+            const detail = body?.detail ? ` | ${body.detail}` : "";
+            const sub = body?.activeSubscriptionStatus ? ` | subscription=${body.activeSubscriptionStatus}` : "";
             const hint = body?.resolutionHint ? ` | ${body.resolutionHint}` : "";
-            lastMessage = `${msg}${hint}`;
+            lastMessage = `${msg}${sub}${detail}${hint}`;
             // Erros 500 recorrentes (schema/RLS) não melhoram com polling agressivo.
             if (res.status >= 500) {
               return { ok: false, message: lastMessage, fatal: true };

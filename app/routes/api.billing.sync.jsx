@@ -210,6 +210,7 @@ export async function loader({ request }) {
             activeSubscriptionStatus,
             diagnostics,
             resolutionHint,
+            detail: diagnostics.bootstrapErrors?.[0] || null,
           },
           { status: 500 },
         );

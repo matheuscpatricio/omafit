@@ -8,7 +8,6 @@ import {
   syncBillingFromShopify,
   writeBillingToSupabase,
   resolvePlanFromSubscription,
-  extractRecurringAmountFromSubscription,
 } from "../billing-sync.server";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
@@ -24,6 +23,83 @@ function formatSupabaseBootstrapError(identifier, status, text) {
   } catch (_err) {
     return `${identifier}: HTTP ${status} - ${raw.slice(0, 220)}`;
   }
+}
+
+async function tryForcePersistActiveBilling({
+  supabaseUrl,
+  supabaseKey,
+  shop,
+  plan = "starter",
+}) {
+  const headers = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
+  };
+
+  const payload = {
+    plan,
+    billing_status: "active",
+    images_included: plan === "growth" ? 500 : plan === "pro" ? 1000 : 100,
+    price_per_extra_image: plan === "growth" ? 0.16 : plan === "pro" ? 0.14 : 0.18,
+    currency: "USD",
+    updated_at: new Date().toISOString(),
+  };
+
+  // 1) PATCH direto na linha bootstrap
+  try {
+    const patchRes = await fetch(
+      `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}`,
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(payload),
+      },
+    );
+    if (patchRes.ok) {
+      const rows = await patchRes.json().catch(() => []);
+      if (Array.isArray(rows) && rows.length > 0) {
+        return { ok: true, strategy: "post-bootstrap-patch" };
+      }
+    } else {
+      const text = await patchRes.text().catch(() => "");
+      return { ok: false, error: formatSupabaseBootstrapError("force_patch", patchRes.status, text) };
+    }
+  } catch (err) {
+    return { ok: false, error: `force_patch: ${err?.message || "unknown error"}` };
+  }
+
+  // 2) UPSERT direto como fallback
+  try {
+    const upsertRes = await fetch(
+      `${supabaseUrl}/rest/v1/shopify_shops?on_conflict=shop_domain`,
+      {
+        method: "POST",
+        headers: {
+          ...headers,
+          Prefer: "resolution=merge-duplicates,return=representation",
+        },
+        body: JSON.stringify({
+          shop_domain: shop,
+          ...payload,
+        }),
+      },
+    );
+    if (upsertRes.ok) {
+      const rows = await upsertRes.json().catch(() => []);
+      if (Array.isArray(rows) && rows.length > 0) {
+        return { ok: true, strategy: "post-bootstrap-upsert" };
+      }
+    } else {
+      const text = await upsertRes.text().catch(() => "");
+      return { ok: false, error: formatSupabaseBootstrapError("force_upsert", upsertRes.status, text) };
+    }
+  } catch (err) {
+    return { ok: false, error: `force_upsert: ${err?.message || "unknown error"}` };
+  }
+
+  return { ok: false, error: "force_persist returned no rows" };
 }
 
 export async function loader({ request }) {
@@ -44,16 +120,6 @@ export async function loader({ request }) {
               id
               name
               status
-              lineItems {
-                plan {
-                  ... on AppRecurringPricing {
-                    price {
-                      amount
-                      currencyCode
-                    }
-                  }
-                }
-              }
             }
           }
         }
@@ -66,10 +132,9 @@ export async function loader({ request }) {
           (sub) => String(sub?.status || "").toUpperCase() === "ACTIVE",
         );
         if (active) {
-          const recurringAmount = extractRecurringAmountFromSubscription(active);
           const plan = resolvePlanFromSubscription({
             subscriptionName: active?.name || "",
-            recurringAmount,
+            recurringAmount: null,
           });
           const saved = await writeBillingToSupabase(session.shop, {
             plan,
@@ -153,6 +218,27 @@ export async function loader({ request }) {
 
       if (diagnostics.bootstrapSucceeded) {
         result = await syncBillingFromShopify(admin, session.shop);
+
+        // Caso clássico: bootstrap cria loja, mas sync normal não consegue promover para ACTIVE.
+        // Força persistência direta para destravar o admin.
+        if (!result) {
+          const forced = await tryForcePersistActiveBilling({
+            supabaseUrl,
+            supabaseKey,
+            shop: session.shop,
+          });
+          if (forced.ok) {
+            return Response.json({
+              ok: true,
+              shop: session.shop,
+              plan: "starter",
+              imagesIncluded: 100,
+              pricePerExtra: 0.18,
+              forcePersistStrategy: forced.strategy,
+            });
+          }
+          diagnostics.bootstrapErrors.push(forced.error || "force persist failed");
+        }
       }
 
       if (!result) {

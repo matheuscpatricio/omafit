@@ -11,16 +11,6 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
         id
         name
         status
-        lineItems {
-          plan {
-            ... on AppRecurringPricing {
-              price {
-                amount
-                currencyCode
-              }
-            }
-          }
-        }
       }
     }
   }

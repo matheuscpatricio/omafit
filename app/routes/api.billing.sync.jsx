@@ -4,7 +4,12 @@
  * O cliente chama antes de carregar dados do Supabase para garantir que vê o plano correto.
  */
 import { authenticate } from "../shopify.server";
-import { syncBillingFromShopify } from "../billing-sync.server";
+import {
+  syncBillingFromShopify,
+  writeBillingToSupabase,
+  resolvePlanFromSubscription,
+  extractRecurringAmountFromSubscription,
+} from "../billing-sync.server";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
 
@@ -28,6 +33,61 @@ export async function loader({ request }) {
       await registerWebhooks({ session });
     } catch (webhookErr) {
       console.warn("[api.billing.sync] registerWebhooks failed:", webhookErr);
+    }
+
+    // Sync autoritativo: se houver assinatura ACTIVE na Shopify, persiste active no Supabase
+    try {
+      const activeResponse = await admin.graphql(`#graphql
+        query BillingSyncActiveSubscription {
+          currentAppInstallation {
+            activeSubscriptions {
+              id
+              name
+              status
+              lineItems {
+                plan {
+                  ... on AppRecurringPricing {
+                    price {
+                      amount
+                      currencyCode
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `);
+      const activeJson = await activeResponse.json();
+      const gqlErrors = Array.isArray(activeJson?.errors) ? activeJson.errors : [];
+      if (gqlErrors.length === 0) {
+        const activeSubscriptions = activeJson?.data?.currentAppInstallation?.activeSubscriptions || [];
+        const active = activeSubscriptions.find(
+          (sub) => String(sub?.status || "").toUpperCase() === "ACTIVE",
+        );
+        if (active) {
+          const recurringAmount = extractRecurringAmountFromSubscription(active);
+          const plan = resolvePlanFromSubscription({
+            subscriptionName: active?.name || "",
+            recurringAmount,
+          });
+          const saved = await writeBillingToSupabase(session.shop, {
+            plan,
+            billingStatus: "active",
+          });
+          if (saved) {
+            return Response.json({
+              ok: true,
+              shop: session.shop,
+              plan: saved.plan,
+              imagesIncluded: saved.imagesIncluded,
+              pricePerExtra: saved.pricePerExtra,
+            });
+          }
+        }
+      }
+    } catch (authoritativeErr) {
+      console.warn("[api.billing.sync] authoritative active sync failed:", authoritativeErr);
     }
 
     let result = await syncBillingFromShopify(admin, session.shop);
@@ -127,8 +187,14 @@ export async function loader({ request }) {
         const needsUserIdNullable =
           bootstrapErrorText.includes("null value in column \"user_id\"") ||
           bootstrapErrorText.includes("user_id");
+        const widgetKeyNotNullError =
+          bootstrapErrorText.includes("null value in column \"key\" of relation \"widget_keys\"") ||
+          bootstrapErrorText.includes("null value in column \"name\" of relation \"widget_keys\"") ||
+          (bootstrapErrorText.includes("widget_keys") && bootstrapErrorText.includes("not-null constraint"));
         const resolutionHint = needsPgcrypto
           ? "Detected missing gen_random_bytes in DB runtime. Run SQL file: supabase_compat_gen_random_bytes.sql (then retry sync)."
+          : widgetKeyNotNullError
+            ? "Detected widget_keys trigger/constraints blocking shop creation. Run SQL file: supabase_fix_widget_keys_trigger_non_blocking.sql"
           : hasUserIdFkConstraint
             ? "Detected FK on shopify_shops.user_id. Inserts for new Shopify stores must keep user_id NULL (or use a valid users.id)."
           : needsUserIdNullable

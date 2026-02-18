@@ -430,19 +430,6 @@ export async function syncBillingFromShopify(admin, shop) {
     return saved;
   } catch (err) {
     console.error("[Billing Sync] Error:", err);
-    // Mesmo quando a consulta à Shopify falha, tenta garantir bootstrap da loja no Supabase.
-    try {
-      const fallback = await writeBillingToSupabase(shop, {
-        plan: "starter",
-        billingStatus: "inactive",
-      });
-      if (fallback) {
-        console.warn("[Billing Sync] Fallback bootstrap row created:", { shop, plan: fallback.plan });
-        return fallback;
-      }
-    } catch (fallbackErr) {
-      console.error("[Billing Sync] Fallback bootstrap failed:", fallbackErr);
-    }
     return null;
   }
 }

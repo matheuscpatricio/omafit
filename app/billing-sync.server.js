@@ -11,6 +11,16 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
         id
         name
         status
+        lineItems {
+          plan {
+            ... on AppRecurringPricing {
+              price {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -36,6 +46,27 @@ function resolvePlanFromSubscriptionName(subscriptionName) {
     if (name.includes(pattern)) return plan;
   }
   return "starter";
+}
+
+function resolvePlanFromSubscription({ subscriptionName, recurringAmount }) {
+  const parsedAmount = Number(recurringAmount);
+  if (Number.isFinite(parsedAmount)) {
+    // Managed Pricing pode retornar nomes localizados; valor recorrente mantém mapeamento estável.
+    if (Math.abs(parsedAmount - 30) < 0.001) return "starter";
+    if (Math.abs(parsedAmount - 120) < 0.001) return "growth";
+    if (Math.abs(parsedAmount - 220) < 0.001) return "pro";
+  }
+  return resolvePlanFromSubscriptionName(subscriptionName);
+}
+
+function extractRecurringAmountFromSubscription(activeSubscription) {
+  const lineItems = activeSubscription?.lineItems || [];
+  for (const item of lineItems) {
+    const amountRaw = item?.plan?.price?.amount;
+    const amount = Number(amountRaw);
+    if (Number.isFinite(amount)) return amount;
+  }
+  return null;
 }
 
 const PLAN_IMAGES = {
@@ -361,7 +392,11 @@ export async function syncBillingFromShopify(admin, shop) {
 
     const hasActiveSubscription = Boolean(active);
     const subscriptionName = active?.name || "";
-    const plan = resolvePlanFromSubscriptionName(subscriptionName);
+    const recurringAmount = extractRecurringAmountFromSubscription(active);
+    const plan = resolvePlanFromSubscription({
+      subscriptionName,
+      recurringAmount,
+    });
     // Normaliza "basic" para "starter"
     const normalizedPlan = plan === "basic" ? "starter" : plan;
     const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES[plan] ?? 100;
@@ -370,6 +405,7 @@ export async function syncBillingFromShopify(admin, shop) {
     console.log("[Billing Sync] Resolved:", {
       shop,
       activeName: subscriptionName,
+      recurringAmount,
       hasActiveSubscription,
       resolvedPlan: normalizedPlan,
       imagesIncluded,
@@ -386,8 +422,28 @@ export async function syncBillingFromShopify(admin, shop) {
     return saved;
   } catch (err) {
     console.error("[Billing Sync] Error:", err);
+    // Mesmo quando a consulta à Shopify falha, tenta garantir bootstrap da loja no Supabase.
+    try {
+      const fallback = await writeBillingToSupabase(shop, {
+        plan: "starter",
+        billingStatus: "inactive",
+      });
+      if (fallback) {
+        console.warn("[Billing Sync] Fallback bootstrap row created:", { shop, plan: fallback.plan });
+        return fallback;
+      }
+    } catch (fallbackErr) {
+      console.error("[Billing Sync] Fallback bootstrap failed:", fallbackErr);
+    }
     return null;
   }
 }
 
-export { GET_ACTIVE_SUBSCRIPTIONS, resolvePlanFromSubscriptionName, PLAN_IMAGES, PLAN_PRICE_EXTRA };
+export {
+  GET_ACTIVE_SUBSCRIPTIONS,
+  resolvePlanFromSubscriptionName,
+  resolvePlanFromSubscription,
+  extractRecurringAmountFromSubscription,
+  PLAN_IMAGES,
+  PLAN_PRICE_EXTRA,
+};

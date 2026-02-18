@@ -1,6 +1,6 @@
 import { authenticate, unauthenticated } from "../shopify.server";
 import {
-  resolvePlanFromSubscriptionName,
+  resolvePlanFromSubscription,
   syncBillingFromShopify,
   writeBillingToSupabase,
 } from "../billing-sync.server";
@@ -16,10 +16,19 @@ export const action = async ({ request }) => {
     const sub = payload?.app_subscription || {};
     const rawStatus = String(sub?.status || "").toUpperCase();
     const status = rawStatus === "ACTIVE" ? "active" : "inactive";
-    const planFromPayload = resolvePlanFromSubscriptionName(sub?.name || "");
+    const lineItems = Array.isArray(sub?.line_items) ? sub.line_items : [];
+    const recurringAmount = Number(
+      lineItems.find((item) => Number.isFinite(Number(item?.plan?.pricing_details?.price?.amount)))
+        ?.plan?.pricing_details?.price?.amount,
+    );
+    const planFromPayload = resolvePlanFromSubscription({
+      subscriptionName: sub?.name || "",
+      recurringAmount: Number.isFinite(recurringAmount) ? recurringAmount : null,
+    });
     console.log(`[Webhook] Received ${topic} for ${shop}`, {
       status: rawStatus || null,
       name: sub?.name || null,
+      recurringAmount: Number.isFinite(recurringAmount) ? recurringAmount : null,
       id: sub?.admin_graphql_api_id || null,
     });
 

@@ -19,6 +19,35 @@ const SHOP_LOCALE_QUERY = `#graphql
   }
 `;
 
+function normalizeSupportedLocale(rawLocale) {
+  const value = String(rawLocale || "").trim().toLowerCase();
+  if (!value) return "en";
+  if (value.startsWith("pt")) return "pt-BR";
+  if (value.startsWith("es")) return "es";
+  return "en";
+}
+
+function pickPreferredLocaleFromRequest(request, session) {
+  const url = new URL(request.url);
+  const localeFromQuery = url.searchParams.get("locale");
+  if (localeFromQuery) {
+    return normalizeSupportedLocale(localeFromQuery);
+  }
+
+  const localeFromSession = session?.locale || session?.user?.locale || "";
+  if (localeFromSession) {
+    return normalizeSupportedLocale(localeFromSession);
+  }
+
+  const acceptLanguage = request.headers.get("accept-language") || "";
+  if (acceptLanguage) {
+    const first = acceptLanguage.split(",")[0] || "";
+    return normalizeSupportedLocale(first);
+  }
+
+  return null;
+}
+
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -45,13 +74,16 @@ export const loader = async ({ request }) => {
     console.warn("[App] Billing sync failed:", e);
   }
 
-  let locale = "en";
+  let locale = pickPreferredLocaleFromRequest(request, session) || "en";
   try {
-    const response = await admin.graphql(SHOP_LOCALE_QUERY);
-    const json = await response.json();
-    const primaryLocale = json?.data?.shop?.primaryLocale;
-    if (primaryLocale) {
-      locale = primaryLocale;
+    // Fallback final: locale primário da loja (apenas se não houver locale do usuário/request).
+    if (!pickPreferredLocaleFromRequest(request, session)) {
+      const response = await admin.graphql(SHOP_LOCALE_QUERY);
+      const json = await response.json();
+      const primaryLocale = json?.data?.shop?.primaryLocale;
+      if (primaryLocale) {
+        locale = normalizeSupportedLocale(primaryLocale);
+      }
     }
   } catch (e) {
     console.warn("[App] Could not fetch shop locale, using en:", e);

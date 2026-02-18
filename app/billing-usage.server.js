@@ -19,6 +19,9 @@ const GET_ACTIVE_SUBSCRIPTION = `#graphql
                 currencyCode
               }
               interval
+            }
+            ... on AppUsagePricing {
+              terms
               cappedAmount {
                 amount
                 currencyCode
@@ -32,11 +35,12 @@ const GET_ACTIVE_SUBSCRIPTION = `#graphql
 `;
 
 const CREATE_USAGE_RECORD = `#graphql
-  mutation AppUsageRecordCreate($subscriptionLineItemId: ID!, $price: MoneyInput!, $description: String!) {
+  mutation AppUsageRecordCreate($subscriptionLineItemId: ID!, $price: MoneyInput!, $description: String!, $idempotencyKey: String) {
     appUsageRecordCreate(
       subscriptionLineItemId: $subscriptionLineItemId
       price: $price
       description: $description
+      idempotencyKey: $idempotencyKey
     ) {
       appUsageRecord {
         id
@@ -72,17 +76,17 @@ export async function getActiveSubscriptionLineItem(admin) {
       return null;
     }
 
-    const lineItem = active.lineItems?.[0];
-    if (!lineItem || !lineItem.id) {
-      console.warn("[Usage Charge] No line item found in active subscription");
+    const usageLineItem = (active.lineItems || []).find((item) => item?.plan?.cappedAmount);
+    if (!usageLineItem || !usageLineItem.id) {
+      console.warn("[Usage Charge] Active subscription has no usage pricing line item");
       return null;
     }
 
-    const cappedAmount = lineItem.plan?.cappedAmount?.amount || null;
+    const cappedAmount = usageLineItem.plan?.cappedAmount?.amount || null;
     
     return {
       subscriptionId: active.id,
-      lineItemId: lineItem.id,
+      lineItemId: usageLineItem.id,
       cappedAmount: cappedAmount ? parseFloat(cappedAmount) : null,
     };
   } catch (err) {
@@ -100,18 +104,38 @@ export async function getActiveSubscriptionLineItem(admin) {
  * @param {string} description - Descrição do uso (ex: "Geração de imagem adicional")
  * @returns {Promise<{ success: boolean, usageRecordId?: string, error?: string }>}
  */
-export async function createUsageCharge(admin, lineItemId, price, currency = "USD", description = "Geração de imagem adicional") {
+export async function createUsageCharge(
+  admin,
+  lineItemId,
+  price,
+  currency = "USD",
+  description = "Geração de imagem adicional",
+  idempotencyKey = null,
+) {
   try {
-    console.log("[Usage Charge] Creating usage record:", { lineItemId, price, currency, description });
+    const normalizedPrice = Number(price);
+    if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) {
+      return { success: false, error: "Invalid usage charge amount" };
+    }
+
+    const roundedPrice = Number(normalizedPrice.toFixed(2));
+    console.log("[Usage Charge] Creating usage record:", {
+      lineItemId,
+      price: roundedPrice,
+      currency,
+      description,
+      idempotencyKey,
+    });
     
     const response = await admin.graphql(CREATE_USAGE_RECORD, {
       variables: {
         subscriptionLineItemId: lineItemId,
         price: {
-          amount: price,
+          amount: roundedPrice,
           currencyCode: currency,
         },
         description,
+        idempotencyKey,
       },
     });
 
@@ -182,7 +206,11 @@ export async function createUsageChargeIfNeeded(admin, imagesUsed, planLimit, pr
   // Obtém subscription ativa
   const subscription = await getActiveSubscriptionLineItem(admin);
   if (!subscription) {
-    return { created: false, error: "No active subscription found" };
+    return {
+      created: false,
+      error:
+        "No usage pricing line item found in active subscription. AppUsageRecordCreate requires a usage-based plan with cappedAmount.",
+    };
   }
 
   // Verifica capped_amount se existir
@@ -211,7 +239,8 @@ export async function createUsageChargeIfNeeded(admin, imagesUsed, planLimit, pr
     subscription.lineItemId,
     totalPrice,
     currency,
-    description
+    description,
+    `omafit:${subscription.lineItemId}:${imagesUsed}:${extraFromThisCall}:${Number(pricePerExtra).toFixed(4)}`,
   );
 
   if (result.success) {

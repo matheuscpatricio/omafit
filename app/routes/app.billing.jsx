@@ -11,7 +11,6 @@ export default function BillingPage() {
   const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams) || '';
   const [loading, setLoading] = useState(true);
-  const [syncingNow, setSyncingNow] = useState(false);
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -121,6 +120,11 @@ export default function BillingPage() {
     );
   }
 
+  const shouldShowChoosePlanLabel = (data?.billingStatus || '').toLowerCase() !== 'active';
+  const primaryButtonLabel = shouldShowChoosePlanLabel
+    ? t('dashboard.choosePlan')
+    : t('billing.wantToChangePlan');
+
   return (
     <Page
       title={t('billing.title')}
@@ -177,28 +181,7 @@ export default function BillingPage() {
                   }
                 }}
               >
-                {t('billing.wantToChangePlan')}
-              </Button>
-              <Button
-                loading={syncingNow}
-                onClick={async () => {
-                  try {
-                    setSyncingNow(true);
-                    await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
-                    await loadData();
-                    const qs = new URLSearchParams(searchParams);
-                    if (shopDomain) qs.set("shop", shopDomain);
-                    qs.set("billing_refresh", "1");
-                    navigate(`/app?${qs.toString()}`);
-                  } catch (err) {
-                    console.error('[Billing] Manual sync failed:', err);
-                    setError('Nao foi possivel sincronizar o plano agora. Tente novamente em alguns segundos.');
-                  } finally {
-                    setSyncingNow(false);
-                  }
-                }}
-              >
-                Sincronizar plano agora
+                {primaryButtonLabel}
               </Button>
             </BlockStack>
           </Card>

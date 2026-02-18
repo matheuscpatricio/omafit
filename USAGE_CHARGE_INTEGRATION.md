@@ -62,6 +62,29 @@ Content-Type: application/json
 }
 ```
 
+## Endpoint de auditoria: GET /api/billing/usage-health
+
+Use este endpoint antes de habilitar cobrança automática em produção para evitar duplicidade, cobranças indevidas ou falhas silenciosas.
+
+**URL:** `https://SEU_APP_URL/api/billing/usage-health`
+
+**Opcional (simulação):**
+- `imagesUsed`
+- `planLimit`
+- `pricePerExtra`
+- `imagesCount`
+
+Exemplo:
+
+`/api/billing/usage-health?imagesUsed=121&planLimit=100&pricePerExtra=0.18&imagesCount=1`
+
+O retorno inclui:
+- assinatura ativa encontrada
+- existência de line item de usage pricing
+- termos de usage presentes
+- cap total, valor já usado e saldo restante
+- validação se a cobrança projetada pode ser criada agora com segurança
+
 ## Integração na Edge Function do Supabase
 
 No arquivo `supabase/functions/virtual-try-on/index.ts`, após gerar a imagem com sucesso:
@@ -156,3 +179,5 @@ Todos os logs incluem prefixo `[Usage Charge]` ou `[API Create Usage]` para faci
 3. **Cálculo Correto**: `imagesUsed` deve ser o total **após** incrementar o contador. A função calcula quantas imagens desta chamada são extras.
 
 4. **Capped Amount**: O `cappedAmount` é definido na criação da subscription. Para alterar, é necessário criar uma nova subscription ou usar `appSubscriptionLineItemUpdate` (requer aprovação do merchant).
+
+5. **Requisito da Shopify API**: `appUsageRecordCreate` só funciona quando a assinatura ativa tem um **line item de usage pricing** (`AppUsagePricing` com `cappedAmount`). Se o app estiver em **Managed Pricing (apenas recorrente fixo)**, a Shopify não cria esse line item de uso e o endpoint retornará erro informativo.

@@ -22,7 +22,7 @@
  * }
  */
 
-import { authenticate } from "../shopify.server";
+import { unauthenticated } from "../shopify.server";
 import { createUsageChargeIfNeeded } from "../billing-usage.server";
 
 export async function action({ request }) {
@@ -49,8 +49,8 @@ export async function action({ request }) {
       imagesCount,
     });
 
-    // Autentica usando o shop domain
-    const { admin } = await authenticate.admin(request);
+    // Endpoint chamado server-to-server pela edge function; obtém admin client pelo shopDomain.
+    const { admin } = await unauthenticated.admin(shopDomain);
     
     // Verifica se precisa criar usage charge e cria se necessário
     const result = await createUsageChargeIfNeeded(

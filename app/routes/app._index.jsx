@@ -9,7 +9,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
-import { useLocaleOverride } from './app';
 import {
   Page,
   Layout,
@@ -21,15 +20,13 @@ import {
   Button,
   ProgressBar,
   Banner,
-  Spinner,
-  Select
+  Spinner
 } from '@shopify/polaris';
 
 export default function DashboardPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { t, locale } = useAppI18n();
-  const { setLocaleOverride } = useLocaleOverride();
+  const { t } = useAppI18n();
   const baseQueryString = searchParams.toString();
 
   const [loading, setLoading] = useState(true);
@@ -317,30 +314,12 @@ export default function DashboardPage() {
   const statusBadge = getBillingStatusBadge(billingStatus);
   const extraImages = Math.max(0, imagesUsed - imagesIncluded);
 
-  const languageOptions = [
-    { label: t('common.languageEnglish'), value: 'en' },
-    { label: t('common.languagePortuguese'), value: 'pt-BR' },
-    { label: t('common.languageSpanish'), value: 'es' }
-  ];
-
   return (
     <Page
       title={t('dashboard.title')}
       subtitle={t('dashboard.subtitle')}
     >
       <Layout>
-        <Layout.Section>
-          <InlineStack align="end" blockAlign="center" gap="300">
-            <Text variant="bodyMd" tone="subdued">{t('common.language')}</Text>
-            <Select
-              label=""
-              labelHidden
-              options={languageOptions}
-              value={locale === 'pt-BR' ? 'pt-BR' : locale === 'es' ? 'es' : 'en'}
-              onChange={(value) => setLocaleOverride(value)}
-            />
-          </InlineStack>
-        </Layout.Section>
         {error && (
           <Layout.Section>
             <Banner tone="critical">

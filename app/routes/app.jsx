@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { Outlet, useLoaderData, useRouteError, useLocation } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useLocation, redirect } from "react-router";
+import { Buffer } from "node:buffer";
+import process from "node:process";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
@@ -27,6 +29,15 @@ const SHOP_LOCALE_QUERY = `#graphql
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const hasHostParam = Boolean(url.searchParams.get("host"));
+  if (!hasHostParam && session?.shop) {
+    const shopHandle = String(session.shop).replace(/\.myshopify\.com$/i, "");
+    const host = Buffer.from(`admin.shopify.com/store/${shopHandle}`, "utf8").toString("base64");
+    url.searchParams.set("shop", session.shop);
+    url.searchParams.set("host", host);
+    return redirect(`${url.pathname}?${url.searchParams.toString()}`);
+  }
 
   // Garante webhooks ativos mesmo em instalações antigas (sem precisar reinstalar).
   try {

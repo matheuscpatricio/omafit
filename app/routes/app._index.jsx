@@ -94,23 +94,36 @@ export default function DashboardPage() {
       const shouldUseAggressiveBillingSync = fromBillingRefresh || pendingBillingActivation;
 
       const syncBillingWithRetry = async (attempts = 3, delayMs = 2000) => {
+        let lastMessage = "";
         for (let i = 0; i < attempts; i++) {
           try {
             const res = await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
-            if (res.ok) return true;
-          } catch (_err) {
-            // ignora e tenta de novo
+            if (res.ok) return { ok: true, message: "" };
+            const body = await res.json().catch(() => ({}));
+            const msg = body?.error || `billing sync failed (${res.status})`;
+            const hint = body?.resolutionHint ? ` | ${body.resolutionHint}` : "";
+            lastMessage = `${msg}${hint}`;
+            // Erros 500 recorrentes (schema/RLS) não melhoram com polling agressivo.
+            if (res.status >= 500) {
+              return { ok: false, message: lastMessage, fatal: true };
+            }
+          } catch (err) {
+            lastMessage = err?.message || "billing sync request error";
           }
           if (i < attempts - 1) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
         }
-        return false;
+        return { ok: false, message: lastMessage };
       };
 
       const waitForActivePlan = async (attempts = 5, delayMs = 2500) => {
         for (let i = 0; i < attempts; i++) {
-          await syncBillingWithRetry(1, 0);
+          const syncResult = await syncBillingWithRetry(1, 0);
+          if (!syncResult.ok && syncResult.fatal) {
+            if (syncResult.message) setError(syncResult.message);
+            return null;
+          }
           const latest = await fetchShopData(true);
           if (latest?.plan && latest?.billing_status === 'active') {
             return latest;
@@ -135,7 +148,13 @@ export default function DashboardPage() {
       };
 
       // Sincronizar plano antes de carregar dados
-      await syncBillingWithRetry(shouldUseAggressiveBillingSync ? 4 : 2, shouldUseAggressiveBillingSync ? 2500 : 1500);
+      const initialSync = await syncBillingWithRetry(
+        shouldUseAggressiveBillingSync ? 4 : 2,
+        shouldUseAggressiveBillingSync ? 2500 : 1500
+      );
+      if (!initialSync.ok && initialSync.message) {
+        setError(initialSync.message);
+      }
 
       let shopData = await fetchShopData(shouldUseAggressiveBillingSync);
 
@@ -144,7 +163,12 @@ export default function DashboardPage() {
       // Em lojas novas, pode levar alguns segundos para a assinatura ficar visível na Shopify
       if (shouldUseAggressiveBillingSync && hasNoActivePlan) {
         console.log('[Dashboard] Plano ainda não ativo após retorno de billing; tentando sincronizar novamente...');
-        await syncBillingWithRetry(3, 2500);
+        const retrySync = await syncBillingWithRetry(3, 2500);
+        if (!retrySync.ok && retrySync.fatal && retrySync.message) {
+          setError(retrySync.message);
+          setLoading(false);
+          return;
+        }
         shopData = await fetchShopData(true);
       }
 
@@ -152,7 +176,12 @@ export default function DashboardPage() {
       // dá uma janela curta adicional para Shopify propagar ACTIVE.
       if (!shouldUseAggressiveBillingSync && hasNoActivePlan) {
         console.log('[Dashboard] Loja sem plano ativo; executando fallback extra de sincronização...');
-        await syncBillingWithRetry(4, 2500);
+        const retrySync = await syncBillingWithRetry(4, 2500);
+        if (!retrySync.ok && retrySync.fatal && retrySync.message) {
+          setError(retrySync.message);
+          setLoading(false);
+          return;
+        }
         shopData = await fetchShopData(true);
       }
 

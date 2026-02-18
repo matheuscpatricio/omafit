@@ -27,7 +27,13 @@ export default function BillingPage() {
         const syncRes = await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
         if (!syncRes.ok) {
           const syncBody = await syncRes.json().catch(() => ({}));
-          const msg = syncBody?.error || `Falha ao sincronizar billing (${syncRes.status})`;
+          const details = [
+            syncBody?.activeSubscriptionStatus ? `subscription=${syncBody.activeSubscriptionStatus}` : null,
+            syncBody?.diagnostics?.bootstrapStrategy ? `bootstrap=${syncBody.diagnostics.bootstrapStrategy}` : null,
+            syncBody?.diagnostics?.bootstrapErrors?.[0] ? `supabase=${syncBody.diagnostics.bootstrapErrors[0]}` : null,
+          ].filter(Boolean).join(" | ");
+          const baseMsg = syncBody?.error || `Falha ao sincronizar billing (${syncRes.status})`;
+          const msg = details ? `${baseMsg} [${details}]` : baseMsg;
           throw new Error(msg);
         }
       } catch (syncErr) {

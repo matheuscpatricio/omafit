@@ -24,9 +24,15 @@ export default function BillingPage() {
 
       // Sincronizar plano da Shopify com Supabase antes de carregar
       try {
-        await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
+        const syncRes = await fetch('/api/billing/sync', { credentials: 'include', cache: 'no-store' });
+        if (!syncRes.ok) {
+          const syncBody = await syncRes.json().catch(() => ({}));
+          const msg = syncBody?.error || `Falha ao sincronizar billing (${syncRes.status})`;
+          throw new Error(msg);
+        }
       } catch (syncErr) {
-        console.warn('[Billing] Sync failed (non-blocking):', syncErr);
+        console.warn('[Billing] Sync failed:', syncErr);
+        setError(syncErr?.message || 'Falha ao sincronizar billing com Shopify.');
       }
 
       const response = await fetch('/api/shopify-shop', {

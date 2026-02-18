@@ -6,7 +6,7 @@ import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import ptBRTranslations from "@shopify/polaris/locales/pt-BR.json";
 import esTranslations from "@shopify/polaris/locales/es.json";
-import { authenticate } from "../shopify.server";
+import { authenticate, registerWebhooks } from "../shopify.server";
 import { syncBillingFromShopify } from "../billing-sync.server";
 import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
 
@@ -27,6 +27,13 @@ const SHOP_LOCALE_QUERY = `#graphql
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
+
+  // Garante webhooks ativos mesmo em instalações antigas (sem precisar reinstalar).
+  try {
+    await registerWebhooks({ session });
+  } catch (e) {
+    console.warn("[App] Webhook registration failed:", e);
+  }
 
   // Sincroniza o plano da Shopify com o Supabase ao abrir o admin (assim o app reflete o plano real, mesmo se assinou fora do admin)
   try {

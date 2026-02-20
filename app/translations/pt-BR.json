@@ -51,7 +51,17 @@
     "errorSupabase": "Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Railway.",
     "errorUploadLogo": "Erro ao fazer upload do logo. Tente novamente.",
     "errorSaveConfig": "Erro ao salvar configuração. Tente novamente.",
-    "errorLoadConfig": "Erro ao carregar configuração."
+    "errorLoadConfig": "Erro ao carregar configuração.",
+    "errorRlsWidgetConfigurations": "Permissão negada no Supabase (RLS) para salvar configuração do widget. Execute o SQL: supabase_fix_widget_configurations_rls.sql",
+    "errorLoadCollections": "Não foi possível carregar as coleções.",
+    "errorLoadStoreCollections": "Não foi possível carregar as coleções da loja.",
+    "errorInvalidImageFile": "Por favor, selecione um arquivo de imagem válido.",
+    "errorImageMaxSize": "A imagem deve ter no máximo 2MB.",
+    "warnExcludedCollectionsColumnMissing": "As coleções excluídas não foram salvas porque a coluna \"excluded_collections\" ainda não existe no banco.",
+    "excludedCollectionsTitle": "Coleções onde o widget NÃO deve aparecer",
+    "excludedCollectionsHelp": "Marque as coleções para ocultar o widget Omafit nessas páginas de produto.",
+    "loadingCollections": "Carregando coleções...",
+    "noCollectionsFound": "Nenhuma coleção encontrada."
   },
   "dashboard": {
     "title": "Dashboard Omafit",
@@ -135,7 +145,21 @@
     "tabLabel": "Tabela {label}",
     "placeholderSize": "Ex: P, M, G",
     "errorLoadCollections": "Erro ao carregar coleções.",
-    "errorSave": "Erro ao salvar tabelas."
+    "errorSave": "Erro ao salvar tabelas.",
+    "errorRlsSizeCharts": "Permissão negada no Supabase (RLS) para salvar tabelas de medidas. Execute o SQL: supabase_fix_size_charts_rls.sql",
+    "errorShopDomainMissing": "Shop domain não encontrado.",
+    "errorSupabaseNotConfigured": "Supabase não configurado.",
+    "warnCollectionMetadataNotPersisted": "As tabelas foram salvas, mas tipo/elasticidade da coleção ainda não foram persistidos. Execute as migrations no Supabase.",
+    "collectionTypeTitle": "Tipo da coleção",
+    "collectionElasticityTitle": "Como o tecido dessa coleção se comporta no corpo?",
+    "selectOneOption": "Marque apenas uma opção.",
+    "collectionTypeUpper": "Parte de cima (camisas, jaquetas, regatas...)",
+    "collectionTypeLower": "Parte de baixo (calças, shorts, bermudas...)",
+    "collectionTypeFull": "Corpo inteiro (vestidos, conjuntos...)",
+    "collectionElasticityStructured": "Estruturado (alfaiataria, jeans rígido, sem elastano)",
+    "collectionElasticityLightFlex": "Leve flexibilidade (até 3% elastano)",
+    "collectionElasticityFlexible": "Flexível (malha, tecidos com stretch)",
+    "collectionElasticityHighElasticity": "Alta elasticidade (ribana, knit, peças muito ajustáveis)"
   },
   "analytics": {
     "title": "Dados",

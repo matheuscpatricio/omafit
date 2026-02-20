@@ -74,7 +74,7 @@ export default function WidgetPage() {
       lower.includes('row level security policy');
 
     if (isRlsWidgetConfigError && lower.includes('widget_configurations')) {
-      return 'Permissão negada no Supabase (RLS) para salvar configuração do widget. Execute o SQL: supabase_fix_widget_configurations_rls.sql';
+      return t('widget.errorRlsWidgetConfigurations');
     }
 
     return message;
@@ -194,7 +194,7 @@ export default function WidgetPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Não foi possível carregar as coleções.');
+        throw new Error(t('widget.errorLoadCollections'));
       }
 
       const data = await response.json();
@@ -206,7 +206,7 @@ export default function WidgetPage() {
       );
     } catch (err) {
       console.error('[Widget] Erro ao carregar coleções:', err);
-      setCollectionsError('Não foi possível carregar as coleções da loja.');
+      setCollectionsError(t('widget.errorLoadStoreCollections'));
     } finally {
       setCollectionsLoading(false);
     }
@@ -217,12 +217,12 @@ export default function WidgetPage() {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      setError('Por favor, selecione um arquivo de imagem válido.');
+      setError(t('widget.errorInvalidImageFile'));
       return;
     }
 
     if (file.size > 2 * 1024 * 1024) {
-      setError('A imagem deve ter no máximo 2MB.');
+      setError(t('widget.errorImageMaxSize'));
       return;
     }
 
@@ -433,7 +433,7 @@ export default function WidgetPage() {
           const { excluded_collections, ...payloadWithoutExcluded } = payload;
           response = await savePayload(payloadWithoutExcluded);
           if (response.ok) {
-            setError('As coleções excluídas não foram salvas porque a coluna "excluded_collections" ainda não existe no banco.');
+            setError(t('widget.warnExcludedCollectionsColumnMissing'));
           }
         } else {
           // Reconstituir response-like flow preservando a mensagem para o bloco de erro abaixo
@@ -733,17 +733,17 @@ export default function WidgetPage() {
 
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h3">
-                  Coleções onde o widget NÃO deve aparecer
+                  {t('widget.excludedCollectionsTitle')}
                 </Text>
                 <Text variant="bodyMd" tone="subdued">
-                  Marque as coleções para ocultar o widget Omafit nessas páginas de produto.
+                  {t('widget.excludedCollectionsHelp')}
                 </Text>
 
                 {collectionsLoading ? (
                   <InlineStack gap="200" blockAlign="center">
                     <Spinner size="small" />
                     <Text variant="bodySm" tone="subdued">
-                      Carregando coleções...
+                      {t('widget.loadingCollections')}
                     </Text>
                   </InlineStack>
                 ) : collectionsError ? (
@@ -752,7 +752,7 @@ export default function WidgetPage() {
                   </Banner>
                 ) : collections.length === 0 ? (
                   <Text variant="bodySm" tone="subdued">
-                    Nenhuma coleção encontrada.
+                    {t('widget.noCollectionsFound')}
                   </Text>
                 ) : (
                   <div

@@ -173,6 +173,29 @@ export default function AnalyticsPage() {
   const [timeRange, setTimeRange] = useState('30');
   const [metrics, setMetrics] = useState(null);
 
+  const toFriendlyAnalyticsError = (rawMessage) => {
+    const message = String(rawMessage || '').trim();
+    if (!message) return t('analytics.errorLoad');
+
+    const lower = message.toLowerCase();
+    const isRlsError =
+      message.includes('"code":"42501"') ||
+      lower.includes('row-level security policy') ||
+      lower.includes('row level security policy');
+
+    if (
+      isRlsError &&
+      (lower.includes('session_analytics') ||
+        lower.includes('tryon_sessions') ||
+        lower.includes('user_measurements') ||
+        lower.includes('shopify_shops'))
+    ) {
+      return 'Permissão negada no Supabase (RLS) para tabelas de analytics. Execute o SQL: supabase_fix_analytics_rls.sql';
+    }
+
+    return message;
+  };
+
   useEffect(() => {
     if (shopDomain) {
       loadAnalytics();
@@ -754,7 +777,7 @@ export default function AnalyticsPage() {
           tableError: 'no_sessions'
         });
       } else {
-        setError(err?.message || t('analytics.errorLoad'));
+        setError(toFriendlyAnalyticsError(err?.message || t('analytics.errorLoad')));
       }
     } finally {
       setLoading(false);
@@ -1008,6 +1031,9 @@ export default function AnalyticsPage() {
                       </BlockStack>
                       <Text variant="bodyMd" tone="subdued">
                         💡 <strong>Dica:</strong> Teste o widget em uma página de produto da sua loja para gerar dados de teste.
+                      </Text>
+                      <Text variant="bodyMd" tone="subdued">
+                        Se a tabela <strong>session_analytics</strong> permanecer vazia, execute o SQL <strong>supabase_fix_session_analytics_autosync.sql</strong> para sincronizar automaticamente a partir de <strong>tryon_sessions</strong>.
                       </Text>
                     </BlockStack>
                   </Banner>

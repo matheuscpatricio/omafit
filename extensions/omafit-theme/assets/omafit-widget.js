@@ -194,82 +194,60 @@
     return { productId, productName, productHandle };
   }
 
-  // Buscar um produto complementar de uma coleção (diferente da atual, ou qualquer se não houver atual)
+  // Buscar um produto complementar da MESMA coleção do produto atual
   async function getComplementaryProduct(currentCollectionHandle) {
     try {
-      const collectionsResponse = await fetch('/collections.json');
-      if (!collectionsResponse.ok) {
-        console.warn('⚠️ Não foi possível buscar coleções');
+      if (!currentCollectionHandle) {
+        console.warn('⚠️ Collection handle atual não informado; não será sugerido produto de outra coleção.');
         return null;
       }
 
-      const collectionsData = await collectionsResponse.json();
-      const collections = collectionsData.collections || [];
+      const productInfo = getProductInfo();
+      const currentProductHandle = productInfo && productInfo.productHandle ? productInfo.productHandle : '';
 
-      if (collections.length === 0) {
-        console.log('⚠️ Nenhuma coleção encontrada');
+      // Buscar produtos apenas da coleção atual
+      const collectionProductsResponse = await fetch(`/collections/${currentCollectionHandle}/products.json?limit=20`);
+      if (!collectionProductsResponse.ok) {
+        console.warn('⚠️ Não foi possível buscar produtos da coleção atual');
         return null;
       }
 
-      // Coleções candidatas: diferentes da atual; se não há atual, todas
-      let complementaryCollections = collections.filter(function (coll) {
-        return coll.handle;
+      const collectionProductsData = await collectionProductsResponse.json();
+      const products = collectionProductsData.products || [];
+
+      if (products.length === 0) {
+        console.log('⚠️ Nenhum produto encontrado na coleção atual');
+        return null;
+      }
+
+      // Evitar recomendar o próprio produto atual
+      var candidateProducts = products.filter(function (p) {
+        return p && p.handle && p.handle !== currentProductHandle;
       });
-      if (currentCollectionHandle) {
-        complementaryCollections = complementaryCollections.filter(
-          function (coll) { return coll.handle !== currentCollectionHandle; }
-        );
-      }
 
-      if (complementaryCollections.length === 0) {
-        console.log('⚠️ Nenhuma coleção complementar encontrada');
+      if (candidateProducts.length === 0) {
+        console.log('⚠️ Não há produto complementar na mesma coleção (apenas o produto atual).');
         return null;
       }
 
-      try {
-        // Selecionar uma coleção complementar aleatória
-        const randomCollection = complementaryCollections[Math.floor(Math.random() * complementaryCollections.length)];
-        console.log('🎲 Coleção complementar selecionada:', randomCollection.handle);
+      // Selecionar um produto aleatório da mesma coleção
+      const randomProduct = candidateProducts[Math.floor(Math.random() * candidateProducts.length)];
+      const productUrl = `/products/${randomProduct.handle}`;
+      const fullProductUrl = window.location.origin + productUrl;
 
-        // Buscar produtos dessa coleção
-        const collectionProductsResponse = await fetch(`/collections/${randomCollection.handle}/products.json?limit=10`);
-        if (!collectionProductsResponse.ok) {
-          console.warn('⚠️ Não foi possível buscar produtos da coleção complementar');
-          return null;
-        }
+      console.log('✅ Produto complementar encontrado na mesma coleção:', {
+        title: randomProduct.title,
+        handle: randomProduct.handle,
+        url: fullProductUrl,
+        collectionHandle: currentCollectionHandle
+      });
 
-        const collectionProductsData = await collectionProductsResponse.json();
-        const products = collectionProductsData.products || [];
-
-        if (products.length === 0) {
-          console.log('⚠️ Nenhum produto encontrado na coleção complementar');
-          return null;
-        }
-
-        // Selecionar um produto aleatório
-        const randomProduct = products[Math.floor(Math.random() * products.length)];
-        
-        // Construir URL do produto
-        const productUrl = `/products/${randomProduct.handle}`;
-        const fullProductUrl = window.location.origin + productUrl;
-
-        console.log('✅ Produto complementar encontrado:', {
-          title: randomProduct.title,
-          handle: randomProduct.handle,
-          url: fullProductUrl,
-          collection: randomCollection.title
-        });
-
-        return {
-          title: randomProduct.title,
-          handle: randomProduct.handle,
-          url: fullProductUrl,
-          collectionTitle: randomCollection.title
-        };
-      } catch (error) {
-        console.error('❌ Erro ao buscar produto complementar:', error);
-        return null;
-      }
+      return {
+        title: randomProduct.title,
+        handle: randomProduct.handle,
+        url: fullProductUrl,
+        collectionTitle: currentCollectionHandle
+      };
     } catch (error) {
       console.error('❌ Erro geral ao buscar produto complementar:', error);
       return null;
@@ -981,6 +959,12 @@
 
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
+    const shopNameFromDomain = shopDomain ? shopDomain.replace(/\.myshopify\.com$/i, '') : '';
+    const resolvedStoreName =
+      (OMAFIT_CONFIG.storeName && String(OMAFIT_CONFIG.storeName).trim()) ||
+      shopNameFromDomain ||
+      'Omafit';
+    config.storeName = resolvedStoreName;
     const rootEl = document.getElementById('omafit-widget-root');
     let collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
@@ -1017,6 +1001,9 @@
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
+      '&shop_domain=' + encodeURIComponent(shopDomain) +
+      '&shopName=' + encodeURIComponent(resolvedStoreName) +
+      '&shop_name=' + encodeURIComponent(resolvedStoreName) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
       (collectionType ? '&collectionType=' + encodeURIComponent(collectionType) : '') +

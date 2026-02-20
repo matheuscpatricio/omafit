@@ -63,17 +63,6 @@ export const loader = async ({ request }) => {
 const DEFAULT_REFS = ['peito', 'cintura', 'quadril'];
 const DEFAULT_COLLECTION_TYPE = 'upper';
 const DEFAULT_COLLECTION_ELASTICITY = 'structured';
-const COLLECTION_TYPE_OPTIONS = [
-  { label: 'Parte de cima (camisas, jaquetas, regatas...)', value: 'upper' },
-  { label: 'Parte de baixo (calças, shorts, bermudas...)', value: 'lower' },
-  { label: 'Corpo inteiro (vestidos, conjuntos...)', value: 'full' }
-];
-const COLLECTION_ELASTICITY_OPTIONS = [
-  { label: 'Estruturado (alfaiataria, jeans rígido, sem elastano)', value: 'structured' },
-  { label: 'Leve flexibilidade (até 3% elastano)', value: 'light_flex' },
-  { label: 'Flexível (malha, tecidos com stretch)', value: 'flexible' },
-  { label: 'Alta elasticidade (ribana, knit, peças muito ajustáveis)', value: 'high_elasticity' }
-];
 
 function getDefaultSizesForRefs(refs) {
   return refs.reduce((acc, key) => ({ ...acc, [key]: '' }), { size: '' });
@@ -112,6 +101,19 @@ export default function SizeChartPage() {
     { label: t('sizeChart.measureAnkle'), value: 'tornozelo' }
   ], [t]);
 
+  const COLLECTION_TYPE_OPTIONS = useMemo(() => [
+    { label: t('sizeChart.collectionTypeUpper'), value: 'upper' },
+    { label: t('sizeChart.collectionTypeLower'), value: 'lower' },
+    { label: t('sizeChart.collectionTypeFull'), value: 'full' }
+  ], [t]);
+
+  const COLLECTION_ELASTICITY_OPTIONS = useMemo(() => [
+    { label: t('sizeChart.collectionElasticityStructured'), value: 'structured' },
+    { label: t('sizeChart.collectionElasticityLightFlex'), value: 'light_flex' },
+    { label: t('sizeChart.collectionElasticityFlexible'), value: 'flexible' },
+    { label: t('sizeChart.collectionElasticityHighElasticity'), value: 'high_elasticity' }
+  ], [t]);
+
   useEffect(() => {
     if (!shopDomain) {
       console.error('[SizeChart] Shop domain não encontrado!');
@@ -139,7 +141,7 @@ export default function SizeChartPage() {
       lower.includes('row level security policy');
 
     if (isRlsError && lower.includes('size_charts')) {
-      return 'Permissão negada no Supabase (RLS) para salvar tabelas de medidas. Execute o SQL: supabase_fix_size_charts_rls.sql';
+      return t('sizeChart.errorRlsSizeCharts');
     }
 
     return message;
@@ -269,11 +271,11 @@ export default function SizeChartPage() {
       setSaving(true);
       setError(null);
       setSuccess(false);
-      if (!shopDomain) throw new Error('Shop domain não encontrado.');
+      if (!shopDomain) throw new Error(t('sizeChart.errorShopDomainMissing'));
 
       const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-      if (!supabaseUrl || !supabaseKey) throw new Error('Supabase não configurado.');
+      if (!supabaseUrl || !supabaseKey) throw new Error(t('sizeChart.errorSupabaseNotConfigured'));
 
       const toSave = [];
       Object.entries(charts).forEach(([handle, byGender]) => {
@@ -328,7 +330,7 @@ export default function SizeChartPage() {
             const fallbackPayload = toSave.map(({ collection_type, collection_elasticity, ...rest }) => rest);
             insertRes = await doInsert(fallbackPayload);
             if (insertRes.ok) {
-              setError('As tabelas foram salvas, mas tipo/elasticidade da coleção ainda não foram persistidos. Execute as migrations no Supabase.');
+              setError(t('sizeChart.warnCollectionMetadataNotPersisted'));
             } else {
               insertErrText = await insertRes.text();
             }
@@ -483,10 +485,10 @@ export default function SizeChartPage() {
 
               <BlockStack gap="200">
                 <Text variant="headingSm" as="h3">
-                  Tipo da coleção
+                  {t('sizeChart.collectionTypeTitle')}
                 </Text>
                 <Text variant="bodySm" tone="subdued">
-                  Marque apenas uma opção.
+                  {t('sizeChart.selectOneOption')}
                 </Text>
                 <BlockStack gap="100">
                   {COLLECTION_TYPE_OPTIONS.map((option) => (
@@ -502,10 +504,10 @@ export default function SizeChartPage() {
 
               <BlockStack gap="200">
                 <Text variant="headingSm" as="h3">
-                  Como o tecido dessa coleção se comporta no corpo?
+                  {t('sizeChart.collectionElasticityTitle')}
                 </Text>
                 <Text variant="bodySm" tone="subdued">
-                  Marque apenas uma opção.
+                  {t('sizeChart.selectOneOption')}
                 </Text>
                 <BlockStack gap="100">
                   {COLLECTION_ELASTICITY_OPTIONS.map((option) => (

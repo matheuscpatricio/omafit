@@ -51,7 +51,17 @@
     "errorSupabase": "Supabase not configured. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.",
     "errorUploadLogo": "Error uploading logo. Please try again.",
     "errorSaveConfig": "Error saving configuration. Please try again.",
-    "errorLoadConfig": "Error loading configuration."
+    "errorLoadConfig": "Error loading configuration.",
+    "errorRlsWidgetConfigurations": "Supabase permission denied (RLS) when saving widget configuration. Run SQL: supabase_fix_widget_configurations_rls.sql",
+    "errorLoadCollections": "Could not load collections.",
+    "errorLoadStoreCollections": "Could not load store collections.",
+    "errorInvalidImageFile": "Please select a valid image file.",
+    "errorImageMaxSize": "Image must be at most 2MB.",
+    "warnExcludedCollectionsColumnMissing": "Excluded collections were not saved because the \"excluded_collections\" column does not exist in the database yet.",
+    "excludedCollectionsTitle": "Collections where the widget should NOT appear",
+    "excludedCollectionsHelp": "Select collections to hide the Omafit widget on those product pages.",
+    "loadingCollections": "Loading collections...",
+    "noCollectionsFound": "No collections found."
   },
   "dashboard": {
     "title": "Omafit Dashboard",
@@ -135,7 +145,21 @@
     "tabLabel": "{label} table",
     "placeholderSize": "e.g. S, M, L",
     "errorLoadCollections": "Error loading collections.",
-    "errorSave": "Error saving tables."
+    "errorSave": "Error saving tables.",
+    "errorRlsSizeCharts": "Supabase permission denied (RLS) when saving size charts. Run SQL: supabase_fix_size_charts_rls.sql",
+    "errorShopDomainMissing": "Shop domain not found.",
+    "errorSupabaseNotConfigured": "Supabase is not configured.",
+    "warnCollectionMetadataNotPersisted": "Tables were saved, but collection type/elasticity were not persisted yet. Run Supabase migrations.",
+    "collectionTypeTitle": "Collection type",
+    "collectionElasticityTitle": "How does this collection's fabric behave on the body?",
+    "selectOneOption": "Select only one option.",
+    "collectionTypeUpper": "Upper body (shirts, jackets, tank tops...)",
+    "collectionTypeLower": "Lower body (pants, shorts, bermudas...)",
+    "collectionTypeFull": "Full body (dresses, sets...)",
+    "collectionElasticityStructured": "Structured (tailoring, rigid denim, no elastane)",
+    "collectionElasticityLightFlex": "Light flexibility (up to 3% elastane)",
+    "collectionElasticityFlexible": "Flexible (knitwear, stretchy fabrics)",
+    "collectionElasticityHighElasticity": "High elasticity (rib knit, very stretchable pieces)"
   },
   "analytics": {
     "title": "Analytics",

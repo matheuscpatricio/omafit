@@ -194,6 +194,39 @@
     return { productId, productName, productHandle };
   }
 
+  function detectStoreDisplayName(shopDomain) {
+    try {
+      // 1) Meta OG costuma refletir o nome comercial da loja
+      const ogSiteName = document.querySelector('meta[property="og:site_name"]');
+      if (ogSiteName && ogSiteName.content && ogSiteName.content.trim()) {
+        return ogSiteName.content.trim();
+      }
+
+      // 2) application-name (quando definido pelo tema)
+      const appName = document.querySelector('meta[name="application-name"]');
+      if (appName && appName.content && appName.content.trim()) {
+        return appName.content.trim();
+      }
+
+      // 3) Título da página: "Produto - Nome da loja"
+      if (document.title && document.title.trim()) {
+        const title = document.title.trim();
+        const parts = title.split(' - ').map(function (p) { return p.trim(); }).filter(Boolean);
+        if (parts.length > 1) return parts[parts.length - 1];
+      }
+
+      // 4) Fallback no handle/domínio da loja
+      if (shopDomain && typeof shopDomain === 'string') {
+        const fromMyshopify = shopDomain.replace(/\.myshopify\.com$/i, '').trim();
+        if (fromMyshopify) return fromMyshopify;
+      }
+    } catch (_err) {
+      // non-blocking
+    }
+
+    return '';
+  }
+
   // Buscar um produto complementar da MESMA coleção do produto atual
   async function getComplementaryProduct(currentCollectionHandle) {
     try {
@@ -304,6 +337,11 @@
         if (urlMatch) {
           shopDomain = urlMatch[1];
         }
+      }
+
+      // Fallback final: usar hostname atual (suporta domínio customizado da loja)
+      if (!shopDomain && window.location && window.location.hostname) {
+        shopDomain = window.location.hostname;
       }
 
       console.log('🔍 Shop domain detectado:', shopDomain);
@@ -982,8 +1020,10 @@
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
     const shopNameFromDomain = shopDomain ? shopDomain.replace(/\.myshopify\.com$/i, '') : '';
+    const detectedStoreName = detectStoreDisplayName(shopDomain);
     const resolvedStoreName =
       (OMAFIT_CONFIG.storeName && String(OMAFIT_CONFIG.storeName).trim()) ||
+      (detectedStoreName && String(detectedStoreName).trim()) ||
       shopNameFromDomain ||
       'Omafit';
     config.storeName = resolvedStoreName;
@@ -1030,6 +1070,8 @@
       '&shop_domain=' + encodeURIComponent(shopDomain) +
       '&shopName=' + encodeURIComponent(resolvedStoreName) +
       '&shop_name=' + encodeURIComponent(resolvedStoreName) +
+      '&storeName=' + encodeURIComponent(resolvedStoreName) +
+      '&store_name=' + encodeURIComponent(resolvedStoreName) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (collectionTitle ? '&collectionTitle=' + encodeURIComponent(collectionTitle) : '') +
       (collectionTitle ? '&collectionName=' + encodeURIComponent(collectionTitle) : '') +
@@ -1118,6 +1160,10 @@
         // Enviar collectionHandle e defaultGender para o app Netlify usar ao buscar tabela de medidas no Supabase
         iframe.contentWindow.postMessage({
           type: 'omafit-context',
+          shopName: resolvedStoreName,
+          shop_name: resolvedStoreName,
+          storeName: resolvedStoreName,
+          store_name: resolvedStoreName,
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
           collectionTitle: typeof collectionTitle === 'string' ? collectionTitle : '',
           collectionName: typeof collectionTitle === 'string' ? collectionTitle : '',
@@ -1191,6 +1237,9 @@
               type: 'omafit-config-update',
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
               storeName: resolvedStoreName,
+              store_name: resolvedStoreName,
+              shopName: resolvedStoreName,
+              shop_name: resolvedStoreName,
               storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
@@ -1223,6 +1272,9 @@
               type: 'omafit-config-update',
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
               storeName: resolvedStoreName,
+              store_name: resolvedStoreName,
+              shopName: resolvedStoreName,
+              shop_name: resolvedStoreName,
               fontFamily: detectedFontFamily,
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
@@ -1249,6 +1301,9 @@
             type: 'omafit-config-update',
             primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
             storeName: resolvedStoreName,
+            store_name: resolvedStoreName,
+            shopName: resolvedStoreName,
+            shop_name: resolvedStoreName,
             fontFamily: detectedFontFamily,
             shopDomain: shopDomain,
             collectionHandle: collectionHandle || '',

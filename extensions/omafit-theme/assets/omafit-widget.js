@@ -227,6 +227,26 @@
     return '';
   }
 
+  function ensureStoreName(configObj) {
+    try {
+      const cfg = configObj || {};
+      const current = cfg.storeName ? String(cfg.storeName).trim() : '';
+      if (current) return current;
+
+      const domain = cfg.shopDomain ? String(cfg.shopDomain).trim() : '';
+      const detected = detectStoreDisplayName(domain);
+      if (detected && String(detected).trim()) return String(detected).trim();
+
+      if (domain) {
+        const fromDomain = domain.replace(/\.myshopify\.com$/i, '').trim();
+        if (fromDomain) return fromDomain;
+      }
+    } catch (_err) {
+      // non-blocking
+    }
+    return 'Omafit';
+  }
+
   // Buscar um produto complementar da MESMA coleção do produto atual
   async function getComplementaryProduct(currentCollectionHandle) {
     try {
@@ -604,6 +624,7 @@
         isActive: isWidgetActive,
         excludedCollections: excludedCollections
       };
+      mappedConfig.storeName = ensureStoreName(mappedConfig);
       
       console.log('✅ Configuração mapeada:', {
         linkText: mappedConfig.linkText,
@@ -619,7 +640,7 @@
       return {
         publicId: 'wgt_pub_default',
         linkText: 'Experimentar virtualmente',
-        storeName: '',
+        storeName: ensureStoreName({ shopDomain: shopDomain || '' }),
         storeLogo: '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
         colors: {
@@ -907,6 +928,9 @@
       console.warn('⚠️ Omafit: configuração não carregada, tentando carregar agora...');
       try {
         OMAFIT_CONFIG = await fetchOmafitConfig();
+        if (OMAFIT_CONFIG) {
+          OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
+        }
         if (!OMAFIT_CONFIG) {
           console.error('❌ Não foi possível carregar configuração do Omafit');
           // Usar configuração padrão
@@ -944,6 +968,8 @@
         };
       }
     }
+
+    OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
     
     console.log('📦 OMAFIT_CONFIG antes de abrir modal:', OMAFIT_CONFIG);
 
@@ -1664,6 +1690,9 @@
 
       // Buscar configuração via API
       OMAFIT_CONFIG = await fetchOmafitConfig();
+      if (OMAFIT_CONFIG) {
+        OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
+      }
 
       if (!OMAFIT_CONFIG) {
         console.error('❌ Falha ao carregar configuração do Omafit');
@@ -1685,6 +1714,8 @@
           isActive: true
         };
       }
+
+      OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
 
       console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
 

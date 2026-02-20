@@ -215,11 +215,6 @@
         if (parts.length > 1) return parts[parts.length - 1];
       }
 
-      // 4) Fallback no handle/domínio da loja
-      if (shopDomain && typeof shopDomain === 'string') {
-        const fromMyshopify = shopDomain.replace(/\.myshopify\.com$/i, '').trim();
-        if (fromMyshopify) return fromMyshopify;
-      }
     } catch (_err) {
       // non-blocking
     }
@@ -236,15 +231,10 @@
       const domain = cfg.shopDomain ? String(cfg.shopDomain).trim() : '';
       const detected = detectStoreDisplayName(domain);
       if (detected && String(detected).trim()) return String(detected).trim();
-
-      if (domain) {
-        const fromDomain = domain.replace(/\.myshopify\.com$/i, '').trim();
-        if (fromDomain) return fromDomain;
-      }
     } catch (_err) {
       // non-blocking
     }
-    return 'Omafit';
+    return '';
   }
 
   // Buscar um produto complementar da MESMA coleção do produto atual
@@ -313,10 +303,12 @@
       const rootElement = document.getElementById('omafit-widget-root');
       let shopDomain = '';
       let publicId = '';
+      let shopNameFromRoot = '';
 
       if (rootElement) {
         shopDomain = rootElement.dataset.shopDomain || '';
         publicId = rootElement.dataset.publicId || '';
+        shopNameFromRoot = rootElement.dataset.shopName || '';
         
         // Se shop.domain retornar apenas o nome da loja (sem .myshopify.com), adicionar
         if (shopDomain && !shopDomain.includes('.')) {
@@ -372,7 +364,7 @@
         return {
           publicId: publicId || 'wgt_pub_default',
           linkText: 'Experimentar virtualmente',
-          storeName: '',
+          storeName: shopNameFromRoot || '',
           storeLogo: '',
           fontFamily: 'inherit',
           colors: {
@@ -605,11 +597,11 @@
         publicId: validPublicId,
         linkText: config?.link_text || 'Experimentar virtualmente',
         storeName:
+          shopNameFromRoot ||
           config?.store_name ||
           config?.storeName ||
           config?.shop_name ||
           config?.name ||
-          (shopDomain ? shopDomain.replace(/\.myshopify\.com$/i, '') : '') ||
           '',
         storeLogo: config?.store_logo || '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
@@ -640,7 +632,7 @@
       return {
         publicId: 'wgt_pub_default',
         linkText: 'Experimentar virtualmente',
-        storeName: ensureStoreName({ shopDomain: shopDomain || '' }),
+        storeName: shopNameFromRoot || '',
         storeLogo: '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
         colors: {
@@ -1035,7 +1027,7 @@
     // Montar configuração - NÃO incluir storeLogo (base64) na URL para evitar 414
     // O widget buscará do Supabase usando shopDomain
     const config = {
-      storeName: OMAFIT_CONFIG.storeName || 'Omafit',
+      storeName: OMAFIT_CONFIG.storeName || '',
       primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
       // storeLogo será enviado via postMessage
       fontFamily: detectedFontFamily, // Usar fonte detectada da loja
@@ -1045,13 +1037,11 @@
 
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
-    const shopNameFromDomain = shopDomain ? shopDomain.replace(/\.myshopify\.com$/i, '') : '';
     const detectedStoreName = detectStoreDisplayName(shopDomain);
     const resolvedStoreName =
       (OMAFIT_CONFIG.storeName && String(OMAFIT_CONFIG.storeName).trim()) ||
       (detectedStoreName && String(detectedStoreName).trim()) ||
-      shopNameFromDomain ||
-      'Omafit';
+      '';
     config.storeName = resolvedStoreName;
     const rootEl = document.getElementById('omafit-widget-root');
     let collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';

@@ -546,7 +546,13 @@
       const mappedConfig = {
         publicId: validPublicId,
         linkText: config?.link_text || 'Experimentar virtualmente',
-        storeName: config?.store_name || '',
+        storeName:
+          config?.store_name ||
+          config?.storeName ||
+          config?.shop_name ||
+          config?.name ||
+          (shopDomain ? shopDomain.replace(/\.myshopify\.com$/i, '') : '') ||
+          '',
         storeLogo: config?.store_logo || '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
         colors: {
@@ -716,6 +722,22 @@
 
       return '';
     } catch (_error) {
+      return '';
+    }
+  }
+
+  // Buscar nome/título da coleção atual a partir do handle
+  async function fetchCollectionTitle(collectionHandle) {
+    try {
+      const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+      if (!coll) return '';
+
+      const response = await fetch(`/collections/${encodeURIComponent(coll)}.json`);
+      if (!response.ok) return '';
+
+      const data = await response.json();
+      return (data && data.collection && data.collection.title) ? String(data.collection.title) : '';
+    } catch (_err) {
       return '';
     }
   }
@@ -967,7 +989,11 @@
     config.storeName = resolvedStoreName;
     const rootEl = document.getElementById('omafit-widget-root');
     let collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
+    let collectionTitle = (rootEl && rootEl.dataset && rootEl.dataset.collectionTitle) ? rootEl.dataset.collectionTitle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
+    if (!collectionTitle && collectionHandle) {
+      collectionTitle = await fetchCollectionTitle(collectionHandle);
+    }
     const collectionType = await fetchCollectionType(shopDomain, collectionHandle);
     const collectionElasticity = await fetchCollectionElasticity(shopDomain, collectionHandle);
     
@@ -1005,6 +1031,8 @@
       '&shopName=' + encodeURIComponent(resolvedStoreName) +
       '&shop_name=' + encodeURIComponent(resolvedStoreName) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
+      (collectionTitle ? '&collectionTitle=' + encodeURIComponent(collectionTitle) : '') +
+      (collectionTitle ? '&collectionName=' + encodeURIComponent(collectionTitle) : '') +
       (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
       (collectionType ? '&collectionType=' + encodeURIComponent(collectionType) : '') +
       (collectionElasticity ? '&collectionElasticity=' + encodeURIComponent(collectionElasticity) : '') +
@@ -1091,6 +1119,8 @@
         iframe.contentWindow.postMessage({
           type: 'omafit-context',
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
+          collectionTitle: typeof collectionTitle === 'string' ? collectionTitle : '',
+          collectionName: typeof collectionTitle === 'string' ? collectionTitle : '',
           defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
           collectionType: typeof collectionType === 'string' ? collectionType : '',
           collectionElasticity: typeof collectionElasticity === 'string' ? collectionElasticity : '',
@@ -1118,6 +1148,7 @@
         if (collectionHandle || defaultGender || complementaryProduct) {
           console.log('📤 Contexto enviado via postMessage:', { 
             collectionHandle: collectionHandle || '(vazio)', 
+            collectionTitle: collectionTitle || '(vazio)',
             defaultGender: defaultGender || '(vazio)',
             collectionType: collectionType || '(vazio)',
             collectionElasticity: collectionElasticity || '(vazio)',
@@ -1159,11 +1190,13 @@
             iframe.contentWindow.postMessage({
               type: 'omafit-config-update',
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
-              storeName: OMAFIT_CONFIG.storeName || 'Omafit',
+              storeName: resolvedStoreName,
               storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
+              collectionTitle: collectionTitle || '',
+              collectionName: collectionTitle || '',
               defaultGender: defaultGender || '',
               collectionType: collectionType || '',
               collectionElasticity: collectionElasticity || '',
@@ -1173,7 +1206,7 @@
             }, 'https://omafit.netlify.app');
             console.log('📤 Configuração enviada via postMessage (com logo):', {
               primaryColor: OMAFIT_CONFIG.colors?.primary,
-              storeName: OMAFIT_CONFIG.storeName,
+              storeName: resolvedStoreName,
               storeLogo: '✅ Presente (' + logoSize + ' chars)',
               fontFamily: detectedFontFamily
             });
@@ -1189,10 +1222,12 @@
             iframe.contentWindow.postMessage({
               type: 'omafit-config-update',
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
-              storeName: OMAFIT_CONFIG.storeName || 'Omafit',
+              storeName: resolvedStoreName,
               fontFamily: detectedFontFamily,
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
+              collectionTitle: collectionTitle || '',
+              collectionName: collectionTitle || '',
               defaultGender: defaultGender || '',
               collectionType: collectionType || '',
               collectionElasticity: collectionElasticity || '',
@@ -1213,10 +1248,12 @@
           iframe.contentWindow.postMessage({
             type: 'omafit-config-update',
             primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
-            storeName: OMAFIT_CONFIG.storeName || 'Omafit',
+            storeName: resolvedStoreName,
             fontFamily: detectedFontFamily,
             shopDomain: shopDomain,
             collectionHandle: collectionHandle || '',
+            collectionTitle: collectionTitle || '',
+            collectionName: collectionTitle || '',
             defaultGender: defaultGender || '',
             collectionType: collectionType || '',
             collectionElasticity: collectionElasticity || '',

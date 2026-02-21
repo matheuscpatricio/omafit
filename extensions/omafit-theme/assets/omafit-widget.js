@@ -215,6 +215,30 @@
     return { productId, productName, productDescription, productHandle };
   }
 
+  async function enrichProductInfo(productInfo) {
+    try {
+      const info = productInfo || {};
+      const handle = info.productHandle ? String(info.productHandle).trim() : '';
+      if (!handle) return info;
+
+      // Só consulta o endpoint da Shopify se faltar algum campo-chave
+      if (info.productName && info.productDescription) return info;
+
+      const response = await fetch(`/products/${encodeURIComponent(handle)}.js`);
+      if (!response.ok) return info;
+
+      const data = await response.json();
+      return {
+        productId: info.productId || data?.id || '',
+        productName: info.productName || data?.title || '',
+        productDescription: info.productDescription || (data?.description ? String(data.description).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : ''),
+        productHandle: handle
+      };
+    } catch (_err) {
+      return productInfo;
+    }
+  }
+
   function detectStoreDisplayName(shopDomain) {
     try {
       // 1) Meta OG costuma refletir o nome comercial da loja
@@ -998,7 +1022,8 @@
     const allProductImages = await getOnlyProductImages();
     console.log('📸 Total de imagens encontradas:', allProductImages.length);
 
-    const productInfo = getProductInfo();
+    let productInfo = getProductInfo();
+    productInfo = await enrichProductInfo(productInfo);
     const isMobile = window.innerWidth <= 768;
 
     const overlay = document.createElement('div');

@@ -146,6 +146,9 @@ export default function DashboardPage() {
         return data?.shop || null;
       };
 
+      const hasActivePlan = (row) =>
+        Boolean(row?.plan) && String(row?.billing_status || '').toLowerCase() === 'active';
+
       // Sincronizar plano antes de carregar dados
       const initialSync = await syncBillingWithRetry(
         shouldUseAggressiveBillingSync ? 4 : 2,
@@ -157,10 +160,8 @@ export default function DashboardPage() {
 
       let shopData = await fetchShopData(shouldUseAggressiveBillingSync);
 
-      const hasNoActivePlan = !shopData || !shopData.plan || shopData.billing_status !== 'active';
-
       // Em lojas novas, pode levar alguns segundos para a assinatura ficar visível na Shopify
-      if (shouldUseAggressiveBillingSync && hasNoActivePlan) {
+      if (shouldUseAggressiveBillingSync && !hasActivePlan(shopData)) {
         console.log('[Dashboard] Plano ainda não ativo após retorno de billing; tentando sincronizar novamente...');
         const retrySync = await syncBillingWithRetry(3, 2500);
         if (!retrySync.ok && retrySync.fatal && retrySync.message) {
@@ -171,11 +172,10 @@ export default function DashboardPage() {
         shopData = await fetchShopData(true);
       }
 
-      // Fallback extra para lojas novas sem billing_refresh explícito:
-      // dá uma janela curta adicional para Shopify propagar ACTIVE.
-      if (!shouldUseAggressiveBillingSync && hasNoActivePlan) {
-        console.log('[Dashboard] Loja sem plano ativo; executando fallback extra de sincronização...');
-        const retrySync = await syncBillingWithRetry(4, 2500);
+      // Sem sinal de retorno do billing, evita polling longo para lojas sem plano:
+      // faz apenas um retry leve se não houver linha da loja.
+      if (!shouldUseAggressiveBillingSync && !shopData) {
+        const retrySync = await syncBillingWithRetry(1, 0);
         if (!retrySync.ok && retrySync.fatal && retrySync.message) {
           setError(retrySync.message);
           setLoading(false);
@@ -184,8 +184,8 @@ export default function DashboardPage() {
         shopData = await fetchShopData(true);
       }
 
-      // Último fallback para lojas novas: aguarda propagação da assinatura ACTIVE.
-      if (!shopData || !shopData.plan || shopData.billing_status !== 'active') {
+      // Só aguarda propagação quando veio de fluxo de aprovação de billing.
+      if (shouldUseAggressiveBillingSync && !hasActivePlan(shopData)) {
         console.log('[Dashboard] Aguardando propagação final do plano ativo...');
         const activeShopData = await waitForActivePlan(5, 2500);
         if (activeShopData) {

@@ -152,6 +152,7 @@
   function getProductInfo() {
     let productId = '';
     let productName = '';
+    let productDescription = '';
     let productHandle = '';
 
     // Pegar do elemento omafit-widget-root primeiro (prioridade)
@@ -159,12 +160,15 @@
     if (rootElement) {
       productId = rootElement.dataset.productId || '';
       productHandle = rootElement.dataset.productHandle || '';
+      productName = rootElement.dataset.productTitle || '';
+      productDescription = rootElement.dataset.productDescription || '';
     }
 
     // Se não tiver, tentar window.meta.product
     if (!productId && window.meta && window.meta.product) {
       productId = window.meta.product.id;
-      productName = window.meta.product.title;
+      productName = productName || window.meta.product.title;
+      productDescription = productDescription || window.meta.product.description || '';
     } else if (
       !productId &&
       window.ShopifyAnalytics &&
@@ -172,7 +176,7 @@
       window.ShopifyAnalytics.meta.product
     ) {
       productId = window.ShopifyAnalytics.meta.product.id;
-      productName = window.ShopifyAnalytics.meta.product.name;
+      productName = productName || window.ShopifyAnalytics.meta.product.name;
     }
 
     // Nome do produto
@@ -183,6 +187,23 @@
       if (nameEl) productName = nameEl.textContent.trim();
     }
 
+    // Descrição do produto
+    if (!productDescription) {
+      const descEl = document.querySelector(
+        '.product__description, .product-single__description, [itemprop="description"]'
+      );
+      if (descEl) {
+        productDescription = (descEl.textContent || '').trim();
+      }
+    }
+
+    if (!productDescription) {
+      const ogDescription = document.querySelector('meta[property="og:description"]');
+      if (ogDescription && ogDescription.content) {
+        productDescription = ogDescription.content.trim();
+      }
+    }
+
     // Handle do produto
     if (!productHandle) {
       const urlParts = window.location.pathname.split('/products/');
@@ -191,7 +212,7 @@
       }
     }
 
-    return { productId, productName, productHandle };
+    return { productId, productName, productDescription, productHandle };
   }
 
   function detectStoreDisplayName(shopDomain) {
@@ -1076,11 +1097,14 @@
     const publicIdToUse = OMAFIT_CONFIG.publicId || 'wgt_pub_default';
     console.log('🔑 PublicId sendo usado:', publicIdToUse);
     
+    const productDescriptionForUrl = (productInfo.productDescription || '').slice(0, 500);
+
     let widgetUrl =
       'https://omafit.netlify.app/widget' +
       '?productImage=' + encodeURIComponent(productImage) +
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
+      (productDescriptionForUrl ? '&productDescription=' + encodeURIComponent(productDescriptionForUrl) : '') +
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       '&shop_domain=' + encodeURIComponent(shopDomain) +
@@ -1180,6 +1204,10 @@
           shop_name: resolvedStoreName,
           storeName: resolvedStoreName,
           store_name: resolvedStoreName,
+          productName: productInfo.productName || '',
+          product_name: productInfo.productName || '',
+          productDescription: productInfo.productDescription || '',
+          product_description: productInfo.productDescription || '',
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
           collectionTitle: typeof collectionTitle === 'string' ? collectionTitle : '',
           collectionName: typeof collectionTitle === 'string' ? collectionTitle : '',
@@ -1256,6 +1284,10 @@
               store_name: resolvedStoreName,
               shopName: resolvedStoreName,
               shop_name: resolvedStoreName,
+              productName: productInfo.productName || '',
+              product_name: productInfo.productName || '',
+              productDescription: productInfo.productDescription || '',
+              product_description: productInfo.productDescription || '',
               storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
@@ -1291,6 +1323,10 @@
               store_name: resolvedStoreName,
               shopName: resolvedStoreName,
               shop_name: resolvedStoreName,
+              productName: productInfo.productName || '',
+              product_name: productInfo.productName || '',
+              productDescription: productInfo.productDescription || '',
+              product_description: productInfo.productDescription || '',
               fontFamily: detectedFontFamily,
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
@@ -1320,6 +1356,10 @@
             store_name: resolvedStoreName,
             shopName: resolvedStoreName,
             shop_name: resolvedStoreName,
+            productName: productInfo.productName || '',
+            product_name: productInfo.productName || '',
+            productDescription: productInfo.productDescription || '',
+            product_description: productInfo.productDescription || '',
             fontFamily: detectedFontFamily,
             shopDomain: shopDomain,
             collectionHandle: collectionHandle || '',

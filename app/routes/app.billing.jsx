@@ -123,7 +123,7 @@ export default function BillingPage() {
 
   const shouldShowChoosePlanLabel = (data?.billingStatus || '').toLowerCase() !== 'active';
   const sectionTitle = shouldShowChoosePlanLabel
-    ? 'Escolha aqui o seu plano'
+    ? t('billing.chooseYourPlanHere')
     : t('billing.needToChangePlan');
   const primaryButtonLabel = shouldShowChoosePlanLabel
     ? t('dashboard.choosePlan')

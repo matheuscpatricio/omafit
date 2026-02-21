@@ -241,6 +241,7 @@
     "extraImagesCount": "{count} imagem{plural}",
     "extraImagesDescription": "{count} imagem{plural} adicional{plural} gerada{plural} este mês. Valor estimado: ${price}",
     "needToChangePlan": "Precisa trocar de plano?",
+    "chooseYourPlanHere": "Escolha aqui o seu plano",
     "clickButtonBelow": "Clique no botão abaixo",
     "wantToChangePlan": "Quero alterar meu plano"
   }

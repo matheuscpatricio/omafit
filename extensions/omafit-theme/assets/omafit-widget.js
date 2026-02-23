@@ -1518,6 +1518,258 @@
     }, 10);
   };
 
+  // --- Add to cart (mensagens do iframe) ---
+  // Recebe type: "omafit-add-to-cart-request" e responde com "omafit-add-to-cart-result".
+  // Origens permitidas: OMAFIT_CART_ALLOWED_ORIGINS. Idempotência por requestId.
+  const OMAFIT_CART_ALLOWED_ORIGINS = [
+    'https://omafit.netlify.app'
+  ];
+  const OMAFIT_PROCESSED_REQUEST_IDS = new Set();
+  const OMAFIT_REQUEST_ID_MAX_AGE_MS = 5 * 60 * 1000;
+  let OMAFIT_LAST_REQUEST_ID_CLEANUP = 0;
+
+  function isValidAddToCartMessage(event) {
+    if (!event || !event.data || event.data.type !== 'omafit-add-to-cart-request') {
+      return false;
+    }
+    if (OMAFIT_CART_ALLOWED_ORIGINS.indexOf(event.origin) === -1) {
+      console.warn('[OmafitCart] Origem não permitida:', event.origin);
+      return false;
+    }
+    const p = event.data.payload;
+    if (!p || typeof p.requestId === 'undefined') {
+      console.warn('[OmafitCart] Payload inválido: requestId obrigatório');
+      return false;
+    }
+    if (!p.product || typeof p.product.id === 'undefined' || !p.product.name) {
+      console.warn('[OmafitCart] Payload inválido: product.id e product.name obrigatórios');
+      return false;
+    }
+    if (!p.selection || typeof p.selection !== 'object') {
+      console.warn('[OmafitCart] Payload inválido: selection obrigatório');
+      return false;
+    }
+    if (p.shop_domain !== undefined && typeof p.shop_domain !== 'string') {
+      return false;
+    }
+    return true;
+  }
+
+  function normalizeText(value) {
+    if (value == null) return '';
+    return String(value).trim().toLowerCase();
+  }
+
+  function normalizeSize(size) {
+    var n = normalizeText(size);
+    if (!n) return '';
+    n = n.replace(/(\d+)\s*br\s*$/i, '$1 br');
+    const aliasMap = {
+      'pp': 'pp', 'p': 'p', 'm': 'm', 'g': 'g', 'gg': 'gg', 'xg': 'xg',
+      '36': '36', '38': '38', '40': '40', '42': '42', '44': '44', '46': '46', '48': '48',
+      '36 br': '36', '38 br': '38', '40 br': '40', '42 br': '42', '44 br': '44', '46 br': '46', '48 br': '48'
+    };
+    return aliasMap[n] || n;
+  }
+
+  function extractColorCandidatesFromVariant(variant) {
+    const candidates = { optionValues: [], imageUrl: null };
+    if (!variant) return candidates;
+    [variant.option1, variant.option2, variant.option3].forEach(function (opt) {
+      if (opt) candidates.optionValues.push(normalizeText(opt));
+    });
+    const img = variant.featured_image || variant.featured_image_url;
+    if (img && (img.src || img.url)) {
+      candidates.imageUrl = normalizeUrl(img.src || img.url) || null;
+    }
+    return candidates;
+  }
+
+  function resolveVariantFromSelection(productData, selection) {
+    if (!productData || !Array.isArray(productData.variants) || productData.variants.length === 0) {
+      return { variant: null, error: 'Produto sem variantes' };
+    }
+    const variants = productData.variants;
+    const options = productData.options || [];
+    const sizeOptionIndex = options.findIndex(function (o) {
+      const name = normalizeText(o.name || o);
+      return name === 'size' || name === 'tamanho' || name === 'talle';
+    });
+    const colorOptionIndex = options.findIndex(function (o) {
+      const name = normalizeText(o.name || o);
+      return name === 'color' || name === 'cor' || name === 'colour';
+    });
+
+    const wantedSize = normalizeSize(selection.recommended_size);
+    const selectionImageUrl = selection.image_url ? normalizeUrl(selection.image_url) : null;
+    const selectionColorHex = (selection.color_hex && String(selection.color_hex).trim()) ? String(selection.color_hex).trim().toLowerCase() : null;
+
+    let bySize = variants;
+    if (sizeOptionIndex >= 0 && wantedSize) {
+      bySize = variants.filter(function (v) {
+        const opt = v['option' + (sizeOptionIndex + 1)];
+        return normalizeSize(opt) === wantedSize || normalizeText(opt) === wantedSize;
+      });
+      if (bySize.length === 0) {
+        bySize = variants;
+      }
+    }
+
+    var byImage = [];
+    if (selectionImageUrl && bySize.length > 0) {
+      byImage = bySize.filter(function (v) {
+        const c = extractColorCandidatesFromVariant(v);
+        return c.imageUrl && c.imageUrl === selectionImageUrl;
+      });
+    }
+
+    var chosen = null;
+    if (byImage.length > 0) {
+      chosen = byImage.find(function (v) { return v.available; }) || byImage[0];
+    }
+    if (!chosen && bySize.length > 0) {
+      chosen = bySize.find(function (v) { return v.available; }) || bySize[0];
+    }
+    if (!chosen && variants.length > 0) {
+      chosen = variants.find(function (v) { return v.available; }) || variants[0];
+    }
+
+    if (!chosen) {
+      return { variant: null, error: 'Nenhuma variante disponível para a seleção' };
+    }
+    return { variant: chosen, error: null };
+  }
+
+  function addToCart(params) {
+    const variantId = params.variantId;
+    const quantity = Math.max(1, parseInt(params.quantity, 10) || 1);
+    const properties = params.properties || {};
+    return fetch('/cart/add.js', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: variantId, quantity: quantity, properties: properties })
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var body = null;
+          try { body = text ? JSON.parse(text) : {}; } catch (_) { body = {}; }
+          if (res.ok) {
+            return { success: true, cart: body, variantId: variantId };
+          }
+          var msg = (body && (body.description || body.message)) || ('Erro ao adicionar ao carrinho (HTTP ' + res.status + ')');
+          return { success: false, message: msg, status: res.status, body: body };
+        });
+      })
+      .catch(function (err) {
+        return { success: false, message: 'Erro de rede ao adicionar ao carrinho', debug: { reason: err && err.message } };
+      });
+  }
+
+  function postResultToIframe(targetWindow, targetOrigin, resultPayload) {
+    if (!targetWindow || !targetWindow.postMessage) return;
+    try {
+      targetWindow.postMessage({
+        type: 'omafit-add-to-cart-result',
+        payload: resultPayload
+      }, targetOrigin);
+    } catch (e) {
+      console.warn('[OmafitCart] Erro ao enviar resultado ao iframe:', e);
+    }
+  }
+
+  async function fetchProductWithVariants() {
+    const info = getProductInfo();
+    const handle = (info.productHandle || '').trim();
+    if (!handle) return null;
+    try {
+      const res = await fetch('/products/' + encodeURIComponent(handle) + '.js');
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[OmafitCart] Erro ao buscar produto:', e);
+      return null;
+    }
+  }
+
+  window.addEventListener('message', async function (event) {
+    if (!isValidAddToCartMessage(event)) return;
+
+    var requestId = event.data.payload.requestId;
+    var source = event.source;
+    var origin = event.origin;
+
+    if (OMAFIT_PROCESSED_REQUEST_IDS.has(requestId)) {
+      console.log('[OmafitCart] Requisição duplicada ignorada:', requestId);
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: false,
+        message: 'Requisição duplicada',
+        debug: { reason: 'idempotency' }
+      });
+      return;
+    }
+    if (Date.now() - OMAFIT_LAST_REQUEST_ID_CLEANUP > OMAFIT_REQUEST_ID_MAX_AGE_MS) {
+      OMAFIT_PROCESSED_REQUEST_IDS.clear();
+      OMAFIT_LAST_REQUEST_ID_CLEANUP = Date.now();
+    }
+    OMAFIT_PROCESSED_REQUEST_IDS.add(requestId);
+
+    const payload = event.data.payload;
+    const selection = payload.selection || {};
+    const quantity = payload.quantity === undefined ? 1 : Math.max(0, parseInt(payload.quantity, 10) || 1);
+    const shopDomain = payload.shop_domain;
+    const metadata = payload.metadata || {};
+
+    console.log('[OmafitCart] Add-to-cart solicitado:', requestId, payload.product);
+
+    var productData = await fetchProductWithVariants();
+    if (!productData) {
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: false,
+        message: 'Produto não encontrado na página atual',
+        debug: { reason: 'product_fetch' }
+      });
+      return;
+    }
+
+    var resolved = resolveVariantFromSelection(productData, selection);
+    if (resolved.error || !resolved.variant) {
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: false,
+        message: resolved.error || 'Variante não encontrada',
+        debug: { reason: 'variant_resolution' }
+      });
+      return;
+    }
+
+    var variantId = resolved.variant.id;
+    var properties = {};
+    if (metadata.session_id) properties.omafit_session_id = metadata.session_id;
+    if (metadata.language) properties.omafit_language = metadata.language;
+
+    var addResult = await addToCart({ variantId: variantId, quantity: quantity || 1, properties: properties });
+
+    if (addResult.success) {
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: true,
+        message: 'Adicionado ao carrinho',
+        cart: addResult.cart,
+        variantId: variantId
+      });
+    } else {
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: false,
+        message: addResult.message || 'Erro ao adicionar ao carrinho',
+        variantId: variantId,
+        debug: addResult.debug || (addResult.body ? { body: addResult.body } : undefined)
+      });
+    }
+  });
+
   // Criar o link do widget
   function createOmafitLink() {
     const link = document.createElement('a');

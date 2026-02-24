@@ -102,7 +102,14 @@
     "aboutOmafit": "Sobre o Omafit",
     "aboutDescription": "O Omafit é um provador virtual alimentado por IA que permite que seus clientes experimentem suas roupas virtualmente, aumentando a confiança na compra e reduzindo devoluções.",
     "learnMore": "Saiba Mais",
-    "support": "Suporte"
+    "support": "Suporte",
+    "bestPracticesTitle": "Dicas para melhores resultados com o Omafit",
+    "bestPracticesSubtitle": "Boas práticas para melhorar recomendação de tamanho, qualidade do try-on e conversão.",
+    "bestPracticeImages": "• Use fotos frontais do produto, bem iluminadas, com boa resolução e fundo limpo.",
+    "bestPracticeVariants": "• Mantenha variantes de produto (cor, tamanho e disponibilidade) bem definidas e atualizadas.",
+    "bestPracticeCollections": "• Organize coleções com handles claros e consistentes para facilitar regras e tabelas de medidas.",
+    "bestPracticeSizeCharts": "• Configure tabelas de medidas por coleção e gênero, com referências reais da sua modelagem.",
+    "bestPracticeCatalog": "• Evite títulos duplicados e descrições incompletas; padronização melhora experiência e análise."
   },
   "sizeChart": {
     "title": "Tabelas de Medidas",

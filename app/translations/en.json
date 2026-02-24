@@ -102,7 +102,14 @@
     "aboutOmafit": "About Omafit",
     "aboutDescription": "Omafit is an AI-powered virtual try-on that lets your customers try your clothes virtually, increasing purchase confidence and reducing returns.",
     "learnMore": "Learn more",
-    "support": "Support"
+    "support": "Support",
+    "bestPracticesTitle": "Tips to get the best from Omafit",
+    "bestPracticesSubtitle": "Best practices to improve size recommendations, try-on quality, and conversion.",
+    "bestPracticeImages": "• Use front-facing product photos with good lighting, high resolution, and clean background.",
+    "bestPracticeVariants": "• Keep product variants (color, size, and availability) well defined and up to date.",
+    "bestPracticeCollections": "• Organize collections with clear, consistent handles to improve rules and size chart mapping.",
+    "bestPracticeSizeCharts": "• Configure size charts by collection and gender using real measurements from your products.",
+    "bestPracticeCatalog": "• Avoid duplicate titles and incomplete descriptions; standardized catalog data improves UX and analytics."
   },
   "sizeChart": {
     "title": "Size charts",

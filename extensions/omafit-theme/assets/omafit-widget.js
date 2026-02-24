@@ -282,6 +282,31 @@
     return '';
   }
 
+  function detectStoreLanguage() {
+    try {
+      var candidates = [
+        window.Shopify && window.Shopify.locale ? String(window.Shopify.locale) : '',
+        window.Shopify && window.Shopify.language ? String(window.Shopify.language) : '',
+        document.documentElement && document.documentElement.lang ? String(document.documentElement.lang) : '',
+        navigator.language ? String(navigator.language) : ''
+      ].map(function (v) { return String(v || '').trim(); }).filter(Boolean);
+
+      for (var i = 0; i < candidates.length; i += 1) {
+        var raw = candidates[i].replace('_', '-');
+        var normalized = raw.match(/^[a-z]{2}(-[A-Z]{2})?$/i) ? raw : '';
+        if (normalized) {
+          var parts = normalized.split('-');
+          var lang = (parts[0] || '').toLowerCase();
+          var region = parts[1] ? parts[1].toUpperCase() : '';
+          return region ? (lang + '-' + region) : lang;
+        }
+      }
+    } catch (_err) {
+      // non-blocking
+    }
+    return 'pt-BR';
+  }
+
   // Buscar um produto complementar da MESMA coleção do produto atual
   async function getComplementaryProduct(currentCollectionHandle) {
     try {
@@ -1083,6 +1108,7 @@
 
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
+    const storeLanguage = detectStoreLanguage();
     const detectedStoreName = detectStoreDisplayName(shopDomain);
     const resolvedStoreName =
       (OMAFIT_CONFIG.storeName && String(OMAFIT_CONFIG.storeName).trim()) ||
@@ -1137,6 +1163,8 @@
       '&shop_name=' + encodeURIComponent(resolvedStoreName) +
       '&storeName=' + encodeURIComponent(resolvedStoreName) +
       '&store_name=' + encodeURIComponent(resolvedStoreName) +
+      '&language=' + encodeURIComponent(storeLanguage) +
+      '&locale=' + encodeURIComponent(storeLanguage) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (collectionTitle ? '&collectionTitle=' + encodeURIComponent(collectionTitle) : '') +
       (collectionTitle ? '&collectionName=' + encodeURIComponent(collectionTitle) : '') +
@@ -1225,6 +1253,9 @@
         // Enviar collectionHandle e defaultGender para o app Netlify usar ao buscar tabela de medidas no Supabase
         iframe.contentWindow.postMessage({
           type: 'omafit-context',
+          language: storeLanguage,
+          locale: storeLanguage,
+          storeLanguage: storeLanguage,
           shopName: resolvedStoreName,
           shop_name: resolvedStoreName,
           storeName: resolvedStoreName,
@@ -1304,6 +1335,9 @@
             // Também incluir logo na atualização de configuração
             iframe.contentWindow.postMessage({
               type: 'omafit-config-update',
+              language: storeLanguage,
+              locale: storeLanguage,
+              storeLanguage: storeLanguage,
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
               storeName: resolvedStoreName,
               store_name: resolvedStoreName,
@@ -1343,6 +1377,9 @@
             // Enviar atualização de configuração sem logo (logo inválido)
             iframe.contentWindow.postMessage({
               type: 'omafit-config-update',
+              language: storeLanguage,
+              locale: storeLanguage,
+              storeLanguage: storeLanguage,
               primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
               storeName: resolvedStoreName,
               store_name: resolvedStoreName,
@@ -1376,6 +1413,9 @@
           // Enviar atualização de configuração sem logo
           iframe.contentWindow.postMessage({
             type: 'omafit-config-update',
+            language: storeLanguage,
+            locale: storeLanguage,
+            storeLanguage: storeLanguage,
             primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
             storeName: resolvedStoreName,
             store_name: resolvedStoreName,
@@ -1887,7 +1927,8 @@
     console.log('[OmafitCart] variantId final:', variantId);
     var properties = { _source: 'omafit_tryon' };
     if (metadata.session_id) properties._omafit_session_id = metadata.session_id;
-    if (metadata.language) properties._omafit_language = metadata.language;
+    var cartLanguage = detectStoreLanguage() || metadata.language || '';
+    if (cartLanguage) properties._omafit_language = cartLanguage;
 
     var addResult = await addToCart({ variantId: variantId, quantity: quantity || 1, properties: properties });
 

@@ -492,6 +492,26 @@ export default function DashboardPage() {
           <Card>
             <BlockStack gap="300">
               <Text variant="headingMd" as="h2">
+                {t('dashboard.bestPracticesTitle')}
+              </Text>
+              <Text variant="bodyMd" tone="subdued">
+                {t('dashboard.bestPracticesSubtitle')}
+              </Text>
+              <BlockStack gap="200">
+                <Text variant="bodyMd">{t('dashboard.bestPracticeImages')}</Text>
+                <Text variant="bodyMd">{t('dashboard.bestPracticeVariants')}</Text>
+                <Text variant="bodyMd">{t('dashboard.bestPracticeCollections')}</Text>
+                <Text variant="bodyMd">{t('dashboard.bestPracticeSizeCharts')}</Text>
+                <Text variant="bodyMd">{t('dashboard.bestPracticeCatalog')}</Text>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">
                 {t('dashboard.aboutOmafit')}
               </Text>
               <Text variant="bodyMd" tone="subdued">

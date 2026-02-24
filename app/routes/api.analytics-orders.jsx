@@ -10,6 +10,8 @@ export const loader = async ({ request }) => {
   const fallback = {
     ordersBefore: null,
     ordersAfter: null,
+    omafitOrdersBefore: null,
+    omafitOrdersAfter: null,
     returnsBefore: null,
     returnsAfter: null,
     conversionBefore: null,
@@ -34,7 +36,10 @@ export const loader = async ({ request }) => {
     const periodDays = Math.min(365, Math.max(1, parseInt(url.searchParams.get('period') || '30', 10)));
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    const supabaseKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_ANON_KEY;
     let installDate = null;
     if (supabaseUrl && supabaseKey) {
       try {
@@ -115,9 +120,49 @@ export const loader = async ({ request }) => {
     const conversionAfter = ordersAfter > 0 ? ((ordersAfter - returnsAfter) / ordersAfter) * 100 : null;
     const conversionBefore = ordersBefore > 0 ? ((ordersBefore - returnsBefore) / ordersBefore) * 100 : null;
 
+    let omafitOrdersAfter = null;
+    let omafitOrdersBefore = null;
+    if (supabaseUrl && supabaseKey) {
+      const countOrdersInRange = async (start, end) => {
+        const queryParams = [
+          `shop_domain=eq.${encodeURIComponent(shop)}`,
+          `order_created_at=gte.${encodeURIComponent(start)}`,
+          `order_created_at=lte.${encodeURIComponent(end)}`,
+          "select=order_id",
+          "order=order_created_at.desc",
+          "limit=5000",
+        ];
+        const r = await fetch(
+          `${supabaseUrl}/rest/v1/order_analytics_omafit?${queryParams.join("&")}`,
+          {
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        if (!r.ok) {
+          const text = await r.text().catch(() => "");
+          throw new Error(`order_analytics_omafit ${r.status}: ${text}`);
+        }
+        const rows = await r.json();
+        return Array.isArray(rows) ? rows.length : 0;
+      };
+
+      try {
+        omafitOrdersAfter = await countOrdersInRange(afterStartStr, afterEndStr);
+        omafitOrdersBefore = await countOrdersInRange(beforeStartStr, beforeEndStr);
+      } catch (e) {
+        console.warn("[api.analytics-orders] Erro ao buscar pedidos Omafit:", e);
+      }
+    }
+
     return Response.json({
       ordersBefore,
       ordersAfter,
+      omafitOrdersBefore,
+      omafitOrdersAfter,
       returnsBefore,
       returnsAfter,
       conversionBefore,

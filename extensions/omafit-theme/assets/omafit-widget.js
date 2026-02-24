@@ -1536,8 +1536,9 @@
       console.warn('[OmafitCart] Origem não permitida:', event.origin);
       return false;
     }
-    const p = event.data.payload;
-    if (!p || typeof p.requestId === 'undefined') {
+    var p = event.data.payload && typeof event.data.payload === 'object' ? event.data.payload : event.data;
+    var requestId = p && (p.requestId !== undefined ? p.requestId : event.data.requestId);
+    if (!p || typeof requestId === 'undefined') {
       console.warn('[OmafitCart] Payload inválido: requestId obrigatório');
       return false;
     }
@@ -1650,14 +1651,16 @@
       body: JSON.stringify({ id: variantId, quantity: quantity, properties: properties })
     })
       .then(function (res) {
-        return res.text().then(function (text) {
-          var body = null;
-          try { body = text ? JSON.parse(text) : {}; } catch (_) { body = {}; }
+        return res.text().then(function (body) {
+          console.log('[OmafitCart] /cart/add.js status:', res.status);
+          console.log('[OmafitCart] /cart/add.js body:', body);
+          var parsed = null;
+          try { parsed = body ? JSON.parse(body) : {}; } catch (_) { parsed = {}; }
           if (res.ok) {
-            return { success: true, cart: body, variantId: variantId };
+            return { success: true, cart: parsed, variantId: variantId };
           }
-          var msg = (body && (body.description || body.message)) || ('Erro ao adicionar ao carrinho (HTTP ' + res.status + ')');
-          return { success: false, message: msg, status: res.status, body: body };
+          var msg = (parsed && (parsed.description || parsed.message)) || ('Erro ao adicionar ao carrinho (HTTP ' + res.status + ')');
+          return { success: false, message: msg, status: res.status, body: parsed };
         });
       })
       .catch(function (err) {
@@ -1667,11 +1670,10 @@
 
   function postResultToIframe(targetWindow, targetOrigin, resultPayload) {
     if (!targetWindow || !targetWindow.postMessage) return;
+    var finalMessage = Object.assign({ type: 'omafit-add-to-cart-result' }, resultPayload || {});
+    console.log('[OmafitCart] resultado enviado iframe:', finalMessage);
     try {
-      targetWindow.postMessage({
-        type: 'omafit-add-to-cart-result',
-        payload: resultPayload
-      }, targetOrigin);
+      targetWindow.postMessage(finalMessage, targetOrigin);
     } catch (e) {
       console.warn('[OmafitCart] Erro ao enviar resultado ao iframe:', e);
     }
@@ -1694,7 +1696,8 @@
   window.addEventListener('message', async function (event) {
     if (!isValidAddToCartMessage(event)) return;
 
-    var requestId = event.data.payload.requestId;
+    var payload = event.data.payload && typeof event.data.payload === 'object' ? event.data.payload : event.data;
+    var requestId = payload.requestId !== undefined ? payload.requestId : event.data.requestId;
     var source = event.source;
     var origin = event.origin;
 
@@ -1714,7 +1717,6 @@
     }
     OMAFIT_PROCESSED_REQUEST_IDS.add(requestId);
 
-    const payload = event.data.payload;
     const selection = payload.selection || {};
     const quantity = payload.quantity === undefined ? 1 : Math.max(0, parseInt(payload.quantity, 10) || 1);
     const shopDomain = payload.shop_domain;
@@ -1745,9 +1747,10 @@
     }
 
     var variantId = resolved.variant.id;
-    var properties = {};
-    if (metadata.session_id) properties.omafit_session_id = metadata.session_id;
-    if (metadata.language) properties.omafit_language = metadata.language;
+    console.log('[OmafitCart] variantId final:', variantId);
+    var properties = { _source: 'omafit_tryon' };
+    if (metadata.session_id) properties._omafit_session_id = metadata.session_id;
+    if (metadata.language) properties._omafit_language = metadata.language;
 
     var addResult = await addToCart({ variantId: variantId, quantity: quantity || 1, properties: properties });
 

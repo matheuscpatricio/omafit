@@ -295,6 +295,8 @@ export default function AnalyticsPage() {
           byCollectionGender: [],
           ordersBefore: ordersData.ordersBefore ?? null,
           ordersAfter: ordersData.ordersAfter ?? null,
+          omafitOrdersBefore: ordersData.omafitOrdersBefore ?? null,
+          omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
           returnsBefore: ordersData.returnsBefore ?? null,
           returnsAfter: ordersData.returnsAfter ?? null,
           conversionBefore: ordersData.conversionBefore ?? null,
@@ -737,6 +739,8 @@ export default function AnalyticsPage() {
         byCollectionGender,
         ordersBefore: ordersData.ordersBefore ?? null,
         ordersAfter: ordersData.ordersAfter ?? null,
+        omafitOrdersBefore: ordersData.omafitOrdersBefore ?? null,
+        omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
         returnsBefore: ordersData.returnsBefore ?? null,
         returnsAfter: ordersData.returnsAfter ?? null,
         conversionBefore: ordersData.conversionBefore ?? null,
@@ -779,6 +783,8 @@ export default function AnalyticsPage() {
           byCollectionGender: [],
           ordersBefore: null,
           ordersAfter: null,
+          omafitOrdersBefore: null,
+          omafitOrdersAfter: null,
           returnsBefore: null,
           returnsAfter: null,
           conversionBefore: null,
@@ -956,6 +962,35 @@ export default function AnalyticsPage() {
                     {m.conversionAfter != null ? `${m.conversionAfter.toFixed(1)}%` : '—'}
                   </Text>
                   <Text variant="bodyMd" tone="subdued">{t('analytics.ordersKept')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Text variant="headingLg" as="h2">
+            Pedidos via botão Omafit
+          </Text>
+          <Text variant="bodyMd" tone="subdued">
+            Pedidos que tiveram pelo menos um item com <code>_source=omafit_tryon</code>.
+          </Text>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.beforeOmafit')}</Text>
+                  <Text variant="headingXl" as="p">{m.omafitOrdersBefore != null ? m.omafitOrdersBefore : '—'}</Text>
+                  <Text variant="bodyMd" tone="subdued">Pedidos atribuídos ao botão Omafit</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.afterOmafit')}</Text>
+                  <Text variant="headingXl" as="p">{m.omafitOrdersAfter != null ? m.omafitOrdersAfter : '—'}</Text>
+                  <Text variant="bodyMd" tone="subdued">Pedidos atribuídos ao botão Omafit</Text>
                 </BlockStack>
               </Card>
             </div>

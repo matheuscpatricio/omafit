@@ -295,7 +295,6 @@ export default function AnalyticsPage() {
           byCollectionGender: [],
           ordersBefore: ordersData.ordersBefore ?? null,
           ordersAfter: ordersData.ordersAfter ?? null,
-          omafitOrdersBefore: ordersData.omafitOrdersBefore ?? null,
           omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
           returnsBefore: ordersData.returnsBefore ?? null,
           returnsAfter: ordersData.returnsAfter ?? null,
@@ -739,7 +738,6 @@ export default function AnalyticsPage() {
         byCollectionGender,
         ordersBefore: ordersData.ordersBefore ?? null,
         ordersAfter: ordersData.ordersAfter ?? null,
-        omafitOrdersBefore: ordersData.omafitOrdersBefore ?? null,
         omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
         returnsBefore: ordersData.returnsBefore ?? null,
         returnsAfter: ordersData.returnsAfter ?? null,
@@ -783,7 +781,6 @@ export default function AnalyticsPage() {
           byCollectionGender: [],
           ordersBefore: null,
           ordersAfter: null,
-          omafitOrdersBefore: null,
           omafitOrdersAfter: null,
           returnsBefore: null,
           returnsAfter: null,
@@ -979,8 +976,8 @@ export default function AnalyticsPage() {
             <div style={{ flex: '1 1 220px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.beforeOmafit')}</Text>
-                  <Text variant="headingXl" as="p">{m.omafitOrdersBefore != null ? m.omafitOrdersBefore : '—'}</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">No período selecionado</Text>
+                  <Text variant="headingXl" as="p">{m.omafitOrdersAfter != null ? m.omafitOrdersAfter : '—'}</Text>
                   <Text variant="bodyMd" tone="subdued">Pedidos atribuídos ao botão Omafit</Text>
                 </BlockStack>
               </Card>
@@ -988,9 +985,13 @@ export default function AnalyticsPage() {
             <div style={{ flex: '1 1 220px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.afterOmafit')}</Text>
-                  <Text variant="headingXl" as="p">{m.omafitOrdersAfter != null ? m.omafitOrdersAfter : '—'}</Text>
-                  <Text variant="bodyMd" tone="subdued">Pedidos atribuídos ao botão Omafit</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">Participação no período</Text>
+                  <Text variant="headingXl" as="p">
+                    {(m.omafitOrdersAfter != null && m.ordersAfter > 0)
+                      ? `${((m.omafitOrdersAfter / m.ordersAfter) * 100).toFixed(1)}%`
+                      : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">Sobre o total de pedidos do período</Text>
                 </BlockStack>
               </Card>
             </div>

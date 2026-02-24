@@ -1527,6 +1527,13 @@
   const OMAFIT_PROCESSED_REQUEST_IDS = new Set();
   const OMAFIT_REQUEST_ID_MAX_AGE_MS = 5 * 60 * 1000;
   let OMAFIT_LAST_REQUEST_ID_CLEANUP = 0;
+  const OMAFIT_CART_SECTION_IDS = [
+    'cart-drawer',
+    'cart-icon-bubble',
+    'cart-live-region-text',
+    'main-cart-items',
+    'main-cart-footer'
+  ];
 
   function isValidAddToCartMessage(event) {
     if (!event || !event.data || event.data.type !== 'omafit-add-to-cart-request') {
@@ -1645,10 +1652,17 @@
     const variantId = params.variantId;
     const quantity = Math.max(1, parseInt(params.quantity, 10) || 1);
     const properties = params.properties || {};
+    const requestBody = {
+      id: variantId,
+      quantity: quantity,
+      properties: properties,
+      sections: OMAFIT_CART_SECTION_IDS,
+      sections_url: window.location.pathname || '/'
+    };
     return fetch('/cart/add.js', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: variantId, quantity: quantity, properties: properties })
+      body: JSON.stringify(requestBody)
     })
       .then(function (res) {
         return res.text().then(function (body) {
@@ -1666,6 +1680,20 @@
       .catch(function (err) {
         return { success: false, message: 'Erro de rede ao adicionar ao carrinho', debug: { reason: err && err.message } };
       });
+  }
+
+  function renderThemeCartFromResponse(addResponse) {
+    if (!addResponse || !addResponse.sections) return false;
+    var cartUi = document.querySelector('cart-drawer') || document.querySelector('cart-notification');
+    if (!cartUi || typeof cartUi.renderContents !== 'function') return false;
+    try {
+      cartUi.renderContents(addResponse);
+      console.log('[OmafitCart] UI de carrinho atualizada via renderContents do tema.');
+      return true;
+    } catch (e) {
+      console.warn('[OmafitCart] Falha ao usar renderContents do tema:', e);
+      return false;
+    }
   }
 
   async function fetchUpdatedCart() {
@@ -1714,15 +1742,10 @@
   }
 
   async function refreshThemeCartSections() {
-    var sectionIds = [
-      'cart-drawer',
-      'cart-icon-bubble',
-      'cart-live-region-text',
-      'main-cart-items',
-      'main-cart-footer'
-    ];
+    var sectionIds = OMAFIT_CART_SECTION_IDS;
     try {
-      var res = await fetch('/?sections=' + encodeURIComponent(sectionIds.join(',')), {
+      var sectionsParam = sectionIds.map(function (id) { return encodeURIComponent(id); }).join(',');
+      var res = await fetch('/?sections=' + sectionsParam, {
         method: 'GET',
         headers: { 'Accept': 'application/json' }
       });
@@ -1869,8 +1892,11 @@
     var addResult = await addToCart({ variantId: variantId, quantity: quantity || 1, properties: properties });
 
     if (addResult.success) {
+      var renderedByTheme = renderThemeCartFromResponse(addResult.cart);
       var updatedCart = await fetchUpdatedCart();
-      await refreshThemeCartSections();
+      if (!renderedByTheme) {
+        await refreshThemeCartSections();
+      }
       dispatchCartUpdatedEvents(updatedCart || addResult.cart || null);
       openCartDrawerIfRequested(shouldOpenDrawer);
       postResultToIframe(source, origin, {

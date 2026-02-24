@@ -10,7 +10,6 @@ export const loader = async ({ request }) => {
   const fallback = {
     ordersBefore: null,
     ordersAfter: null,
-    omafitOrdersBefore: null,
     omafitOrdersAfter: null,
     returnsBefore: null,
     returnsAfter: null,
@@ -121,7 +120,6 @@ export const loader = async ({ request }) => {
     const conversionBefore = ordersBefore > 0 ? ((ordersBefore - returnsBefore) / ordersBefore) * 100 : null;
 
     let omafitOrdersAfter = null;
-    let omafitOrdersBefore = null;
     if (supabaseUrl && supabaseKey) {
       const countOrdersInRange = async (start, end) => {
         const queryParams = [
@@ -152,7 +150,6 @@ export const loader = async ({ request }) => {
 
       try {
         omafitOrdersAfter = await countOrdersInRange(afterStartStr, afterEndStr);
-        omafitOrdersBefore = await countOrdersInRange(beforeStartStr, beforeEndStr);
       } catch (e) {
         console.warn("[api.analytics-orders] Erro ao buscar pedidos Omafit:", e);
       }
@@ -161,7 +158,6 @@ export const loader = async ({ request }) => {
     return Response.json({
       ordersBefore,
       ordersAfter,
-      omafitOrdersBefore,
       omafitOrdersAfter,
       returnsBefore,
       returnsAfter,

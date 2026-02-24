@@ -126,7 +126,7 @@ function getCollectionKey(session) {
 export default function AnalyticsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { t } = useAppI18n();
+  const { t, locale } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
 
   const BODY_TYPE_NAMES = useMemo(() => ({
@@ -239,6 +239,10 @@ export default function AnalyticsPage() {
       // Preferir endpoint interno (mais resiliente a schema legado e RLS).
       let userId = null;
       let imagesUsedMonth = 0;
+      let billingPlan = null;
+      let imagesIncluded = 0;
+      let pricePerExtraImage = 0;
+      let shopCurrency = 'USD';
 
       try {
         const internalShopRes = await fetch(
@@ -250,6 +254,10 @@ export default function AnalyticsPage() {
           const row = internalShopData?.shop || null;
           userId = row?.user_id ?? null;
           imagesUsedMonth = row?.images_used_month ?? 0;
+          billingPlan = row?.plan ?? null;
+          imagesIncluded = row?.images_included ?? 0;
+          pricePerExtraImage = Number(row?.price_per_extra_image ?? 0) || 0;
+          shopCurrency = row?.currency || 'USD';
         }
       } catch (_internalErr) {
         // fallback abaixo
@@ -259,7 +267,7 @@ export default function AnalyticsPage() {
       if (userId == null && imagesUsedMonth === 0) {
         try {
           const shopRes = await fetch(
-            `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month`,
+            `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month,plan,images_included,price_per_extra_image`,
             {
               headers: {
                 apikey: supabaseKey,
@@ -272,6 +280,10 @@ export default function AnalyticsPage() {
             const shopData = await shopRes.json();
             userId = shopData?.[0]?.user_id ?? null;
             imagesUsedMonth = shopData?.[0]?.images_used_month ?? 0;
+            billingPlan = shopData?.[0]?.plan ?? null;
+            imagesIncluded = shopData?.[0]?.images_included ?? 0;
+            pricePerExtraImage = Number(shopData?.[0]?.price_per_extra_image ?? 0) || 0;
+            shopCurrency = shopData?.[0]?.currency || 'USD';
           } else {
             console.warn('[Analytics] shopify_shops read failed:', shopRes.status);
           }
@@ -289,6 +301,16 @@ export default function AnalyticsPage() {
       }
 
       if (!userId) {
+        const omafitRevenue = Number(ordersData.omafitRevenueAfter ?? 0) || 0;
+        const planCostMap = { starter: 30, basic: 30, growth: 120, pro: 220 };
+        const planCost = planCostMap[String(billingPlan || '').toLowerCase()] || 0;
+        const extraImages = Math.max(0, (imagesUsedMonth || 0) - (imagesIncluded || 0));
+        const extraCost = extraImages * (pricePerExtraImage || 0);
+        const estimatedCost = planCost + extraCost;
+        const roiPercent = estimatedCost > 0 ? ((omafitRevenue - estimatedCost) / estimatedCost) * 100 : null;
+        const avoidedReturns = Math.max(0, (ordersData.returnsBefore ?? 0) - (ordersData.returnsAfter ?? 0));
+        const avgTicket = (ordersData.omafitOrdersAfter ?? 0) > 0 ? omafitRevenue / ordersData.omafitOrdersAfter : null;
+        const estimatedCostAvoided = avgTicket != null ? avoidedReturns * avgTicket : null;
         setMetrics({
           totalImagesProcessed: imagesUsedMonth,
           avgByGender: { male: { height: null, weight: null }, female: { height: null, weight: null } },
@@ -296,11 +318,34 @@ export default function AnalyticsPage() {
           ordersBefore: ordersData.ordersBefore ?? null,
           ordersAfter: ordersData.ordersAfter ?? null,
           omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
+          omafitRevenueAfter: ordersData.omafitRevenueAfter ?? null,
           returnsBefore: ordersData.returnsBefore ?? null,
           returnsAfter: ordersData.returnsAfter ?? null,
           conversionBefore: ordersData.conversionBefore ?? null,
           conversionAfter: ordersData.conversionAfter ?? null,
-          ordersError: ordersData.error ?? null
+          ordersError: ordersData.error ?? null,
+          finance: {
+            estimatedRoiPercent: roiPercent,
+            attributedRevenue: omafitRevenue,
+            estimatedCostAvoided,
+          },
+          currency: shopCurrency,
+          performance: {
+            sessionsTotal: 0,
+            sessionsWithProfile: 0,
+            sessionsWithRecommendation: 0,
+            avgSessionSeconds: null,
+            usageByCollection: [],
+          },
+          quality: {
+            recommendationCoveragePercent: null,
+            tableDivergenceAlert: t('analytics.qualityNoSessionCoverage'),
+          },
+          intelligence: {
+            bodyTypeDistribution: [],
+            sizeDistribution: [],
+            heatmapRows: [],
+          }
         });
         setLoading(false);
         return;
@@ -732,6 +777,109 @@ export default function AnalyticsPage() {
         items: byCollectionGender
       });
 
+      const sessionsTotal = sessionsData.length;
+      const sessionsWithProfile = sessionsData.filter((s) => !!getMeasurements(s)).length;
+      const sessionsWithRecommendation = sessionsData.filter((s) => {
+        const m = getMeasurements(s);
+        const size = m?.recommended_size ?? s?.recommended_size;
+        return size != null && String(size).trim() !== '';
+      }).length;
+      const recommendationCoveragePercent =
+        sessionsTotal > 0 ? (sessionsWithRecommendation / sessionsTotal) * 100 : null;
+
+      const durationSeconds = sessionsData
+        .map((s) => {
+          const startRaw = s?.session_start_time || s?.created_at;
+          const endRaw = s?.session_end_time || s?.updated_at;
+          if (!startRaw || !endRaw) return null;
+          const start = new Date(startRaw).getTime();
+          const end = new Date(endRaw).getTime();
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+          const seconds = (end - start) / 1000;
+          if (seconds <= 0 || seconds > 7200) return null;
+          return seconds;
+        })
+        .filter((v) => typeof v === 'number');
+      const avgSessionSeconds =
+        durationSeconds.length > 0
+          ? durationSeconds.reduce((a, b) => a + b, 0) / durationSeconds.length
+          : null;
+
+      const usageByCollectionMap = {};
+      const bodyTypeMap = {};
+      const sizeMap = {};
+      const heatmapMap = {};
+      sessionsData.forEach((s) => {
+        const m = getMeasurements(s);
+        const coll = getCollectionKey(s) || 'geral';
+        usageByCollectionMap[coll] = (usageByCollectionMap[coll] || 0) + 1;
+        const body = m?.body_type_index;
+        if (body !== undefined && body !== null && !Number.isNaN(Number(body))) {
+          const bodyKey = String(Number(body));
+          bodyTypeMap[bodyKey] = (bodyTypeMap[bodyKey] || 0) + 1;
+        }
+        const size = m?.recommended_size ?? s?.recommended_size;
+        if (size != null && String(size).trim() !== '') {
+          const sizeKey = String(size).trim();
+          sizeMap[sizeKey] = (sizeMap[sizeKey] || 0) + 1;
+          const heatKey = `${coll}__${sizeKey}`;
+          heatmapMap[heatKey] = (heatmapMap[heatKey] || 0) + 1;
+        }
+      });
+      const usageByCollection = Object.entries(usageByCollectionMap)
+        .map(([collection, count]) => ({
+          collection: collection === 'geral' ? 'Geral' : collection,
+          count,
+          percent: sessionsTotal > 0 ? (count / sessionsTotal) * 100 : 0,
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      const bodyTypeDistribution = Object.entries(bodyTypeMap)
+        .map(([bodyType, count]) => ({
+          bodyType,
+          label: BODY_TYPE_NAMES[bodyType] ?? bodyType,
+          count,
+          percent: sessionsTotal > 0 ? (count / sessionsTotal) * 100 : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      const sizeDistribution = Object.entries(sizeMap)
+        .map(([size, count]) => ({
+          size,
+          count,
+          percent: sessionsTotal > 0 ? (count / sessionsTotal) * 100 : 0,
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8);
+
+      const heatmapRows = Object.entries(heatmapMap)
+        .map(([key, count]) => {
+          const [collection, size] = key.split('__');
+          return {
+            collection: collection === 'geral' ? 'Geral' : collection,
+            size,
+            count,
+          };
+        })
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+
+      const omafitRevenue = Number(ordersData.omafitRevenueAfter ?? 0) || 0;
+      const planCostMap = { starter: 30, basic: 30, growth: 120, pro: 220 };
+      const planCost = planCostMap[String(billingPlan || '').toLowerCase()] || 0;
+      const extraImages = Math.max(0, (imagesUsedMonth || 0) - (imagesIncluded || 0));
+      const extraCost = extraImages * (pricePerExtraImage || 0);
+      const estimatedCost = planCost + extraCost;
+      const estimatedRoiPercent =
+        estimatedCost > 0 ? ((omafitRevenue - estimatedCost) / estimatedCost) * 100 : null;
+      const avoidedReturns = Math.max(0, (ordersData.returnsBefore ?? 0) - (ordersData.returnsAfter ?? 0));
+      const avgTicket = (ordersData.omafitOrdersAfter ?? 0) > 0 ? omafitRevenue / ordersData.omafitOrdersAfter : null;
+      const estimatedCostAvoided = avgTicket != null ? avoidedReturns * avgTicket : null;
+      const tableDivergenceAlert = recommendationCoveragePercent != null && recommendationCoveragePercent < 70
+        ? t('analytics.qualityLowCoverage', { percent: recommendationCoveragePercent.toFixed(1) })
+        : t('analytics.qualityHealthyCoverage');
+
       setMetrics({
         totalImagesProcessed,
         avgByGender,
@@ -739,12 +887,35 @@ export default function AnalyticsPage() {
         ordersBefore: ordersData.ordersBefore ?? null,
         ordersAfter: ordersData.ordersAfter ?? null,
         omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
+        omafitRevenueAfter: ordersData.omafitRevenueAfter ?? null,
         returnsBefore: ordersData.returnsBefore ?? null,
         returnsAfter: ordersData.returnsAfter ?? null,
         conversionBefore: ordersData.conversionBefore ?? null,
         conversionAfter: ordersData.conversionAfter ?? null,
         ordersError: ordersData.error ?? null,
-        tableError: sessionsData.length === 0 ? 'No sessions found or table does not exist' : null
+        tableError: sessionsData.length === 0 ? 'No sessions found or table does not exist' : null,
+        finance: {
+          estimatedRoiPercent,
+          attributedRevenue: omafitRevenue,
+          estimatedCostAvoided,
+        },
+        currency: shopCurrency,
+        performance: {
+          sessionsTotal,
+          sessionsWithProfile,
+          sessionsWithRecommendation,
+          avgSessionSeconds,
+          usageByCollection,
+        },
+        quality: {
+          recommendationCoveragePercent,
+          tableDivergenceAlert,
+        },
+        intelligence: {
+          bodyTypeDistribution,
+          sizeDistribution,
+          heatmapRows,
+        }
       });
     } catch (err) {
       console.error('[Analytics]', err);
@@ -782,12 +953,18 @@ export default function AnalyticsPage() {
           ordersBefore: null,
           ordersAfter: null,
           omafitOrdersAfter: null,
+          omafitRevenueAfter: null,
           returnsBefore: null,
           returnsAfter: null,
           conversionBefore: null,
           conversionAfter: null,
           ordersError: null,
-          tableError: 'no_sessions'
+          tableError: 'no_sessions',
+          finance: { estimatedRoiPercent: null, attributedRevenue: null, estimatedCostAvoided: null },
+          currency: 'USD',
+          performance: { sessionsTotal: 0, sessionsWithProfile: 0, sessionsWithRecommendation: 0, avgSessionSeconds: null, usageByCollection: [] },
+          quality: { recommendationCoveragePercent: null, tableDivergenceAlert: t('analytics.qualityNoSessionCoverage') },
+          intelligence: { bodyTypeDistribution: [], sizeDistribution: [], heatmapRows: [] }
         });
       } else {
         setError(toFriendlyAnalyticsError(err?.message || t('analytics.errorLoad')));
@@ -815,6 +992,23 @@ export default function AnalyticsPage() {
   }
 
   const m = metrics ?? {};
+  const formatMoney = (value, currencyCode) => {
+    if (value == null || Number.isNaN(Number(value))) return '—';
+    try {
+      const localeForFormat =
+        locale === 'pt-BR' ? 'pt-BR' :
+        locale === 'es' ? 'es-ES' :
+        'en-US';
+      return new Intl.NumberFormat(localeForFormat, {
+        style: 'currency',
+        currency: currencyCode || 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(Number(value));
+    } catch (_err) {
+      return `${currencyCode || 'USD'} ${Number(value).toFixed(2)}`;
+    }
+  };
   const rows = (m.byCollectionGender || []).map((r) => {
     const bodyLabel = r.mostBodyType != null ? (BODY_TYPE_NAMES[r.mostBodyType.value] ?? r.mostBodyType.value) : null;
     const mannequinUrl = bodyLabel != null ? getMannequinImageUrl(r.mostBodyType.value, r.gender) : null;
@@ -891,206 +1085,241 @@ export default function AnalyticsPage() {
         </Layout.Section>
 
         <Layout.Section>
+          <Text variant="headingLg" as="h2">{t('analytics.financialImpactTitle')}</Text>
+          <Text variant="bodyMd" tone="subdued">
+            {t('analytics.financialImpactSubtitle')}
+          </Text>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.financialRoiTitle')}</Text>
+                  <Text variant="headingXl" as="p">
+                    {m.finance?.estimatedRoiPercent != null ? `${m.finance.estimatedRoiPercent.toFixed(1)}%` : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.financialRoiHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.financialRevenueTitle')}</Text>
+                  <Text variant="headingXl" as="p">
+                    {formatMoney(m.finance?.attributedRevenue, m.currency)}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.financialRevenueHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.financialAvoidedCostTitle')}</Text>
+                  <Text variant="headingXl" as="p">
+                    {formatMoney(m.finance?.estimatedCostAvoided, m.currency)}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.financialAvoidedCostHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Text variant="headingLg" as="h2">{t('analytics.performanceTitle')}</Text>
+          <Text variant="bodyMd" tone="subdued">
+            {t('analytics.performanceSubtitle')}
+          </Text>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.performanceSessionsTitle')}</Text>
+                  <Text variant="headingXl" as="p">{m.performance?.sessionsTotal ?? 0}</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.performanceSessionsHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.performanceSessionsWithProfileTitle')}</Text>
+                  <Text variant="headingXl" as="p">{m.performance?.sessionsWithProfile ?? 0}</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.performanceSessionsWithProfileHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.performanceAvgSessionTitle')}</Text>
+                  <Text variant="headingXl" as="p">
+                    {m.performance?.avgSessionSeconds != null ? `${Math.round(m.performance.avgSessionSeconds)}s` : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.performanceAvgSessionHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
           <Card>
-            <BlockStack gap="300">
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h3">{t('analytics.performanceUsageByCollectionTitle')}</Text>
+              {(m.performance?.usageByCollection || []).length > 0 ? (
+                <DataTable
+                  columnContentTypes={['text', 'numeric', 'numeric']}
+                  headings={[t('analytics.performanceUsageHeadingCollection'), t('analytics.performanceUsageHeadingSessions'), t('analytics.performanceUsageHeadingRate')]}
+                  rows={(m.performance?.usageByCollection || []).map((row) => [
+                    row.collection,
+                    String(row.count),
+                    `${row.percent.toFixed(1)}%`,
+                  ])}
+                />
+              ) : (
+                <Text variant="bodyMd" tone="subdued">{t('analytics.performanceNoSessionData')}</Text>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Text variant="headingLg" as="h2">{t('analytics.qualityTitle')}</Text>
+          <Text variant="bodyMd" tone="subdued">
+            {t('analytics.qualitySubtitle')}
+          </Text>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.qualityReturnsBeforeTitle')}</Text>
+                  <Text variant="headingXl" as="p">{m.returnsBefore != null ? m.returnsBefore : '—'}</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.qualityReturnsBeforeHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.qualityReturnsAfterTitle')}</Text>
+                  <Text variant="headingXl" as="p">{m.returnsAfter != null ? m.returnsAfter : '—'}</Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.qualityReturnsAfterHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.qualityUsersVsNonUsersTitle')}</Text>
+                  <Text variant="headingXl" as="p">
+                    {(m.omafitOrdersAfter != null && m.ordersAfter > 0)
+                      ? `${((m.omafitOrdersAfter / m.ordersAfter) * 100).toFixed(1)}%`
+                      : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">{t('analytics.qualityUsersVsNonUsersHelp')}</Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
+          <Card>
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h3">{t('analytics.qualityTableAlertTitle')}</Text>
+              <Banner tone={(m.quality?.recommendationCoveragePercent != null && m.quality?.recommendationCoveragePercent < 70) ? 'warning' : 'success'}>
+                <p>{m.quality?.tableDivergenceAlert || 'Sem alertas no período.'}</p>
+              </Banner>
               <Text variant="bodyMd" tone="subdued">
-                {t('analytics.imagesProcessed')}
-              </Text>
-              <Text variant="heading2xl" as="p">
-                {m.totalImagesProcessed ?? 0}
+                {t('analytics.qualityCoverageLabel')}: {m.quality?.recommendationCoveragePercent != null ? `${m.quality.recommendationCoveragePercent.toFixed(1)}%` : '—'}
               </Text>
             </BlockStack>
           </Card>
         </Layout.Section>
 
         <Layout.Section>
-          <Text variant="headingLg" as="h2">
-            {t('analytics.returnsBeforeAfter')}
-          </Text>
+          <Text variant="headingLg" as="h2">{t('analytics.intelligenceTitle')}</Text>
           <Text variant="bodyMd" tone="subdued">
-            {t('analytics.returnsHelp')}
+            {t('analytics.intelligenceSubtitle')}
           </Text>
           <InlineStack gap="400" wrap>
-            <div style={{ flex: '1 1 220px' }}>
+            <div style={{ flex: '1 1 240px' }}>
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.beforeOmafit')}</Text>
-                  <Text variant="headingXl" as="p">{m.returnsBefore != null ? m.returnsBefore : '—'}</Text>
-                  <Text variant="bodyMd" tone="subdued">{t('analytics.returnsCount')}</Text>
-                </BlockStack>
-              </Card>
-            </div>
-            <div style={{ flex: '1 1 220px' }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.afterOmafit')}</Text>
-                  <Text variant="headingXl" as="p">{m.returnsAfter != null ? m.returnsAfter : '—'}</Text>
-                  <Text variant="bodyMd" tone="subdued">{t('analytics.returnsCount')}</Text>
-                </BlockStack>
-              </Card>
-            </div>
-          </InlineStack>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Text variant="headingLg" as="h2">
-            {t('analytics.conversionRate')}
-          </Text>
-          <Text variant="bodyMd" tone="subdued">
-            {t('analytics.conversionHelp')}
-          </Text>
-          <InlineStack gap="400" wrap>
-            <div style={{ flex: '1 1 220px' }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.beforeOmafit')}</Text>
-                  <Text variant="headingXl" as="p">
-                    {m.conversionBefore != null ? `${m.conversionBefore.toFixed(1)}%` : '—'}
-                  </Text>
-                  <Text variant="bodyMd" tone="subdued">{t('analytics.ordersKept')}</Text>
-                </BlockStack>
-              </Card>
-            </div>
-            <div style={{ flex: '1 1 220px' }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">{t('analytics.afterOmafit')}</Text>
-                  <Text variant="headingXl" as="p">
-                    {m.conversionAfter != null ? `${m.conversionAfter.toFixed(1)}%` : '—'}
-                  </Text>
-                  <Text variant="bodyMd" tone="subdued">{t('analytics.ordersKept')}</Text>
-                </BlockStack>
-              </Card>
-            </div>
-          </InlineStack>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Text variant="headingLg" as="h2">
-            Pedidos via botão Omafit
-          </Text>
-          <Text variant="bodyMd" tone="subdued">
-            Pedidos que tiveram pelo menos um item com <code>_source=omafit_tryon</code>.
-          </Text>
-          <InlineStack gap="400" wrap>
-            <div style={{ flex: '1 1 220px' }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">No período selecionado</Text>
-                  <Text variant="headingXl" as="p">{m.omafitOrdersAfter != null ? m.omafitOrdersAfter : '—'}</Text>
-                  <Text variant="bodyMd" tone="subdued">Pedidos atribuídos ao botão Omafit</Text>
-                </BlockStack>
-              </Card>
-            </div>
-            <div style={{ flex: '1 1 220px' }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="semibold">Participação no período</Text>
-                  <Text variant="headingXl" as="p">
-                    {(m.omafitOrdersAfter != null && m.ordersAfter > 0)
-                      ? `${((m.omafitOrdersAfter / m.ordersAfter) * 100).toFixed(1)}%`
-                      : '—'}
-                  </Text>
-                  <Text variant="bodyMd" tone="subdued">Sobre o total de pedidos do período</Text>
-                </BlockStack>
-              </Card>
-            </div>
-          </InlineStack>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Text variant="headingLg" as="h2">
-            {t('analytics.avgHeightWeight')}
-          </Text>
-          <BlockStack gap="300">
-            <InlineStack gap="400" wrap>
-              <div style={{ flex: '1 1 240px' }}>
-                <Card>
-                  <BlockStack gap="200">
-                    <Text variant="headingMd" as="h3">{t('analytics.male')}</Text>
-                    <Text variant="bodyMd" tone="subdued">
-                      {t('analytics.avgHeight')} {m.avgByGender?.male?.height != null ? `${m.avgByGender.male.height.toFixed(1)} cm` : '—'}
-                    </Text>
-                    <Text variant="bodyMd" tone="subdued">
-                      {t('analytics.avgWeight')} {m.avgByGender?.male?.weight != null ? `${m.avgByGender.male.weight.toFixed(1)} kg` : '—'}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </div>
-              <div style={{ flex: '1 1 240px' }}>
-                <Card>
-                  <BlockStack gap="200">
-                    <Text variant="headingMd" as="h3">{t('analytics.female')}</Text>
-                    <Text variant="bodyMd" tone="subdued">
-                      {t('analytics.avgHeight')} {m.avgByGender?.female?.height != null ? `${m.avgByGender.female.height.toFixed(1)} cm` : '—'}
-                    </Text>
-                    <Text variant="bodyMd" tone="subdued">
-                      {t('analytics.avgWeight')} {m.avgByGender?.female?.weight != null ? `${m.avgByGender.female.weight.toFixed(1)} kg` : '—'}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </div>
-            </InlineStack>
-          </BlockStack>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Text variant="headingLg" as="h2">
-            {t('analytics.byCollectionGender')}
-          </Text>
-          <Text variant="bodyMd" tone="subdued">
-            {t('analytics.byCollectionHelp')}
-          </Text>
-          {rows.length > 0 ? (
-            <Card>
-              <DataTable
-                columnContentTypes={['text', 'text', 'text', 'text', 'text']}
-                headings={[t('analytics.headingsCollection'), t('analytics.headingsGender'), t('analytics.headingsMostSize'), t('analytics.headingsFit'), t('analytics.headingsBodyType')]}
-                rows={rows}
-              />
-            </Card>
-          ) : (
-            <Card>
-              <BlockStack gap="300">
-                {m.tableError === 'no_sessions' ? (
-                  <Banner tone="info">
-                    <BlockStack gap="200">
-                      <Text variant="bodyMd" fontWeight="semibold">
-                        📊 Nenhuma sessão de try-on encontrada ainda
-                      </Text>
-                      <Text variant="bodyMd" tone="subdued">
-                        As tabelas <strong>session_analytics</strong> e <strong>tryon_sessions</strong> existem no Supabase, mas estão vazias.
-                      </Text>
-                      <Text variant="bodyMd" tone="subdued">
-                        Os dados aparecerão automaticamente quando:
-                      </Text>
-                      <BlockStack gap="100">
-                        <Text variant="bodyMd" tone="subdued">
-                          • Clientes usarem o widget de try-on virtual na sua loja
-                        </Text>
-                        <Text variant="bodyMd" tone="subdued">
-                          • A edge function <strong>virtual-try-on</strong> salvar as sessões no Supabase
-                        </Text>
-                        <Text variant="bodyMd" tone="subdued">
-                          • As sessões incluírem dados de gênero (male/female) e collection_handle
-                        </Text>
-                      </BlockStack>
-                      <Text variant="bodyMd" tone="subdued">
-                        💡 <strong>Dica:</strong> Teste o widget em uma página de produto da sua loja para gerar dados de teste.
-                      </Text>
-                      <Text variant="bodyMd" tone="subdued">
-                        Se a tabela <strong>session_analytics</strong> permanecer vazia, execute o SQL <strong>supabase_fix_session_analytics_autosync.sql</strong> para sincronizar automaticamente a partir de <strong>tryon_sessions</strong>.
-                      </Text>
-                    </BlockStack>
-                  </Banner>
-                ) : (
+                  <Text variant="headingMd" as="h3">{t('analytics.male')}</Text>
                   <Text variant="bodyMd" tone="subdued">
-                    {t('analytics.noDataByCollection')}
+                    {t('analytics.avgHeight')} {m.avgByGender?.male?.height != null ? `${m.avgByGender.male.height.toFixed(1)} cm` : '—'}
                   </Text>
-                )}
-              </BlockStack>
-            </Card>
-          )}
+                  <Text variant="bodyMd" tone="subdued">
+                    {t('analytics.avgWeight')} {m.avgByGender?.male?.weight != null ? `${m.avgByGender.male.weight.toFixed(1)} kg` : '—'}
+                  </Text>
+                </BlockStack>
+              </Card>
+            </div>
+            <div style={{ flex: '1 1 240px' }}>
+              <Card>
+                <BlockStack gap="200">
+                  <Text variant="headingMd" as="h3">{t('analytics.female')}</Text>
+                  <Text variant="bodyMd" tone="subdued">
+                    {t('analytics.avgHeight')} {m.avgByGender?.female?.height != null ? `${m.avgByGender.female.height.toFixed(1)} cm` : '—'}
+                  </Text>
+                  <Text variant="bodyMd" tone="subdued">
+                    {t('analytics.avgWeight')} {m.avgByGender?.female?.weight != null ? `${m.avgByGender.female.weight.toFixed(1)} kg` : '—'}
+                  </Text>
+                </BlockStack>
+              </Card>
+            </div>
+          </InlineStack>
+          <Card>
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h3">{t('analytics.intelligenceBodyDistributionTitle')}</Text>
+              {(m.intelligence?.bodyTypeDistribution || []).length > 0 ? (
+                <DataTable
+                  columnContentTypes={['text', 'numeric', 'numeric']}
+                  headings={[t('analytics.intelligenceBodyHeading'), t('analytics.intelligenceSessionsHeading'), t('analytics.intelligenceParticipationHeading')]}
+                  rows={(m.intelligence?.bodyTypeDistribution || []).map((row) => [
+                    row.label,
+                    String(row.count),
+                    `${row.percent.toFixed(1)}%`,
+                  ])}
+                />
+              ) : (
+                <Text variant="bodyMd" tone="subdued">{t('analytics.intelligenceNoBodyData')}</Text>
+              )}
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h3">{t('analytics.intelligenceSizeDistributionTitle')}</Text>
+              {(m.intelligence?.sizeDistribution || []).length > 0 ? (
+                <DataTable
+                  columnContentTypes={['text', 'numeric', 'numeric']}
+                  headings={[t('analytics.intelligenceSizeHeading'), t('analytics.intelligenceSessionsHeading'), t('analytics.intelligenceParticipationHeading')]}
+                  rows={(m.intelligence?.sizeDistribution || []).map((row) => [
+                    row.size,
+                    String(row.count),
+                    `${row.percent.toFixed(1)}%`,
+                  ])}
+                />
+              ) : (
+                <Text variant="bodyMd" tone="subdued">{t('analytics.intelligenceNoSizeData')}</Text>
+              )}
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h3">{t('analytics.intelligenceHeatmapTitle')}</Text>
+              {(m.intelligence?.heatmapRows || []).length > 0 ? (
+                <DataTable
+                  columnContentTypes={['text', 'text', 'numeric']}
+                  headings={[t('analytics.intelligenceHeatmapHeadingCollection'), t('analytics.intelligenceHeatmapHeadingSize'), t('analytics.intelligenceHeatmapHeadingOccurrences')]}
+                  rows={(m.intelligence?.heatmapRows || []).map((row) => [
+                    row.collection,
+                    row.size,
+                    String(row.count),
+                  ])}
+                />
+              ) : (
+                <Text variant="bodyMd" tone="subdued">{t('analytics.intelligenceNoHeatmapData')}</Text>
+              )}
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>

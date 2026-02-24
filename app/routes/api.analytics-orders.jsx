@@ -11,6 +11,7 @@ export const loader = async ({ request }) => {
     ordersBefore: null,
     ordersAfter: null,
     omafitOrdersAfter: null,
+    omafitRevenueAfter: null,
     returnsBefore: null,
     returnsAfter: null,
     conversionBefore: null,
@@ -120,13 +121,14 @@ export const loader = async ({ request }) => {
     const conversionBefore = ordersBefore > 0 ? ((ordersBefore - returnsBefore) / ordersBefore) * 100 : null;
 
     let omafitOrdersAfter = null;
+    let omafitRevenueAfter = null;
     if (supabaseUrl && supabaseKey) {
-      const countOrdersInRange = async (start, end) => {
+      const fetchOmafitOrdersInRange = async (start, end) => {
         const queryParams = [
           `shop_domain=eq.${encodeURIComponent(shop)}`,
           `order_created_at=gte.${encodeURIComponent(start)}`,
           `order_created_at=lte.${encodeURIComponent(end)}`,
-          "select=order_id",
+          "select=order_id,total_price",
           "order=order_created_at.desc",
           "limit=5000",
         ];
@@ -144,12 +146,17 @@ export const loader = async ({ request }) => {
           const text = await r.text().catch(() => "");
           throw new Error(`order_analytics_omafit ${r.status}: ${text}`);
         }
-        const rows = await r.json();
-        return Array.isArray(rows) ? rows.length : 0;
+        return await r.json();
       };
 
       try {
-        omafitOrdersAfter = await countOrdersInRange(afterStartStr, afterEndStr);
+        const rows = await fetchOmafitOrdersInRange(afterStartStr, afterEndStr);
+        const list = Array.isArray(rows) ? rows : [];
+        omafitOrdersAfter = list.length;
+        omafitRevenueAfter = list.reduce((sum, row) => {
+          const value = Number(row?.total_price ?? 0);
+          return Number.isFinite(value) ? sum + value : sum;
+        }, 0);
       } catch (e) {
         console.warn("[api.analytics-orders] Erro ao buscar pedidos Omafit:", e);
       }
@@ -159,6 +166,7 @@ export const loader = async ({ request }) => {
       ordersBefore,
       ordersAfter,
       omafitOrdersAfter,
+      omafitRevenueAfter,
       returnsBefore,
       returnsAfter,
       conversionBefore,

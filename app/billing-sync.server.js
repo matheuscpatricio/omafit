@@ -177,6 +177,7 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
   const inferContext = { supabaseUrl, supabaseKey, cachedUserId: undefined };
 
   const candidateInsertBodies = SHOP_IDENTIFIER_COLUMNS.map((identifierKey) => ({
+    shop_domain: shop,
     [identifierKey]: shop,
     ...basePayload,
   }));

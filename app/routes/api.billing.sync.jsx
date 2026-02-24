@@ -185,6 +185,7 @@ export async function loader({ request }) {
         const identifiers = ["shop_domain", "shop", "domain"];
         for (const identifier of identifiers) {
           const body = {
+            shop_domain: session.shop,
             [identifier]: session.shop,
             plan: "starter",
             billing_status: "inactive",

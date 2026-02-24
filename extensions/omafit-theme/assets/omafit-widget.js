@@ -1156,6 +1156,7 @@
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
       (productDescriptionForUrl ? '&productDescription=' + encodeURIComponent(productDescriptionForUrl) : '') +
+      (productDescriptionForUrl ? '&product_description=' + encodeURIComponent(productDescriptionForUrl) : '') +
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       '&shop_domain=' + encodeURIComponent(shopDomain) +
@@ -1701,6 +1702,8 @@
     };
     return fetch('/cart/add.js', {
       method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
     })
@@ -1722,6 +1725,10 @@
       });
   }
 
+  function waitMs(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
   function renderThemeCartFromResponse(addResponse) {
     if (!addResponse || !addResponse.sections) return false;
     var cartUi = document.querySelector('cart-drawer') || document.querySelector('cart-notification');
@@ -1737,20 +1744,29 @@
   }
 
   async function fetchUpdatedCart() {
-    try {
-      var res = await fetch('/cart.js', {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!res.ok) {
-        console.warn('[OmafitCart] /cart.js status inválido:', res.status);
-        return null;
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        var url = '/cart.js?_=' + Date.now() + '_' + attempt;
+        var res = await fetch(url, {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) {
+          console.warn('[OmafitCart] /cart.js status inválido:', res.status, 'tentativa', attempt + 1);
+        } else {
+          var cart = await res.json();
+          // Em alguns temas o primeiro GET após add ainda pode vir desatualizado.
+          if (cart && typeof cart.item_count === 'number' && cart.item_count > 0) return cart;
+          if (attempt === 2) return cart || null;
+        }
+      } catch (e) {
+        console.warn('[OmafitCart] Erro ao buscar /cart.js (tentativa ' + (attempt + 1) + '):', e);
       }
-      return await res.json();
-    } catch (e) {
-      console.warn('[OmafitCart] Erro ao buscar /cart.js:', e);
-      return null;
+      await waitMs(180);
     }
+    return null;
   }
 
   function replaceSectionInDom(sectionId, sectionHtml) {
@@ -1785,8 +1801,10 @@
     var sectionIds = OMAFIT_CART_SECTION_IDS;
     try {
       var sectionsParam = sectionIds.map(function (id) { return encodeURIComponent(id); }).join(',');
-      var res = await fetch('/?sections=' + sectionsParam, {
+      var res = await fetch('/?sections=' + sectionsParam + '&_=' + Date.now(), {
         method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
         headers: { 'Accept': 'application/json' }
       });
       if (!res.ok) {
@@ -1805,6 +1823,17 @@
     } catch (e) {
       console.warn('[OmafitCart] Erro ao aplicar Section Rendering API:', e);
       return null;
+    }
+  }
+
+  function notifyThemeCartUpdate(cart) {
+    try {
+      if (window.Shopify && typeof window.Shopify.onCartUpdate === 'function') {
+        window.Shopify.onCartUpdate(cart || null);
+        console.log('[OmafitCart] Shopify.onCartUpdate disparado.');
+      }
+    } catch (e) {
+      console.warn('[OmafitCart] Erro ao disparar Shopify.onCartUpdate:', e);
     }
   }
 
@@ -1938,6 +1967,7 @@
       if (!renderedByTheme) {
         await refreshThemeCartSections();
       }
+      notifyThemeCartUpdate(updatedCart || addResult.cart || null);
       dispatchCartUpdatedEvents(updatedCart || addResult.cart || null);
       openCartDrawerIfRequested(shouldOpenDrawer);
       postResultToIframe(source, origin, {

@@ -384,6 +384,33 @@ export async function loader({ request }) {
           // keep returning session_analytics
         }
       }
+      // Quando session_analytics não tem tryon_session_id: preencher com a(s) medição(ões) mais recente(s) de user_measurements
+      if (umBySession.size === 0 && data.length > 0) {
+        try {
+          const umRecentUrl = `${SUPABASE_URL}/rest/v1/user_measurements?select=*&order=updated_at.desc&limit=50`;
+          const umRecent = await fetchSupabaseJson(umRecentUrl);
+          if (Array.isArray(umRecent) && umRecent.length > 0) {
+            data = data.map((row, idx) => {
+              const measurement = umRecent[idx] ?? umRecent[0];
+              return {
+                ...row,
+                ...measurement,
+                user_measurements: JSON.stringify(measurement),
+                gender: measurement.gender ?? row.gender,
+                recommended_size: measurement.recommended_size ?? measurement.recommendedSize ?? row.recommended_size,
+                body_type_index: measurement.body_type_index ?? measurement.bodyTypeIndex ?? row.body_type_index,
+                fit_preference_index: measurement.fit_preference_index ?? measurement.fitPreferenceIndex ?? row.fit_preference_index,
+                height: measurement.height ?? row.height,
+                weight: measurement.weight ?? row.weight,
+                collection_handle: measurement.collection_handle ?? measurement.collectionHandle ?? row.collection_handle,
+              };
+            });
+            umBySession = new Map([["filled", true]]);
+          }
+        } catch (_e) {
+          // ignora
+        }
+      }
       const source = umBySession.size > 0 ? "session_analytics_with_user_measurements" : "session_analytics";
       return Response.json(withDebug({ sessions: data, source }));
     } catch (fallbackErr) {

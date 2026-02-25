@@ -72,7 +72,7 @@ export async function loader({ request }) {
       }
     }
     if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
-      const sessionIdsFromUm = [...new Set(measurementsFirst.map((m) => m?.tryon_session_id).filter(Boolean))];
+      const sessionIdsFromUm = [...new Set(measurementsFirst.map((m) => m?.tryon_session_id ?? m?.tryonSessionId).filter(Boolean))];
       if (sessionIdsFromUm.length > 0) {
         let sessionsById = [];
         for (let i = 0; i < sessionIdsFromUm.length; i += 100) {
@@ -93,6 +93,12 @@ export async function loader({ request }) {
           const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
           if (matchShop || matchUser) sessionIdsForShop.add(norm(row.id));
         });
+        if (sessionIdsForShop.size === 0 && sessionsById.length > 0) {
+          const allNull = sessionsById.every((r) => !r.shop_domain && !r.user_id);
+          if (allNull || sessionsById.length === 1) {
+            sessionsById.forEach((row) => sessionIdsForShop.add(norm(row.id)));
+          }
+        }
         const bySessionId = new Map();
         measurementsFirst.forEach((m) => {
           const sid = norm(m?.tryon_session_id);
@@ -310,8 +316,9 @@ export async function loader({ request }) {
       let data = await response.json();
       if (!Array.isArray(data)) data = [];
 
+      const getTryonSessionId = (row) => row?.tryon_session_id ?? row?.tryonSessionId ?? null;
       let umBySession = new Map();
-      const tryonIds = data.map((row) => row?.tryon_session_id).filter(Boolean);
+      const tryonIds = data.map((row) => getTryonSessionId(row)).filter(Boolean);
       if (tryonIds.length > 0) {
         for (let i = 0; i < tryonIds.length; i += 100) {
           const chunk = tryonIds.slice(i, i + 100);
@@ -321,7 +328,7 @@ export async function loader({ request }) {
             const rows = await fetchSupabaseJson(umUrl);
             if (Array.isArray(rows)) {
               rows.forEach((m) => {
-                const sid = norm(m?.tryon_session_id);
+                const sid = norm(m?.tryon_session_id ?? m?.tryonSessionId);
                 if (!sid || umBySession.has(sid)) return;
                 umBySession.set(sid, m);
               });
@@ -332,7 +339,8 @@ export async function loader({ request }) {
         }
         if (umBySession.size > 0) {
           data = data.map((row) => {
-            const sid = row?.tryon_session_id ? norm(row.tryon_session_id) : "";
+            const tid = getTryonSessionId(row);
+            const sid = tid ? norm(tid) : "";
             const measurement = umBySession.get(sid);
             if (!measurement) return row;
             return {
@@ -348,6 +356,64 @@ export async function loader({ request }) {
               collection_handle: measurement.collection_handle ?? measurement.collectionHandle ?? row.collection_handle,
             };
           });
+        }
+      }
+      if (umBySession.size === 0 && data.length > 0) {
+        try {
+          const minimalSelect = "select=id,user_id,shop_domain,created_at,updated_at";
+          const noFilterUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?${minimalSelect}&order=created_at.desc&limit=500`;
+          let lastResortSessions = await fetchSupabaseJson(noFilterUrl);
+          if (!Array.isArray(lastResortSessions)) lastResortSessions = [];
+          const wantShop = normShop(shopDomain);
+          lastResortSessions = lastResortSessions.filter((row) => {
+            const matchShop = row.shop_domain && normShop(row.shop_domain) === wantShop;
+            const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
+            return matchShop || matchUser;
+          });
+          if (lastResortSessions.length === 0 && userId) {
+            const byUserUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&${minimalSelect}&order=created_at.desc&limit=500`;
+            lastResortSessions = await fetchSupabaseJson(byUserUrl);
+          }
+          if (lastResortSessions.length === 0) {
+            lastResortSessions = await fetchSupabaseJson(noFilterUrl);
+            lastResortSessions = Array.isArray(lastResortSessions) ? lastResortSessions.filter((r) => !r.shop_domain && !r.user_id) : [];
+          }
+          if (Array.isArray(lastResortSessions) && lastResortSessions.length > 0) {
+            const ids = lastResortSessions.map((r) => r?.id).filter(Boolean).slice(0, 500);
+            const umMap = new Map();
+            for (let i = 0; i < ids.length; i += 100) {
+              const chunk = ids.slice(i, i + 100);
+              const inList = chunk.map((id) => String(id)).join(",");
+              try {
+                const umRows = await fetchSupabaseJson(`${SUPABASE_URL}/rest/v1/user_measurements?tryon_session_id=in.(${inList})&select=*&order=updated_at.desc`);
+                if (Array.isArray(umRows)) {
+                  umRows.forEach((m) => {
+                    const sid = norm(m?.tryon_session_id ?? m?.tryonSessionId);
+                    if (sid && !umMap.has(sid)) umMap.set(sid, m);
+                  });
+                }
+              } catch (_e) {
+                break;
+              }
+            }
+            const combined = [];
+            lastResortSessions.forEach((sessionRow) => {
+              const sid = norm(sessionRow?.id);
+              const measurement = umMap.get(sid);
+              if (!measurement) return;
+              combined.push({
+                ...sessionRow,
+                ...measurement,
+                created_at: sessionRow?.session_start_time ?? sessionRow?.created_at ?? measurement?.created_at ?? measurement?.updated_at ?? null,
+                user_measurements: JSON.stringify(measurement),
+              });
+            });
+            if (combined.length > 0) {
+              return Response.json(withDebug({ sessions: combined, source: "user_measurements" }));
+            }
+          }
+        } catch (_lastErr) {
+          // keep returning session_analytics
         }
       }
       const source = umBySession.size > 0 ? "session_analytics_with_user_measurements" : "session_analytics";

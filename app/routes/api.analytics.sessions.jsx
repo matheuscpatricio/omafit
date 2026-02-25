@@ -23,6 +23,7 @@ export async function loader({ request }) {
     const shopDomain = url.searchParams.get("shop_domain");
     const userId = url.searchParams.get("user_id");
     const since = url.searchParams.get("since");
+    const debug = url.searchParams.get("debug") === "1" || url.searchParams.get("debug") === "true";
 
     if (!shopDomain) {
       return Response.json(
@@ -50,6 +51,84 @@ export async function loader({ request }) {
         throw new Error(`HTTP ${response.status} - ${text}`);
       }
       return await response.json();
+    }
+
+    const norm = (v) => (v != null ? String(v).toLowerCase() : "");
+    const normShop = (s) => (s != null ? String(s).toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "");
+    const debugInfo = debug ? { step: "", measurementsFirst: 0, tryonSessionsById: 0, sessionIdsForShop: 0 } : null;
+    const withDebug = (payload) => (debug && debugInfo ? { ...payload, debug: debugInfo } : payload);
+
+    // 0) FLUXO INVERTIDO: user_measurements primeiro, depois tryon_sessions (quando tryon_sessions não retorna por shop/user)
+    let measurementsFirst = [];
+    try {
+      const umUrl = `${SUPABASE_URL}/rest/v1/user_measurements?select=*&order=updated_at.desc&limit=500`;
+      measurementsFirst = await fetchSupabaseJson(umUrl);
+    } catch (_e) {
+      try {
+        const umUrl = `${SUPABASE_URL}/rest/v1/user_measurements?select=*&limit=500`;
+        measurementsFirst = await fetchSupabaseJson(umUrl);
+      } catch (_e2) {
+        measurementsFirst = [];
+      }
+    }
+    if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
+      const sessionIdsFromUm = [...new Set(measurementsFirst.map((m) => m?.tryon_session_id).filter(Boolean))];
+      if (sessionIdsFromUm.length > 0) {
+        let sessionsById = [];
+        for (let i = 0; i < sessionIdsFromUm.length; i += 100) {
+          const chunk = sessionIdsFromUm.slice(i, i + 100);
+          const inVal = chunk.map((id) => String(id)).join(",");
+          const tsUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?id=in.(${inVal})&select=id,user_id,shop_domain,session_start_time,session_end_time,created_at,updated_at`;
+          try {
+            const rows = await fetchSupabaseJson(tsUrl);
+            if (Array.isArray(rows)) sessionsById = sessionsById.concat(rows);
+          } catch (_err) {
+            break;
+          }
+        }
+        const sessionIdsForShop = new Set();
+        const wantShop = normShop(shopDomain);
+        sessionsById.forEach((row) => {
+          const matchShop = row.shop_domain && normShop(row.shop_domain) === wantShop;
+          const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
+          if (matchShop || matchUser) sessionIdsForShop.add(norm(row.id));
+        });
+        const bySessionId = new Map();
+        measurementsFirst.forEach((m) => {
+          const sid = norm(m?.tryon_session_id);
+          if (!sid || !sessionIdsForShop.has(sid)) return;
+          if (!bySessionId.has(sid)) bySessionId.set(sid, []);
+          bySessionId.get(sid).push(m);
+        });
+        const combined = [];
+        sessionsById.forEach((sessionRow) => {
+          const sid = norm(sessionRow?.id);
+          if (!sessionIdsForShop.has(sid)) return;
+          const list = bySessionId.get(sid) || [];
+          if (list.length === 0) return;
+          const measurement = list[list.length - 1];
+          combined.push({
+            ...sessionRow,
+            ...measurement,
+            created_at:
+              sessionRow?.session_start_time ||
+              sessionRow?.created_at ||
+              measurement?.created_at ||
+              measurement?.updated_at ||
+              null,
+            user_measurements: JSON.stringify(measurement),
+          });
+        });
+        if (combined.length > 0) {
+          if (debugInfo) {
+            debugInfo.step = "user_measurements_first";
+            debugInfo.measurementsFirst = measurementsFirst.length;
+            debugInfo.tryonSessionsById = sessionsById.length;
+            debugInfo.sessionIdsForShop = sessionIdsForShop.size;
+          }
+          return Response.json(withDebug({ sessions: combined, source: "user_measurements" }));
+        }
+      }
     }
 
     // 1) PRIORIDADE: tryon_sessions + user_measurements
@@ -136,8 +215,9 @@ export async function loader({ request }) {
     }
 
     if (tryonSessions.length > 0 && shopDomain) {
+      const wantShop = normShop(shopDomain);
       const filtered = tryonSessions.filter(
-        (row) => !row.shop_domain || String(row.shop_domain).toLowerCase() === String(shopDomain).toLowerCase()
+        (row) => !row.shop_domain || normShop(row.shop_domain) === wantShop
       );
       if (filtered.length > 0) tryonSessions = filtered;
     }
@@ -153,9 +233,9 @@ export async function loader({ request }) {
         const measurements = [];
         for (let i = 0; i < tryonIds.length; i += 100) {
           const chunk = tryonIds.slice(i, i + 100);
-          const inClause = chunk.map((id) => String(id)).join(",");
+          const inList = chunk.map((id) => String(id)).join(",");
           const measurementsUrl =
-            `${SUPABASE_URL}/rest/v1/user_measurements?tryon_session_id=in.(${encodeURIComponent(inClause)})&select=*`;
+            `${SUPABASE_URL}/rest/v1/user_measurements?tryon_session_id=in.(${inList})&select=*`;
           try {
             const rows = await fetchSupabaseJson(measurementsUrl);
             if (Array.isArray(rows)) measurements.push(...rows);
@@ -166,7 +246,6 @@ export async function loader({ request }) {
 
         if (measurements.length > 0) {
           const bySessionId = new Map();
-          const norm = (v) => (v != null ? String(v).toLowerCase() : "");
           measurements.forEach((m) => {
             const sid = norm(m?.tryon_session_id);
             if (!sid) return;
@@ -228,8 +307,51 @@ export async function loader({ request }) {
           { status: response.status }
         );
       }
-      const data = await response.json();
-      return Response.json({ sessions: data, source: "session_analytics" });
+      let data = await response.json();
+      if (!Array.isArray(data)) data = [];
+
+      let umBySession = new Map();
+      const tryonIds = data.map((row) => row?.tryon_session_id).filter(Boolean);
+      if (tryonIds.length > 0) {
+        for (let i = 0; i < tryonIds.length; i += 100) {
+          const chunk = tryonIds.slice(i, i + 100);
+          const inList = chunk.map((id) => String(id)).join(",");
+          try {
+            const umUrl = `${SUPABASE_URL}/rest/v1/user_measurements?tryon_session_id=in.(${inList})&select=*&order=updated_at.desc`;
+            const rows = await fetchSupabaseJson(umUrl);
+            if (Array.isArray(rows)) {
+              rows.forEach((m) => {
+                const sid = norm(m?.tryon_session_id);
+                if (!sid || umBySession.has(sid)) return;
+                umBySession.set(sid, m);
+              });
+            }
+          } catch (_err) {
+            break;
+          }
+        }
+        if (umBySession.size > 0) {
+          data = data.map((row) => {
+            const sid = row?.tryon_session_id ? norm(row.tryon_session_id) : "";
+            const measurement = umBySession.get(sid);
+            if (!measurement) return row;
+            return {
+              ...row,
+              ...measurement,
+              user_measurements: JSON.stringify(measurement),
+              gender: measurement.gender ?? row.gender,
+              recommended_size: measurement.recommended_size ?? measurement.recommendedSize ?? row.recommended_size,
+              body_type_index: measurement.body_type_index ?? measurement.bodyTypeIndex ?? row.body_type_index,
+              fit_preference_index: measurement.fit_preference_index ?? measurement.fitPreferenceIndex ?? row.fit_preference_index,
+              height: measurement.height ?? row.height,
+              weight: measurement.weight ?? row.weight,
+              collection_handle: measurement.collection_handle ?? measurement.collectionHandle ?? row.collection_handle,
+            };
+          });
+        }
+      }
+      const source = umBySession.size > 0 ? "session_analytics_with_user_measurements" : "session_analytics";
+      return Response.json(withDebug({ sessions: data, source }));
     } catch (fallbackErr) {
       console.error("[api.analytics.sessions] fallback failed:", fallbackErr);
       return Response.json(

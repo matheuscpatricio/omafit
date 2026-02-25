@@ -53,11 +53,15 @@ export async function loader({ request }) {
     }
 
     // 1) PRIORIDADE: tryon_sessions + user_measurements
-    const buildTryonUrl = (withSince) => {
+    const selectTryon = "select=id,user_id,shop_domain,session_start_time,session_end_time,created_at,updated_at";
+    const orderTryon = "order=session_start_time.desc";
+    const orderTryonCreated = "order=created_at.desc";
+
+    const buildTryonUrlByShop = (withSince) => {
       const parts = [
         `shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-        "select=id,user_id,shop_domain,session_start_time,session_end_time,created_at,updated_at",
-        "order=session_start_time.desc",
+        selectTryon,
+        orderTryon,
         "limit=500",
       ];
       if (userId) parts.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
@@ -65,18 +69,77 @@ export async function loader({ request }) {
       return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
     };
 
+    const buildTryonUrlByUser = (withSince) => {
+      if (!userId) return null;
+      const parts = [
+        `user_id=eq.${encodeURIComponent(userId)}`,
+        selectTryon,
+        orderTryon,
+        "limit=500",
+      ];
+      if (withSince && since) parts.push(`session_start_time=gte.${encodeURIComponent(since)}`);
+      return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
+    };
+
+    const buildTryonUrlMinimal = () => {
+      const parts = [
+        "select=id,user_id,created_at,updated_at",
+        orderTryonCreated,
+        "limit=500",
+      ];
+      if (userId) parts.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
+      return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
+    };
+
     let tryonSessions = [];
     try {
-      tryonSessions = await fetchSupabaseJson(buildTryonUrl(true));
-    } catch (err) {
-      // Fallback para schema sem session_start_time indexável no filtro.
+      tryonSessions = await fetchSupabaseJson(buildTryonUrlByShop(true));
+    } catch (_errByShop) {
+      tryonSessions = [];
       if (since) {
         try {
-          tryonSessions = await fetchSupabaseJson(buildTryonUrl(false));
-        } catch (_err) {
+          tryonSessions = await fetchSupabaseJson(buildTryonUrlByShop(false));
+        } catch (_e) {
           tryonSessions = [];
         }
       }
+      if (tryonSessions.length === 0 && userId) {
+        try {
+          tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(true));
+        } catch (_e) {
+          try {
+            tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(false));
+          } catch (_e2) {
+            try {
+              tryonSessions = await fetchSupabaseJson(buildTryonUrlMinimal());
+            } catch (_e3) {
+              tryonSessions = [];
+            }
+          }
+        }
+      }
+    }
+    if (tryonSessions.length === 0 && userId) {
+      try {
+        tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(true));
+      } catch (_e) {
+        try {
+          tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(false));
+        } catch (_e2) {
+          try {
+            tryonSessions = await fetchSupabaseJson(buildTryonUrlMinimal());
+          } catch (_e3) {
+            tryonSessions = [];
+          }
+        }
+      }
+    }
+
+    if (tryonSessions.length > 0 && shopDomain) {
+      const filtered = tryonSessions.filter(
+        (row) => !row.shop_domain || String(row.shop_domain).toLowerCase() === String(shopDomain).toLowerCase()
+      );
+      if (filtered.length > 0) tryonSessions = filtered;
     }
 
     if (Array.isArray(tryonSessions) && tryonSessions.length > 0) {
@@ -103,8 +166,9 @@ export async function loader({ request }) {
 
         if (measurements.length > 0) {
           const bySessionId = new Map();
+          const norm = (v) => (v != null ? String(v).toLowerCase() : "");
           measurements.forEach((m) => {
-            const sid = m?.tryon_session_id;
+            const sid = norm(m?.tryon_session_id);
             if (!sid) return;
             if (!bySessionId.has(sid)) bySessionId.set(sid, []);
             bySessionId.get(sid).push(m);
@@ -112,7 +176,7 @@ export async function loader({ request }) {
 
           const combined = [];
           tryonSessions.forEach((sessionRow) => {
-            const sid = sessionRow?.id;
+            const sid = norm(sessionRow?.id);
             const list = bySessionId.get(sid) || [];
             if (list.length === 0) return;
             // Usa o último registro de medição como fonte primária.

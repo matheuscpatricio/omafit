@@ -373,9 +373,10 @@ export default function AnalyticsPage() {
         if (apiRes.ok) {
           const json = await apiRes.json();
           const list = Array.isArray(json.sessions) ? json.sessions : [];
+          const source = json.source || "session_analytics";
           if (list.length > 0) {
             sessionsData = list;
-            console.log(`[Analytics] ✅ Loaded ${sessionsData.length} sessions via server API (session_analytics)`);
+            console.log(`[Analytics] ✅ Loaded ${sessionsData.length} sessions via server API (${source})`);
           } else {
             console.log('[Analytics] Server API OK but 0 sessions returned (shop_domain/user_id may have no data yet)');
           }

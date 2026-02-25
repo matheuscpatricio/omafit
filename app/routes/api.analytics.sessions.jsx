@@ -78,7 +78,7 @@ export async function loader({ request }) {
         for (let i = 0; i < sessionIdsFromUm.length; i += 100) {
           const chunk = sessionIdsFromUm.slice(i, i + 100);
           const inVal = chunk.map((id) => String(id)).join(",");
-          const tsUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?id=in.(${inVal})&select=id,user_id,shop_domain,session_start_time,session_end_time,created_at,updated_at`;
+          const tsUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?id=in.(${inVal})&select=id,user_id,session_start_time,session_end_time,created_at,updated_at`;
           try {
             const rows = await fetchSupabaseJson(tsUrl);
             if (Array.isArray(rows)) sessionsById = sessionsById.concat(rows);
@@ -87,14 +87,12 @@ export async function loader({ request }) {
           }
         }
         const sessionIdsForShop = new Set();
-        const wantShop = normShop(shopDomain);
         sessionsById.forEach((row) => {
-          const matchShop = row.shop_domain && normShop(row.shop_domain) === wantShop;
           const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
-          if (matchShop || matchUser) sessionIdsForShop.add(norm(row.id));
+          if (matchUser) sessionIdsForShop.add(norm(row.id));
         });
         if (sessionIdsForShop.size === 0 && sessionsById.length > 0) {
-          const allNull = sessionsById.every((r) => !r.shop_domain && !r.user_id);
+          const allNull = sessionsById.every((r) => !r.user_id);
           if (allNull || sessionsById.length === 1) {
             sessionsById.forEach((row) => sessionIdsForShop.add(norm(row.id)));
           }
@@ -137,22 +135,10 @@ export async function loader({ request }) {
       }
     }
 
-    // 1) PRIORIDADE: tryon_sessions + user_measurements
-    const selectTryon = "select=id,user_id,shop_domain,session_start_time,session_end_time,created_at,updated_at";
+    // 1) tryon_sessions (sem shop_domain) + user_measurements — só por user_id ou sem filtro
+    const selectTryon = "select=id,user_id,session_start_time,session_end_time,created_at,updated_at";
     const orderTryon = "order=session_start_time.desc";
     const orderTryonCreated = "order=created_at.desc";
-
-    const buildTryonUrlByShop = (withSince) => {
-      const parts = [
-        `shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-        selectTryon,
-        orderTryon,
-        "limit=500",
-      ];
-      if (userId) parts.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
-      if (withSince && since) parts.push(`session_start_time=gte.${encodeURIComponent(since)}`);
-      return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
-    };
 
     const buildTryonUrlByUser = (withSince) => {
       if (!userId) return null;
@@ -176,19 +162,12 @@ export async function loader({ request }) {
       return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
     };
 
+    const buildTryonUrlNoFilter = () =>
+      `${SUPABASE_URL}/rest/v1/tryon_sessions?select=id,user_id,created_at,updated_at&order=created_at.desc&limit=500`;
+
     let tryonSessions = [];
     try {
-      tryonSessions = await fetchSupabaseJson(buildTryonUrlByShop(true));
-    } catch (_errByShop) {
-      tryonSessions = [];
-      if (since) {
-        try {
-          tryonSessions = await fetchSupabaseJson(buildTryonUrlByShop(false));
-        } catch (_e) {
-          tryonSessions = [];
-        }
-      }
-      if (tryonSessions.length === 0 && userId) {
+      if (userId) {
         try {
           tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(true));
         } catch (_e) {
@@ -203,31 +182,22 @@ export async function loader({ request }) {
           }
         }
       }
-    }
-    if (tryonSessions.length === 0 && userId) {
-      try {
-        tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(true));
-      } catch (_e) {
+      if (tryonSessions.length === 0) {
         try {
-          tryonSessions = await fetchSupabaseJson(buildTryonUrlByUser(false));
-        } catch (_e2) {
-          try {
-            tryonSessions = await fetchSupabaseJson(buildTryonUrlMinimal());
-          } catch (_e3) {
-            tryonSessions = [];
+          tryonSessions = await fetchSupabaseJson(buildTryonUrlNoFilter());
+          if (Array.isArray(tryonSessions) && userId) {
+            tryonSessions = tryonSessions.filter((row) => row.user_id && norm(row.user_id) === norm(userId));
           }
+          if (!Array.isArray(tryonSessions) || tryonSessions.length === 0) {
+            tryonSessions = await fetchSupabaseJson(buildTryonUrlNoFilter());
+          }
+        } catch (_e) {
+          tryonSessions = [];
         }
       }
+    } catch (_err) {
+      tryonSessions = [];
     }
-
-    if (tryonSessions.length > 0 && shopDomain) {
-      const wantShop = normShop(shopDomain);
-      const filtered = tryonSessions.filter(
-        (row) => !row.shop_domain || normShop(row.shop_domain) === wantShop
-      );
-      if (filtered.length > 0) tryonSessions = filtered;
-    }
-
     if (Array.isArray(tryonSessions) && tryonSessions.length > 0) {
       const tryonIds = tryonSessions
         .map((row) => row?.id)
@@ -360,15 +330,13 @@ export async function loader({ request }) {
       }
       if (umBySession.size === 0 && data.length > 0) {
         try {
-          const minimalSelect = "select=id,user_id,shop_domain,created_at,updated_at";
+          const minimalSelect = "select=id,user_id,created_at,updated_at";
           const noFilterUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?${minimalSelect}&order=created_at.desc&limit=500`;
           let lastResortSessions = await fetchSupabaseJson(noFilterUrl);
           if (!Array.isArray(lastResortSessions)) lastResortSessions = [];
-          const wantShop = normShop(shopDomain);
           lastResortSessions = lastResortSessions.filter((row) => {
-            const matchShop = row.shop_domain && normShop(row.shop_domain) === wantShop;
             const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
-            return matchShop || matchUser;
+            return matchUser;
           });
           if (lastResortSessions.length === 0 && userId) {
             const byUserUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&${minimalSelect}&order=created_at.desc&limit=500`;
@@ -376,7 +344,7 @@ export async function loader({ request }) {
           }
           if (lastResortSessions.length === 0) {
             lastResortSessions = await fetchSupabaseJson(noFilterUrl);
-            lastResortSessions = Array.isArray(lastResortSessions) ? lastResortSessions.filter((r) => !r.shop_domain && !r.user_id) : [];
+            lastResortSessions = Array.isArray(lastResortSessions) ? lastResortSessions.filter((r) => !r.user_id) : [];
           }
           if (Array.isArray(lastResortSessions) && lastResortSessions.length > 0) {
             const ids = lastResortSessions.map((r) => r?.id).filter(Boolean).slice(0, 500);

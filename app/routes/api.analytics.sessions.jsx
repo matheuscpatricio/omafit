@@ -1,6 +1,7 @@
 /**
  * GET /api/analytics/sessions
- * Busca session_analytics no Supabase usando service role key (ignora RLS).
+ * Prioriza dados de user_measurements (join com tryon_sessions) e
+ * usa session_analytics apenas como fallback.
  * Query: shop_domain, user_id (opcional), since (ISO date opcional).
  */
 import { authenticate } from "../shopify.server";
@@ -36,8 +37,108 @@ export async function loader({ request }) {
       );
     }
 
-    // Monta query: shop_domain obrigatório; opcional user_id e since (created_at >= since)
-    const buildUrl = (withSince) => {
+    const headers = {
+      apikey: SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+    };
+
+    async function fetchSupabaseJson(urlToFetch) {
+      const response = await fetch(urlToFetch, { headers });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`HTTP ${response.status} - ${text}`);
+      }
+      return await response.json();
+    }
+
+    // 1) PRIORIDADE: tryon_sessions + user_measurements
+    const buildTryonUrl = (withSince) => {
+      const parts = [
+        `shop_domain=eq.${encodeURIComponent(shopDomain)}`,
+        "select=id,user_id,shop_domain,session_start_time,session_end_time,created_at,updated_at",
+        "order=session_start_time.desc",
+        "limit=500",
+      ];
+      if (userId) parts.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
+      if (withSince && since) parts.push(`session_start_time=gte.${encodeURIComponent(since)}`);
+      return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
+    };
+
+    let tryonSessions = [];
+    try {
+      tryonSessions = await fetchSupabaseJson(buildTryonUrl(true));
+    } catch (err) {
+      // Fallback para schema sem session_start_time indexável no filtro.
+      if (since) {
+        try {
+          tryonSessions = await fetchSupabaseJson(buildTryonUrl(false));
+        } catch (_err) {
+          tryonSessions = [];
+        }
+      }
+    }
+
+    if (Array.isArray(tryonSessions) && tryonSessions.length > 0) {
+      const tryonIds = tryonSessions
+        .map((row) => row?.id)
+        .filter(Boolean)
+        .slice(0, 500);
+
+      if (tryonIds.length > 0) {
+        // Quebra em lotes para evitar URL grande demais.
+        const measurements = [];
+        for (let i = 0; i < tryonIds.length; i += 100) {
+          const chunk = tryonIds.slice(i, i + 100);
+          const inClause = chunk.map((id) => String(id)).join(",");
+          const measurementsUrl =
+            `${SUPABASE_URL}/rest/v1/user_measurements?tryon_session_id=in.(${encodeURIComponent(inClause)})&select=*`;
+          try {
+            const rows = await fetchSupabaseJson(measurementsUrl);
+            if (Array.isArray(rows)) measurements.push(...rows);
+          } catch (err) {
+            console.warn("[api.analytics.sessions] user_measurements chunk failed:", err?.message || err);
+          }
+        }
+
+        if (measurements.length > 0) {
+          const bySessionId = new Map();
+          measurements.forEach((m) => {
+            const sid = m?.tryon_session_id;
+            if (!sid) return;
+            if (!bySessionId.has(sid)) bySessionId.set(sid, []);
+            bySessionId.get(sid).push(m);
+          });
+
+          const combined = [];
+          tryonSessions.forEach((sessionRow) => {
+            const sid = sessionRow?.id;
+            const list = bySessionId.get(sid) || [];
+            if (list.length === 0) return;
+            // Usa o último registro de medição como fonte primária.
+            const measurement = list[list.length - 1];
+            combined.push({
+              ...sessionRow,
+              ...measurement,
+              created_at:
+                sessionRow?.session_start_time ||
+                sessionRow?.created_at ||
+                measurement?.created_at ||
+                measurement?.updated_at ||
+                null,
+              user_measurements: JSON.stringify(measurement),
+            });
+          });
+
+          if (combined.length > 0) {
+            return Response.json({ sessions: combined, source: "user_measurements" });
+          }
+        }
+      }
+    }
+
+    // 2) FALLBACK: session_analytics
+    const buildSessionAnalyticsUrl = (withSince) => {
       const parts = [
         `shop_domain=eq.${encodeURIComponent(shopDomain)}`,
         "select=*",
@@ -49,36 +150,29 @@ export async function loader({ request }) {
       return `${SUPABASE_URL}/rest/v1/session_analytics?${parts.join("&")}`;
     };
 
-    let response = await fetch(buildUrl(true), {
-      headers: {
-        apikey: SUPABASE_SERVICE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    // Se 400 (ex.: coluna ou formato de data), tenta sem filtro de data
-    if (response.status === 400 && since) {
-      response = await fetch(buildUrl(false), {
-        headers: {
-          apikey: SUPABASE_SERVICE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-          "Content-Type": "application/json",
-        },
-      });
-    }
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("[api.analytics.sessions] Supabase error:", response.status, text);
+    let response;
+    try {
+      response = await fetch(buildSessionAnalyticsUrl(true), { headers });
+      if (response.status === 400 && since) {
+        response = await fetch(buildSessionAnalyticsUrl(false), { headers });
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        console.error("[api.analytics.sessions] Supabase fallback error:", response.status, text);
+        return Response.json(
+          { error: "Failed to fetch sessions", details: text },
+          { status: response.status }
+        );
+      }
+      const data = await response.json();
+      return Response.json({ sessions: data, source: "session_analytics" });
+    } catch (fallbackErr) {
+      console.error("[api.analytics.sessions] fallback failed:", fallbackErr);
       return Response.json(
-        { error: "Failed to fetch sessions", details: text },
-        { status: response.status }
+        { error: fallbackErr?.message || "Failed to fetch sessions" },
+        { status: 500 }
       );
     }
-
-    const data = await response.json();
-    return Response.json({ sessions: data });
   } catch (err) {
     console.error("[api.analytics.sessions]", err);
     return Response.json(

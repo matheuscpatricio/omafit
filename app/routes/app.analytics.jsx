@@ -790,6 +790,10 @@ export default function AnalyticsPage() {
 
       const durationSeconds = sessionsData
         .map((s) => {
+          const directDuration = Number(s?.duration_seconds);
+          if (Number.isFinite(directDuration) && directDuration > 0 && directDuration <= 7200) {
+            return directDuration;
+          }
           const startRaw = s?.session_start_time || s?.created_at;
           const endRaw = s?.session_end_time || s?.updated_at;
           if (!startRaw || !endRaw) return null;

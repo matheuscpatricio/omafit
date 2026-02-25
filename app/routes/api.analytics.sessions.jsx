@@ -53,6 +53,74 @@ export async function loader({ request }) {
       return await response.json();
     }
 
+    async function enrichCollectionHandlesFromShopify(rows) {
+      if (!Array.isArray(rows) || rows.length === 0) return rows;
+
+      const toGid = (productId) => {
+        if (!productId) return null;
+        const raw = String(productId).trim();
+        if (!raw) return null;
+        if (raw.startsWith("gid://shopify/Product/")) return raw;
+        if (/^\d+$/.test(raw)) return `gid://shopify/Product/${raw}`;
+        return null;
+      };
+
+      const missing = rows.filter((r) => !r?.collection_handle && r?.product_id);
+      if (missing.length === 0) return rows;
+
+      const gids = [...new Set(missing.map((r) => toGid(r.product_id)).filter(Boolean))];
+      if (gids.length === 0) return rows;
+
+      const mapById = new Map();
+      const mapByGid = new Map();
+      const query = `#graphql
+        query ProductCollections($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              collections(first: 1) {
+                edges {
+                  node {
+                    handle
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      for (let i = 0; i < gids.length; i += 100) {
+        const chunk = gids.slice(i, i + 100);
+        try {
+          const gqlRes = await admin.graphql(query, { variables: { ids: chunk } });
+          const gqlJson = await gqlRes.json();
+          const nodes = gqlJson?.data?.nodes ?? [];
+          nodes.forEach((node) => {
+            const gid = node?.id;
+            const handle = node?.collections?.edges?.[0]?.node?.handle || null;
+            if (!gid || !handle) return;
+            mapByGid.set(gid, handle);
+            const numId = String(gid).split("/").pop();
+            if (numId) mapById.set(numId, handle);
+          });
+        } catch (_e) {
+          // Se Shopify falhar, mantém dados atuais sem bloquear analytics.
+        }
+      }
+
+      return rows.map((row) => {
+        if (row?.collection_handle) return row;
+        const rawProductId = row?.product_id != null ? String(row.product_id).trim() : "";
+        if (!rawProductId) return row;
+        const byNum = mapById.get(rawProductId);
+        const byGid = mapByGid.get(rawProductId);
+        const handle = byNum || byGid || null;
+        if (!handle) return row;
+        return { ...row, collection_handle: handle };
+      });
+    }
+
     const norm = (v) => (v != null ? String(v).toLowerCase() : "");
     const normShop = (s) => (s != null ? String(s).toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "");
     const debugInfo = debug ? { step: "", measurementsFirst: 0, tryonSessionsById: 0, sessionIdsForShop: 0 } : null;
@@ -130,7 +198,8 @@ export async function loader({ request }) {
             debugInfo.tryonSessionsById = sessionsById.length;
             debugInfo.sessionIdsForShop = sessionIdsForShop.size;
           }
-          return Response.json(withDebug({ sessions: combined, source: "user_measurements" }));
+          const enriched = await enrichCollectionHandlesFromShopify(combined);
+          return Response.json(withDebug({ sessions: enriched, source: "user_measurements" }));
         }
       }
     }
@@ -250,7 +319,8 @@ export async function loader({ request }) {
           });
 
           if (combined.length > 0) {
-            return Response.json({ sessions: combined, source: "user_measurements" });
+            const enriched = await enrichCollectionHandlesFromShopify(combined);
+            return Response.json({ sessions: enriched, source: "user_measurements" });
           }
         }
       }
@@ -377,7 +447,8 @@ export async function loader({ request }) {
               });
             });
             if (combined.length > 0) {
-              return Response.json(withDebug({ sessions: combined, source: "user_measurements" }));
+              const enriched = await enrichCollectionHandlesFromShopify(combined);
+              return Response.json(withDebug({ sessions: enriched, source: "user_measurements" }));
             }
           }
         } catch (_lastErr) {
@@ -412,7 +483,8 @@ export async function loader({ request }) {
         }
       }
       const source = umBySession.size > 0 ? "session_analytics_with_user_measurements" : "session_analytics";
-      return Response.json(withDebug({ sessions: data, source }));
+      const enrichedData = await enrichCollectionHandlesFromShopify(data);
+      return Response.json(withDebug({ sessions: enrichedData, source }));
     } catch (fallbackErr) {
       console.error("[api.analytics.sessions] fallback failed:", fallbackErr);
       return Response.json(

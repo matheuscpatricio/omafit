@@ -146,49 +146,24 @@ export default function WidgetPage() {
 
       console.log('[Widget] Carregando configuração para shop_domain:', shopDomain);
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
-        {
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
+      const response = await fetch('/api/widget-config', { credentials: 'include' });
       if (response.ok) {
-        const responseText = await response.text();
-        
-        if (responseText && responseText.trim().length > 0) {
-          try {
-            const data = JSON.parse(responseText);
-            if (data && Array.isArray(data) && data.length > 0) {
-              const loadedConfig = data[0];
-              setConfigId(loadedConfig.id);
-              setConfig({
-                link_text: loadedConfig.link_text || t('widget.defaultLinkText'),
-                store_logo: loadedConfig.store_logo || '',
-                primary_color: loadedConfig.primary_color || '#810707',
-                widget_enabled: loadedConfig.widget_enabled !== false,
-                excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections),
-                admin_locale: loadedConfig.admin_locale || locale || 'en'
-              });
-            } else if (data && data.id) {
-              setConfigId(data.id);
-              setConfig({
-                link_text: data.link_text || t('widget.defaultLinkText'),
-                store_logo: data.store_logo || '',
-                primary_color: data.primary_color || '#810707',
-                widget_enabled: data.widget_enabled !== false,
-                excluded_collections: normalizeExcludedCollections(data.excluded_collections),
-                admin_locale: data.admin_locale || locale || 'en'
-              });
-            }
-          } catch (e) {
-            console.error('[Widget] Erro ao fazer parse do JSON:', e, 'Resposta:', responseText);
-          }
+        const json = await response.json().catch(() => ({}));
+        const loadedConfig = json?.config || null;
+        if (loadedConfig) {
+          setConfigId(loadedConfig.id);
+          setConfig({
+            link_text: loadedConfig.link_text || t('widget.defaultLinkText'),
+            store_logo: loadedConfig.store_logo || '',
+            primary_color: loadedConfig.primary_color || '#810707',
+            widget_enabled: loadedConfig.widget_enabled !== false,
+            excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections),
+            admin_locale: loadedConfig.admin_locale || locale || 'en'
+          });
         }
+      } else {
+        const body = await response.text().catch(() => '');
+        console.warn('[Widget] loadConfig via API falhou:', response.status, body);
       }
     } catch (err) {
       console.error('[Widget] Erro ao carregar configuração:', err);
@@ -359,13 +334,6 @@ export default function WidgetPage() {
       setError(null);
       setSuccess(false);
 
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error('Supabase não configurado. Verifique as variáveis de ambiente VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Railway.');
-      }
-
       console.log('[Widget] Salvando configuração para shop_domain:', shopDomain);
       console.log('[Widget] ConfigId atual:', configId);
 
@@ -395,120 +363,40 @@ export default function WidgetPage() {
         console.warn('[Widget] ⚠️ store_logo não parece ser uma URL válida:', storeLogoValue.substring(0, 50));
       }
 
-      let response;
-      
-      const savePayload = async (dataToSave) => {
-        // Se já temos um configId, usar PATCH para atualizar
-        if (configId) {
-          console.log('[Widget] Atualizando configuração existente (PATCH)');
-          return fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?id=eq.${configId}`,
-            {
-              method: 'PATCH',
-              headers: {
-                'apikey': supabaseKey,
-                'Authorization': `Bearer ${supabaseKey}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-              },
-              body: JSON.stringify(dataToSave)
-            }
-          );
-        }
-
-        // Se não temos configId, tentar UPSERT via POST
-        console.log('[Widget] Criando/atualizando configuração (UPSERT)');
-        return fetch(
-          `${supabaseUrl}/rest/v1/widget_configurations`,
-          {
-            method: 'POST',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'resolution=merge-duplicates'
-            },
-            body: JSON.stringify(dataToSave)
-          }
-        );
-      };
-
-      response = await savePayload(payload);
-
-      // Compatibilidade: se a coluna excluded_collections ainda não existir, salva sem ela
-      if (!response.ok) {
-        const initialErrorText = await response.text().catch(() => '');
-        const hasMissingColumnError =
-          initialErrorText.includes('excluded_collections') &&
-          (initialErrorText.includes('column') || initialErrorText.includes('42703'));
-
-        if (hasMissingColumnError) {
-          console.warn('[Widget] Coluna excluded_collections não encontrada. Repetindo salvamento sem esse campo.');
-          const { excluded_collections, ...payloadWithoutExcluded } = payload;
-          response = await savePayload(payloadWithoutExcluded);
-          if (response.ok) {
-            setError(t('widget.warnExcludedCollectionsColumnMissing'));
-          }
-        } else {
-          // Reconstituir response-like flow preservando a mensagem para o bloco de erro abaixo
-          throw new Error(initialErrorText || t('widget.errorSaveConfig'));
-        }
-      }
+      const response = await fetch('/api/widget-config', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
       if (response.ok) {
-        const responseText = await response.text();
-        let data = null;
+        const json = await response.json().catch(() => ({}));
+        const data = json?.config || null;
         
         console.log('[Widget] ✅ Resposta do salvamento recebida:', {
           status: response.status,
           statusText: response.statusText,
           ok: response.ok,
-          responseLength: responseText.length,
-          responsePreview: responseText.substring(0, 200)
+          responseLength: JSON.stringify(json || {}).length,
+          responsePreview: JSON.stringify(json || {}).substring(0, 200)
         });
         
         // Log adicional: verificar se store_logo foi salvo corretamente
         console.log('[Widget] Verificando se store_logo foi salvo...');
         console.log('[Widget] store_logo enviado:', payload.store_logo ? `✅ ${payload.store_logo.substring(0, 80)}...` : '❌ null');
         
-        // Tentar fazer parse do JSON apenas se houver conteúdo
-        if (responseText && responseText.trim().length > 0) {
-          try {
-            data = JSON.parse(responseText);
-            if (data && Array.isArray(data) && data.length > 0 && data[0].id) {
-              setConfigId(data[0].id);
-              console.log('[Widget] ConfigId salvo:', data[0].id);
-              
-              // Verificar se store_logo foi salvo corretamente na resposta
-              if (data[0].store_logo) {
-                console.log('[Widget] ✅ store_logo salvo no banco (confirmado na resposta):', data[0].store_logo.substring(0, 100) + '...');
-              } else {
-                console.warn('[Widget] ⚠️ store_logo não aparece na resposta (pode ser normal se foi PATCH)');
-                // Buscar novamente para confirmar
-                await loadConfig();
-              }
-            } else if (data && data.id) {
-              setConfigId(data.id);
-              console.log('[Widget] ConfigId salvo:', data.id);
-              
-              // Verificar se store_logo foi salvo
-              if (data.store_logo) {
-                console.log('[Widget] ✅ store_logo salvo no banco (confirmado na resposta):', data.store_logo.substring(0, 100) + '...');
-              }
-            } else if (data && Array.isArray(data) && data.length === 0) {
-              // PATCH pode retornar array vazio, buscar novamente
-              console.log('[Widget] PATCH retornou vazio, buscando configuração novamente para confirmar store_logo...');
-              await loadConfig();
-            }
-          } catch (e) {
-            console.warn('[Widget] Resposta não é JSON válido, mas status é OK:', responseText);
-            // Se o status é OK, buscar novamente para garantir que temos o ID e store_logo
-            console.log('[Widget] Buscando configuração novamente para confirmar salvamento...');
+        if (data && data.id) {
+          setConfigId(data.id);
+          console.log('[Widget] ConfigId salvo:', data.id);
+          if (data.store_logo) {
+            console.log('[Widget] ✅ store_logo salvo no banco (confirmado na resposta):', data.store_logo.substring(0, 100) + '...');
+          } else {
+            console.warn('[Widget] ⚠️ store_logo não aparece na resposta consolidada, recarregando...');
             await loadConfig();
           }
         } else {
-          // Se não recebemos resposta mas status é OK, buscar novamente para confirmar
-          console.log('[Widget] Resposta vazia, buscando configuração novamente para confirmar store_logo...');
+          console.log('[Widget] Resposta sem config consolidada, recarregando...');
           await loadConfig();
         }
         
@@ -517,21 +405,12 @@ export default function WidgetPage() {
         setTimeout(async () => {
           try {
             // Buscar configuração diretamente para verificar
-            const verifyResponse = await fetch(
-              `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=store_logo`,
-              {
-                headers: {
-                  'apikey': supabaseKey,
-                  'Authorization': `Bearer ${supabaseKey}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
+            const verifyResponse = await fetch('/api/widget-config', { credentials: 'include' });
             
             if (verifyResponse.ok) {
-              const verifyData = await verifyResponse.json();
-              if (verifyData && verifyData.length > 0) {
-                const savedLogo = verifyData[0].store_logo;
+              const verifyJson = await verifyResponse.json().catch(() => ({}));
+              const savedLogo = verifyJson?.config?.store_logo;
+              if (savedLogo !== undefined) {
                 if (savedLogo) {
                   console.log('[Widget] ✅ VERIFICAÇÃO FINAL: store_logo salvo corretamente no banco!');
                   console.log('[Widget] URL salva:', savedLogo.substring(0, 100) + '...');
@@ -539,7 +418,7 @@ export default function WidgetPage() {
                   console.log('[Widget] URL corresponde ao esperado?', savedLogo === payload.store_logo ? '✅ SIM' : '⚠️ NÃO (pode ser normal se foi truncado ou modificado)');
                 } else {
                   console.error('[Widget] ❌ VERIFICAÇÃO FINAL: store_logo NÃO foi salvo (está null/vazio)');
-                }
+                }                
               }
             }
           } catch (e) {

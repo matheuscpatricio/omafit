@@ -139,6 +139,7 @@ export async function loader({ request }) {
           const saved = await writeBillingToSupabase(session.shop, {
             plan,
             billingStatus: "active",
+            admin,
           });
           if (saved) {
             return Response.json({

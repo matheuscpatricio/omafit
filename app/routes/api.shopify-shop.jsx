@@ -132,6 +132,7 @@ export const loader = async ({ request }) => {
           await writeBillingToSupabase(shop, {
             plan: "starter",
             billingStatus: "inactive",
+            admin,
           });
           shopRow = await fetchShopRow();
         } catch (err) {

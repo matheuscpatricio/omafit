@@ -43,7 +43,7 @@ export const loader = async ({ request }) => {
 export default function WidgetPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { t } = useAppI18n();
+  const { t, locale } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
   
   // Mostrar erro se shop domain não foi encontrado
@@ -67,7 +67,8 @@ export default function WidgetPage() {
     store_logo: '',
     primary_color: '#810707',
     widget_enabled: true,
-    excluded_collections: []
+    excluded_collections: [],
+    admin_locale: locale || 'en'
   });
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [collectionsError, setCollectionsError] = useState(null);
@@ -170,7 +171,8 @@ export default function WidgetPage() {
                 store_logo: loadedConfig.store_logo || '',
                 primary_color: loadedConfig.primary_color || '#810707',
                 widget_enabled: loadedConfig.widget_enabled !== false,
-                excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections)
+                excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections),
+                admin_locale: loadedConfig.admin_locale || locale || 'en'
               });
             } else if (data && data.id) {
               setConfigId(data.id);
@@ -179,7 +181,8 @@ export default function WidgetPage() {
                 store_logo: data.store_logo || '',
                 primary_color: data.primary_color || '#810707',
                 widget_enabled: data.widget_enabled !== false,
-                excluded_collections: normalizeExcludedCollections(data.excluded_collections)
+                excluded_collections: normalizeExcludedCollections(data.excluded_collections),
+                admin_locale: data.admin_locale || locale || 'en'
               });
             }
           } catch (e) {
@@ -375,7 +378,8 @@ export default function WidgetPage() {
         store_logo: storeLogoValue || null, // null ao invés de string vazia
         primary_color: configToSave.primary_color || '#810707',
         widget_enabled: configToSave.widget_enabled !== false,
-        excluded_collections: normalizeExcludedCollections(configToSave.excluded_collections)
+        excluded_collections: normalizeExcludedCollections(configToSave.excluded_collections),
+        admin_locale: configToSave.admin_locale || locale || 'en'
       };
       
       console.log('[Widget] Payload a ser enviado:', {

@@ -307,6 +307,20 @@
     return 'pt-BR';
   }
 
+  function normalizeLanguageTag(value) {
+    try {
+      var raw = String(value || '').trim().replace('_', '-');
+      if (!raw) return '';
+      if (!/^[a-z]{2}(-[A-Z]{2})?$/i.test(raw)) return '';
+      var parts = raw.split('-');
+      var lang = (parts[0] || '').toLowerCase();
+      var region = parts[1] ? parts[1].toUpperCase() : '';
+      return region ? (lang + '-' + region) : lang;
+    } catch (_e) {
+      return '';
+    }
+  }
+
   // Buscar um produto complementar da MESMA coleção do produto atual
   async function getComplementaryProduct(currentCollectionHandle) {
     try {
@@ -460,7 +474,7 @@
         'Content-Type': 'application/json'
       };
       let configResponse = await fetch(
-        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,created_at,updated_at`,
+        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at`,
         { headers: configHeaders }
       );
       if (!configResponse.ok) {
@@ -472,7 +486,7 @@
         if (missingExcludedColumn) {
           console.warn('⚠️ Coluna excluded_collections não encontrada no banco. Repetindo busca sem essa coluna.');
           configResponse = await fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,created_at,updated_at`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at`,
             { headers: configHeaders }
           );
         } else {
@@ -681,6 +695,7 @@
           text: config?.primary_color || '#810707',
           overlay: (config?.primary_color || '#810707') + 'CC'
         },
+        adminLocale: config?.admin_locale || '',
         shopDomain: shopDomain,
         widgetEnabled: finalWidgetEnabled,
         isActive: isWidgetActive,
@@ -1108,7 +1123,10 @@
 
     // Garantir que shopDomain está disponível
     const shopDomain = OMAFIT_CONFIG.shopDomain || '';
-    const storeLanguage = detectStoreLanguage();
+    const storeLanguage =
+      normalizeLanguageTag(OMAFIT_CONFIG.adminLocale) ||
+      normalizeLanguageTag(detectStoreLanguage()) ||
+      'pt-BR';
     const detectedStoreName = detectStoreDisplayName(shopDomain);
     const resolvedStoreName =
       (OMAFIT_CONFIG.storeName && String(OMAFIT_CONFIG.storeName).trim()) ||
@@ -1956,7 +1974,11 @@
     console.log('[OmafitCart] variantId final:', variantId);
     var properties = { _source: 'omafit_tryon' };
     if (metadata.session_id) properties._omafit_session_id = metadata.session_id;
-    var cartLanguage = detectStoreLanguage() || metadata.language || '';
+    var cartLanguage =
+      normalizeLanguageTag(metadata.language) ||
+      normalizeLanguageTag(OMAFIT_CONFIG.adminLocale) ||
+      normalizeLanguageTag(detectStoreLanguage()) ||
+      '';
     if (cartLanguage) properties._omafit_language = cartLanguage;
 
     var addResult = await addToCart({ variantId: variantId, quantity: quantity || 1, properties: properties });

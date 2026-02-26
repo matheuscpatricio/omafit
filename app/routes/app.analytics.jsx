@@ -411,9 +411,6 @@ export default function AnalyticsPage() {
             if (byShop.length > 0) {
               sessionsData = byShop;
               console.log(`[Analytics] Found ${sessionsData.length} sessions in session_analytics (fallback shop_domain)`);
-            } else if (fetchedData.length > 0) {
-              sessionsData = fetchedData;
-              console.log(`[Analytics] Using all ${fetchedData.length} from session_analytics (fallback)`);
             }
           }
         } catch (err) {
@@ -434,13 +431,10 @@ export default function AnalyticsPage() {
             );
             if (sessionsRes.ok) {
               const fetchedData = await sessionsRes.json();
-              const byShop = fetchedData.filter((r) => r.shop_domain === shopDomain || r.user_id === userId || (!r.shop_domain && !r.user_id));
+              const byShop = fetchedData.filter((r) => r.shop_domain === shopDomain || (userId && r.user_id === userId));
               if (byShop.length > 0) {
                 sessionsData = byShop;
                 console.log(`[Analytics] Found ${sessionsData.length} sessions in tryon_sessions (fallback)`);
-              } else if (fetchedData.length > 0) {
-                sessionsData = fetchedData;
-                console.log(`[Analytics] Using all ${fetchedData.length} from tryon_sessions (no shop filter)`);
               }
             }
           } catch (err) {
@@ -504,9 +498,6 @@ export default function AnalyticsPage() {
               if (matchingData.length > 0) {
                 sessionsData = matchingData;
                 console.log(`[Analytics] ✅ Found ${sessionsData.length} matching sessions in session_analytics (without date filter)`);
-              } else if (allData.length > 0) {
-                sessionsData = allData;
-                console.log(`[Analytics] ⚠️ No exact match found, but using all ${allData.length} records for analysis`);
               } else {
                 console.log(`[Analytics] ⚠️ No exact match found and no data available.`);
               }

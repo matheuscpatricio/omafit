@@ -16,6 +16,16 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
   }
 `;
 
+const GET_SHOP_CONTACT = `#graphql
+  query GetShopContactForUserBinding {
+    shop {
+      email
+      myshopifyDomain
+      name
+    }
+  }
+`;
+
 // Ordem importa: mais específicos primeiro; "professional" antes de "pro"; "starter"/"basic" antes de outros
 const PLAN_MATCHERS = [
   { pattern: "omafit starter", plan: "starter" },
@@ -132,6 +142,72 @@ async function findExistingUserId(shop, supabaseUrl, supabaseKey) {
   }
 
   return null;
+}
+
+async function findUserIdByEmail(email, supabaseUrl, supabaseKey) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const headers = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`,
+    "Content-Type": "application/json",
+  };
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/users?select=id,email&email=eq.${encodeURIComponent(normalized)}&limit=1`,
+      { headers },
+    );
+    if (!response.ok) return null;
+    const rows = await response.json();
+    return rows?.[0]?.id || null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function resolveShopUserBinding({ admin, shop, supabaseUrl, supabaseKey }) {
+  const existingUserId = await findExistingUserId(shop, supabaseUrl, supabaseKey);
+  if (existingUserId) {
+    return { userId: existingUserId, ownerEmail: null, source: "existing" };
+  }
+
+  if (!admin) {
+    return { userId: null, ownerEmail: null, source: "no-admin" };
+  }
+
+  try {
+    const response = await admin.graphql(GET_SHOP_CONTACT);
+    const json = await response.json();
+    const ownerEmail = String(json?.data?.shop?.email || "").trim().toLowerCase();
+    if (!ownerEmail) {
+      return { userId: null, ownerEmail: null, source: "shop-email-missing" };
+    }
+    const resolvedUserId = await findUserIdByEmail(ownerEmail, supabaseUrl, supabaseKey);
+    return { userId: resolvedUserId || null, ownerEmail, source: resolvedUserId ? "shop-email-match" : "shop-email-no-match" };
+  } catch (_err) {
+    return { userId: null, ownerEmail: null, source: "shop-email-query-failed" };
+  }
+}
+
+async function patchWidgetKeysUserId(shop, userId, supabaseUrl, supabaseKey) {
+  if (!shop || !userId) return;
+  const headers = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`,
+    "Content-Type": "application/json",
+  };
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shop)}`,
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ user_id: userId, updated_at: new Date().toISOString() }),
+      },
+    );
+  } catch (_err) {
+    // non-blocking
+  }
 }
 
 async function inferValueForMissingColumn(columnName, shop, payload, context = {}) {
@@ -314,7 +390,7 @@ async function upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey) {
   return false;
 }
 
-export async function writeBillingToSupabase(shop, { plan, billingStatus }) {
+export async function writeBillingToSupabase(shop, { plan, billingStatus, admin }) {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const supabaseKey =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -328,16 +404,27 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus }) {
   const normalizedPlan = plan === "basic" ? "starter" : (plan || "starter");
   const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? 100;
   const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? 0.18;
+  const binding = await resolveShopUserBinding({
+    admin,
+    shop,
+    supabaseUrl,
+    supabaseKey,
+  });
   const payload = {
     plan: normalizedPlan,
     billing_status: billingStatus || "inactive",
     images_included: imagesIncluded,
     price_per_extra_image: pricePerExtra,
     updated_at: new Date().toISOString(),
+    ...(binding.ownerEmail ? { shop_owner_email: binding.ownerEmail } : {}),
+    ...(binding.userId ? { user_id: binding.userId } : {}),
   };
 
   const ok = await upsertShopBillingRow(shop, payload, supabaseUrl, supabaseKey);
   if (!ok) return null;
+  if (binding.userId) {
+    await patchWidgetKeysUserId(shop, binding.userId, supabaseUrl, supabaseKey);
+  }
   return { plan: normalizedPlan, imagesIncluded, pricePerExtra };
 }
 
@@ -414,6 +501,7 @@ export async function syncBillingFromShopify(admin, shop) {
     const saved = await writeBillingToSupabase(shop, {
       plan: normalizedPlan,
       billingStatus: hasActiveSubscription ? "active" : "inactive",
+      admin,
     });
     if (saved) {
       console.log("[Billing Sync] Upserted billing row:", { shop, plan: saved.plan, imagesIncluded: saved.imagesIncluded });

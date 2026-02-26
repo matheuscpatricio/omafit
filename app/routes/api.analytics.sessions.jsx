@@ -21,7 +21,7 @@ export async function loader({ request }) {
     }
     const url = new URL(request.url);
     const shopDomain = url.searchParams.get("shop_domain");
-    const userId = url.searchParams.get("user_id");
+    let userId = url.searchParams.get("user_id");
     const since = url.searchParams.get("since");
     const debug = url.searchParams.get("debug") === "1" || url.searchParams.get("debug") === "true";
 
@@ -51,6 +51,19 @@ export async function loader({ request }) {
         throw new Error(`HTTP ${response.status} - ${text}`);
       }
       return await response.json();
+    }
+
+    // Escopo por loja: se user_id não vier da UI, resolve via shopify_shops.
+    if (!userId) {
+      try {
+        const shopRows = await fetchSupabaseJson(
+          `${SUPABASE_URL}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id&limit=1`
+        );
+        const resolvedUserId = Array.isArray(shopRows) && shopRows[0] ? shopRows[0].user_id : null;
+        if (resolvedUserId) userId = String(resolvedUserId);
+      } catch (_e) {
+        // non-blocking
+      }
     }
 
     async function enrichCollectionHandlesFromShopify(rows) {
@@ -122,7 +135,6 @@ export async function loader({ request }) {
     }
 
     const norm = (v) => (v != null ? String(v).toLowerCase() : "");
-    const normShop = (s) => (s != null ? String(s).toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "");
     const debugInfo = debug ? { step: "", measurementsFirst: 0, tryonSessionsById: 0, sessionIdsForShop: 0 } : null;
     const withDebug = (payload) => (debug && debugInfo ? { ...payload, debug: debugInfo } : payload);
 
@@ -139,7 +151,7 @@ export async function loader({ request }) {
         measurementsFirst = [];
       }
     }
-    if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
+    if (userId && Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
       const sessionIdsFromUm = [...new Set(measurementsFirst.map((m) => m?.tryon_session_id ?? m?.tryonSessionId).filter(Boolean))];
       if (sessionIdsFromUm.length > 0) {
         let sessionsById = [];
@@ -159,12 +171,6 @@ export async function loader({ request }) {
           const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
           if (matchUser) sessionIdsForShop.add(norm(row.id));
         });
-        if (sessionIdsForShop.size === 0 && sessionsById.length > 0) {
-          const allNull = sessionsById.every((r) => !r.user_id);
-          if (allNull || sessionsById.length === 1) {
-            sessionsById.forEach((row) => sessionIdsForShop.add(norm(row.id)));
-          }
-        }
         const bySessionId = new Map();
         measurementsFirst.forEach((m) => {
           const sid = norm(m?.tryon_session_id);
@@ -204,7 +210,7 @@ export async function loader({ request }) {
       }
     }
 
-    // 1) tryon_sessions (sem shop_domain) + user_measurements — só por user_id ou sem filtro
+    // 1) tryon_sessions + user_measurements (sempre escopado por user_id da loja)
     const selectTryon = "select=id,user_id,session_start_time,session_end_time,created_at,updated_at";
     const orderTryon = "order=session_start_time.desc";
     const orderTryonCreated = "order=created_at.desc";
@@ -231,9 +237,6 @@ export async function loader({ request }) {
       return `${SUPABASE_URL}/rest/v1/tryon_sessions?${parts.join("&")}`;
     };
 
-    const buildTryonUrlNoFilter = () =>
-      `${SUPABASE_URL}/rest/v1/tryon_sessions?select=id,user_id,created_at,updated_at&order=created_at.desc&limit=500`;
-
     let tryonSessions = [];
     try {
       if (userId) {
@@ -251,19 +254,7 @@ export async function loader({ request }) {
           }
         }
       }
-      if (tryonSessions.length === 0) {
-        try {
-          tryonSessions = await fetchSupabaseJson(buildTryonUrlNoFilter());
-          if (Array.isArray(tryonSessions) && userId) {
-            tryonSessions = tryonSessions.filter((row) => row.user_id && norm(row.user_id) === norm(userId));
-          }
-          if (!Array.isArray(tryonSessions) || tryonSessions.length === 0) {
-            tryonSessions = await fetchSupabaseJson(buildTryonUrlNoFilter());
-          }
-        } catch (_e) {
-          tryonSessions = [];
-        }
-      }
+      // Sem user_id não tentamos ler tryon_sessions para evitar mistura entre lojas.
     } catch (_err) {
       tryonSessions = [];
     }
@@ -398,24 +389,12 @@ export async function loader({ request }) {
           });
         }
       }
-      if (umBySession.size === 0 && data.length > 0) {
+      if (userId && umBySession.size === 0 && data.length > 0) {
         try {
           const minimalSelect = "select=id,user_id,created_at,updated_at";
-          const noFilterUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?${minimalSelect}&order=created_at.desc&limit=500`;
-          let lastResortSessions = await fetchSupabaseJson(noFilterUrl);
+          const byUserUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&${minimalSelect}&order=created_at.desc&limit=500`;
+          let lastResortSessions = await fetchSupabaseJson(byUserUrl);
           if (!Array.isArray(lastResortSessions)) lastResortSessions = [];
-          lastResortSessions = lastResortSessions.filter((row) => {
-            const matchUser = userId && row.user_id && norm(row.user_id) === norm(userId);
-            return matchUser;
-          });
-          if (lastResortSessions.length === 0 && userId) {
-            const byUserUrl = `${SUPABASE_URL}/rest/v1/tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&${minimalSelect}&order=created_at.desc&limit=500`;
-            lastResortSessions = await fetchSupabaseJson(byUserUrl);
-          }
-          if (lastResortSessions.length === 0) {
-            lastResortSessions = await fetchSupabaseJson(noFilterUrl);
-            lastResortSessions = Array.isArray(lastResortSessions) ? lastResortSessions.filter((r) => !r.user_id) : [];
-          }
           if (Array.isArray(lastResortSessions) && lastResortSessions.length > 0) {
             const ids = lastResortSessions.map((r) => r?.id).filter(Boolean).slice(0, 500);
             const umMap = new Map();
@@ -455,33 +434,7 @@ export async function loader({ request }) {
           // keep returning session_analytics
         }
       }
-      // Quando session_analytics não tem tryon_session_id: preencher com a(s) medição(ões) mais recente(s) de user_measurements
-      if (umBySession.size === 0 && data.length > 0) {
-        try {
-          const umRecentUrl = `${SUPABASE_URL}/rest/v1/user_measurements?select=*&order=updated_at.desc&limit=50`;
-          const umRecent = await fetchSupabaseJson(umRecentUrl);
-          if (Array.isArray(umRecent) && umRecent.length > 0) {
-            data = data.map((row, idx) => {
-              const measurement = umRecent[idx] ?? umRecent[0];
-              return {
-                ...row,
-                ...measurement,
-                user_measurements: JSON.stringify(measurement),
-                gender: measurement.gender ?? row.gender,
-                recommended_size: measurement.recommended_size ?? measurement.recommendedSize ?? row.recommended_size,
-                body_type_index: measurement.body_type_index ?? measurement.bodyTypeIndex ?? row.body_type_index,
-                fit_preference_index: measurement.fit_preference_index ?? measurement.fitPreferenceIndex ?? row.fit_preference_index,
-                height: measurement.height ?? row.height,
-                weight: measurement.weight ?? row.weight,
-                collection_handle: measurement.collection_handle ?? measurement.collectionHandle ?? row.collection_handle,
-              };
-            });
-            umBySession = new Map([["filled", true]]);
-          }
-        } catch (_e) {
-          // ignora
-        }
-      }
+      // Evita fallback genérico por user_measurements recente para não misturar dados entre lojas.
       const source = umBySession.size > 0 ? "session_analytics_with_user_measurements" : "session_analytics";
       const enrichedData = await enrichCollectionHandlesFromShopify(data);
       return Response.json(withDebug({ sessions: enrichedData, source }));

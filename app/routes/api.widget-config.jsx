@@ -7,6 +7,43 @@ const SUPABASE_SERVICE_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_ANON_KEY;
 
+function normalizeSupportedLocale(rawLocale) {
+  const value = String(rawLocale || "").trim().toLowerCase();
+  if (!value) return "en";
+  if (value.startsWith("pt")) return "pt-BR";
+  if (value.startsWith("es")) return "es";
+  return "en";
+}
+
+function resolveAdminPreferredLocale(request, session) {
+  const url = new URL(request.url);
+  const localeFromQuery = url.searchParams.get("locale");
+  if (localeFromQuery) {
+    return normalizeSupportedLocale(localeFromQuery);
+  }
+
+  const localeFromShopifyHeader =
+    request.headers.get("x-shopify-locale") ||
+    request.headers.get("x-shopify-language") ||
+    "";
+  if (localeFromShopifyHeader) {
+    return normalizeSupportedLocale(localeFromShopifyHeader);
+  }
+
+  const localeFromSession = session?.locale || session?.user?.locale || "";
+  if (localeFromSession) {
+    return normalizeSupportedLocale(localeFromSession);
+  }
+
+  const acceptLanguage = request.headers.get("accept-language") || "";
+  if (acceptLanguage) {
+    const first = acceptLanguage.split(",")[0] || "";
+    return normalizeSupportedLocale(first);
+  }
+
+  return "en";
+}
+
 function normalizeExcludedCollections(value) {
   if (Array.isArray(value)) {
     return value.map((item) => String(item || "").trim()).filter(Boolean);
@@ -47,9 +84,38 @@ async function fetchConfigByShop(shopDomain) {
   return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
 }
 
+async function upsertAdminLocaleByShop(shopDomain, adminLocale) {
+  const payload = {
+    shop_domain: shopDomain,
+    admin_locale: normalizeSupportedLocale(adminLocale),
+    updated_at: new Date().toISOString(),
+  };
+
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/widget_configurations?on_conflict=shop_domain`,
+    {
+      method: "POST",
+      headers: {
+        ...supabaseHeaders(),
+        Prefer: "resolution=merge-duplicates,return=representation",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`widget_configurations locale upsert failed (${response.status}): ${text}`);
+  }
+
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+}
+
 export async function loader({ request }) {
   try {
     const { admin, session } = await authenticate.admin(request);
+    const effectiveLocale = resolveAdminPreferredLocale(request, session);
     const check = await ensureShopHasActiveBilling(admin, session.shop);
     if (!check.active) {
       return Response.json({ error: "billing_inactive" }, { status: 402 });
@@ -57,8 +123,24 @@ export async function loader({ request }) {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       return Response.json({ error: "supabase_not_configured" }, { status: 500 });
     }
-    const config = await fetchConfigByShop(session.shop);
-    return Response.json({ ok: true, config });
+    let config = await fetchConfigByShop(session.shop);
+    const configLocale = normalizeSupportedLocale(config?.admin_locale || "");
+
+    // Mantém admin_locale sincronizado com o idioma atual do admin Shopify.
+    if (!config || configLocale !== effectiveLocale) {
+      try {
+        const updated = await upsertAdminLocaleByShop(session.shop, effectiveLocale);
+        if (updated) config = updated;
+      } catch (err) {
+        console.warn("[api.widget-config][GET] locale sync failed:", err?.message || err);
+      }
+    }
+
+    if (config && !config.admin_locale) {
+      config = { ...config, admin_locale: effectiveLocale };
+    }
+
+    return Response.json({ ok: true, config, effective_locale: effectiveLocale });
   } catch (err) {
     console.error("[api.widget-config][GET]", err);
     return Response.json({ ok: false, error: err?.message || "Failed to load widget config" }, { status: 500 });
@@ -68,6 +150,7 @@ export async function loader({ request }) {
 export async function action({ request }) {
   try {
     const { admin, session } = await authenticate.admin(request);
+    const effectiveLocale = resolveAdminPreferredLocale(request, session);
     const check = await ensureShopHasActiveBilling(admin, session.shop);
     if (!check.active) {
       return Response.json({ error: "billing_inactive" }, { status: 402 });
@@ -84,7 +167,7 @@ export async function action({ request }) {
       primary_color: body?.primary_color || "#810707",
       widget_enabled: body?.widget_enabled !== false,
       excluded_collections: normalizeExcludedCollections(body?.excluded_collections),
-      admin_locale: body?.admin_locale ? String(body.admin_locale).trim() : null,
+      admin_locale: normalizeSupportedLocale(body?.admin_locale ? String(body.admin_locale).trim() : effectiveLocale),
       updated_at: new Date().toISOString(),
     };
 

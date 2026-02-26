@@ -210,7 +210,7 @@ export async function loader({ request }) {
       }
     }
 
-    // 1) tryon_sessions + user_measurements (sempre escopado por user_id da loja)
+    // 1) tryon_sessions + user_measurements (escopado por user_id quando disponível)
     const selectTryon = "select=id,user_id,session_start_time,session_end_time,created_at,updated_at";
     const orderTryon = "order=session_start_time.desc";
     const orderTryonCreated = "order=created_at.desc";
@@ -317,7 +317,7 @@ export async function loader({ request }) {
       }
     }
 
-    // 2) FALLBACK: session_analytics
+    // 2) FALLBACK: session_analytics (principal para lojas sem user_id)
     const buildSessionAnalyticsUrl = (withSince) => {
       const parts = [
         `shop_domain=eq.${encodeURIComponent(shopDomain)}`,

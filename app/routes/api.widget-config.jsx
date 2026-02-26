@@ -105,6 +105,43 @@ export async function action({ request }) {
     ];
 
     let lastError = "";
+    const patchByShopDomain = async (payload) => {
+      const patchRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(session.shop)}`,
+        {
+          method: "PATCH",
+          headers: {
+            ...supabaseHeaders(),
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!patchRes.ok) {
+        const text = await patchRes.text().catch(() => "");
+        throw new Error(`PATCH failed (${patchRes.status}): ${text}`);
+      }
+      const rows = await patchRes.json().catch(() => []);
+      return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    };
+
+    const insertPlain = async (payload) => {
+      const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/widget_configurations`, {
+        method: "POST",
+        headers: {
+          ...supabaseHeaders(),
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!insertRes.ok) {
+        const text = await insertRes.text().catch(() => "");
+        throw new Error(`INSERT failed (${insertRes.status}): ${text}`);
+      }
+      const rows = await insertRes.json().catch(() => []);
+      return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    };
+
     for (const payload of attemptBodies) {
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/widget_configurations?on_conflict=shop_domain`,
@@ -126,6 +163,17 @@ export async function action({ request }) {
         if (config) return Response.json({ ok: true, config });
       } else {
         lastError = await response.text().catch(() => "");
+        // Fallback defensivo para schema sem constraint inferível no ON CONFLICT.
+        if (String(lastError).includes("42P10")) {
+          try {
+            const patched = await patchByShopDomain(payload);
+            if (patched) return Response.json({ ok: true, config: patched });
+            const inserted = await insertPlain(payload);
+            if (inserted) return Response.json({ ok: true, config: inserted });
+          } catch (fallbackErr) {
+            lastError = fallbackErr?.message || String(fallbackErr || "");
+          }
+        }
         if (!String(lastError).includes("42703") && !String(lastError).includes("column")) {
           break;
         }

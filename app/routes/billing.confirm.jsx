@@ -35,6 +35,8 @@ export async function loader({ request }) {
     if (shop) qs.set("shop", shop);
     const host = hostFromQuery || deriveHostFromShop(shop);
     if (host) qs.set("host", host);
+    const embedded = url.searchParams.get("embedded");
+    if (embedded) qs.set("embedded", embedded);
     qs.set("billing_refresh", "1");
     return `/app?${qs.toString()}`;
   }
@@ -55,7 +57,12 @@ export async function loader({ request }) {
   } catch (authErr) {
     if (!shopFromQuery) {
       console.error("[Billing Confirm] No shop in URL:", authErr);
-      return redirect("/app");
+      const fallbackQs = new URLSearchParams();
+      if (hostFromQuery) fallbackQs.set("host", hostFromQuery);
+      const embedded = url.searchParams.get("embedded");
+      if (embedded) fallbackQs.set("embedded", embedded);
+      const suffix = fallbackQs.toString();
+      return redirect(suffix ? `/app?${suffix}` : "/app");
     }
     try {
       const { admin } = await unauthenticated.admin(shopFromQuery);

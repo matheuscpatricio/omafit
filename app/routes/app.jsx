@@ -81,7 +81,8 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const incomingHost = url.searchParams.get("host") || "";
   const hasValidHostParam = isValidEmbeddedHost(incomingHost);
-  if ((!hasValidHostParam || !incomingHost) && session?.shop) {
+  const hasEmbeddedParam = url.searchParams.get("embedded") === "1";
+  if (((!hasValidHostParam || !incomingHost) || !hasEmbeddedParam) && session?.shop) {
     const host = deriveEmbeddedHost(session.shop);
     url.searchParams.set("shop", session.shop);
     if (host) url.searchParams.set("host", host);

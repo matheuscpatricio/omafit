@@ -28,6 +28,7 @@ export const loader = async ({ request }) => {
   if (!check.active) {
     const url = new URL(request.url);
     const hostFromQuery = url.searchParams.get("host") || "";
+    const embeddedFromQuery = url.searchParams.get("embedded") || "";
     const shopHandle = String(session.shop || "").replace(/\.myshopify\.com$/i, "");
     const derivedHost = shopHandle
       ? Buffer.from(`admin.shopify.com/store/${shopHandle}`, "utf8").toString("base64")
@@ -35,6 +36,7 @@ export const loader = async ({ request }) => {
     const qs = new URLSearchParams();
     if (session.shop) qs.set("shop", session.shop);
     if (hostFromQuery || derivedHost) qs.set("host", hostFromQuery || derivedHost);
+    if (embeddedFromQuery) qs.set("embedded", embeddedFromQuery);
     return redirect(`/app/billing?${qs.toString()}`);
   }
   return null;

@@ -27,6 +27,34 @@ function normalizeSupportedLocale(rawLocale) {
   return "en";
 }
 
+function toBase64Url(input) {
+  return Buffer.from(input, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function deriveEmbeddedHost(shop) {
+  const shopHandle = String(shop || "").replace(/\.myshopify\.com$/i, "");
+  if (!shopHandle) return "";
+  return toBase64Url(`admin.shopify.com/store/${shopHandle}`);
+}
+
+function isValidEmbeddedHost(hostValue) {
+  const raw = String(hostValue || "").trim();
+  if (!raw) return false;
+  try {
+    const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+    const padLen = (4 - (normalized.length % 4)) % 4;
+    const padded = normalized + "=".repeat(padLen);
+    const decoded = Buffer.from(padded, "base64").toString("utf8");
+    return /^admin\.shopify\.com\/store\/[a-z0-9-]+$/i.test(decoded);
+  } catch (_err) {
+    return false;
+  }
+}
+
 function pickPreferredLocaleFromRequest(request, session) {
   const url = new URL(request.url);
   const localeFromQuery = url.searchParams.get("locale");
@@ -51,12 +79,13 @@ function pickPreferredLocaleFromRequest(request, session) {
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const hasHostParam = Boolean(url.searchParams.get("host"));
-  if (!hasHostParam && session?.shop) {
-    const shopHandle = String(session.shop).replace(/\.myshopify\.com$/i, "");
-    const host = Buffer.from(`admin.shopify.com/store/${shopHandle}`, "utf8").toString("base64");
+  const incomingHost = url.searchParams.get("host") || "";
+  const hasValidHostParam = isValidEmbeddedHost(incomingHost);
+  if ((!hasValidHostParam || !incomingHost) && session?.shop) {
+    const host = deriveEmbeddedHost(session.shop);
     url.searchParams.set("shop", session.shop);
-    url.searchParams.set("host", host);
+    if (host) url.searchParams.set("host", host);
+    url.searchParams.set("embedded", "1");
     return redirect(`${url.pathname}?${url.searchParams.toString()}`);
   }
 

@@ -128,6 +128,8 @@ export default function AnalyticsPage() {
   const navigate = useNavigate();
   const { t, locale } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
+  const appSearch = searchParams.toString();
+  const appBackHref = `/app${appSearch ? `?${appSearch}` : ''}`;
 
   const BODY_TYPE_NAMES = useMemo(() => ({
     0: t('analytics.bodyType0'),
@@ -929,7 +931,7 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <Page title={t('analytics.title')} backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}>
+      <Page title={t('analytics.title')} backAction={{ content: t('common.dashboard'), onAction: () => navigate(appBackHref) }}>
         <Layout>
           <Layout.Section>
             <Card>
@@ -998,7 +1000,7 @@ export default function AnalyticsPage() {
     <Page
       title={t('analytics.title')}
       subtitle={t('analytics.subtitle')}
-      backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain || ''}`) }}
+      backAction={{ content: t('common.dashboard'), onAction: () => navigate(appBackHref) }}
     >
       <Layout>
         {error && (

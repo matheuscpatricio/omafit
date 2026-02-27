@@ -94,6 +94,8 @@ export default function SizeChartPage() {
   const loaderData = useLoaderData();
   const { t } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
+  const appSearch = searchParams.toString();
+  const appBackHref = `/app${appSearch ? `?${appSearch}` : ''}`;
 
   const shopifyCollections = Array.isArray(loaderData?.collections) ? loaderData.collections : [];
 
@@ -460,7 +462,7 @@ export default function SizeChartPage() {
     <Page
       title={t('sizeChart.title')}
       subtitle={t('sizeChart.subtitle')}
-      backAction={{ content: t('common.dashboard'), onAction: () => navigate(`/app?shop=${shopDomain}`) }}
+      backAction={{ content: t('common.dashboard'), onAction: () => navigate(appBackHref) }}
     >
       <Layout>
         {success && (

@@ -45,6 +45,8 @@ export default function WidgetPage() {
   const navigate = useNavigate();
   const { t, locale } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
+  const appSearch = searchParams.toString();
+  const appBackHref = `/app${appSearch ? `?${appSearch}` : ''}`;
   
   // Mostrar erro se shop domain não foi encontrado
   useEffect(() => {
@@ -499,7 +501,7 @@ export default function WidgetPage() {
     <Page
       title={t("widget.title")}
       subtitle={t("widget.subtitle")}
-      backAction={{ content: t("common.dashboard"), onAction: () => navigate(`/app?shop=${shopDomain}`) }}
+      backAction={{ content: t("common.dashboard"), onAction: () => navigate(appBackHref) }}
     >
       <Layout>
         {success && (

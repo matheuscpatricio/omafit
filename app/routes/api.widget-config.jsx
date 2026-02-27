@@ -7,6 +7,14 @@ const SUPABASE_SERVICE_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_ANON_KEY;
 
+const SHOP_PRIMARY_LOCALE_QUERY = `#graphql
+  query ShopPrimaryLocaleForWidget {
+    shop {
+      primaryLocale
+    }
+  }
+`;
+
 function normalizeSupportedLocale(rawLocale) {
   const value = String(rawLocale || "").trim().toLowerCase();
   if (!value) return "en";
@@ -42,6 +50,18 @@ function resolveAdminPreferredLocale(request, session) {
   }
 
   return "en";
+}
+
+async function fetchShopPrimaryLocale(admin) {
+  try {
+    const response = await admin.graphql(SHOP_PRIMARY_LOCALE_QUERY);
+    const json = await response.json();
+    const primaryLocale = json?.data?.shop?.primaryLocale || "";
+    return normalizeSupportedLocale(primaryLocale);
+  } catch (err) {
+    console.warn("[api.widget-config] Could not fetch shop.primaryLocale:", err?.message || err);
+    return "";
+  }
 }
 
 function normalizeExcludedCollections(value) {
@@ -115,7 +135,7 @@ async function upsertAdminLocaleByShop(shopDomain, adminLocale) {
 export async function loader({ request }) {
   try {
     const { admin, session } = await authenticate.admin(request);
-    const effectiveLocale = resolveAdminPreferredLocale(request, session);
+    const requestLocale = resolveAdminPreferredLocale(request, session);
     const check = await ensureShopHasActiveBilling(admin, session.shop);
     if (!check.active) {
       return Response.json({ error: "billing_inactive" }, { status: 402 });
@@ -123,6 +143,8 @@ export async function loader({ request }) {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       return Response.json({ error: "supabase_not_configured" }, { status: 500 });
     }
+    const shopPreferredLocale = await fetchShopPrimaryLocale(admin);
+    const effectiveLocale = shopPreferredLocale || requestLocale;
     let config = await fetchConfigByShop(session.shop);
     const configLocale = normalizeSupportedLocale(config?.admin_locale || "");
 
@@ -140,7 +162,12 @@ export async function loader({ request }) {
       config = { ...config, admin_locale: effectiveLocale };
     }
 
-    return Response.json({ ok: true, config, effective_locale: effectiveLocale });
+    return Response.json({
+      ok: true,
+      config,
+      effective_locale: effectiveLocale,
+      shopify_preferred_locale: shopPreferredLocale || null,
+    });
   } catch (err) {
     console.error("[api.widget-config][GET]", err);
     return Response.json({ ok: false, error: err?.message || "Failed to load widget config" }, { status: 500 });
@@ -150,7 +177,7 @@ export async function loader({ request }) {
 export async function action({ request }) {
   try {
     const { admin, session } = await authenticate.admin(request);
-    const effectiveLocale = resolveAdminPreferredLocale(request, session);
+    const requestLocale = resolveAdminPreferredLocale(request, session);
     const check = await ensureShopHasActiveBilling(admin, session.shop);
     if (!check.active) {
       return Response.json({ error: "billing_inactive" }, { status: 402 });
@@ -158,6 +185,8 @@ export async function action({ request }) {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       return Response.json({ error: "supabase_not_configured" }, { status: 500 });
     }
+    const shopPreferredLocale = await fetchShopPrimaryLocale(admin);
+    const effectiveLocale = shopPreferredLocale || requestLocale;
 
     const body = await request.json();
     const payloadBase = {

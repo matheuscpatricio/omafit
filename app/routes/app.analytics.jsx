@@ -301,54 +301,7 @@ export default function AnalyticsPage() {
       }
 
       if (!userId) {
-        const omafitRevenue = Number(ordersData.omafitRevenueAfter ?? 0) || 0;
-        const planCostMap = { starter: 30, basic: 30, growth: 120, pro: 220 };
-        const planCost = planCostMap[String(billingPlan || '').toLowerCase()] || 0;
-        const extraImages = Math.max(0, (imagesUsedMonth || 0) - (imagesIncluded || 0));
-        const extraCost = extraImages * (pricePerExtraImage || 0);
-        const estimatedCost = planCost + extraCost;
-        const roiPercent = estimatedCost > 0 ? ((omafitRevenue - estimatedCost) / estimatedCost) * 100 : null;
-        const avoidedReturns = Math.max(0, (ordersData.returnsBefore ?? 0) - (ordersData.returnsAfter ?? 0));
-        const avgTicket = (ordersData.omafitOrdersAfter ?? 0) > 0 ? omafitRevenue / ordersData.omafitOrdersAfter : null;
-        const estimatedCostAvoided = avgTicket != null ? avoidedReturns * avgTicket : null;
-        setMetrics({
-          totalImagesProcessed: imagesUsedMonth,
-          avgByGender: { male: { height: null, weight: null }, female: { height: null, weight: null } },
-          byCollectionGender: [],
-          ordersBefore: ordersData.ordersBefore ?? null,
-          ordersAfter: ordersData.ordersAfter ?? null,
-          omafitOrdersAfter: ordersData.omafitOrdersAfter ?? null,
-          omafitRevenueAfter: ordersData.omafitRevenueAfter ?? null,
-          returnsBefore: ordersData.returnsBefore ?? null,
-          returnsAfter: ordersData.returnsAfter ?? null,
-          conversionBefore: ordersData.conversionBefore ?? null,
-          conversionAfter: ordersData.conversionAfter ?? null,
-          ordersError: ordersData.error ?? null,
-          finance: {
-            estimatedRoiPercent: roiPercent,
-            attributedRevenue: omafitRevenue,
-            estimatedCostAvoided,
-          },
-          currency: shopCurrency,
-          performance: {
-            sessionsTotal: 0,
-            sessionsWithProfile: 0,
-            sessionsWithRecommendation: 0,
-            avgSessionSeconds: null,
-            usageByCollection: [],
-          },
-          quality: {
-            recommendationCoveragePercent: null,
-            tableDivergenceAlert: t('analytics.qualityNoSessionCoverage'),
-          },
-          intelligence: {
-            bodyTypeDistribution: [],
-            sizeDistribution: [],
-            heatmapRows: [],
-          }
-        });
-        setLoading(false);
-        return;
+        console.warn('[Analytics] user_id ausente para a loja; seguindo com leitura por shop_domain.');
       }
 
       const dateFilter = new Date();

@@ -1,6 +1,6 @@
 import { Outlet, useLoaderData, useRouteError, useLocation, redirect } from "react-router";
-import { Buffer } from "node:buffer";
 import process from "node:process";
+import { useEffect } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
@@ -28,8 +28,13 @@ function normalizeSupportedLocale(rawLocale) {
 }
 
 function toBase64Url(input) {
-  return Buffer.from(input, "utf8")
-    .toString("base64")
+  const base64 =
+    typeof window !== "undefined" && typeof window.btoa === "function"
+      ? window.btoa(input)
+      : typeof globalThis !== "undefined" && globalThis.Buffer
+        ? globalThis.Buffer.from(input, "utf8").toString("base64")
+        : "";
+  return base64
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
@@ -48,11 +53,34 @@ function isValidEmbeddedHost(hostValue) {
     const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
     const padLen = (4 - (normalized.length % 4)) % 4;
     const padded = normalized + "=".repeat(padLen);
-    const decoded = Buffer.from(padded, "base64").toString("utf8");
+    const decoded =
+      typeof window !== "undefined" && typeof window.atob === "function"
+        ? window.atob(padded)
+        : typeof globalThis !== "undefined" && globalThis.Buffer
+          ? globalThis.Buffer.from(padded, "base64").toString("utf8")
+          : "";
     return /^admin\.shopify\.com\/store\/[a-z0-9-]+$/i.test(decoded);
   } catch (_err) {
     return false;
   }
+}
+
+function deriveEmbeddedHostClient(shop) {
+  const shopHandle = String(shop || "").replace(/\.myshopify\.com$/i, "");
+  if (!shopHandle) return "";
+  const raw = `admin.shopify.com/store/${shopHandle}`;
+  try {
+    if (typeof window !== "undefined" && typeof window.btoa === "function") {
+      return window
+        .btoa(raw)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+    }
+  } catch (_err) {
+    // fallback below
+  }
+  return toBase64Url(raw);
 }
 
 function pickPreferredLocaleFromRequest(request, session) {
@@ -146,6 +174,7 @@ function AppNav() {
 
 export default function App() {
   const { apiKey, supabaseUrl, supabaseKey, appUrl, locale } = useLoaderData();
+  const location = useLocation();
 
   const effectiveLocale = locale;
   const polarisLocale =
@@ -161,6 +190,28 @@ export default function App() {
     window.ENV.VITE_SUPABASE_ANON_KEY = supabaseKey;
     window.ENV.APP_URL = appUrl;
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const host = url.searchParams.get("host") || "";
+    const embedded = url.searchParams.get("embedded") || "";
+    const shop = url.searchParams.get("shop") || "";
+    const hasValidHost = isValidEmbeddedHost(host);
+    const hasEmbedded = embedded === "1";
+
+    // Blindagem final: se perder contexto embedded, corrige URL imediatamente.
+    if ((!hasValidHost || !hasEmbedded) && shop) {
+      const correctedHost = deriveEmbeddedHostClient(shop);
+      if (correctedHost) url.searchParams.set("host", correctedHost);
+      url.searchParams.set("embedded", "1");
+      const next = `${url.pathname}?${url.searchParams.toString()}`;
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (next !== current) {
+        window.location.replace(next);
+      }
+    }
+  }, [location.key]);
 
   return (
     <AppProvider embedded apiKey={apiKey}>

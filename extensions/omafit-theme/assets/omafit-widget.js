@@ -49,6 +49,26 @@
     return decoded.replace(/\s+/g, ' ').trim();
   }
 
+  function sanitizeProductHandle(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return raw.split('?')[0].split('#')[0].trim();
+  }
+
+  function extractProductHandleFromPathname() {
+    try {
+      const pathname = String(window.location.pathname || '');
+      const marker = '/products/';
+      const idx = pathname.indexOf(marker);
+      if (idx === -1) return '';
+      const rest = pathname.slice(idx + marker.length);
+      const handle = rest.split('/')[0];
+      return sanitizeProductHandle(decodeURIComponent(handle));
+    } catch (_err) {
+      return '';
+    }
+  }
+
   function extractDescriptionFromJsonLd() {
     try {
       const scripts = document.querySelectorAll('script[type="application/ld+json"]');
@@ -209,19 +229,18 @@
       productDescriptionHtml = rootElement.dataset.productDescriptionHtml || '';
     }
 
-    // Se não tiver, tentar window.meta.product
-    if (!productId && window.meta && window.meta.product) {
-      productId = window.meta.product.id;
+    // Complementar dados por window.meta.product (mesmo quando productId já existe)
+    if (window.meta && window.meta.product) {
+      productId = productId || window.meta.product.id;
       productName = productName || window.meta.product.title;
       productDescription = productDescription || window.meta.product.description || '';
       productDescriptionHtml = productDescriptionHtml || window.meta.product.description || '';
     } else if (
-      !productId &&
       window.ShopifyAnalytics &&
       window.ShopifyAnalytics.meta &&
       window.ShopifyAnalytics.meta.product
     ) {
-      productId = window.ShopifyAnalytics.meta.product.id;
+      productId = productId || window.ShopifyAnalytics.meta.product.id;
       productName = productName || window.ShopifyAnalytics.meta.product.name;
     }
 
@@ -260,12 +279,10 @@
 
     // Handle do produto
     if (!productHandle) {
-      const urlParts = window.location.pathname.split('/products/');
-      if (urlParts.length > 1) {
-        productHandle = urlParts[1].split('/')[0];
-      }
+      productHandle = extractProductHandleFromPathname();
     }
 
+    productHandle = sanitizeProductHandle(productHandle);
     const finalDescriptionText = normalizeProductDescriptionText(productDescription);
     const finalDescriptionHtml = String(productDescriptionHtml || '').trim();
     return {
@@ -412,7 +429,7 @@
   }
 
   async function fetchProductJsonByHandle(productHandle) {
-    const handle = String(productHandle || '').trim();
+    const handle = sanitizeProductHandle(productHandle);
     if (!handle) return null;
     try {
       const res = await fetch('/products/' + encodeURIComponent(handle) + '.js');
@@ -421,6 +438,44 @@
     } catch (_err) {
       return null;
     }
+  }
+
+  async function getCurrentProductData(productInfo) {
+    const info = productInfo || getProductInfo();
+    const handle = sanitizeProductHandle(info && info.productHandle ? info.productHandle : '');
+    const byHandle = await fetchProductJsonByHandle(handle);
+    if (byHandle && Array.isArray(byHandle.variants) && byHandle.variants.length > 0) {
+      return byHandle;
+    }
+
+    if (window.meta && window.meta.product && Array.isArray(window.meta.product.variants)) {
+      const p = window.meta.product;
+      return {
+        id: p.id,
+        title: p.title || '',
+        description: p.description || '',
+        options: p.options || [],
+        variants: p.variants || []
+      };
+    }
+
+    if (
+      window.ShopifyAnalytics &&
+      window.ShopifyAnalytics.meta &&
+      window.ShopifyAnalytics.meta.product &&
+      Array.isArray(window.ShopifyAnalytics.meta.product.variants)
+    ) {
+      const p = window.ShopifyAnalytics.meta.product;
+      return {
+        id: p.id,
+        title: p.name || '',
+        description: '',
+        options: p.options || [],
+        variants: p.variants || []
+      };
+    }
+
+    return null;
   }
 
   function buildProductVariantCatalog(productData) {
@@ -487,9 +542,7 @@
   }
 
   async function getCurrentProductVariantCatalog(productInfo) {
-    const info = productInfo || getProductInfo();
-    const handle = info && info.productHandle ? String(info.productHandle) : '';
-    const productData = await fetchProductJsonByHandle(handle);
+    const productData = await getCurrentProductData(productInfo);
     return buildProductVariantCatalog(productData);
   }
 

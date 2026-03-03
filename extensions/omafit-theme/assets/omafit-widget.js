@@ -2,6 +2,7 @@
 (function () {
   // Log imediato para confirmar que script está carregando
   console.log('✅ Script omafit-widget.js carregado e executando...');
+  const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   
   // Configuração global (será preenchida pela API)
   let OMAFIT_CONFIG = null;
@@ -1290,6 +1291,11 @@
     let productInfo = getProductInfo();
     productInfo = await enrichProductInfo(productInfo);
     const productVariantCatalog = await getCurrentProductVariantCatalog(productInfo);
+    const currentProductData = await getCurrentProductData(productInfo);
+    if (!productInfo.productDescription && currentProductData && currentProductData.description) {
+      productInfo.productDescription = normalizeProductDescriptionText(currentProductData.description);
+      productInfo.productDescriptionHtml = String(currentProductData.description || '').trim();
+    }
     const isMobile = window.innerWidth <= 768;
 
     const overlay = document.createElement('div');
@@ -1397,9 +1403,19 @@
     const publicIdToUse = OMAFIT_CONFIG.publicId || 'wgt_pub_default';
     console.log('🔑 PublicId sendo usado:', publicIdToUse);
     
-    const productDescriptionFull = normalizeProductDescriptionText(productInfo.productDescription || '');
-    const productDescriptionHtml = String(productInfo.productDescriptionHtml || '').trim();
+    const productDescriptionFull = normalizeProductDescriptionText(
+      productInfo.productDescription ||
+      (currentProductData && currentProductData.description ? currentProductData.description : '')
+    );
+    const productDescriptionHtml = String(
+      productInfo.productDescriptionHtml ||
+      (currentProductData && currentProductData.description ? currentProductData.description : '') ||
+      ''
+    ).trim();
     const productDescriptionForUrl = productDescriptionFull.slice(0, 500);
+    const variantCatalogList = Array.isArray(productVariantCatalog.variants) ? productVariantCatalog.variants : [];
+    const availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
+    const availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
 
     let widgetUrl =
       'https://omafit.netlify.app/widget' +
@@ -1503,7 +1519,32 @@
       // Enviar dados grandes via postMessage para evitar URL muito longa
       try {
         // Enviar collectionHandle e defaultGender para o app Netlify usar ao buscar tabela de medidas no Supabase
-        iframe.contentWindow.postMessage({
+        const sharedWidgetData = {
+          productDescription: productDescriptionFull,
+          product_description: productDescriptionFull,
+          productDescriptionHtml: productDescriptionHtml,
+          product_description_html: productDescriptionHtml,
+          selectedImage: productImage || '',
+          selected_image: productImage || '',
+          productImage: productImage || '',
+          product_image: productImage || '',
+          variantCatalog: variantCatalogList,
+          variant_catalog: variantCatalogList,
+          availableSizes: availableSizesList,
+          available_sizes: availableSizesList,
+          availableColors: availableColorsList,
+          available_colors: availableColorsList,
+          sizes: availableSizesList,
+          colors: availableColorsList,
+          variants: variantCatalogList,
+          productCatalog: productVariantCatalog,
+          product_catalog: productVariantCatalog
+        };
+
+        const sendWidgetPayloads = function () {
+          if (!iframe.contentWindow) return;
+
+          iframe.contentWindow.postMessage({
           type: 'omafit-context',
           language: storeLanguage,
           locale: storeLanguage,
@@ -1514,84 +1555,118 @@
           store_name: resolvedStoreName,
           productName: productInfo.productName || '',
           product_name: productInfo.productName || '',
-          productDescription: productDescriptionFull,
-          product_description: productDescriptionFull,
-          productDescriptionHtml: productDescriptionHtml,
-          product_description_html: productDescriptionHtml,
+          ...sharedWidgetData,
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
           collectionTitle: typeof collectionTitle === 'string' ? collectionTitle : '',
           collectionName: typeof collectionTitle === 'string' ? collectionTitle : '',
           defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
           collectionType: typeof collectionType === 'string' ? collectionType : '',
           collectionElasticity: typeof collectionElasticity === 'string' ? collectionElasticity : '',
-          productCatalog: productVariantCatalog,
-          product_catalog: productVariantCatalog,
-          sizes: productVariantCatalog.sizes,
-          colors: productVariantCatalog.colors,
-          variants: productVariantCatalog.variants,
           complementaryProduct: complementaryProduct || null,
           recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
           recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
-        }, 'https://omafit.netlify.app');
+          }, OMAFIT_WIDGET_ORIGIN);
 
-        // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)
-        if (complementaryProduct) {
-          iframe.contentWindow.postMessage({
-            type: 'omafit-complementary-product',
-            complementaryProduct: {
-              title: complementaryProduct.title,
-              handle: complementaryProduct.handle,
-              url: complementaryProduct.url,
-              collectionTitle: complementaryProduct.collectionTitle
-            },
-            recommendedProductName: complementaryProduct.title,
-            recommendedProductUrl: complementaryProduct.url
-          }, 'https://omafit.netlify.app');
-          console.log('📤 Produto complementar enviado via postMessage (recommendedProductName/Url):', complementaryProduct.title, complementaryProduct.url);
-        }
-
-        if (collectionHandle || defaultGender || complementaryProduct) {
-          console.log('📤 Contexto enviado via postMessage:', { 
-            collectionHandle: collectionHandle || '(vazio)', 
-            collectionTitle: collectionTitle || '(vazio)',
-            defaultGender: defaultGender || '(vazio)',
-            collectionType: collectionType || '(vazio)',
-            collectionElasticity: collectionElasticity || '(vazio)',
-            complementaryProduct: complementaryProduct ? complementaryProduct.url : '(nenhum)'
-          });
-        }
-
-        // Enviar todas as imagens do produto (não apenas as 3 primeiras)
-        if (allProductImages.length > 3) {
-          iframe.contentWindow.postMessage({
-            type: 'omafit-product-images',
-            images: allProductImages
-          }, 'https://omafit.netlify.app');
-          console.log('📤 Enviadas', allProductImages.length, 'imagens via postMessage');
-        }
-        
-        // Enviar logo se existir (base64 pode ser muito grande para URL)
-        if (OMAFIT_CONFIG.storeLogo) {
-          const logoSize = OMAFIT_CONFIG.storeLogo.length;
-          const logoPreview = OMAFIT_CONFIG.storeLogo.substring(0, 50) + '...';
-          
-          // Validar logo antes de enviar (aceita URL ou base64)
-          const isUrl = OMAFIT_CONFIG.storeLogo.startsWith('http://') || 
-                       OMAFIT_CONFIG.storeLogo.startsWith('https://');
-          const isBase64 = OMAFIT_CONFIG.storeLogo.startsWith('data:image/') && 
-                          OMAFIT_CONFIG.storeLogo.includes('base64,') &&
-                          logoSize > 500; // Logo muito pequeno pode estar truncado
-          const isValidLogo = isUrl || isBase64;
-          
-          if (isValidLogo) {
-            // Enviar logo separadamente
+          // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)
+          if (complementaryProduct) {
             iframe.contentWindow.postMessage({
-              type: 'omafit-store-logo',
-              logo: OMAFIT_CONFIG.storeLogo
-            }, 'https://omafit.netlify.app');
-            console.log('📤 Logo enviado via postMessage (tamanho:', logoSize, 'chars, preview:', logoPreview, ')');
+              type: 'omafit-complementary-product',
+              complementaryProduct: {
+                title: complementaryProduct.title,
+                handle: complementaryProduct.handle,
+                url: complementaryProduct.url,
+                collectionTitle: complementaryProduct.collectionTitle
+              },
+              recommendedProductName: complementaryProduct.title,
+              recommendedProductUrl: complementaryProduct.url
+            }, OMAFIT_WIDGET_ORIGIN);
+          }
+
+          // Enviar todas as imagens do produto (não apenas as 3 primeiras)
+          if (allProductImages.length > 3) {
+            iframe.contentWindow.postMessage({
+              type: 'omafit-product-images',
+              images: allProductImages
+            }, OMAFIT_WIDGET_ORIGIN);
+          }
+
+          // Enviar logo se existir (base64 pode ser muito grande para URL)
+          if (OMAFIT_CONFIG.storeLogo) {
+            const logoSize = OMAFIT_CONFIG.storeLogo.length;
+            const logoPreview = OMAFIT_CONFIG.storeLogo.substring(0, 50) + '...';
             
-            // Também incluir logo na atualização de configuração
+            // Validar logo antes de enviar (aceita URL ou base64)
+            const isUrl = OMAFIT_CONFIG.storeLogo.startsWith('http://') || 
+                         OMAFIT_CONFIG.storeLogo.startsWith('https://');
+            const isBase64 = OMAFIT_CONFIG.storeLogo.startsWith('data:image/') && 
+                            OMAFIT_CONFIG.storeLogo.includes('base64,') &&
+                            logoSize > 500; // Logo muito pequeno pode estar truncado
+            const isValidLogo = isUrl || isBase64;
+            
+            if (isValidLogo) {
+              // Enviar logo separadamente
+              iframe.contentWindow.postMessage({
+                type: 'omafit-store-logo',
+                logo: OMAFIT_CONFIG.storeLogo
+              }, OMAFIT_WIDGET_ORIGIN);
+              
+              // Também incluir logo na atualização de configuração
+              iframe.contentWindow.postMessage({
+                type: 'omafit-config-update',
+                language: storeLanguage,
+                locale: storeLanguage,
+                storeLanguage: storeLanguage,
+                primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
+                storeName: resolvedStoreName,
+                store_name: resolvedStoreName,
+                shopName: resolvedStoreName,
+                shop_name: resolvedStoreName,
+                productName: productInfo.productName || '',
+                product_name: productInfo.productName || '',
+                ...sharedWidgetData,
+                storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
+                fontFamily: detectedFontFamily, // Enviar fonte detectada
+                shopDomain: shopDomain,
+                collectionHandle: collectionHandle || '',
+                collectionTitle: collectionTitle || '',
+                collectionName: collectionTitle || '',
+                defaultGender: defaultGender || '',
+                collectionType: collectionType || '',
+                collectionElasticity: collectionElasticity || '',
+                complementaryProduct: complementaryProduct || null,
+                recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
+                recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
+              }, OMAFIT_WIDGET_ORIGIN);
+            } else {
+              // Enviar atualização de configuração sem logo (logo inválido)
+              iframe.contentWindow.postMessage({
+                type: 'omafit-config-update',
+                language: storeLanguage,
+                locale: storeLanguage,
+                storeLanguage: storeLanguage,
+                primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
+                storeName: resolvedStoreName,
+                store_name: resolvedStoreName,
+                shopName: resolvedStoreName,
+                shop_name: resolvedStoreName,
+                productName: productInfo.productName || '',
+                product_name: productInfo.productName || '',
+                ...sharedWidgetData,
+                fontFamily: detectedFontFamily,
+                shopDomain: shopDomain,
+                collectionHandle: collectionHandle || '',
+                collectionTitle: collectionTitle || '',
+                collectionName: collectionTitle || '',
+                defaultGender: defaultGender || '',
+                collectionType: collectionType || '',
+                collectionElasticity: collectionElasticity || '',
+                complementaryProduct: complementaryProduct || null,
+                recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
+                recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
+              }, OMAFIT_WIDGET_ORIGIN);
+            }
+          } else {
+            // Enviar atualização de configuração sem logo
             iframe.contentWindow.postMessage({
               type: 'omafit-config-update',
               language: storeLanguage,
@@ -1604,11 +1679,7 @@
               shop_name: resolvedStoreName,
               productName: productInfo.productName || '',
               product_name: productInfo.productName || '',
-              productDescription: productDescriptionFull,
-              product_description: productDescriptionFull,
-              productDescriptionHtml: productDescriptionHtml,
-              product_description_html: productDescriptionHtml,
-              storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
+              ...sharedWidgetData,
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
@@ -1617,109 +1688,34 @@
               defaultGender: defaultGender || '',
               collectionType: collectionType || '',
               collectionElasticity: collectionElasticity || '',
-              productCatalog: productVariantCatalog,
-              product_catalog: productVariantCatalog,
-              sizes: productVariantCatalog.sizes,
-              colors: productVariantCatalog.colors,
-              variants: productVariantCatalog.variants,
               complementaryProduct: complementaryProduct || null,
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
               recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
-            }, 'https://omafit.netlify.app');
-            console.log('📤 Configuração enviada via postMessage (com logo):', {
-              primaryColor: OMAFIT_CONFIG.colors?.primary,
-              storeName: resolvedStoreName,
-              storeLogo: '✅ Presente (' + logoSize + ' chars)',
-              fontFamily: detectedFontFamily
-            });
-          } else {
-            console.warn('⚠️ Logo inválido (nem URL nem base64 válido):', {
-              isUrl: isUrl,
-              isBase64: isBase64,
-              tamanho: logoSize,
-              preview: logoPreview
-            });
-            
-            // Enviar atualização de configuração sem logo (logo inválido)
-            iframe.contentWindow.postMessage({
-              type: 'omafit-config-update',
-              language: storeLanguage,
-              locale: storeLanguage,
-              storeLanguage: storeLanguage,
-              primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
-              storeName: resolvedStoreName,
-              store_name: resolvedStoreName,
-              shopName: resolvedStoreName,
-              shop_name: resolvedStoreName,
-              productName: productInfo.productName || '',
-              product_name: productInfo.productName || '',
-              productDescription: productDescriptionFull,
-              product_description: productDescriptionFull,
-              productDescriptionHtml: productDescriptionHtml,
-              product_description_html: productDescriptionHtml,
-              fontFamily: detectedFontFamily,
-              shopDomain: shopDomain,
-              collectionHandle: collectionHandle || '',
-              collectionTitle: collectionTitle || '',
-              collectionName: collectionTitle || '',
-              defaultGender: defaultGender || '',
-              collectionType: collectionType || '',
-              collectionElasticity: collectionElasticity || '',
-              productCatalog: productVariantCatalog,
-              product_catalog: productVariantCatalog,
-              sizes: productVariantCatalog.sizes,
-              colors: productVariantCatalog.colors,
-              variants: productVariantCatalog.variants,
-              complementaryProduct: complementaryProduct || null,
-              recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
-              recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
-            }, 'https://omafit.netlify.app');
-            console.log('📤 Configuração enviada via postMessage (sem logo - inválido):', {
-              primaryColor: OMAFIT_CONFIG.colors?.primary,
-              fontFamily: detectedFontFamily
-            });
+            }, OMAFIT_WIDGET_ORIGIN);
           }
-        } else {
-          console.warn('⚠️ Logo não encontrado em OMAFIT_CONFIG.storeLogo');
-          console.warn('⚠️ OMAFIT_CONFIG completo:', OMAFIT_CONFIG);
-          
-          // Enviar atualização de configuração sem logo
-          iframe.contentWindow.postMessage({
-            type: 'omafit-config-update',
-            language: storeLanguage,
-            locale: storeLanguage,
-            storeLanguage: storeLanguage,
-            primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
-            storeName: resolvedStoreName,
-            store_name: resolvedStoreName,
-            shopName: resolvedStoreName,
-            shop_name: resolvedStoreName,
-            productName: productInfo.productName || '',
-            product_name: productInfo.productName || '',
-            productDescription: productDescriptionFull,
-            product_description: productDescriptionFull,
-            productDescriptionHtml: productDescriptionHtml,
-            product_description_html: productDescriptionHtml,
-            fontFamily: detectedFontFamily,
-            shopDomain: shopDomain,
-            collectionHandle: collectionHandle || '',
-            collectionTitle: collectionTitle || '',
-            collectionName: collectionTitle || '',
-            defaultGender: defaultGender || '',
-            collectionType: collectionType || '',
-            collectionElasticity: collectionElasticity || '',
-            productCatalog: productVariantCatalog,
-            product_catalog: productVariantCatalog,
-            sizes: productVariantCatalog.sizes,
-            colors: productVariantCatalog.colors,
-            variants: productVariantCatalog.variants,
-            complementaryProduct: complementaryProduct || null,
-            recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
-            recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
-          }, 'https://omafit.netlify.app');
-          console.log('📤 Configuração enviada via postMessage (sem logo):', {
-            primaryColor: OMAFIT_CONFIG.colors?.primary,
-            fontFamily: detectedFontFamily
+        };
+
+        // Primeira entrega + retries para cobrir timing de mount no iframe.
+        sendWidgetPayloads();
+        setTimeout(sendWidgetPayloads, 350);
+        setTimeout(sendWidgetPayloads, 1200);
+        setTimeout(sendWidgetPayloads, 2500);
+
+        console.log('📤 Payload completo enviado ao widget:', {
+          variant_catalog: variantCatalogList.length,
+          available_sizes: availableSizesList.length,
+          available_colors: availableColorsList.length,
+          product_description: productDescriptionFull ? '✅' : '❌'
+        });
+
+        if (collectionHandle || defaultGender || complementaryProduct) {
+          console.log('📤 Contexto enviado via postMessage:', {
+            collectionHandle: collectionHandle || '(vazio)',
+            collectionTitle: collectionTitle || '(vazio)',
+            defaultGender: defaultGender || '(vazio)',
+            collectionType: collectionType || '(vazio)',
+            collectionElasticity: collectionElasticity || '(vazio)',
+            complementaryProduct: complementaryProduct ? complementaryProduct.url : '(nenhum)'
           });
         }
       } catch (e) {

@@ -33,6 +33,49 @@
     return url;
   }
 
+  function decodeHtmlEntities(value) {
+    const raw = String(value || '');
+    if (!raw) return '';
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = raw;
+    return textarea.value || '';
+  }
+
+  function normalizeProductDescriptionText(value) {
+    const raw = String(value || '');
+    if (!raw) return '';
+    const withoutHtml = raw.replace(/<[^>]*>/g, ' ');
+    const decoded = decodeHtmlEntities(withoutHtml);
+    return decoded.replace(/\s+/g, ' ').trim();
+  }
+
+  function extractDescriptionFromJsonLd() {
+    try {
+      const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+      for (const script of scripts) {
+        const raw = script.textContent || '';
+        if (!raw.trim()) continue;
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch (_err) {
+          continue;
+        }
+        const nodes = Array.isArray(data) ? data : [data];
+        for (const node of nodes) {
+          if (!node || typeof node !== 'object') continue;
+          const typeValue = Array.isArray(node['@type']) ? node['@type'].join(',') : String(node['@type'] || '');
+          if (typeValue.toLowerCase().indexOf('product') === -1) continue;
+          const desc = String(node.description || '').trim();
+          if (desc) return desc;
+        }
+      }
+    } catch (_err) {
+      // non-blocking
+    }
+    return '';
+  }
+
   // Obter só imagens de produto, usando várias fontes de dados Shopify
   async function getOnlyProductImages() {
     // 1. window.meta.product
@@ -153,6 +196,7 @@
     let productId = '';
     let productName = '';
     let productDescription = '';
+    let productDescriptionHtml = '';
     let productHandle = '';
 
     // Pegar do elemento omafit-widget-root primeiro (prioridade)
@@ -162,6 +206,7 @@
       productHandle = rootElement.dataset.productHandle || '';
       productName = rootElement.dataset.productTitle || '';
       productDescription = rootElement.dataset.productDescription || '';
+      productDescriptionHtml = rootElement.dataset.productDescriptionHtml || '';
     }
 
     // Se não tiver, tentar window.meta.product
@@ -169,6 +214,7 @@
       productId = window.meta.product.id;
       productName = productName || window.meta.product.title;
       productDescription = productDescription || window.meta.product.description || '';
+      productDescriptionHtml = productDescriptionHtml || window.meta.product.description || '';
     } else if (
       !productId &&
       window.ShopifyAnalytics &&
@@ -194,6 +240,14 @@
       );
       if (descEl) {
         productDescription = (descEl.textContent || '').trim();
+        productDescriptionHtml = productDescriptionHtml || (descEl.innerHTML || '');
+      }
+    }
+
+    if (!productDescription) {
+      const jsonLdDescription = extractDescriptionFromJsonLd();
+      if (jsonLdDescription) {
+        productDescription = jsonLdDescription;
       }
     }
 
@@ -212,7 +266,15 @@
       }
     }
 
-    return { productId, productName, productDescription, productHandle };
+    const finalDescriptionText = normalizeProductDescriptionText(productDescription);
+    const finalDescriptionHtml = String(productDescriptionHtml || '').trim();
+    return {
+      productId,
+      productName,
+      productDescription: finalDescriptionText,
+      productDescriptionHtml: finalDescriptionHtml,
+      productHandle
+    };
   }
 
   async function enrichProductInfo(productInfo) {
@@ -228,10 +290,15 @@
       if (!response.ok) return info;
 
       const data = await response.json();
+      const shopifyDescriptionHtml = typeof data?.description === 'string' ? data.description : '';
+      const shopifyDescriptionText = normalizeProductDescriptionText(shopifyDescriptionHtml);
+      const currentDescriptionText = normalizeProductDescriptionText(info.productDescription || '');
+      const currentDescriptionHtml = String(info.productDescriptionHtml || '').trim();
       return {
         productId: info.productId || data?.id || '',
         productName: info.productName || data?.title || '',
-        productDescription: info.productDescription || (data?.description ? String(data.description).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : ''),
+        productDescription: shopifyDescriptionText || currentDescriptionText,
+        productDescriptionHtml: shopifyDescriptionHtml || currentDescriptionHtml,
         productHandle: handle
       };
     } catch (_err) {
@@ -319,6 +386,111 @@
     } catch (_e) {
       return '';
     }
+  }
+
+  function normalizeOptionName(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function isSizeOptionName(name) {
+    const n = normalizeOptionName(name);
+    return n === 'size' || n === 'tamanho' || n === 'talla' || n === 'taille';
+  }
+
+  function isColorOptionName(name) {
+    const n = normalizeOptionName(name);
+    return n === 'color' || n === 'cor' || n === 'colour' || n === 'couleur';
+  }
+
+  function inferSizeValue(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const n = raw.toLowerCase();
+    if (/^(pp|p|m|g|gg|xg|xs|s|l|xl|xxl|xxxl)$/.test(n)) return raw;
+    if (/^\d{1,3}(\s?(br|eu|us))?$/i.test(raw)) return raw;
+    return '';
+  }
+
+  async function fetchProductJsonByHandle(productHandle) {
+    const handle = String(productHandle || '').trim();
+    if (!handle) return null;
+    try {
+      const res = await fetch('/products/' + encodeURIComponent(handle) + '.js');
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function buildProductVariantCatalog(productData) {
+    const emptyCatalog = { sizes: [], colors: [], variants: [] };
+    if (!productData || !Array.isArray(productData.variants) || productData.variants.length === 0) {
+      return emptyCatalog;
+    }
+
+    const options = Array.isArray(productData.options) ? productData.options : [];
+    const optionNames = options.map(function (opt) {
+      return typeof opt === 'string' ? opt : (opt && opt.name ? String(opt.name) : '');
+    });
+    const sizeOptionIndex = optionNames.findIndex(isSizeOptionName);
+    const colorOptionIndex = optionNames.findIndex(isColorOptionName);
+    const sizeSet = new Set();
+    const colorSet = new Set();
+
+    const variants = productData.variants.map(function (variant) {
+      const values = [variant.option1, variant.option2, variant.option3]
+        .map(function (v) { return String(v || '').trim(); });
+
+      const namedOptions = {};
+      for (let i = 0; i < values.length; i += 1) {
+        if (!values[i]) continue;
+        const key = optionNames[i] || ('option' + (i + 1));
+        namedOptions[key] = values[i];
+      }
+
+      if (sizeOptionIndex >= 0 && values[sizeOptionIndex]) {
+        sizeSet.add(values[sizeOptionIndex]);
+      }
+      if (colorOptionIndex >= 0 && values[colorOptionIndex]) {
+        colorSet.add(values[colorOptionIndex]);
+      }
+
+      if (sizeOptionIndex < 0) {
+        values.forEach(function (v) {
+          const inferred = inferSizeValue(v);
+          if (inferred) sizeSet.add(inferred);
+        });
+      }
+
+      if (colorOptionIndex < 0) {
+        values.forEach(function (v) {
+          if (!v) return;
+          const inferredSize = inferSizeValue(v);
+          if (!inferredSize) colorSet.add(v);
+        });
+      }
+
+      return {
+        id: variant.id,
+        title: variant.title || '',
+        available: !!variant.available,
+        options: namedOptions
+      };
+    });
+
+    return {
+      sizes: Array.from(sizeSet),
+      colors: Array.from(colorSet),
+      variants: variants
+    };
+  }
+
+  async function getCurrentProductVariantCatalog(productInfo) {
+    const info = productInfo || getProductInfo();
+    const handle = info && info.productHandle ? String(info.productHandle) : '';
+    const productData = await fetchProductJsonByHandle(handle);
+    return buildProductVariantCatalog(productData);
   }
 
   // Buscar um produto complementar da MESMA coleção do produto atual
@@ -1064,6 +1236,7 @@
 
     let productInfo = getProductInfo();
     productInfo = await enrichProductInfo(productInfo);
+    const productVariantCatalog = await getCurrentProductVariantCatalog(productInfo);
     const isMobile = window.innerWidth <= 768;
 
     const overlay = document.createElement('div');
@@ -1161,12 +1334,19 @@
       primaryColor: config.primaryColor,
       storeName: config.storeName
     });
+    console.log('🧩 Catálogo de variantes extraído:', {
+      sizes: productVariantCatalog.sizes.length,
+      colors: productVariantCatalog.colors.length,
+      variants: productVariantCatalog.variants.length
+    });
 
     // Construir URL apenas com dados essenciais (evitar 414 URI Too Long)
     const publicIdToUse = OMAFIT_CONFIG.publicId || 'wgt_pub_default';
     console.log('🔑 PublicId sendo usado:', publicIdToUse);
     
-    const productDescriptionForUrl = (productInfo.productDescription || '').slice(0, 500);
+    const productDescriptionFull = normalizeProductDescriptionText(productInfo.productDescription || '');
+    const productDescriptionHtml = String(productInfo.productDescriptionHtml || '').trim();
+    const productDescriptionForUrl = productDescriptionFull.slice(0, 500);
 
     let widgetUrl =
       'https://omafit.netlify.app/widget' +
@@ -1281,14 +1461,21 @@
           store_name: resolvedStoreName,
           productName: productInfo.productName || '',
           product_name: productInfo.productName || '',
-          productDescription: productInfo.productDescription || '',
-          product_description: productInfo.productDescription || '',
+          productDescription: productDescriptionFull,
+          product_description: productDescriptionFull,
+          productDescriptionHtml: productDescriptionHtml,
+          product_description_html: productDescriptionHtml,
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
           collectionTitle: typeof collectionTitle === 'string' ? collectionTitle : '',
           collectionName: typeof collectionTitle === 'string' ? collectionTitle : '',
           defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
           collectionType: typeof collectionType === 'string' ? collectionType : '',
           collectionElasticity: typeof collectionElasticity === 'string' ? collectionElasticity : '',
+          productCatalog: productVariantCatalog,
+          product_catalog: productVariantCatalog,
+          sizes: productVariantCatalog.sizes,
+          colors: productVariantCatalog.colors,
+          variants: productVariantCatalog.variants,
           complementaryProduct: complementaryProduct || null,
           recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
           recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
@@ -1364,8 +1551,10 @@
               shop_name: resolvedStoreName,
               productName: productInfo.productName || '',
               product_name: productInfo.productName || '',
-              productDescription: productInfo.productDescription || '',
-              product_description: productInfo.productDescription || '',
+              productDescription: productDescriptionFull,
+              product_description: productDescriptionFull,
+              productDescriptionHtml: productDescriptionHtml,
+              product_description_html: productDescriptionHtml,
               storeLogo: OMAFIT_CONFIG.storeLogo, // Incluir logo na configuração também
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
@@ -1375,6 +1564,11 @@
               defaultGender: defaultGender || '',
               collectionType: collectionType || '',
               collectionElasticity: collectionElasticity || '',
+              productCatalog: productVariantCatalog,
+              product_catalog: productVariantCatalog,
+              sizes: productVariantCatalog.sizes,
+              colors: productVariantCatalog.colors,
+              variants: productVariantCatalog.variants,
               complementaryProduct: complementaryProduct || null,
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
               recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
@@ -1406,8 +1600,10 @@
               shop_name: resolvedStoreName,
               productName: productInfo.productName || '',
               product_name: productInfo.productName || '',
-              productDescription: productInfo.productDescription || '',
-              product_description: productInfo.productDescription || '',
+              productDescription: productDescriptionFull,
+              product_description: productDescriptionFull,
+              productDescriptionHtml: productDescriptionHtml,
+              product_description_html: productDescriptionHtml,
               fontFamily: detectedFontFamily,
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
@@ -1416,6 +1612,11 @@
               defaultGender: defaultGender || '',
               collectionType: collectionType || '',
               collectionElasticity: collectionElasticity || '',
+              productCatalog: productVariantCatalog,
+              product_catalog: productVariantCatalog,
+              sizes: productVariantCatalog.sizes,
+              colors: productVariantCatalog.colors,
+              variants: productVariantCatalog.variants,
               complementaryProduct: complementaryProduct || null,
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
               recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
@@ -1442,8 +1643,10 @@
             shop_name: resolvedStoreName,
             productName: productInfo.productName || '',
             product_name: productInfo.productName || '',
-            productDescription: productInfo.productDescription || '',
-            product_description: productInfo.productDescription || '',
+            productDescription: productDescriptionFull,
+            product_description: productDescriptionFull,
+            productDescriptionHtml: productDescriptionHtml,
+            product_description_html: productDescriptionHtml,
             fontFamily: detectedFontFamily,
             shopDomain: shopDomain,
             collectionHandle: collectionHandle || '',
@@ -1452,6 +1655,11 @@
             defaultGender: defaultGender || '',
             collectionType: collectionType || '',
             collectionElasticity: collectionElasticity || '',
+            productCatalog: productVariantCatalog,
+            product_catalog: productVariantCatalog,
+            sizes: productVariantCatalog.sizes,
+            colors: productVariantCatalog.colors,
+            variants: productVariantCatalog.variants,
             complementaryProduct: complementaryProduct || null,
             recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
             recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''

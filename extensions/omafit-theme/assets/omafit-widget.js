@@ -1837,8 +1837,12 @@
   // --- Add to cart (mensagens do iframe) ---
   // Recebe type: "omafit-add-to-cart-request" e responde com "omafit-add-to-cart-result".
   // Origens permitidas: OMAFIT_CART_ALLOWED_ORIGINS. Idempotência por requestId.
+  // Origens permitidas para add-to-cart (remover localhost em produção)
   const OMAFIT_CART_ALLOWED_ORIGINS = [
-    'https://omafit.netlify.app'
+    'https://omafit.netlify.app',
+    'https://omafit.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000'
   ];
   const OMAFIT_PROCESSED_REQUEST_IDS = new Set();
   const OMAFIT_REQUEST_ID_MAX_AGE_MS = 5 * 60 * 1000;
@@ -1889,7 +1893,8 @@
     if (!n) return '';
     n = n.replace(/(\d+)\s*br\s*$/i, '$1 br');
     const aliasMap = {
-      'pp': 'pp', 'p': 'p', 'm': 'm', 'g': 'g', 'gg': 'gg', 'xg': 'xg',
+      'pp': 'pp', 'p': 'p', 'xs': 'xs', 's': 's', 'm': 'm', 'g': 'g', 'l': 'l', 'gg': 'gg', 'xg': 'xg',
+      'xl': 'xl', 'xxl': 'xxl', 'xxxl': 'xxxl',
       '36': '36', '38': '38', '40': '40', '42': '42', '44': '44', '46': '46', '48': '48',
       '36 br': '36', '38 br': '38', '40 br': '40', '42 br': '42', '44 br': '44', '46 br': '46', '48 br': '48'
     };
@@ -1902,36 +1907,78 @@
     [variant.option1, variant.option2, variant.option3].forEach(function (opt) {
       if (opt) candidates.optionValues.push(normalizeText(opt));
     });
-    const img = variant.featured_image || variant.featured_image_url;
+    var img = variant.featured_image || variant.featured_image_url;
     if (img && (img.src || img.url)) {
       candidates.imageUrl = normalizeUrl(img.src || img.url) || null;
     }
     return candidates;
   }
 
-  function resolveVariantFromSelection(productData, selection) {
+  function getVariantsByImageFromProduct(productData, selectionImageUrl) {
+    if (!productData || !selectionImageUrl) return [];
+    var normalizedSel = normalizeUrl(selectionImageUrl);
+    var variantIds = new Set();
+    var images = productData.images || productData.media || [];
+    images.forEach(function (img) {
+      var src = (img.src || img.url || (img.preview_image && img.preview_image.src)) || '';
+      if (normalizeUrl(src) === normalizedSel && Array.isArray(img.variant_ids)) {
+        img.variant_ids.forEach(function (vid) { variantIds.add(vid); });
+      }
+    });
+    return (productData.variants || []).filter(function (v) { return variantIds.has(v.id); });
+  }
+
+  function hexToColorNames(hex) {
+    if (!hex || typeof hex !== 'string') return [];
+    var h = hex.replace(/^#/, '').toLowerCase();
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var map = {
+      '000000': ['preto', 'black'], 'ffffff': ['branco', 'white'], 'fff': ['branco', 'white'],
+      '808080': ['cinza', 'gray', 'grey'], 'c0c0c0': ['cinza', 'silver'],
+      '800000': ['marrom', 'brown'], 'a52a2a': ['marrom', 'brown'],
+      'ff0000': ['vermelho', 'red'], 'f00': ['vermelho', 'red'],
+      'ffa500': ['laranja', 'orange'], 'ffd700': ['dourado', 'gold'],
+      'ffff00': ['amarelo', 'yellow'], 'ff0': ['amarelo', 'yellow'],
+      '008000': ['verde', 'green'], '00ff00': ['verde', 'green'],
+      '0000ff': ['azul', 'blue'], '00f': ['azul', 'blue'],
+      '4b0082': ['indigo'], '8b00ff': ['violeta', 'violet'],
+      'ff00ff': ['magenta'], 'f0f': ['magenta'],
+      'ffc0cb': ['rosa', 'pink'], 'deb887': ['bege', 'beige'], 'f5f5dc': ['bege', 'beige'],
+      'daa520': ['dourado', 'gold'], '000080': ['azul marinho', 'navy']
+    };
+    return map[h] || [];
+  }
+
+  function resolveVariantFromSelection(productDataOrArg, selectionArg) {
+    var productData = productDataOrArg;
+    var selection = selectionArg;
+    if (productDataOrArg && typeof productDataOrArg === 'object' && productDataOrArg.productData !== undefined) {
+      productData = productDataOrArg.productData;
+      selection = productDataOrArg.selection || {};
+    }
     if (!productData || !Array.isArray(productData.variants) || productData.variants.length === 0) {
       return { variant: null, error: 'Produto sem variantes' };
     }
-    const variants = productData.variants;
-    const options = productData.options || [];
-    const sizeOptionIndex = options.findIndex(function (o) {
-      const name = normalizeText(o.name || o);
-      return name === 'size' || name === 'tamanho' || name === 'talle';
+    selection = selection || {};
+    var variants = productData.variants;
+    var options = productData.options || [];
+    var sizeOptionIndex = options.findIndex(function (o) {
+      var name = normalizeText(typeof o === 'string' ? o : (o && o.name));
+      return name === 'size' || name === 'tamanho' || name === 'talle' || name === 'talla';
     });
-    const colorOptionIndex = options.findIndex(function (o) {
-      const name = normalizeText(o.name || o);
-      return name === 'color' || name === 'cor' || name === 'colour';
+    var colorOptionIndex = options.findIndex(function (o) {
+      var name = normalizeText(typeof o === 'string' ? o : (o && o.name));
+      return name === 'color' || name === 'cor' || name === 'colour' || name === 'couleur';
     });
 
-    const wantedSize = normalizeSize(selection.recommended_size);
-    const selectionImageUrl = selection.image_url ? normalizeUrl(selection.image_url) : null;
-    const selectionColorHex = (selection.color_hex && String(selection.color_hex).trim()) ? String(selection.color_hex).trim().toLowerCase() : null;
+    var wantedSize = normalizeSize(selection.recommended_size);
+    var selectionImageUrl = selection.image_url ? normalizeUrl(selection.image_url) : null;
+    var selectionColorHex = (selection.color_hex && String(selection.color_hex).trim()) ? String(selection.color_hex).trim().toLowerCase() : null;
 
-    let bySize = variants;
+    var bySize = variants;
     if (sizeOptionIndex >= 0 && wantedSize) {
       bySize = variants.filter(function (v) {
-        const opt = v['option' + (sizeOptionIndex + 1)];
+        var opt = v['option' + (sizeOptionIndex + 1)];
         return normalizeSize(opt) === wantedSize || normalizeText(opt) === wantedSize;
       });
       if (bySize.length === 0) {
@@ -1942,14 +1989,33 @@
     var byImage = [];
     if (selectionImageUrl && bySize.length > 0) {
       byImage = bySize.filter(function (v) {
-        const c = extractColorCandidatesFromVariant(v);
+        var c = extractColorCandidatesFromVariant(v);
         return c.imageUrl && c.imageUrl === selectionImageUrl;
       });
+      if (byImage.length === 0) {
+        var byProductImage = getVariantsByImageFromProduct(productData, selectionImageUrl);
+        byImage = bySize.filter(function (v) { return byProductImage.some(function (vi) { return vi.id === v.id; }); });
+      }
+    }
+
+    var byColorHex = [];
+    if (byImage.length === 0 && selectionColorHex && colorOptionIndex >= 0 && bySize.length > 0) {
+      var inferredColorNames = hexToColorNames(selectionColorHex);
+      if (inferredColorNames.length > 0) {
+        var nameSet = new Set(inferredColorNames.map(normalizeText));
+        byColorHex = bySize.filter(function (v) {
+          var colorVal = v['option' + (colorOptionIndex + 1)];
+          return colorVal && nameSet.has(normalizeText(colorVal));
+        });
+      }
     }
 
     var chosen = null;
     if (byImage.length > 0) {
       chosen = byImage.find(function (v) { return v.available; }) || byImage[0];
+    }
+    if (!chosen && byColorHex.length > 0) {
+      chosen = byColorHex.find(function (v) { return v.available; }) || byColorHex[0];
     }
     if (!chosen && bySize.length > 0) {
       chosen = bySize.find(function (v) { return v.available; }) || bySize[0];
@@ -1965,9 +2031,9 @@
   }
 
   function addToCart(params) {
-    const variantId = params.variantId;
-    const quantity = Math.max(1, parseInt(params.quantity, 10) || 1);
-    const properties = params.properties || {};
+    var variantId = params.variantId;
+    var quantity = Math.max(1, parseInt(params.quantity, 10) || 1);
+    var properties = params.properties || {};
     const requestBody = {
       id: variantId,
       quantity: quantity,
@@ -2150,7 +2216,18 @@
 
   function postResultToIframe(targetWindow, targetOrigin, resultPayload) {
     if (!targetWindow || !targetWindow.postMessage) return;
-    var finalMessage = Object.assign({ type: 'omafit-add-to-cart-result' }, resultPayload || {});
+    var payload = resultPayload && typeof resultPayload === 'object' ? resultPayload : {};
+    var finalMessage = {
+      type: 'omafit-add-to-cart-result',
+      payload: {
+        requestId: payload.requestId,
+        success: !!payload.success,
+        message: payload.message || '',
+        cart: payload.cart,
+        variantId: payload.variantId,
+        debug: payload.debug
+      }
+    };
     console.log('[OmafitCart] resultado enviado iframe:', finalMessage);
     try {
       targetWindow.postMessage(finalMessage, targetOrigin);
@@ -2216,7 +2293,20 @@
       return;
     }
 
-    var resolved = resolveVariantFromSelection(productData, selection);
+    var payloadProductId = String(payload.product.id || '').replace(/^.*\/(\d+)$/, '$1');
+    var currentProductId = String(productData.id || '').replace(/^.*\/(\d+)$/, '$1');
+    if (payloadProductId && currentProductId && payloadProductId !== currentProductId) {
+      console.warn('[OmafitCart] product.id do payload não corresponde ao produto da página:', payloadProductId, 'vs', currentProductId);
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: false,
+        message: 'Produto da solicitação não corresponde à página atual',
+        debug: { reason: 'product_mismatch' }
+      });
+      return;
+    }
+
+    var resolved = resolveVariantFromSelection({ productData: productData, selection: selection });
     if (resolved.error || !resolved.variant) {
       postResultToIframe(source, origin, {
         requestId: requestId,

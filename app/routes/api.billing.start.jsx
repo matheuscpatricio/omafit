@@ -1,5 +1,5 @@
 /**
- * POST /api/billing/start  ou  GET /api/billing/start?plan=basic|growth|pro&redirect=1
+ * POST /api/billing/start  ou  GET /api/billing/start?plan=ondemand|pro&redirect=1
  *
  * Cria assinatura via Shopify Billing API e redireciona para aprovação.
  * Em app embutido: 302 para /auth/exit-iframe. Preferir navegação para /app/billing/start (rota de página).

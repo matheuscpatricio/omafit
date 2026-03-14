@@ -19,36 +19,36 @@ const APP_SUBSCRIPTION_CREATE = `#graphql
 `;
 
 const PLAN_CONFIG = {
-  starter: {
-    name: "Omafit Starter",
-    amount: 30,
+  ondemand: {
+    name: "Omafit On-demand",
+    amount: 0,
     currency: "USD",
-    imagesIncluded: 100,
+    imagesIncluded: 0,
     pricePerExtra: 0.18,
-    cappedAmount: 1000, // Limite máximo de cobrança adicional por período (USD)
-  },
-  growth: {
-    name: "Omafit Growth",
-    amount: 120,
-    currency: "USD",
-    imagesIncluded: 500,
-    pricePerExtra: 0.16,
-    cappedAmount: 2000, // Limite máximo de cobrança adicional por período (USD)
+    cappedAmount: 1000, // Limite máximo de cobrança por período (USD)
   },
   pro: {
     name: "Omafit Pro",
-    amount: 220,
+    amount: 300,
     currency: "USD",
-    imagesIncluded: 1000,
-    pricePerExtra: 0.14,
+    imagesIncluded: 3000,
+    pricePerExtra: 0.08,
     cappedAmount: 5000, // Limite máximo de cobrança adicional por período (USD)
   },
-  // Mantém compatibilidade com nomes antigos
-  basic: {
-    name: "Omafit Starter",
-    amount: 30,
+  // Compatibilidade com nomes antigos
+  starter: {
+    name: "Omafit On-demand",
+    amount: 0,
     currency: "USD",
-    imagesIncluded: 100,
+    imagesIncluded: 0,
+    pricePerExtra: 0.18,
+    cappedAmount: 1000,
+  },
+  basic: {
+    name: "Omafit On-demand",
+    amount: 0,
+    currency: "USD",
+    imagesIncluded: 0,
     pricePerExtra: 0.18,
     cappedAmount: 1000,
   },
@@ -63,9 +63,8 @@ const PLAN_CONFIG = {
 export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const { admin, session } = auth;
   const key = (planKey || "").toLowerCase();
-  // Normaliza "basic" para "starter" mas aceita ambos
-  const normalizedKey = key === "basic" ? "starter" : key;
-  if (!["starter", "growth", "pro"].includes(normalizedKey)) {
+  const normalizedKey = key === "basic" || key === "starter" ? "ondemand" : key === "growth" ? "pro" : key;
+  if (!["ondemand", "pro"].includes(normalizedKey)) {
     throw new Response(
       JSON.stringify({
         error: normalizedKey === "enterprise" ? "Enterprise plan requires direct contact." : "Invalid plan",
@@ -76,24 +75,36 @@ export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const config = PLAN_CONFIG[normalizedKey];
   const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
   const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
+  // Line items: 1) Recurring (base), 2) Usage (appUsagePricingDetails) - obrigatório para appUsageRecordCreate
+  const usageTerms = normalizedKey === "ondemand"
+    ? `$${config.pricePerExtra.toFixed(2)} per image generated`
+    : `$${config.pricePerExtra.toFixed(2)} per extra image (after ${config.imagesIncluded} included)`;
+  const lineItems = [
+    {
+      plan: {
+        appRecurringPricingDetails: {
+          price: { amount: config.amount, currencyCode: config.currency },
+          interval: "EVERY_30_DAYS",
+        },
+      },
+    },
+    {
+      plan: {
+        appUsagePricingDetails: {
+          terms: usageTerms,
+          cappedAmount: {
+            amount: config.cappedAmount,
+            currencyCode: config.currency,
+          },
+        },
+      },
+    },
+  ];
   const response = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
     variables: {
       name: config.name,
       returnUrl,
-      lineItems: [
-        {
-          plan: {
-            appRecurringPricingDetails: {
-              price: { amount: config.amount, currencyCode: config.currency },
-              interval: "EVERY_30_DAYS",
-              cappedAmount: {
-                amount: config.cappedAmount,
-                currencyCode: config.currency,
-              },
-            },
-          },
-        },
-      ],
+      lineItems,
     },
   });
   const json = await response.json();

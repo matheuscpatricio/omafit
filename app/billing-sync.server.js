@@ -1,7 +1,7 @@
 /**
  * Sincroniza o plano de billing da Shopify com o Supabase.
  * Usado ao carregar o admin e no retorno do billing.
- * Apenas planos oficiais: basic (100), growth (500), pro (1000).
+ * Planos: ondemand (0 imagens, $0.18/img) | pro (3000 imagens, $0.08/img extra).
  */
 
 const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
@@ -26,35 +26,37 @@ const GET_SHOP_CONTACT = `#graphql
   }
 `;
 
-// Ordem importa: mais específicos primeiro; "professional" antes de "pro"; "starter"/"basic" antes de outros
+// Ordem importa: mais específicos primeiro
 const PLAN_MATCHERS = [
-  { pattern: "omafit starter", plan: "starter" },
-  { pattern: "omafit growth", plan: "growth" },
+  { pattern: "omafit on-demand", plan: "ondemand" },
+  { pattern: "omafit on demand", plan: "ondemand" },
   { pattern: "omafit pro", plan: "pro" },
-  { pattern: "omafit basic", plan: "starter" }, // Compatibilidade: basic → starter
-  { pattern: "starter", plan: "starter" },
-  { pattern: "growth", plan: "growth" },
-  { pattern: "basic", plan: "starter" }, // Compatibilidade: basic → starter
+  { pattern: "on-demand", plan: "ondemand" },
+  { pattern: "on demand", plan: "ondemand" },
+  { pattern: "ondemand", plan: "ondemand" },
   { pattern: "professional", plan: "pro" },
   { pattern: "pro", plan: "pro" },
+  // Compatibilidade com nomes antigos
+  { pattern: "starter", plan: "ondemand" },
+  { pattern: "basic", plan: "ondemand" },
+  { pattern: "growth", plan: "pro" },
 ];
 
 function resolvePlanFromSubscriptionName(subscriptionName) {
   const name = (subscriptionName || "").toLowerCase().trim();
-  if (!name) return "starter";
+  if (!name) return "ondemand";
   for (const { pattern, plan } of PLAN_MATCHERS) {
     if (name.includes(pattern)) return plan;
   }
-  return "starter";
+  return "ondemand";
 }
 
 function resolvePlanFromSubscription({ subscriptionName, recurringAmount }) {
   const parsedAmount = Number(recurringAmount);
   if (Number.isFinite(parsedAmount)) {
-    // Managed Pricing pode retornar nomes localizados; valor recorrente mantém mapeamento estável.
-    if (Math.abs(parsedAmount - 30) < 0.001) return "starter";
-    if (Math.abs(parsedAmount - 120) < 0.001) return "growth";
-    if (Math.abs(parsedAmount - 220) < 0.001) return "pro";
+    // Managed Pricing: valor recorrente mantém mapeamento estável.
+    if (Math.abs(parsedAmount) < 0.01) return "ondemand"; // $0 = on-demand
+    if (Math.abs(parsedAmount - 300) < 0.01) return "pro";
   }
   return resolvePlanFromSubscriptionName(subscriptionName);
 }
@@ -70,19 +72,21 @@ function extractRecurringAmountFromSubscription(activeSubscription) {
 }
 
 const PLAN_IMAGES = {
-  starter: 100,
-  growth: 500,
-  pro: 1000,
+  ondemand: 0,
+  pro: 3000,
   // Compatibilidade com nomes antigos
-  basic: 100,
+  starter: 0,
+  basic: 0,
+  growth: 3000,
 };
 
 const PLAN_PRICE_EXTRA = {
-  starter: 0.18,
-  growth: 0.16,
-  pro: 0.14,
+  ondemand: 0.18,
+  pro: 0.08,
   // Compatibilidade com nomes antigos
+  starter: 0.18,
   basic: 0.18,
+  growth: 0.08,
 };
 
 const SHOP_IDENTIFIER_COLUMNS = ["shop_domain", "shop", "domain"];
@@ -225,9 +229,9 @@ async function inferValueForMissingColumn(columnName, shop, payload, context = {
     }
     return context.cachedUserId || null;
   }
-  if (key === "plan" || key.includes("plan_")) return payload.plan || "starter";
+  if (key === "plan" || key.includes("plan_")) return payload.plan || "ondemand";
   if (key.includes("billing_status") || key === "status") return payload.billing_status || "inactive";
-  if (key.includes("images_included")) return payload.images_included ?? 100;
+  if (key.includes("images_included")) return payload.images_included ?? 0;
   if (key.includes("price_per_extra")) return payload.price_per_extra_image ?? 0.18;
   if (key.includes("currency")) return payload.currency || "USD";
   if (key.includes("images_used") || key.includes("usage")) return 0;
@@ -401,8 +405,8 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
     return null;
   }
 
-  const normalizedPlan = plan === "basic" ? "starter" : (plan || "starter");
-  const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? 100;
+  const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : (plan || "ondemand");
+  const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? 0;
   const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? 0.18;
   const binding = await resolveShopUserBinding({
     admin,
@@ -483,9 +487,9 @@ export async function syncBillingFromShopify(admin, shop) {
       subscriptionName,
       recurringAmount,
     });
-    // Normaliza "basic" para "starter"
-    const normalizedPlan = plan === "basic" ? "starter" : plan;
-    const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES[plan] ?? 100;
+    // Normaliza nomes antigos para ondemand/pro
+    const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
+    const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES[plan] ?? 0;
     const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA[plan] ?? 0.18;
 
     console.log("[Billing Sync] Resolved:", {

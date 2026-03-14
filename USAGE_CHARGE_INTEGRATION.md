@@ -146,11 +146,12 @@ if (imagesUsed > planLimit) {
 
 Os planos estão configurados em `app/billing-create.server.js`:
 
-- **Starter**: $30/mês, 100 imagens, $0.18/imagem extra, capped: $1000
-- **Growth**: $120/mês, 500 imagens, $0.16/imagem extra, capped: $2000
-- **Pro**: $220/mês, 1000 imagens, $0.14/imagem extra, capped: $5000
+- **On-demand**: Instalação gratuita ($0/mês), $0.18/imagem, capped: $1000
+- **Pro**: $300/mês, 3000 imagens incluídas, $0.08/imagem extra, capped: $5000
 
 O `cappedAmount` limita o total de usage charges em um período de 30 dias. Se o lojista ultrapassar esse limite, a Shopify retornará erro ao tentar criar novos usage records.
+
+Para cobrança por demanda funcionar, a assinatura precisa ter um **line item de usage pricing** (`appUsagePricingDetails` com `terms` e `cappedAmount`). O `billing-create.server.js` cria esse line item automaticamente para ambos os planos.
 
 ## Tratamento de Erros
 

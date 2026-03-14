@@ -272,12 +272,13 @@ export default function DashboardPage() {
     if (!plan) return t('common.none');
 
     const planNames = {
-      basic: 'Basic',
-      growth: 'Growth',
+      ondemand: 'On-demand',
+      basic: 'On-demand',
+      starter: 'On-demand',
+      growth: 'Pro',
       pro: 'Pro',
       professional: 'Professional',
       enterprise: 'Enterprise',
-      starter: 'Basic'
     };
 
     return planNames[plan.toLowerCase()] || plan;

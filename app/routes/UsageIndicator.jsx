@@ -30,6 +30,7 @@ export function UsageIndicator({ usage }) {
   const planName = plan && typeof plan === 'string'
     ? plan.charAt(0).toUpperCase() + plan.slice(1)
     : '';
+  const isOnDemand = included === 0;
 
   return (
     <Card>
@@ -39,23 +40,27 @@ export function UsageIndicator({ usage }) {
             {t('billing.usageTitle', { plan: planName || '–' })}
           </Text>
           <Badge tone={badgeTone}>
-            {t('billing.usagePercentUsed', { percent: percentage.toFixed(1) })}
+            {isOnDemand ? t('billing.usagePayPerUse') : t('billing.usagePercentUsed', { percent: percentage.toFixed(1) })}
           </Badge>
         </InlineStack>
 
         <BlockStack gap="200">
-          <ProgressBar
-            progress={percentage}
-            tone={progressColor}
-            size="medium"
-          />
+          {!isOnDemand && (
+            <ProgressBar
+              progress={percentage}
+              tone={progressColor}
+              size="medium"
+            />
+          )}
           <InlineStack align="space-between">
             <Text variant="bodyMd">
-              {t('billing.usageImagesUsed', { used, included })}
+              {isOnDemand ? t('billing.usageImagesUsedOnDemand', { used }) : t('billing.usageImagesUsed', { used, included })}
             </Text>
-            <Text variant="bodyMd" fontWeight="semibold">
-              {t('billing.usageRemaining', { remaining })}
-            </Text>
+            {!isOnDemand && (
+              <Text variant="bodyMd" fontWeight="semibold">
+                {t('billing.usageRemaining', { remaining })}
+              </Text>
+            )}
           </InlineStack>
         </BlockStack>
 

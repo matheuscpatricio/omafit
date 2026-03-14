@@ -27,32 +27,18 @@ export default function BillingPlans({
       ? plans
       : [
           {
-            name: "Basic",
-            priceKey: "billing.planBasicPrice",
-            imagesIncluded: 100,
-            pricePerExtraKey: "billing.planBasicExtra",
-            descriptionKey: "billing.planBasicDesc",
-          },
-          {
-            name: "Growth",
-            priceKey: "billing.planGrowthPrice",
-            imagesIncluded: 500,
-            pricePerExtraKey: "billing.planGrowthExtra",
-            descriptionKey: "billing.planGrowthDesc",
+            name: "On-demand",
+            priceKey: "billing.planOndemandPrice",
+            imagesIncluded: 0,
+            pricePerExtraKey: "billing.planOndemandExtra",
+            descriptionKey: "billing.planOndemandDesc",
           },
           {
             name: "Pro",
             priceKey: "billing.planProPrice",
-            imagesIncluded: 1000,
+            imagesIncluded: 3000,
             pricePerExtraKey: "billing.planProExtra",
             descriptionKey: "billing.planProDesc",
-          },
-          {
-            name: "Enterprise",
-            priceKey: "billing.planEnterprisePrice",
-            imagesIncluded: "billing.unlimited",
-            pricePerExtraKey: "billing.planEnterpriseExtra",
-            descriptionKey: "billing.planEnterpriseDesc",
           },
         ];
 
@@ -71,14 +57,14 @@ export default function BillingPlans({
 
       <BlockStack gap="400">
         {effectivePlans.map((plan) => {
-          const planKey = plan.name.toLowerCase();
-          const normalizedCurrent = (currentPlan || "").toLowerCase().trim();
+          const planKey = plan.name.toLowerCase().includes("demand") ? "ondemand" : "pro";
+          const normalizedCurrent = (currentPlan || "").toLowerCase().trim().replace(/-/g, "");
           const isCurrent = Boolean(
             normalizedCurrent &&
               (normalizedCurrent === planKey ||
-                (planKey === "pro" && normalizedCurrent === "professional"))
+                (planKey === "pro" && (normalizedCurrent === "professional" || normalizedCurrent === "pro")))
           );
-          const isEnterprise = planKey === "enterprise";
+          const isEnterprise = false;
 
           return (
             <Card key={plan.name}>

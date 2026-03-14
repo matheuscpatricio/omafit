@@ -1,5 +1,5 @@
 /**
- * GET /app/billing/start?plan=basic|growth|pro&shop=...&host=...&embedded=1
+ * GET /app/billing/start?plan=ondemand|pro&shop=...&host=...&embedded=1
  *
  * Rota de PÁGINA para iniciar o billing: o merchant clica em "Assinar" e o formulário
  * faz uma navegação GET para esta URL (com target="_top" para sair do iframe).

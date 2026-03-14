@@ -823,7 +823,7 @@ export default function AnalyticsPage() {
         .slice(0, 10);
 
       const omafitRevenue = Number(ordersData.omafitRevenueAfter ?? 0) || 0;
-      const planCostMap = { starter: 30, basic: 30, growth: 120, pro: 220 };
+      const planCostMap = { ondemand: 0, starter: 0, basic: 0, growth: 300, pro: 300 };
       const planCost = planCostMap[String(billingPlan || '').toLowerCase()] || 0;
       const extraImages = Math.max(0, (imagesUsedMonth || 0) - (imagesIncluded || 0));
       const extraCost = extraImages * (pricePerExtraImage || 0);

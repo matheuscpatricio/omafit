@@ -150,12 +150,14 @@ export async function checkImageLimit(shopDomain) {
   // Verificar se está dentro do limite
   // Nota: Não bloqueamos se ultrapassar, apenas informamos
   // O billing por uso cobrará automaticamente pelas extras
+  // Plano on-demand (included=0): toda imagem é cobrada; percentage=0 para evitar divisão por zero
+  const percentage = included > 0 ? Math.min(100, Math.round((used / included) * 100)) : 0;
   return {
     withinLimit: used <= included,
     used,
     included,
     remaining,
-    percentage: Math.min(100, Math.round((used / included) * 100))
+    percentage,
   };
 }
 

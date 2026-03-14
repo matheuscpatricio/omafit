@@ -52,7 +52,7 @@ Use este checklist para garantir que **Shopify**, **Supabase** e **variáveis de
 ## 3. Fluxo no app (o que o código faz)
 
 1. O merchant clica em **Assinar** ou **Mudar plano** na página **Billing**.
-2. O formulário faz um **GET** para **`/app/billing/start?plan=basic|growth|pro&shop=...&host=...&embedded=1`** com **target="_top"** (navegação no topo da janela, saindo do iframe).
+2. O formulário faz um **GET** para **`/app/billing/start?plan=ondemand|pro&shop=...&host=...&embedded=1`** com **target="_top"** (navegação no topo da janela, saindo do iframe).
 3. O **loader** da rota `app.billing.start`:
    - autentica com a sessão (cookie ou `id_token` na URL),
    - chama a API da Shopify para criar a assinatura,

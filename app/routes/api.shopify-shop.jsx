@@ -130,7 +130,7 @@ export const loader = async ({ request }) => {
       if (!shopRow) {
         try {
           await writeBillingToSupabase(shop, {
-            plan: "starter",
+            plan: "ondemand",
             billingStatus: "inactive",
             admin,
           });

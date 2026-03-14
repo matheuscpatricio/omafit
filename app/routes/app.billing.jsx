@@ -65,7 +65,7 @@ export default function BillingPage() {
         currentPlan: isBillingActive ? (shop?.plan || null) : null,
         billingStatus: shop?.billing_status || null,
         usage: isBillingActive && shop ? {
-          plan: shop?.plan || 'starter',
+          plan: shop?.plan || 'ondemand',
           used: imagesUsed,
           included: imagesIncluded,
           remaining: Math.max(0, imagesIncluded - imagesUsed),

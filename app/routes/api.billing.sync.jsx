@@ -29,7 +29,7 @@ async function tryForcePersistActiveBilling({
   supabaseUrl,
   supabaseKey,
   shop,
-  plan = "starter",
+  plan = "ondemand",
 }) {
   const headers = {
     apikey: supabaseKey,
@@ -38,11 +38,12 @@ async function tryForcePersistActiveBilling({
     Prefer: "return=representation",
   };
 
+  const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
   const payload = {
-    plan,
+    plan: normalizedPlan,
     billing_status: "active",
-    images_included: plan === "growth" ? 500 : plan === "pro" ? 1000 : 100,
-    price_per_extra_image: plan === "growth" ? 0.16 : plan === "pro" ? 0.14 : 0.18,
+    images_included: normalizedPlan === "pro" ? 3000 : 0,
+    price_per_extra_image: normalizedPlan === "pro" ? 0.08 : 0.18,
     currency: "USD",
     updated_at: new Date().toISOString(),
   };
@@ -136,8 +137,9 @@ export async function loader({ request }) {
             subscriptionName: active?.name || "",
             recurringAmount: null,
           });
+          const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
           const saved = await writeBillingToSupabase(session.shop, {
-            plan,
+            plan: normalizedPlan,
             billingStatus: "active",
             admin,
           });
@@ -188,9 +190,9 @@ export async function loader({ request }) {
           const body = {
             shop_domain: session.shop,
             [identifier]: session.shop,
-            plan: "starter",
+            plan: "ondemand",
             billing_status: "inactive",
-            images_included: 100,
+            images_included: 0,
             price_per_extra_image: 0.18,
             images_used_month: 0,
             currency: "USD",
@@ -233,8 +235,8 @@ export async function loader({ request }) {
             return Response.json({
               ok: true,
               shop: session.shop,
-              plan: "starter",
-              imagesIncluded: 100,
+              plan: "ondemand",
+              imagesIncluded: 0,
               pricePerExtra: 0.18,
               forcePersistStrategy: forced.strategy,
             });

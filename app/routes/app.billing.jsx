@@ -72,7 +72,7 @@ export default function BillingPage() {
           plan: shop?.plan || 'ondemand',
           used: imagesUsed,
           included: imagesIncluded,
-          remaining: isOnDemand ? Math.max(0, 50 - freeImagesUsed) : Math.max(0, imagesIncluded - imagesUsedMonth),
+          remaining: isOnDemand ? Math.max(0, 50 - Math.min(50, imagesUsed)) : Math.max(0, imagesIncluded - imagesUsedMonth),
           extraImages: extraImages,
           percentage: imagesIncluded > 0
             ? Math.min(100, (imagesUsed / imagesIncluded) * 100)

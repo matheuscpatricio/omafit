@@ -219,7 +219,7 @@ export default function DashboardPage() {
       const imagesIncluded = shopData.images_included || 0;
       const imagesUsed = isOnDemand ? freeImagesUsed + imagesUsedMonth : imagesUsedMonth;
       const remaining = isOnDemand
-        ? Math.max(0, 50 - freeImagesUsed)
+        ? Math.max(0, 50 - Math.min(50, imagesUsed))
         : Math.max(0, imagesIncluded - imagesUsedMonth);
       const percentage = imagesIncluded > 0
         ? Math.min(100, Math.round((imagesUsed / imagesIncluded) * 100))

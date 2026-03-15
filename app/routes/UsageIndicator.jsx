@@ -17,11 +17,11 @@ export function UsageIndicator({ usage }) {
   let progressColor = 'success';
   let badgeTone = 'success';
   if (percentage >= 90) {
-    progressColor = 'critical';
-    badgeTone = 'critical';
+    progressColor = 'attention';
+    badgeTone = 'info';
   } else if (percentage >= 75) {
     progressColor = 'warning';
-    badgeTone = 'warning';
+    badgeTone = 'info';
   } else if (percentage >= 50) {
     progressColor = 'attention';
     badgeTone = 'attention';
@@ -79,13 +79,13 @@ export function UsageIndicator({ usage }) {
 
         {extraImages > 0 && !isOnDemand && (
           <BlockStack gap="200">
-            <Card background="bg-surface-critical-subdued">
+            <Card background="bg-surface-info-subdued">
               <BlockStack gap="200">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text variant="bodyMd" tone="critical" fontWeight="semibold">
+                  <Text variant="bodyMd" tone="info" fontWeight="semibold">
                     {t('billing.extraImagesTitle')}
                   </Text>
-                  <Badge tone="critical">
+                  <Badge tone="info">
                     {t('billing.extraImagesCount', { 
                       count: extraImages,
                       plural: extraImages > 1 ? 's' : ''
@@ -106,7 +106,7 @@ export function UsageIndicator({ usage }) {
 
         {!withinLimit && extraImages === 0 && (
           <BlockStack gap="100">
-            <Text variant="bodyMd" tone="critical" fontWeight="semibold">
+            <Text variant="bodyMd" tone="info" fontWeight="semibold">
               ⚠️ {t('billing.usageOverLimit')}
             </Text>
             <Text variant="bodyMd" tone="subdued">

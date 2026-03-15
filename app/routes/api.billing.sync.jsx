@@ -8,6 +8,8 @@ import {
   syncBillingFromShopify,
   writeBillingToSupabase,
   resolvePlanFromSubscription,
+  extractRecurringAmountFromSubscription,
+  extractPlanHandleFromSubscription,
 } from "../billing-sync.server";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
@@ -121,6 +123,17 @@ export async function loader({ request }) {
               id
               name
               status
+        lineItems {
+          id
+          plan {
+            pricingDetails {
+              ... on AppRecurringPricing {
+                price { amount currencyCode }
+                planHandle
+              }
+            }
+          }
+        }
             }
           }
         }
@@ -133,9 +146,12 @@ export async function loader({ request }) {
           (sub) => String(sub?.status || "").toUpperCase() === "ACTIVE",
         );
         if (active) {
+          const recurringAmount = extractRecurringAmountFromSubscription(active);
+          const planHandle = extractPlanHandleFromSubscription(active);
           const plan = resolvePlanFromSubscription({
             subscriptionName: active?.name || "",
-            recurringAmount: null,
+            recurringAmount,
+            planHandle,
           });
           const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
           const saved = await writeBillingToSupabase(session.shop, {

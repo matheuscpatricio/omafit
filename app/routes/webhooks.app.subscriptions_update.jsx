@@ -17,13 +17,15 @@ export const action = async ({ request }) => {
     const rawStatus = String(sub?.status || "").toUpperCase();
     const status = rawStatus === "ACTIVE" ? "active" : "inactive";
     const lineItems = Array.isArray(sub?.line_items) ? sub.line_items : [];
-    const recurringAmount = Number(
-      lineItems.find((item) => Number.isFinite(Number(item?.plan?.pricing_details?.price?.amount)))
-        ?.plan?.pricing_details?.price?.amount,
-    );
+    const recurringItem = lineItems.find((item) => Number.isFinite(Number(item?.plan?.pricing_details?.price?.amount)));
+    const recurringAmount = Number(recurringItem?.plan?.pricing_details?.price?.amount) || null;
+    const planHandle = recurringItem?.plan?.plan_handle
+      ? String(recurringItem.plan.plan_handle).trim().toLowerCase()
+      : null;
     const planFromPayload = resolvePlanFromSubscription({
       subscriptionName: sub?.name || "",
       recurringAmount: Number.isFinite(recurringAmount) ? recurringAmount : null,
+      planHandle,
     });
     console.log(`[Webhook] Received ${topic} for ${shop}`, {
       status: rawStatus || null,

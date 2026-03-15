@@ -11,6 +11,17 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
         id
         name
         status
+        lineItems {
+          id
+          plan {
+            pricingDetails {
+              ... on AppRecurringPricing {
+                price { amount currencyCode }
+                planHandle
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -52,22 +63,53 @@ function resolvePlanFromSubscriptionName(subscriptionName) {
   return "ondemand";
 }
 
-function resolvePlanFromSubscription({ subscriptionName, recurringAmount }) {
+// planHandle do Partner Dashboard (Managed Pricing) - mapeamento direto e confiável
+const PLAN_HANDLE_MAP = {
+  free: "ondemand",
+  ondemand: "ondemand",
+  "on-demand": "ondemand",
+  basic: "ondemand",
+  starter: "ondemand",
+  pro: "pro",
+  growth: "pro",
+  professional: "pro",
+};
+
+function resolvePlanFromSubscription({ subscriptionName, recurringAmount, planHandle }) {
+  // 1) planHandle (Managed Pricing) é a fonte mais confiável
+  if (planHandle) {
+    const direct = PLAN_HANDLE_MAP[planHandle];
+    if (direct) return direct;
+    if (planHandle.includes("free") || planHandle.includes("ondemand")) return "ondemand";
+    if (planHandle.includes("pro") || planHandle.includes("growth")) return "pro";
+  }
+  // 2) Valor recorrente ($0 = on-demand, $300 = pro)
   const parsedAmount = Number(recurringAmount);
   if (Number.isFinite(parsedAmount)) {
-    // Managed Pricing: valor recorrente mantém mapeamento estável.
-    if (Math.abs(parsedAmount) < 0.01) return "ondemand"; // $0 = on-demand
+    if (Math.abs(parsedAmount) < 0.01) return "ondemand";
     if (Math.abs(parsedAmount - 300) < 0.01) return "pro";
   }
+  // 3) Fallback: nome da subscription
   return resolvePlanFromSubscriptionName(subscriptionName);
 }
 
 function extractRecurringAmountFromSubscription(activeSubscription) {
   const lineItems = activeSubscription?.lineItems || [];
   for (const item of lineItems) {
-    const amountRaw = item?.plan?.price?.amount;
+    const details = item?.plan?.pricingDetails ?? item?.plan;
+    const amountRaw = details?.price?.amount;
     const amount = Number(amountRaw);
     if (Number.isFinite(amount)) return amount;
+  }
+  return null;
+}
+
+function extractPlanHandleFromSubscription(activeSubscription) {
+  const lineItems = activeSubscription?.lineItems || [];
+  for (const item of lineItems) {
+    const details = item?.plan?.pricingDetails ?? item?.plan;
+    const handle = details?.planHandle ?? details?.plan_handle;
+    if (handle && typeof handle === "string") return String(handle).trim().toLowerCase();
   }
   return null;
 }
@@ -484,9 +526,11 @@ export async function syncBillingFromShopify(admin, shop) {
     const hasActiveSubscription = Boolean(active);
     const subscriptionName = active?.name || "";
     const recurringAmount = extractRecurringAmountFromSubscription(active);
+    const planHandle = extractPlanHandleFromSubscription(active);
     const plan = resolvePlanFromSubscription({
       subscriptionName,
       recurringAmount,
+      planHandle,
     });
     // Normaliza nomes antigos para ondemand/pro
     const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
@@ -496,6 +540,7 @@ export async function syncBillingFromShopify(admin, shop) {
     console.log("[Billing Sync] Resolved:", {
       shop,
       activeName: subscriptionName,
+      planHandle,
       recurringAmount,
       hasActiveSubscription,
       resolvedPlan: normalizedPlan,
@@ -523,6 +568,7 @@ export {
   resolvePlanFromSubscriptionName,
   resolvePlanFromSubscription,
   extractRecurringAmountFromSubscription,
+  extractPlanHandleFromSubscription,
   PLAN_IMAGES,
   PLAN_PRICE_EXTRA,
 };

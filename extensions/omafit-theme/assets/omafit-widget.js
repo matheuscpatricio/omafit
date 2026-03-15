@@ -1,13 +1,12 @@
 // Omafit - Widget oficial adaptado para Theme App Extension
 (function () {
-  // Log imediato para confirmar que script está carregando
-  console.log('✅ Script omafit-widget.js carregado e executando...');
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
-  
+  const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
+
   // Configuração global (será preenchida pela API)
   let OMAFIT_CONFIG = null;
 
-  // Carregar fontes do Google Fonts
+  // Carregar fontes do Google Fonts apenas quando o modal for aberto (evita bloquear carregamento inicial)
   const fontsToLoad = [
     'Outfit:wght@100..900',
     'Playfair+Display:wght@400..900',
@@ -15,15 +14,17 @@
     'Inter:opsz,wght@14..32,100..900'
   ];
 
-  fontsToLoad.forEach((font) => {
-    const fontName = font.split(':')[0];
-    if (!document.querySelector('link[href*="' + fontName + '"]')) {
-      const link = document.createElement('link');
-      link.href = 'https://fonts.googleapis.com/css2?family=' + font + '&display=swap';
-      link.rel = 'stylesheet';
-      document.head.appendChild(link);
-    }
-  });
+  function loadOmafitFontsWhenNeeded() {
+    fontsToLoad.forEach((font) => {
+      const fontName = font.split(':')[0];
+      if (!document.querySelector('link[href*="' + fontName + '"]')) {
+        const link = document.createElement('link');
+        link.href = 'https://fonts.googleapis.com/css2?family=' + font + '&display=swap';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+    });
+  }
 
   // Normalizar URLs
   function normalizeUrl(url) {
@@ -1226,6 +1227,9 @@
 
   // Função que abre o modal do Omafit
   window.openOmafitModal = async function () {
+    // Carregar fontes apenas quando o usuário abre o modal (não bloqueia carregamento da página)
+    loadOmafitFontsWhenNeeded();
+
     // Se configuração não estiver carregada, tentar carregar agora
     if (!OMAFIT_CONFIG) {
       console.warn('⚠️ Omafit: configuração não carregada, tentando carregar agora...');
@@ -2381,6 +2385,14 @@
     link.addEventListener('mouseenter', function () {
       this.style.opacity = '0.7';
       this.style.textDecorationThickness = '2px';
+      // Preconnect ao abrir o modal (aquecimento de conexão antes do clique)
+      if (!document.querySelector('link[rel="preconnect"][href="' + OMAFIT_WIDGET_ORIGIN + '"]')) {
+        const preconnect = document.createElement('link');
+        preconnect.rel = 'preconnect';
+        preconnect.href = OMAFIT_WIDGET_ORIGIN;
+        preconnect.crossOrigin = 'anonymous';
+        document.head.appendChild(preconnect);
+      }
     });
     link.addEventListener('mouseleave', function () {
       this.style.opacity = '1';
@@ -2654,26 +2666,24 @@
     }
   }
 
-  // Inicializar widget
+  // Inicializar widget (deferido para não bloquear carregamento da página)
   function startInit() {
-    console.log('🚀 Omafit: Iniciando widget...');
-    console.log('📋 Estado do documento:', document.readyState);
-    console.log('🏪 Shopify disponível:', !!window.Shopify);
-    
-    if (document.readyState === 'loading') {
-      console.log('⏳ Aguardando DOMContentLoaded...');
-      document.addEventListener('DOMContentLoaded', function() {
-        console.log('✅ DOMContentLoaded disparado');
-        initOmafit();
-      });
+    function doInit() {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initOmafit);
+      } else {
+        setTimeout(initOmafit, 50);
+      }
+    }
+
+    // Usar requestIdleCallback quando disponível para não competir com recursos críticos
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(function() { doInit(); }, { timeout: 2000 });
     } else {
-      console.log('✅ DOM já está pronto, inicializando imediatamente');
-      // Aguardar um pouco para garantir que elementos estão renderizados
-      setTimeout(initOmafit, 100);
+      doInit();
     }
   }
 
-  // Tentar múltiplas vezes se necessário (para SPAs)
   startInit();
   
   // Também tentar após um delay (para temas que carregam conteúdo dinamicamente)

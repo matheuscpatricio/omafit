@@ -383,50 +383,38 @@ export default function DashboardPage() {
                       {t('dashboard.imagesGenerated')}
                     </Text>
                     <Text variant="bodyLg" fontWeight="bold">
-                      {imagesUsed} / {imagesIncluded}
+                      {imagesIncluded === 0
+                        ? imagesUsed
+                        : `${imagesUsed} / ${imagesIncluded}`}
                     </Text>
                   </InlineStack>
 
-                  <ProgressBar
-                    progress={usage.percentage}
-                    tone={usage.percentage > 90 ? 'critical' : usage.percentage > 70 ? 'attention' : 'success'}
-                  />
-
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text variant="bodyMd" tone="subdued">
-                      {t('dashboard.remaining')}
-                    </Text>
-                    <Text variant="bodyMd">
-                      {usage.remaining} {t('dashboard.imagesUnit')}
-                    </Text>
-                  </InlineStack>
-
-                  {extraImages > 0 && (
+                  {imagesIncluded > 0 && (
                     <>
+                      <ProgressBar
+                        progress={usage.percentage}
+                        tone={usage.percentage > 90 ? 'critical' : usage.percentage > 70 ? 'attention' : 'success'}
+                      />
                       <InlineStack align="space-between" blockAlign="center">
                         <Text variant="bodyMd" tone="subdued">
-                          {t('dashboard.extraImagesLabel')}
+                          {t('dashboard.remaining')}
                         </Text>
-                        <Text variant="bodyMd" fontWeight="semibold">
-                          {extraImages} {t('dashboard.imagesUnit')}
-                        </Text>
-                      </InlineStack>
-
-                      <InlineStack align="space-between" blockAlign="center">
-                        <Text variant="bodyMd" tone="subdued">
-                          {t('dashboard.extraCostEstimate')}
-                        </Text>
-                        <Text variant="bodyMd" fontWeight="semibold">
-                          {currency} ${(extraImages * pricePerExtra).toFixed(2)}
+                        <Text variant="bodyMd">
+                          {usage.remaining} {t('dashboard.imagesUnit')}
                         </Text>
                       </InlineStack>
-
-                      <Banner tone="info">
-                        <p>
-                          {t('dashboard.extraImagesBanner', { count: extraImages, currency, price: pricePerExtra })}
-                        </p>
-                      </Banner>
                     </>
+                  )}
+
+                  {imagesIncluded > 0 && extraImages > 0 && (
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="bodyMd" tone="subdued">
+                        {t('dashboard.extraImagesLabel')}
+                      </Text>
+                      <Text variant="bodyMd" fontWeight="semibold">
+                        {extraImages} {t('dashboard.imagesUnit')}
+                      </Text>
+                    </InlineStack>
                   )}
                 </BlockStack>
               </BlockStack>

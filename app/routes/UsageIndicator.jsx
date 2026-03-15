@@ -64,7 +64,7 @@ export function UsageIndicator({ usage }) {
           </InlineStack>
         </BlockStack>
 
-        {extraImages > 0 && (
+        {extraImages > 0 && !isOnDemand && (
           <BlockStack gap="200">
             <Card background="bg-surface-critical-subdued">
               <BlockStack gap="200">

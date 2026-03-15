@@ -31,6 +31,8 @@ export function UsageIndicator({ usage }) {
     ? plan.charAt(0).toUpperCase() + plan.slice(1)
     : '';
   const isOnDemand = included === 0;
+  const billableCount = isOnDemand ? used : extraImages;
+  const estimatedCost = billableCount > 0 ? (billableCount * pricePerExtra).toFixed(2) : null;
 
   return (
     <Card>
@@ -63,6 +65,17 @@ export function UsageIndicator({ usage }) {
             )}
           </InlineStack>
         </BlockStack>
+
+        {estimatedCost != null && (
+          <InlineStack align="space-between" blockAlign="center">
+            <Text variant="bodyMd" tone="subdued">
+              {t('billing.estimatedCostLabel')}
+            </Text>
+            <Text variant="bodyMd" fontWeight="semibold">
+              ${estimatedCost}
+            </Text>
+          </InlineStack>
+        )}
 
         {extraImages > 0 && !isOnDemand && (
           <BlockStack gap="200">

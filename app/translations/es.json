@@ -292,6 +292,7 @@
     "usageOverLimitNote": "Las imágenes extra se cobrarán automáticamente según tu plan.",
     "usageNearLimit": "Estás cerca del límite",
     "usageNearLimitNote": "Considera actualizar tu plan si necesitas más imágenes.",
+    "estimatedCostLabel": "Coste estimado del mes",
     "extraImagesTitle": "Imágenes adicionales",
     "extraImagesCount": "{count} imagen{plural}",
     "extraImagesDescription": "{count} imagen{plural} adicional{plural} generada{plural} este mes. Coste estimado: ${price}",

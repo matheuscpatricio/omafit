@@ -277,18 +277,20 @@ export default function DashboardPage() {
   const getPlanDisplayName = (plan) => {
     if (!plan) return t('common.none');
 
-    const planNames = {
-      ondemand: 'On-demand',
-      free: 'On-demand',
-      basic: 'On-demand',
-      starter: 'On-demand',
-      growth: 'Pro',
-      pro: 'Pro',
-      professional: 'Professional',
-      enterprise: 'Enterprise',
+    const planKey = plan.toLowerCase();
+    const planMap = {
+      ondemand: 'plans.ondemand',
+      free: 'plans.ondemand',
+      basic: 'plans.ondemand',
+      starter: 'plans.ondemand',
+      growth: 'plans.pro',
+      pro: 'plans.pro',
+      professional: 'plans.professional',
+      enterprise: 'plans.enterprise',
     };
 
-    return planNames[plan.toLowerCase()] || plan;
+    const key = planMap[planKey];
+    return key ? t(key) : plan;
   };
 
   if (loading) {
@@ -399,7 +401,7 @@ export default function DashboardPage() {
                     <>
                       <ProgressBar
                         progress={usage.percentage}
-                        tone={usage.percentage > 90 ? 'critical' : usage.percentage > 70 ? 'attention' : 'success'}
+                        tone={usage.percentage > 70 ? 'info' : 'success'}
                       />
                       <InlineStack align="space-between" blockAlign="center">
                         <Text variant="bodyMd" tone="subdued">

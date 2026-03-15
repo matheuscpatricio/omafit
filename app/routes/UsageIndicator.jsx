@@ -17,14 +17,14 @@ export function UsageIndicator({ usage }) {
   let progressColor = 'success';
   let badgeTone = 'success';
   if (percentage >= 90) {
-    progressColor = 'attention';
+    progressColor = 'info';
     badgeTone = 'info';
   } else if (percentage >= 75) {
-    progressColor = 'warning';
+    progressColor = 'info';
     badgeTone = 'info';
   } else if (percentage >= 50) {
-    progressColor = 'attention';
-    badgeTone = 'attention';
+    progressColor = 'info';
+    badgeTone = 'info';
   }
 
   const planName = plan && typeof plan === 'string'
@@ -86,18 +86,15 @@ export function UsageIndicator({ usage }) {
                     {t('billing.extraImagesTitle')}
                   </Text>
                   <Badge tone="info">
-                    {t('billing.extraImagesCount', { 
-                      count: extraImages,
-                      plural: extraImages > 1 ? 's' : ''
-                    })}
+                    {extraImages === 1
+                      ? t('billing.extraImagesCount', { count: 1 })
+                      : t('billing.extraImagesCountPlural', { count: extraImages })}
                   </Badge>
                 </InlineStack>
                 <Text variant="bodyMd" tone="subdued">
-                  {t('billing.extraImagesDescription', { 
-                    count: extraImages,
-                    plural: extraImages > 1 ? 's' : '',
-                    price: (extraImages * pricePerExtra).toFixed(2) 
-                  })}
+                  {extraImages === 1
+                    ? t('billing.extraImagesDescription', { count: 1, price: (extraImages * pricePerExtra).toFixed(2) })
+                    : t('billing.extraImagesDescriptionPlural', { count: extraImages, price: (extraImages * pricePerExtra).toFixed(2) })}
                 </Text>
               </BlockStack>
             </Card>
@@ -107,7 +104,7 @@ export function UsageIndicator({ usage }) {
         {!withinLimit && extraImages === 0 && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="info" fontWeight="semibold">
-              ⚠️ {t('billing.usageOverLimit')}
+              {t('billing.usageOverLimit')}
             </Text>
             <Text variant="bodyMd" tone="subdued">
               {t('billing.usageOverLimitNote')}
@@ -118,7 +115,7 @@ export function UsageIndicator({ usage }) {
         {withinLimit && percentage >= 75 && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="warning" fontWeight="semibold">
-              💡 {t('billing.usageNearLimit')}
+              {t('billing.usageNearLimit')}
             </Text>
             <Text variant="bodyMd" tone="subdued">
               {t('billing.usageNearLimitNote')}

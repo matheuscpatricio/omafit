@@ -288,17 +288,29 @@
     "usageImagesUsed": "{used} de {included} imágenes usadas",
     "usageImagesUsedOnDemand": "{used} imágenes generadas – cobranza por uso",
     "usageRemaining": "{remaining} restantes",
-    "usageOverLimit": "Has superado el límite incluido",
+    "usageOverLimit": "⚠️ Has superado el límite incluido",
     "usageOverLimitNote": "Las imágenes extra se cobrarán automáticamente según tu plan.",
-    "usageNearLimit": "Estás cerca del límite",
+    "usageNearLimit": "💡 Estás cerca del límite",
     "usageNearLimitNote": "Considera actualizar tu plan si necesitas más imágenes.",
     "estimatedCostLabel": "Coste estimado del mes",
     "extraImagesTitle": "Imágenes adicionales",
-    "extraImagesCount": "{count} imagen{plural}",
-    "extraImagesDescription": "{count} imagen{plural} adicional{plural} generada{plural} este mes. Coste estimado: ${price}",
+    "extraImagesCount": "{count} imagen",
+    "extraImagesCountPlural": "{count} imágenes",
+    "extraImagesDescription": "{count} imagen adicional generada este mes. Coste estimado: ${price}",
+    "extraImagesDescriptionPlural": "{count} imágenes adicionales generadas este mes. Coste estimado: ${price}",
     "needToChangePlan": "¿Necesitas cambiar de plan?",
     "chooseYourPlanHere": "Elige aquí tu plan",
     "clickButtonBelow": "Haz clic en el botón de abajo",
-    "wantToChangePlan": "Quiero cambiar mi plan"
+    "wantToChangePlan": "Quiero cambiar mi plan",
+    "errorSyncBilling": "Error al sincronizar facturación",
+    "errorSyncBillingWithShopify": "Error al sincronizar facturación con Shopify.",
+    "errorLoadData": "Error al cargar datos",
+    "errorLoadDataWithStatus": "Error al cargar datos: {status}"
+  },
+  "plans": {
+    "ondemand": "On-demand",
+    "pro": "Pro",
+    "professional": "Professional",
+    "enterprise": "Enterprise"
   }
 }

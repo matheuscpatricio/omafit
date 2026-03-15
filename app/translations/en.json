@@ -288,17 +288,29 @@
     "usageImagesUsed": "{used} of {included} images used",
     "usageImagesUsedOnDemand": "{used} images generated – pay per use",
     "usageRemaining": "{remaining} remaining",
-    "usageOverLimit": "You have exceeded the included limit",
+    "usageOverLimit": "⚠️ You have exceeded the included limit",
     "usageOverLimitNote": "Extra images will be charged automatically according to your plan.",
-    "usageNearLimit": "You are close to the limit",
+    "usageNearLimit": "💡 You are close to the limit",
     "usageNearLimitNote": "Consider upgrading your plan if you need more images.",
     "estimatedCostLabel": "Estimated cost this month",
     "extraImagesTitle": "Extra images",
-    "extraImagesCount": "{count} image{plural}",
-    "extraImagesDescription": "{count} extra image{plural} generated this month. Estimated cost: ${price}",
+    "extraImagesCount": "{count} image",
+    "extraImagesCountPlural": "{count} images",
+    "extraImagesDescription": "{count} extra image generated this month. Estimated cost: ${price}",
+    "extraImagesDescriptionPlural": "{count} extra images generated this month. Estimated cost: ${price}",
     "needToChangePlan": "Need to change plan?",
     "chooseYourPlanHere": "Choose your plan here",
     "clickButtonBelow": "Click the button below",
-    "wantToChangePlan": "I want to change my plan"
+    "wantToChangePlan": "I want to change my plan",
+    "errorSyncBilling": "Failed to sync billing",
+    "errorSyncBillingWithShopify": "Failed to sync billing with Shopify.",
+    "errorLoadData": "Error loading data",
+    "errorLoadDataWithStatus": "Error loading data: {status}"
+  },
+  "plans": {
+    "ondemand": "On-demand",
+    "pro": "Pro",
+    "professional": "Professional",
+    "enterprise": "Enterprise"
   }
 }

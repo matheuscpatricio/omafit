@@ -32,13 +32,13 @@ export default function BillingPage() {
             syncBody?.diagnostics?.bootstrapErrors?.[0] ? `supabase=${syncBody.diagnostics.bootstrapErrors[0]}` : null,
             syncBody?.resolutionHint ? `fix=${syncBody.resolutionHint}` : null,
           ].filter(Boolean).join(" | ");
-          const baseMsg = syncBody?.error || `Falha ao sincronizar billing (${syncRes.status})`;
+          const baseMsg = syncBody?.error || t('billing.errorSyncBilling') + ` (${syncRes.status})`;
           const msg = details ? `${baseMsg} [${details}]` : baseMsg;
           throw new Error(msg);
         }
       } catch (syncErr) {
         console.warn('[Billing] Sync failed:', syncErr);
-        setError(syncErr?.message || 'Falha ao sincronizar billing com Shopify.');
+        setError(syncErr?.message || t('billing.errorSyncBillingWithShopify'));
       }
 
       const response = await fetch('/api/shopify-shop', {
@@ -47,7 +47,7 @@ export default function BillingPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Erro ao carregar dados: ${response.statusText}`);
+        throw new Error(t('billing.errorLoadDataWithStatus', { status: response.statusText }));
       }
 
       const shopData = await response.json();
@@ -83,7 +83,7 @@ export default function BillingPage() {
       });
     } catch (error) {
       console.error('[Billing] Error loading data:', error);
-      setError(error.message || 'Erro ao carregar dados');
+      setError(error.message || t('billing.errorLoadData'));
     } finally {
       setLoading(false);
     }

@@ -1,17 +1,24 @@
--- Corrige planos legados (basic/starter/free) para ondemand com 0 imagens incluídas
--- Execute no Supabase SQL Editor para corrigir lojas que mostram "basic" com 100 imagens
--- após terem escolhido o plano Free/On-demand
+-- Corrige planos legados (basic/starter/free) para ondemand com 50 imagens grátis
+-- Execute no Supabase SQL Editor para corrigir lojas On-demand
 
--- 1) Atualizar plan=basic, starter ou free para ondemand com images_included=0
+-- 1) Atualizar plan=basic, starter ou free para ondemand com 50 imagens grátis
 UPDATE shopify_shops
 SET
   plan = 'ondemand',
-  images_included = 0,
+  images_included = 50,
   price_per_extra_image = 0.18,
   updated_at = NOW()
 WHERE LOWER(plan) IN ('basic', 'starter', 'free')
    OR (LOWER(plan) = 'basic' AND images_included = 100)
    OR (LOWER(plan) = 'starter' AND images_included = 100);
+
+-- 1b) Corrigir ondemand com 0 imagens para 50 imagens grátis
+UPDATE shopify_shops
+SET
+  images_included = 50,
+  updated_at = NOW()
+WHERE LOWER(plan) = 'ondemand'
+  AND images_included = 0;
 
 -- 2) Corrigir growth para pro (3000 imagens, $0.08 extra)
 UPDATE shopify_shops

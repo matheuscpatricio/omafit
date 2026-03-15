@@ -38,6 +38,9 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shopify_shops' AND column_name = 'images_used_month') THEN
     ALTER TABLE shopify_shops ADD COLUMN images_used_month INTEGER DEFAULT 0;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shopify_shops' AND column_name = 'free_images_used') THEN
+    ALTER TABLE shopify_shops ADD COLUMN free_images_used INTEGER DEFAULT 0;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shopify_shops' AND column_name = 'currency') THEN
     ALTER TABLE shopify_shops ADD COLUMN currency TEXT DEFAULT 'USD';
   END IF;

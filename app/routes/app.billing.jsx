@@ -56,8 +56,12 @@ export default function BillingPage() {
 
       console.log('[Billing] Shop data loaded:', { shopDomain, plan: shop?.plan, billingStatus: shop?.billing_status, imagesIncluded: shop?.images_included });
 
-      const imagesUsed = shop?.images_used_month || 0;
+      const plan = String(shop?.plan || "").toLowerCase();
+      const isOnDemand = plan === "ondemand" || plan === "basic" || plan === "starter" || plan === "free";
+      const freeImagesUsed = Math.min(50, Number(shop?.free_images_used) || 0);
+      const imagesUsedMonth = shop?.images_used_month || 0;
       const imagesIncluded = shop?.images_included || 0;
+      const imagesUsed = isOnDemand ? freeImagesUsed + imagesUsedMonth : imagesUsedMonth;
       const extraImages = Math.max(0, imagesUsed - imagesIncluded);
       
       setData({
@@ -68,7 +72,7 @@ export default function BillingPage() {
           plan: shop?.plan || 'ondemand',
           used: imagesUsed,
           included: imagesIncluded,
-          remaining: Math.max(0, imagesIncluded - imagesUsed),
+          remaining: isOnDemand ? Math.max(0, 50 - freeImagesUsed) : Math.max(0, imagesIncluded - imagesUsedMonth),
           extraImages: extraImages,
           percentage: imagesIncluded > 0
             ? Math.min(100, (imagesUsed / imagesIncluded) * 100)

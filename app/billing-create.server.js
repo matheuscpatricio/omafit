@@ -23,7 +23,7 @@ const PLAN_CONFIG = {
     name: "Omafit On-demand",
     amount: 0,
     currency: "USD",
-    imagesIncluded: 0,
+    imagesIncluded: 50,
     pricePerExtra: 0.18,
     cappedAmount: 1000, // Limite máximo de cobrança por período (USD)
   },
@@ -40,7 +40,7 @@ const PLAN_CONFIG = {
     name: "Omafit On-demand",
     amount: 0,
     currency: "USD",
-    imagesIncluded: 0,
+    imagesIncluded: 50,
     pricePerExtra: 0.18,
     cappedAmount: 1000,
   },
@@ -48,7 +48,7 @@ const PLAN_CONFIG = {
     name: "Omafit On-demand",
     amount: 0,
     currency: "USD",
-    imagesIncluded: 0,
+    imagesIncluded: 50,
     pricePerExtra: 0.18,
     cappedAmount: 1000,
   },
@@ -77,7 +77,7 @@ export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
   // Line items: 1) Recurring (base), 2) Usage (appUsagePricingDetails) - obrigatório para appUsageRecordCreate
   const usageTerms = normalizedKey === "ondemand"
-    ? `$${config.pricePerExtra.toFixed(2)} per image generated`
+    ? `$${config.pricePerExtra.toFixed(2)} per image (after 50 free one-time)`
     : `$${config.pricePerExtra.toFixed(2)} per extra image (after ${config.imagesIncluded} included)`;
   const lineItems = [
     {

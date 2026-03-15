@@ -1,7 +1,7 @@
 /**
  * Sincroniza o plano de billing da Shopify com o Supabase.
  * Usado ao carregar o admin e no retorno do billing.
- * Planos: ondemand (0 imagens, $0.18/img) | pro (3000 imagens, $0.08/img extra).
+ * Planos: ondemand (50 imagens grátis, $0.18/img extra) | pro (3000 imagens, $0.08/img extra).
  */
 
 const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
@@ -115,11 +115,11 @@ function extractPlanHandleFromSubscription(activeSubscription) {
 }
 
 const PLAN_IMAGES = {
-  ondemand: 0,
+  ondemand: 50,
   pro: 3000,
   // Compatibilidade com nomes antigos
-  starter: 0,
-  basic: 0,
+  starter: 50,
+  basic: 50,
   growth: 3000,
 };
 

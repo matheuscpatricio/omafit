@@ -115,7 +115,8 @@ export const loader = async ({ request }) => {
     const hasLegacyPlan = ["basic", "starter"].includes(plan);
     const hasLegacyImagesIncluded =
       ([100, 500].includes(imagesIncluded) && plan !== "pro") ||
-      (plan === "pro" && imagesIncluded === 1000);
+      (plan === "pro" && imagesIncluded === 1000) ||
+      (plan === "ondemand" && imagesIncluded === 0);
     const shouldForceSync =
       !shopRow ||
       !shopRow.plan ||
@@ -151,19 +152,22 @@ export const loader = async ({ request }) => {
     }
 
     // Normaliza planos legados na resposta (basic/starter → ondemand, growth → pro) e images_included
+    // On-demand: 50 imagens grátis ONE-TIME (na criação da conta), free_images_used rastreia consumo
     const normalizedShop = shopRow
       ? (() => {
           const p = String(shopRow.plan || "").toLowerCase();
           const normPlan = p === "basic" || p === "starter" ? "ondemand" : p === "growth" ? "pro" : shopRow.plan;
           const normImages =
-            normPlan === "ondemand" ? 0 : normPlan === "pro" ? 3000 : shopRow.images_included;
+            normPlan === "ondemand" ? 50 : normPlan === "pro" ? 3000 : shopRow.images_included;
           const normPrice =
             normPlan === "ondemand" ? 0.18 : normPlan === "pro" ? 0.08 : shopRow.price_per_extra_image;
+          const freeUsed = Number(shopRow.free_images_used) || 0;
           return {
             ...shopRow,
             plan: normPlan,
             images_included: normImages,
             price_per_extra_image: normPrice ?? (normPlan === "pro" ? 0.08 : 0.18),
+            free_images_used: normPlan === "ondemand" ? Math.min(50, freeUsed) : 0,
           };
         })()
       : null;

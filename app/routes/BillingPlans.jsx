@@ -29,7 +29,7 @@ export default function BillingPlans({
           {
             name: "On-demand",
             priceKey: "billing.planOndemandPrice",
-            imagesIncluded: 0,
+            imagesIncluded: 50,
             pricePerExtraKey: "billing.planOndemandExtra",
             descriptionKey: "billing.planOndemandDesc",
           },

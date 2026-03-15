@@ -212,9 +212,15 @@ export default function DashboardPage() {
         return;
       }
 
-      const imagesUsed = shopData.images_used_month || 0;
+      const plan = String(shopData.plan || "").toLowerCase();
+      const isOnDemand = plan === "ondemand" || plan === "basic" || plan === "starter" || plan === "free";
+      const freeImagesUsed = Math.min(50, Number(shopData.free_images_used) || 0);
+      const imagesUsedMonth = shopData.images_used_month || 0;
       const imagesIncluded = shopData.images_included || 0;
-      const remaining = Math.max(0, imagesIncluded - imagesUsed);
+      const imagesUsed = isOnDemand ? freeImagesUsed + imagesUsedMonth : imagesUsedMonth;
+      const remaining = isOnDemand
+        ? Math.max(0, 50 - freeImagesUsed)
+        : Math.max(0, imagesIncluded - imagesUsedMonth);
       const percentage = imagesIncluded > 0
         ? Math.min(100, Math.round((imagesUsed / imagesIncluded) * 100))
         : 0;

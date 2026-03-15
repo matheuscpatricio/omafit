@@ -87,35 +87,66 @@ O retorno inclui:
 
 ## Integração na Edge Function do Supabase
 
-No arquivo `supabase/functions/virtual-try-on/index.ts`, após gerar a imagem com sucesso:
+No arquivo `supabase/functions/virtual-try-on/index.ts` (ou equivalente), após gerar a imagem com sucesso:
+
+**IMPORTANTE – Plano On-demand**: As 50 imagens grátis são **uma vez** (na criação da conta), não mensais. Use `free_images_used` para consumir primeiro.
 
 ```typescript
-// 1. Incrementa images_used_month no Supabase
-const updatedUsage = await supabase
+// 1. Buscar dados da loja
+const { data: shop } = await supabase
   .from('shopify_shops')
-  .update({ 
-    images_used_month: supabase.rpc('increment', { 
-      shop_domain: shopDomain,
-      amount: 1 
-    })
-  })
+  .select('plan, free_images_used, images_used_month, images_included, price_per_extra_image')
   .eq('shop_domain', shopDomain)
-  .select('images_used_month, images_included, price_per_extra_image')
   .single();
 
-const imagesUsed = updatedUsage.data?.images_used_month || 0;
-const planLimit = updatedUsage.data?.images_included || 0;
-const pricePerExtra = updatedUsage.data?.price_per_extra_image || 0.18;
+const plan = (shop?.plan || '').toLowerCase();
+const isOnDemand = ['ondemand', 'basic', 'starter', 'free'].includes(plan);
+const freeImagesUsed = Math.min(50, Number(shop?.free_images_used) || 0);
+const imagesIncluded = Number(shop?.images_included) || 0;
+const pricePerExtra = Number(shop?.price_per_extra_image) || 0.18;
 
-// 2. Se ultrapassou o limite, cria usage charge
-if (imagesUsed > planLimit) {
+let imagesUsed: number;
+let planLimit: number;
+let shouldCharge = false;
+
+if (isOnDemand) {
+  // 50 grátis ONE-TIME: consumir free_images_used primeiro
+  if (freeImagesUsed < 50) {
+    await supabase
+      .from('shopify_shops')
+      .update({ free_images_used: Math.min(50, freeImagesUsed + 1), updated_at: new Date().toISOString() })
+      .eq('shop_domain', shopDomain);
+    return; // Não cobra, não chama create-usage
+  }
+  // Já consumiu as 50 grátis: incrementa images_used_month e cobra
+  const { data: updated } = await supabase
+    .from('shopify_shops')
+    .update({ images_used_month: (shop?.images_used_month || 0) + 1, updated_at: new Date().toISOString() })
+    .eq('shop_domain', shopDomain)
+    .select('images_used_month')
+    .single();
+  imagesUsed = updated?.images_used_month || 1;
+  planLimit = 0; // Toda imagem é cobrada
+  shouldCharge = true;
+} else {
+  // Pro: incrementa images_used_month
+  const { data: updated } = await supabase
+    .from('shopify_shops')
+    .update({ images_used_month: (shop?.images_used_month || 0) + 1, updated_at: new Date().toISOString() })
+    .eq('shop_domain', shopDomain)
+    .select('images_used_month')
+    .single();
+  imagesUsed = updated?.images_used_month || 1;
+  planLimit = imagesIncluded;
+  shouldCharge = imagesUsed > planLimit;
+}
+
+if (shouldCharge) {
   try {
     const appUrl = Deno.env.get('SHOPIFY_APP_URL') || 'https://seu-app.up.railway.app';
     const usageResponse = await fetch(`${appUrl}/api/billing/create-usage`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         shopDomain,
         imagesUsed,
@@ -125,10 +156,8 @@ if (imagesUsed > planLimit) {
         imagesCount: 1,
       }),
     });
-
     if (!usageResponse.ok) {
       console.error('[Edge Function] Failed to create usage charge:', await usageResponse.text());
-      // Não bloqueia a geração da imagem, apenas loga o erro
     } else {
       const usageResult = await usageResponse.json();
       if (usageResult.created) {
@@ -137,7 +166,6 @@ if (imagesUsed > planLimit) {
     }
   } catch (err) {
     console.error('[Edge Function] Error calling usage charge API:', err);
-    // Não bloqueia a geração da imagem
   }
 }
 ```
@@ -146,7 +174,7 @@ if (imagesUsed > planLimit) {
 
 Os planos estão configurados em `app/billing-create.server.js`:
 
-- **On-demand**: Instalação gratuita ($0/mês), $0.18/imagem, capped: $1000
+- **On-demand**: 50 imagens grátis **uma vez** (na criação da conta), depois $0.18/imagem, capped: $1000
 - **Pro**: $300/mês, 3000 imagens incluídas, $0.08/imagem extra, capped: $5000
 
 O `cappedAmount` limita o total de usage charges em um período de 30 dias. Se o lojista ultrapassar esse limite, a Shopify retornará erro ao tentar criar novos usage records.

@@ -12,7 +12,7 @@ Para que o plano escolhido na página da Shopify corresponda ao exibido no dashb
 
 | Plano no Dashboard | Plan handle (Partner Dashboard) | Resultado no app |
 |--------------------|----------------------------------|------------------|
-| Free / On-demand   | `free` ou `ondemand`             | On-demand (0 imagens, $0.18/img) |
+| Free / On-demand   | `free` ou `ondemand`             | On-demand (50 imagens grátis one-time, $0.18/img depois) |
 | Pro                | `pro`                            | Pro (3000 imagens, $0.08/img extra) |
 
 ## Plan handles aceitos

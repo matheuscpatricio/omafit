@@ -44,7 +44,7 @@ async function tryForcePersistActiveBilling({
   const payload = {
     plan: normalizedPlan,
     billing_status: "active",
-    images_included: normalizedPlan === "pro" ? 3000 : 0,
+    images_included: normalizedPlan === "pro" ? 3000 : 50,
     price_per_extra_image: normalizedPlan === "pro" ? 0.08 : 0.18,
     currency: "USD",
     updated_at: new Date().toISOString(),
@@ -208,9 +208,10 @@ export async function loader({ request }) {
             [identifier]: session.shop,
             plan: "ondemand",
             billing_status: "inactive",
-            images_included: 0,
+            images_included: 50,
             price_per_extra_image: 0.18,
             images_used_month: 0,
+            free_images_used: 0,
             currency: "USD",
             updated_at: new Date().toISOString(),
           };
@@ -252,7 +253,7 @@ export async function loader({ request }) {
               ok: true,
               shop: session.shop,
               plan: "ondemand",
-              imagesIncluded: 0,
+              imagesIncluded: 50,
               pricePerExtra: 0.18,
               forcePersistStrategy: forced.strategy,
             });

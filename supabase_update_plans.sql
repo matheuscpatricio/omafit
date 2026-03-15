@@ -3,17 +3,22 @@
 -- =============================================================================
 -- Este script atualiza os planos existentes e garante que os valores estão
 -- corretos conforme a nova estrutura:
--- - On-demand: $0/mês, 0 imagens, $0.18/imagem
+-- - On-demand: $0/mês, 50 imagens grátis, $0.18/imagem extra
 -- - Pro: $300/mês, 3000 imagens incluídas, $0.08/imagem extra
 -- =============================================================================
 
 -- 1) Atualizar planos legados (basic, starter, free) para ondemand
 UPDATE shopify_shops
 SET plan = 'ondemand',
-    images_included = 0,
+    images_included = 50,
     price_per_extra_image = 0.18,
     updated_at = NOW()
 WHERE LOWER(plan) IN ('basic', 'starter', 'free');
+
+-- 1b) Corrigir ondemand com 0 imagens para 50 imagens grátis
+UPDATE shopify_shops
+SET images_included = 50, updated_at = NOW()
+WHERE LOWER(plan) = 'ondemand' AND images_included = 0;
 
 -- 2) Atualizar growth para pro e valores de pro
 UPDATE shopify_shops

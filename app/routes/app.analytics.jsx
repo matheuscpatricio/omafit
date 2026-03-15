@@ -257,7 +257,10 @@ export default function AnalyticsPage() {
           const internalShopData = await internalShopRes.json().catch(() => ({}));
           const row = internalShopData?.shop || null;
           userId = row?.user_id ?? null;
-          imagesUsedMonth = row?.images_used_month ?? 0;
+          const rawImagesMonth = row?.images_used_month ?? 0;
+          const freeImagesUsed = Math.min(50, Number(row?.free_images_used) || 0);
+          const isOnDemandPlan = ['ondemand', 'basic', 'starter', 'free'].includes(String(row?.plan || '').toLowerCase());
+          imagesUsedMonth = isOnDemandPlan ? freeImagesUsed + rawImagesMonth : rawImagesMonth;
           billingPlan = row?.plan ?? null;
           imagesIncluded = row?.images_included ?? 0;
           pricePerExtraImage = Number(row?.price_per_extra_image ?? 0) || 0;
@@ -271,7 +274,7 @@ export default function AnalyticsPage() {
       if (userId == null && imagesUsedMonth === 0) {
         try {
           const shopRes = await fetch(
-            `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month,plan,images_included,price_per_extra_image`,
+            `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=user_id,images_used_month,free_images_used,plan,images_included,price_per_extra_image`,
             {
               headers: {
                 apikey: supabaseKey,
@@ -284,6 +287,11 @@ export default function AnalyticsPage() {
             const shopData = await shopRes.json();
             userId = shopData?.[0]?.user_id ?? null;
             imagesUsedMonth = shopData?.[0]?.images_used_month ?? 0;
+            const freeImagesUsed = Math.min(50, Number(shopData?.[0]?.free_images_used) || 0);
+            const isOnDemandPlan = ['ondemand', 'basic', 'starter', 'free'].includes(String(shopData?.[0]?.plan || '').toLowerCase());
+            if (isOnDemandPlan) {
+              imagesUsedMonth = freeImagesUsed + (imagesUsedMonth || 0);
+            }
             billingPlan = shopData?.[0]?.plan ?? null;
             imagesIncluded = shopData?.[0]?.images_included ?? 0;
             pricePerExtraImage = Number(shopData?.[0]?.price_per_extra_image ?? 0) || 0;

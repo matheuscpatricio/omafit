@@ -30,10 +30,11 @@ const GET_SHOP_CONTACT = `#graphql
 const PLAN_MATCHERS = [
   { pattern: "omafit on-demand", plan: "ondemand" },
   { pattern: "omafit on demand", plan: "ondemand" },
+  { pattern: "omafit free", plan: "ondemand" },
   { pattern: "omafit pro", plan: "pro" },
   { pattern: "on-demand", plan: "ondemand" },
   { pattern: "on demand", plan: "ondemand" },
-  { pattern: "ondemand", plan: "ondemand" },
+  { pattern: "free", plan: "ondemand" },
   { pattern: "professional", plan: "pro" },
   { pattern: "pro", plan: "pro" },
   // Compatibilidade com nomes antigos

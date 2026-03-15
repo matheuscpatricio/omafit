@@ -273,6 +273,7 @@ export default function DashboardPage() {
 
     const planNames = {
       ondemand: 'On-demand',
+      free: 'On-demand',
       basic: 'On-demand',
       starter: 'On-demand',
       growth: 'Pro',

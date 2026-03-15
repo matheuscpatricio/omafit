@@ -109,10 +109,19 @@ export const loader = async ({ request }) => {
 
     // Se não encontrou linha, tenta criar/sincronizar.
     // Se encontrou sem plano ativo, tenta sincronizar novamente (caso de propagação após assinatura).
+    // Se tem dados legados (basic/starter com 100 imagens, ou free mostrando como basic), força sync para corrigir.
+    const plan = String(shopRow?.plan || "").toLowerCase();
+    const imagesIncluded = Number(shopRow?.images_included) || 0;
+    const hasLegacyPlan = ["basic", "starter"].includes(plan);
+    const hasLegacyImagesIncluded =
+      ([100, 500].includes(imagesIncluded) && plan !== "pro") ||
+      (plan === "pro" && imagesIncluded === 1000);
     const shouldForceSync =
       !shopRow ||
       !shopRow.plan ||
-      String(shopRow.billing_status || "").toLowerCase() !== "active";
+      String(shopRow.billing_status || "").toLowerCase() !== "active" ||
+      hasLegacyPlan ||
+      hasLegacyImagesIncluded;
 
     if (shouldForceSync) {
       try {
@@ -141,7 +150,25 @@ export const loader = async ({ request }) => {
       }
     }
 
-    return Response.json({ shop: shopRow || null });
+    // Normaliza planos legados na resposta (basic/starter → ondemand, growth → pro) e images_included
+    const normalizedShop = shopRow
+      ? (() => {
+          const p = String(shopRow.plan || "").toLowerCase();
+          const normPlan = p === "basic" || p === "starter" ? "ondemand" : p === "growth" ? "pro" : shopRow.plan;
+          const normImages =
+            normPlan === "ondemand" ? 0 : normPlan === "pro" ? 3000 : shopRow.images_included;
+          const normPrice =
+            normPlan === "ondemand" ? 0.18 : normPlan === "pro" ? 0.08 : shopRow.price_per_extra_image;
+          return {
+            ...shopRow,
+            plan: normPlan,
+            images_included: normImages,
+            price_per_extra_image: normPrice ?? (normPlan === "pro" ? 0.08 : 0.18),
+          };
+        })()
+      : null;
+
+    return Response.json({ shop: normalizedShop });
   } catch (err) {
     console.error("[api.shopify-shop] Error:", err);
     if (err?.name === "AbortError") {

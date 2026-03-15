@@ -3,35 +3,42 @@
 -- =============================================================================
 -- Este script atualiza os planos existentes e garante que os valores estão
 -- corretos conforme a nova estrutura:
--- - Starter: $30/mês, 100 imagens, $0.18/imagem extra
--- - Growth: $120/mês, 500 imagens, $0.16/imagem extra  
--- - Pro: $220/mês, 1000 imagens, $0.14/imagem extra
+-- - On-demand: $0/mês, 0 imagens, $0.18/imagem
+-- - Pro: $300/mês, 3000 imagens incluídas, $0.08/imagem extra
 -- =============================================================================
 
--- 1) Atualizar planos "basic" para "starter" (compatibilidade)
+-- 1) Atualizar planos legados (basic, starter, free) para ondemand
 UPDATE shopify_shops
-SET plan = 'starter',
+SET plan = 'ondemand',
+    images_included = 0,
+    price_per_extra_image = 0.18,
     updated_at = NOW()
-WHERE plan = 'basic';
+WHERE LOWER(plan) IN ('basic', 'starter', 'free');
 
--- 2) Atualizar valores de images_included e price_per_extra_image conforme o plano
+-- 2) Atualizar growth para pro e valores de pro
 UPDATE shopify_shops
 SET 
+    plan = CASE WHEN LOWER(plan) = 'growth' THEN 'pro' ELSE plan END,
     images_included = CASE 
-        WHEN plan = 'starter' THEN 100
-        WHEN plan = 'growth' THEN 500
-        WHEN plan = 'pro' THEN 1000
+        WHEN LOWER(plan) IN ('pro', 'growth') THEN 3000
         ELSE images_included
     END,
     price_per_extra_image = CASE 
-        WHEN plan = 'starter' THEN 0.18
-        WHEN plan = 'growth' THEN 0.16
-        WHEN plan = 'pro' THEN 0.14
+        WHEN LOWER(plan) IN ('pro', 'growth') THEN 0.08
         ELSE price_per_extra_image
     END,
     currency = COALESCE(currency, 'USD'),
     updated_at = NOW()
-WHERE plan IN ('starter', 'growth', 'pro');
+WHERE LOWER(plan) IN ('growth', 'pro');
+
+-- 2b) Corrigir pro com valores antigos (1000 imagens, $0.14)
+UPDATE shopify_shops
+SET
+    images_included = 3000,
+    price_per_extra_image = 0.08,
+    updated_at = NOW()
+WHERE LOWER(plan) = 'pro'
+  AND (images_included = 1000 OR price_per_extra_image = 0.14);
 
 -- 3) Garantir que images_used_month tem valor padrão 0 se for NULL
 UPDATE shopify_shops

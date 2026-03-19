@@ -73,8 +73,32 @@ export const loader = async ({ request }) => {
 };
 
 const DEFAULT_REFS = ['peito', 'cintura', 'quadril'];
+const FOOTWEAR_REFS = ['tamanho_pe'];
 const DEFAULT_COLLECTION_TYPE = 'upper';
+const FOOTWEAR_COLLECTION_TYPE = 'footwear';
 const DEFAULT_COLLECTION_ELASTICITY = 'structured';
+const STANDARD_COLLECTION_TYPES = ['upper', 'lower', 'full'];
+const ALL_COLLECTION_TYPES = [...STANDARD_COLLECTION_TYPES, FOOTWEAR_COLLECTION_TYPE];
+
+function isFootwearCollectionType(type) {
+  return type === FOOTWEAR_COLLECTION_TYPE;
+}
+
+function getMeasurementRefsForCollectionType(type) {
+  return isFootwearCollectionType(type) ? FOOTWEAR_REFS.slice() : DEFAULT_REFS.slice();
+}
+
+function getExpectedMeasurementCount(type) {
+  return isFootwearCollectionType(type) ? 1 : 3;
+}
+
+function normalizeMeasurementRefsForType(refs, type) {
+  const expectedCount = getExpectedMeasurementCount(type);
+  if (Array.isArray(refs) && refs.length === expectedCount) {
+    return refs.slice();
+  }
+  return getMeasurementRefsForCollectionType(type);
+}
 
 function getDefaultSizesForRefs(refs) {
   return refs.reduce((acc, key) => ({ ...acc, [key]: '' }), { size: '' });
@@ -84,9 +108,9 @@ function createEmptyCollectionCharts() {
   return {
     collectionType: DEFAULT_COLLECTION_TYPE,
     collectionElasticity: DEFAULT_COLLECTION_ELASTICITY,
-    male: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-    female: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] },
-    unisex: { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] }
+    male: { enabled: false, measurementRefs: getMeasurementRefsForCollectionType(DEFAULT_COLLECTION_TYPE), sizes: [] },
+    female: { enabled: false, measurementRefs: getMeasurementRefsForCollectionType(DEFAULT_COLLECTION_TYPE), sizes: [] },
+    unisex: { enabled: false, measurementRefs: getMeasurementRefsForCollectionType(DEFAULT_COLLECTION_TYPE), sizes: [] }
   };
 }
 
@@ -112,13 +136,15 @@ export default function SizeChartPage() {
     { label: t('sizeChart.measureWaist'), value: 'cintura' },
     { label: t('sizeChart.measureHip'), value: 'quadril' },
     { label: t('sizeChart.measureLength'), value: 'comprimento' },
-    { label: t('sizeChart.measureAnkle'), value: 'tornozelo' }
+    { label: t('sizeChart.measureAnkle'), value: 'tornozelo' },
+    { label: t('sizeChart.measureFootSize'), value: 'tamanho_pe' }
   ], [t]);
 
   const COLLECTION_TYPE_OPTIONS = useMemo(() => [
     { label: t('sizeChart.collectionTypeUpper'), value: 'upper' },
     { label: t('sizeChart.collectionTypeLower'), value: 'lower' },
-    { label: t('sizeChart.collectionTypeFull'), value: 'full' }
+    { label: t('sizeChart.collectionTypeFull'), value: 'full' },
+    { label: t('sizeChart.collectionTypeFootwear'), value: FOOTWEAR_COLLECTION_TYPE }
   ], [t]);
 
   const COLLECTION_ELASTICITY_OPTIONS = useMemo(() => [
@@ -187,16 +213,13 @@ export default function SizeChartPage() {
         if (!byCollection[handle]) {
           byCollection[handle] = createEmptyCollectionCharts();
         }
-        if (row.collection_type && ['upper', 'lower', 'full'].includes(row.collection_type)) {
+        if (row.collection_type && ALL_COLLECTION_TYPES.includes(row.collection_type)) {
           byCollection[handle].collectionType = row.collection_type;
         }
         if (row.collection_elasticity && ['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(row.collection_elasticity)) {
           byCollection[handle].collectionElasticity = row.collection_elasticity;
         }
-        const refs =
-          Array.isArray(row.measurement_refs) && row.measurement_refs.length === 3
-            ? row.measurement_refs
-            : DEFAULT_REFS.slice();
+        const refs = normalizeMeasurementRefsForType(row.measurement_refs, row.collection_type);
         byCollection[handle][row.gender] = {
           enabled: true,
           measurementRefs: refs,
@@ -219,8 +242,19 @@ export default function SizeChartPage() {
 
   const getChart = (handle, gender) => {
     const coll = charts[handle];
-    if (!coll) return { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] };
-    return coll[gender] ?? { enabled: false, measurementRefs: DEFAULT_REFS.slice(), sizes: [] };
+    const collectionType = coll?.collectionType ?? DEFAULT_COLLECTION_TYPE;
+    const fallbackChart = {
+      enabled: false,
+      measurementRefs: getMeasurementRefsForCollectionType(collectionType),
+      sizes: []
+    };
+    if (!coll) return fallbackChart;
+    const chart = coll[gender];
+    if (!chart) return fallbackChart;
+    return {
+      ...chart,
+      measurementRefs: normalizeMeasurementRefsForType(chart.measurementRefs, collectionType)
+    };
   };
 
   const getCollectionType = (handle) => {
@@ -234,7 +268,33 @@ export default function SizeChartPage() {
       if (!next[handle]) {
         next[handle] = createEmptyCollectionCharts();
       }
-      next[handle] = { ...next[handle], collectionType };
+      const nextMeasurementRefs = getMeasurementRefsForCollectionType(collectionType);
+      const nextElasticity = isFootwearCollectionType(collectionType)
+        ? ''
+        : (['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(next[handle].collectionElasticity)
+          ? next[handle].collectionElasticity
+          : DEFAULT_COLLECTION_ELASTICITY);
+
+      const remapChart = (chart = { enabled: false, measurementRefs: nextMeasurementRefs, sizes: [] }) => ({
+        ...chart,
+        measurementRefs: nextMeasurementRefs,
+        sizes: (chart.sizes || []).map((row) => {
+          const mappedRow = { size: row?.size ?? '' };
+          nextMeasurementRefs.forEach((key) => {
+            mappedRow[key] = row?.[key] ?? '';
+          });
+          return mappedRow;
+        })
+      });
+
+      next[handle] = {
+        ...next[handle],
+        collectionType,
+        collectionElasticity: nextElasticity,
+        male: remapChart(next[handle].male),
+        female: remapChart(next[handle].female),
+        unisex: remapChart(next[handle].unisex)
+      };
       return next;
     });
   };
@@ -246,6 +306,9 @@ export default function SizeChartPage() {
   };
 
   const getCollectionElasticity = (handle) => {
+    if (isFootwearCollectionType(getCollectionType(handle))) {
+      return '';
+    }
     const elasticity = charts[handle]?.collectionElasticity;
     return COLLECTION_ELASTICITY_OPTIONS.some((opt) => opt.value === elasticity)
       ? elasticity
@@ -293,15 +356,17 @@ export default function SizeChartPage() {
 
       const toSave = [];
       Object.entries(charts).forEach(([handle, byGender]) => {
+        const collectionType = getCollectionType(handle);
+        const expectedMeasurementCount = getExpectedMeasurementCount(collectionType);
         ['male', 'female', 'unisex'].forEach((gender) => {
           const c = byGender[gender];
-          if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === 3) {
+          if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === expectedMeasurementCount) {
             toSave.push({
               shop_domain: shopDomain,
               collection_handle: handle,
               gender,
-              collection_type: getCollectionType(handle),
-              collection_elasticity: getCollectionElasticity(handle),
+              collection_type: collectionType,
+              collection_elasticity: isFootwearCollectionType(collectionType) ? null : getCollectionElasticity(handle),
               measurement_refs: c.measurementRefs,
               sizes: c.sizes
             });
@@ -374,6 +439,8 @@ export default function SizeChartPage() {
   };
 
   const currentGender = GENDER_OPTIONS[selectedTab]?.value ?? 'male';
+  const selectedCollectionType = getCollectionType(selectedHandle);
+  const isFootwearSelected = isFootwearCollectionType(selectedCollectionType);
   const currentChart = getChart(selectedHandle, currentGender);
 
   const handleToggleChart = () => {
@@ -516,24 +583,26 @@ export default function SizeChartPage() {
                 </BlockStack>
               </BlockStack>
 
-              <BlockStack gap="200">
-                <Text variant="headingSm" as="h3">
-                  {t('sizeChart.collectionElasticityTitle')}
-                </Text>
-                <Text variant="bodySm" tone="subdued">
-                  {t('sizeChart.selectOneOption')}
-                </Text>
-                <BlockStack gap="100">
-                  {COLLECTION_ELASTICITY_OPTIONS.map((option) => (
-                    <Checkbox
-                      key={option.value}
-                      label={option.label}
-                      checked={getCollectionElasticity(selectedHandle) === option.value}
-                      onChange={(checked) => handleCollectionElasticityCheckbox(selectedHandle, option.value, checked)}
-                    />
-                  ))}
+              {!isFootwearSelected && (
+                <BlockStack gap="200">
+                  <Text variant="headingSm" as="h3">
+                    {t('sizeChart.collectionElasticityTitle')}
+                  </Text>
+                  <Text variant="bodySm" tone="subdued">
+                    {t('sizeChart.selectOneOption')}
+                  </Text>
+                  <BlockStack gap="100">
+                    {COLLECTION_ELASTICITY_OPTIONS.map((option) => (
+                      <Checkbox
+                        key={option.value}
+                        label={option.label}
+                        checked={getCollectionElasticity(selectedHandle) === option.value}
+                        onChange={(checked) => handleCollectionElasticityCheckbox(selectedHandle, option.value, checked)}
+                      />
+                    ))}
+                  </BlockStack>
                 </BlockStack>
-              </BlockStack>
+              )}
 
               <Divider />
 
@@ -563,18 +632,26 @@ export default function SizeChartPage() {
 
                     {currentChart.enabled && (
                       <>
-                        <InlineStack gap="200" wrap>
-                          {[0, 1, 2].map((i) => (
-                            <Box key={i} minWidth="160px">
-                              <Select
-                                label={t('sizeChart.measureN', { n: i + 1 })}
-                                options={MEASUREMENT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
-                                value={currentChart.measurementRefs[i] ?? DEFAULT_REFS[i]}
-                                onChange={(v) => setMeasurementRef(i, v)}
-                              />
-                            </Box>
-                          ))}
-                        </InlineStack>
+                        {isFootwearSelected ? (
+                          <Box>
+                            <Text variant="bodyMd">{t('sizeChart.measureFootSize')}</Text>
+                          </Box>
+                        ) : (
+                          <InlineStack gap="200" wrap>
+                            {[0, 1, 2].map((i) => (
+                              <Box key={i} minWidth="160px">
+                                <Select
+                                  label={t('sizeChart.measureN', { n: i + 1 })}
+                                  options={MEASUREMENT_OPTIONS
+                                    .filter((option) => option.value !== 'tamanho_pe')
+                                    .map((o) => ({ label: o.label, value: o.value }))}
+                                  value={currentChart.measurementRefs[i] ?? DEFAULT_REFS[i]}
+                                  onChange={(v) => setMeasurementRef(i, v)}
+                                />
+                              </Box>
+                            ))}
+                          </InlineStack>
+                        )}
 
                         {currentChart.sizes.length === 0 ? (
                           <Card sectioned>

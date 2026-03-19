@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS size_charts (
   shop_domain TEXT NOT NULL,
   collection_handle TEXT NOT NULL DEFAULT '',
   gender TEXT NOT NULL CHECK (gender IN ('male', 'female', 'unisex')),
-  collection_type TEXT CHECK (collection_type IN ('upper', 'lower', 'full')),
+  collection_type TEXT CHECK (collection_type IN ('upper', 'lower', 'full', 'footwear')),
   collection_elasticity TEXT CHECK (collection_elasticity IN ('structured', 'light_flex', 'flexible', 'high_elasticity')),
   measurement_refs JSONB NOT NULL DEFAULT '["peito","cintura","quadril"]'::jsonb,
   sizes JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -41,6 +41,13 @@ BEGIN
     UNIQUE (shop_domain, collection_handle, gender);
   END IF;
 END $$;
+
+ALTER TABLE size_charts
+DROP CONSTRAINT IF EXISTS size_charts_collection_type_check;
+
+ALTER TABLE size_charts
+ADD CONSTRAINT size_charts_collection_type_check
+CHECK (collection_type IN ('upper', 'lower', 'full', 'footwear'));
 
 -- 2) RLS ligada + políticas explícitas por role
 ALTER TABLE size_charts ENABLE ROW LEVEL SECURITY;

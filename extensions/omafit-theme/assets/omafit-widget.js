@@ -973,6 +973,13 @@
       let genderToFetch = gender;
       if (gender !== 'male' && gender !== 'female') genderToFetch = 'unisex';
 
+      const normalizeMeasurementRefs = function (refs, collectionType) {
+        if (collectionType === 'footwear') {
+          return Array.isArray(refs) && refs.length === 1 ? refs : ['tamanho_pe'];
+        }
+        return Array.isArray(refs) && refs.length === 3 ? refs : ['peito', 'cintura', 'quadril'];
+      };
+
       const response = await fetch(
         `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.${genderToFetch}&select=sizes,measurement_refs,collection_type,collection_elasticity`,
         {
@@ -991,9 +998,7 @@
             sizes: data[0].sizes,
               collectionType: data[0].collection_type || '',
               collectionElasticity: data[0].collection_elasticity || '',
-            measurementRefs: Array.isArray(data[0].measurement_refs) && data[0].measurement_refs.length === 3
-              ? data[0].measurement_refs
-              : ['peito', 'cintura', 'quadril']
+            measurementRefs: normalizeMeasurementRefs(data[0].measurement_refs, data[0].collection_type || '')
           };
         }
       }
@@ -1016,9 +1021,7 @@
               sizes: unisexData[0].sizes,
               collectionType: unisexData[0].collection_type || '',
               collectionElasticity: unisexData[0].collection_elasticity || '',
-              measurementRefs: Array.isArray(unisexData[0].measurement_refs) && unisexData[0].measurement_refs.length === 3
-                ? unisexData[0].measurement_refs
-                : ['peito', 'cintura', 'quadril']
+              measurementRefs: normalizeMeasurementRefs(unisexData[0].measurement_refs, unisexData[0].collection_type || '')
             };
           }
         }
@@ -1046,7 +1049,7 @@
 
       const parseCollectionType = function (rows) {
         if (!Array.isArray(rows) || rows.length === 0) return '';
-        const validTypes = ['upper', 'lower', 'full'];
+        const validTypes = ['upper', 'lower', 'full', 'footwear'];
         for (const row of rows) {
           if (row && validTypes.indexOf(row.collection_type) !== -1) {
             return row.collection_type;
@@ -1421,8 +1424,10 @@
     const availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
     const availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
 
+    const widgetPath = collectionType === 'footwear' ? '/widget-shoes' : '/widget';
+
     let widgetUrl =
-      'https://omafit.netlify.app/widget' +
+      'https://omafit.netlify.app' + widgetPath +
       '?productImage=' + encodeURIComponent(productImage) +
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +

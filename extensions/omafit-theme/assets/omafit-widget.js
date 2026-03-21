@@ -552,6 +552,70 @@
     };
   }
 
+  function getSelectedVariantIdFromPage() {
+    try {
+      var variantFromUrl = new URLSearchParams(window.location.search).get('variant');
+      if (variantFromUrl && String(variantFromUrl).trim()) {
+        return String(variantFromUrl).trim();
+      }
+    } catch (_err) {
+      // non-blocking
+    }
+
+    try {
+      var variantInput = document.querySelector(
+        'form[action*="/cart/add"] [name="id"], .product-form [name="id"], form.product-form [name="id"]'
+      );
+      if (variantInput && variantInput.value && String(variantInput.value).trim()) {
+        return String(variantInput.value).trim();
+      }
+    } catch (_err) {
+      // non-blocking
+    }
+
+    return '';
+  }
+
+  function getSelectedVariantContext(productData) {
+    var emptyContext = { selectedVariantId: '', selectedVariantOptions: {} };
+    if (!productData || !Array.isArray(productData.variants) || productData.variants.length === 0) {
+      return emptyContext;
+    }
+
+    var selectedVariantId = getSelectedVariantIdFromPage();
+    var selectedVariant = productData.variants.find(function (variant) {
+      return String(variant && variant.id ? variant.id : '') === selectedVariantId;
+    }) || null;
+
+    if (!selectedVariant && productData.variants.length === 1) {
+      selectedVariant = productData.variants[0];
+      selectedVariantId = String(selectedVariant && selectedVariant.id ? selectedVariant.id : '');
+    }
+
+    if (!selectedVariant) {
+      return emptyContext;
+    }
+
+    var optionNames = Array.isArray(productData.options)
+      ? productData.options.map(function (opt) {
+          return typeof opt === 'string' ? String(opt) : (opt && opt.name ? String(opt.name) : '');
+        })
+      : [];
+
+    var selectedVariantOptions = {};
+    [selectedVariant.option1, selectedVariant.option2, selectedVariant.option3].forEach(function (value, index) {
+      var normalizedValue = String(value || '').trim();
+      var optionName = String(optionNames[index] || ('option' + (index + 1))).trim();
+      if (!normalizedValue || !optionName) return;
+      selectedVariantOptions[optionName] = normalizedValue;
+    });
+
+    return {
+      selectedVariantId: selectedVariantId,
+      selectedVariantOptions: selectedVariantOptions
+    };
+  }
+
   async function getCurrentProductVariantCatalog(productInfo) {
     const productData = await getCurrentProductData(productInfo);
     return buildProductVariantCatalog(productData);
@@ -1308,6 +1372,7 @@
     productInfo = await enrichProductInfo(productInfo);
     const productVariantCatalog = await getCurrentProductVariantCatalog(productInfo);
     const currentProductData = await getCurrentProductData(productInfo);
+    const currentVariantSelection = getSelectedVariantContext(currentProductData);
     if (!productInfo.productDescription && currentProductData && currentProductData.description) {
       productInfo.productDescription = normalizeProductDescriptionText(currentProductData.description);
       productInfo.productDescriptionHtml = String(currentProductData.description || '').trim();
@@ -1559,7 +1624,11 @@
           colors: availableColorsList,
           variants: variantCatalogList,
           productCatalog: productVariantCatalog,
-          product_catalog: productVariantCatalog
+          product_catalog: productVariantCatalog,
+          selectedVariantId: currentVariantSelection.selectedVariantId,
+          selected_variant_id: currentVariantSelection.selectedVariantId,
+          selectedVariantOptions: currentVariantSelection.selectedVariantOptions,
+          selected_variant_options: currentVariantSelection.selectedVariantOptions
         };
 
         const sendWidgetPayloads = function () {
@@ -1983,6 +2052,7 @@
     selection = selection || {};
     var variants = productData.variants;
     var options = productData.options || [];
+    var currentVariantContext = getSelectedVariantContext(productData);
     var sizeOptionIndex = options.findIndex(function (o) {
       return isSizeOptionName(typeof o === 'string' ? o : (o && o.name));
     });
@@ -1992,9 +2062,10 @@
     });
 
     var explicitOptionName = selection.variant_option_name || '';
-    var selectedOptions = selection.selected_options && typeof selection.selected_options === 'object'
+    var requestedSelectedOptions = selection.selected_options && typeof selection.selected_options === 'object'
       ? selection.selected_options
       : {};
+    var selectedOptions = Object.assign({}, currentVariantContext.selectedVariantOptions || {}, requestedSelectedOptions);
     var explicitOptionValue = explicitOptionName && selectedOptions[explicitOptionName] !== undefined
       ? selectedOptions[explicitOptionName]
       : '';
@@ -2022,24 +2093,51 @@
       }
     }
 
+    var byExplicitOptions = [];
+    var explicitNonSizeOptionNames = Object.keys(selectedOptions).filter(function (key) {
+      return !isSizeOptionName(key) && selectedOptions[key] !== undefined && selectedOptions[key] !== null && String(selectedOptions[key]).trim();
+    });
+
+    if (explicitNonSizeOptionNames.length > 0) {
+      byExplicitOptions = bySize.filter(function (variant) {
+        return explicitNonSizeOptionNames.every(function (optionName) {
+          var optionIndex = options.findIndex(function (opt) {
+            var candidate = typeof opt === 'string' ? opt : (opt && opt.name);
+            return normalizeText(candidate) === normalizeText(optionName);
+          });
+
+          if (optionIndex < 0) return true;
+
+          var variantValue = variant['option' + (optionIndex + 1)];
+          return normalizeText(variantValue) === normalizeText(selectedOptions[optionName]);
+        });
+      });
+
+      if (byExplicitOptions.length === 0) {
+        byExplicitOptions = bySize;
+      }
+    }
+
+    var pool = byExplicitOptions.length > 0 ? byExplicitOptions : bySize;
+
     var byImage = [];
-    if (selectionImageUrl && bySize.length > 0) {
-      byImage = bySize.filter(function (v) {
+    if (selectionImageUrl && pool.length > 0) {
+      byImage = pool.filter(function (v) {
         var c = extractColorCandidatesFromVariant(v);
         return c.imageUrl && c.imageUrl === selectionImageUrl;
       });
       if (byImage.length === 0) {
         var byProductImage = getVariantsByImageFromProduct(productData, selectionImageUrl);
-        byImage = bySize.filter(function (v) { return byProductImage.some(function (vi) { return vi.id === v.id; }); });
+        byImage = pool.filter(function (v) { return byProductImage.some(function (vi) { return vi.id === v.id; }); });
       }
     }
 
     var byColorHex = [];
-    if (byImage.length === 0 && selectionColorHex && colorOptionIndex >= 0 && bySize.length > 0) {
+    if (byImage.length === 0 && selectionColorHex && colorOptionIndex >= 0 && pool.length > 0) {
       var inferredColorNames = hexToColorNames(selectionColorHex);
       if (inferredColorNames.length > 0) {
         var nameSet = new Set(inferredColorNames.map(normalizeText));
-        byColorHex = bySize.filter(function (v) {
+        byColorHex = pool.filter(function (v) {
           var colorVal = v['option' + (colorOptionIndex + 1)];
           return colorVal && nameSet.has(normalizeText(colorVal));
         });
@@ -2053,8 +2151,8 @@
     if (!chosen && byColorHex.length > 0) {
       chosen = byColorHex.find(function (v) { return v.available; }) || byColorHex[0];
     }
-    if (!chosen && bySize.length > 0) {
-      chosen = bySize.find(function (v) { return v.available; }) || bySize[0];
+    if (!chosen && pool.length > 0) {
+      chosen = pool.find(function (v) { return v.available; }) || pool[0];
     }
     if (!chosen && variants.length > 0) {
       chosen = variants.find(function (v) { return v.available; }) || variants[0];

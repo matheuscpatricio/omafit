@@ -2462,6 +2462,28 @@
       '';
     if (cartLanguage) properties._omafit_language = cartLanguage;
 
+    if (resolved.variant.available === false) {
+      var unavailableMessage =
+        cartLanguage === 'es'
+          ? 'La variante seleccionada está agotada.'
+          : cartLanguage === 'en'
+            ? 'The selected variant is sold out.'
+            : 'A variante selecionada está esgotada.';
+      postResultToIframe(source, origin, {
+        requestId: requestId,
+        success: false,
+        message: unavailableMessage,
+        variantId: variantId,
+        variant_status: 'sold_out',
+        inventory_status: 'unavailable',
+        debug: {
+          reason: 'variant_unavailable',
+          variantTitle: resolved.variant.title || ''
+        }
+      });
+      return;
+    }
+
     var addResult = await addToCart({ variantId: variantId, quantity: quantity || 1, properties: properties });
 
     if (addResult.success) {

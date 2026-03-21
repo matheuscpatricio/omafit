@@ -413,7 +413,16 @@
 
   function isSizeOptionName(name) {
     const n = normalizeOptionName(name);
-    return n === 'size' || n === 'tamanho' || n === 'talla' || n === 'taille';
+    return (
+      n === 'size' ||
+      n === 'tamanho' ||
+      n === 'talla' ||
+      n === 'taille' ||
+      n.indexOf('size') !== -1 ||
+      n.indexOf('tamanho') !== -1 ||
+      n.indexOf('talla') !== -1 ||
+      n.indexOf('taille') !== -1
+    );
   }
 
   function isColorOptionName(name) {
@@ -1380,7 +1389,10 @@
       collectionTitle = await fetchCollectionTitle(collectionHandle);
     }
     const collectionType = await fetchCollectionType(shopDomain, collectionHandle);
-    const collectionElasticity = await fetchCollectionElasticity(shopDomain, collectionHandle);
+    let collectionElasticity = await fetchCollectionElasticity(shopDomain, collectionHandle);
+    if (collectionType === 'footwear') {
+      collectionElasticity = '';
+    }
     
     // Buscar produto complementar (usa coleção atual se houver; senão busca de qualquer coleção)
     const complementaryProduct = await getComplementaryProduct(collectionHandle);
@@ -1972,15 +1984,30 @@
     var variants = productData.variants;
     var options = productData.options || [];
     var sizeOptionIndex = options.findIndex(function (o) {
-      var name = normalizeText(typeof o === 'string' ? o : (o && o.name));
-      return name === 'size' || name === 'tamanho' || name === 'talle' || name === 'talla';
+      return isSizeOptionName(typeof o === 'string' ? o : (o && o.name));
     });
     var colorOptionIndex = options.findIndex(function (o) {
       var name = normalizeText(typeof o === 'string' ? o : (o && o.name));
       return name === 'color' || name === 'cor' || name === 'colour' || name === 'couleur';
     });
 
-    var wantedSize = normalizeSize(selection.recommended_size);
+    var explicitOptionName = selection.variant_option_name || '';
+    var selectedOptions = selection.selected_options && typeof selection.selected_options === 'object'
+      ? selection.selected_options
+      : {};
+    var explicitOptionValue = explicitOptionName && selectedOptions[explicitOptionName] !== undefined
+      ? selectedOptions[explicitOptionName]
+      : '';
+    if (!explicitOptionValue) {
+      Object.keys(selectedOptions).some(function (key) {
+        if (isSizeOptionName(key) && selectedOptions[key] !== undefined && selectedOptions[key] !== null && String(selectedOptions[key]).trim()) {
+          explicitOptionValue = selectedOptions[key];
+          return true;
+        }
+        return false;
+      });
+    }
+    var wantedSize = normalizeSize(explicitOptionValue || selection.recommended_size || selection.recommended_size_label);
     var selectionImageUrl = selection.image_url ? normalizeUrl(selection.image_url) : null;
     var selectionColorHex = (selection.color_hex && String(selection.color_hex).trim()) ? String(selection.color_hex).trim().toLowerCase() : null;
 

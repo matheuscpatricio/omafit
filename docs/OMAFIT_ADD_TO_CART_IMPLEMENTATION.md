@@ -6,35 +6,35 @@ Implementação do fluxo completo de add-to-cart no `omafit-widget.js`, recebend
 
 ### O que foi implementado
 
-1. **Listener para `omafit-add-to-cart-request`** – `window.addEventListener('message', ...)` valida e processa mensagens do iframe.
+1. **Listener para `omafit-add-to-cart-request`** - `window.addEventListener('message', ...)` valida e processa mensagens do iframe.
 
-2. **Validação de origem** – Allowlist `OMAFIT_CART_ALLOWED_ORIGINS`:
+2. **Validação de origem** - Allowlist `OMAFIT_CART_ALLOWED_ORIGINS`:
    - `https://omafit.netlify.app`
    - `https://omafit.com`
    - `http://localhost:3000`
    - `http://127.0.0.1:3000`
 
-3. **Validação de schema** – `isValidAddToCartMessage(event)` verifica:
+3. **Validação de schema** - `isValidAddToCartMessage(event)` verifica:
    - `type === 'omafit-add-to-cart-request'`
    - `requestId` obrigatório
    - `product.id` e `product.name` obrigatórios
    - `selection` como objeto obrigatório
    - `shop_domain` string se presente
 
-4. **Resolução de variante** – `resolveVariantFromSelection({ productData, selection })`:
+4. **Resolução de variante** - `resolveVariantFromSelection({ productData, selection })`:
    - Prioridade: mídia/imagem da variante (`variant.featured_image`, `product.images[].variant_ids`)
-   - Fallback: `color_hex` via mapeamento heurístico hex → nomes de cor (PT/EN)
+   - Fallback: `color_hex` via mapeamento heurístico hex -> nomes de cor (PT/EN)
    - Match de tamanho: `normalizeSize()` com aliases (M, 42 BR, etc.)
    - Preferência por variante disponível (`available: true`)
 
-5. **Add to cart** – `addToCart({ variantId, quantity, properties })`:
+5. **Add to cart** - `addToCart({ variantId, quantity, properties })`:
    - POST em `/cart/add.js` com `{ id, quantity, properties }`
    - Tratamento de sucesso e erro (422, rede)
    - Atualização de seções do tema (cart-drawer, etc.)
 
-6. **Idempotência** – `OMAFIT_PROCESSED_REQUEST_IDS` evita requisições duplicadas por `requestId`.
+6. **Idempotência** - `OMAFIT_PROCESSED_REQUEST_IDS` evita requisições duplicadas por `requestId`.
 
-7. **Resposta ao iframe** – `postResultToIframe()` envia `omafit-add-to-cart-result` com `requestId`, `success`, `message`, `cart`, `variantId`, `debug`.
+7. **Resposta ao iframe** - `postResultToIframe()` envia `omafit-add-to-cart-result` com `requestId`, `success`, `message`, `cart`, `variantId`, `debug`.
 
 ---
 
@@ -127,7 +127,7 @@ Implementação do fluxo completo de add-to-cart no `omafit-widget.js`, recebend
 | `normalizeSize(size)` | Normaliza tamanhos (M, 42 BR, etc.) |
 | `extractColorCandidatesFromVariant(variant)` | Extrai optionValues e imageUrl da variante |
 | `getVariantsByImageFromProduct(productData, selectionImageUrl)` | Variantes via `product.images[].variant_ids` |
-| `hexToColorNames(hex)` | Mapeamento heurístico hex → nomes de cor (PT/EN) |
+| `hexToColorNames(hex)` | Mapeamento heurístico hex -> nomes de cor (PT/EN) |
 | `resolveVariantFromSelection({ productData, selection })` | Resolve variante por imagem, cor e tamanho |
 | `addToCart({ variantId, quantity, properties })` | POST `/cart/add.js` |
 | `postResultToIframe(targetWindow, targetOrigin, resultPayload)` | Envia `omafit-add-to-cart-result` ao iframe |

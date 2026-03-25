@@ -1,4 +1,11 @@
-import { Outlet, useLoaderData, useRouteError, useLocation, redirect } from "react-router";
+import {
+  Outlet,
+  useLoaderData,
+  useRouteError,
+  useLocation,
+  redirect,
+  Link,
+} from "react-router";
 import process from "node:process";
 import { useEffect } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -83,6 +90,17 @@ function deriveEmbeddedHostClient(shop) {
   return toBase64Url(raw);
 }
 
+/** Evita reload quando só a ordem dos query params difere (URLSearchParams pode reordenar). */
+function areSearchParamsEquivalent(a, b) {
+  const pa = new URLSearchParams(a.startsWith("?") ? a.slice(1) : a);
+  const pb = new URLSearchParams(b.startsWith("?") ? b.slice(1) : b);
+  if (pa.size !== pb.size) return false;
+  for (const [key, value] of pa.entries()) {
+    if (pb.get(key) !== value) return false;
+  }
+  return true;
+}
+
 function pickPreferredLocaleFromRequest(request, session) {
   const url = new URL(request.url);
   const localeFromQuery = url.searchParams.get("locale");
@@ -161,13 +179,25 @@ function AppNav() {
   const { t } = useAppI18n();
   const location = useLocation();
   const search = location.search || "";
+  // React Router <Link> evita reload completo do iframe; <s-link> pode forçar navegação documento inteiro.
+  const navLinkStyle = { textDecoration: "none", color: "inherit" };
   return (
     <s-app-nav>
-      <s-link href={`/app${search}`}>{t("nav.home")}</s-link>
-      <s-link href={`/app/billing${search}`}>{t("nav.billing")}</s-link>
-      <s-link href={`/app/widget${search}`}>{t("nav.widget")}</s-link>
-      <s-link href={`/app/size-chart${search}`}>{t("nav.sizeChart")}</s-link>
-      <s-link href={`/app/analytics${search}`}>{t("nav.analytics")}</s-link>
+      <Link to={`/app${search}`} style={navLinkStyle}>
+        {t("nav.home")}
+      </Link>
+      <Link to={`/app/billing${search}`} style={navLinkStyle}>
+        {t("nav.billing")}
+      </Link>
+      <Link to={`/app/widget${search}`} style={navLinkStyle}>
+        {t("nav.widget")}
+      </Link>
+      <Link to={`/app/size-chart${search}`} style={navLinkStyle}>
+        {t("nav.sizeChart")}
+      </Link>
+      <Link to={`/app/analytics${search}`} style={navLinkStyle}>
+        {t("nav.analytics")}
+      </Link>
     </s-app-nav>
   );
 }
@@ -207,7 +237,12 @@ export default function App() {
       url.searchParams.set("embedded", "1");
       const next = `${url.pathname}?${url.searchParams.toString()}`;
       const current = `${window.location.pathname}${window.location.search}`;
-      if (next !== current) {
+      const samePath = url.pathname === window.location.pathname;
+      const sameParams = areSearchParamsEquivalent(
+        url.search,
+        window.location.search || "",
+      );
+      if (!(samePath && sameParams)) {
         window.location.replace(next);
       }
     }

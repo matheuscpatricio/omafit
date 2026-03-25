@@ -698,6 +698,16 @@
         if (shopDomain && !shopDomain.includes('.')) {
           shopDomain = shopDomain + '.myshopify.com';
         }
+
+        // Se o tema estiver passando um domínio "público" concatenado com ".myshopify.com"
+        // (ex: allenboxers.com.br.myshopify.com), desconsideramos para buscar o domínio canônico.
+        // O canônico esperado em Supabase é *.myshopify.com (ex: allenstorebr.myshopify.com).
+        if (shopDomain && shopDomain.endsWith('.myshopify.com')) {
+          const shopPart = shopDomain.replace(/\.myshopify\.com$/, '');
+          if (shopPart.includes('.')) {
+            shopDomain = '';
+          }
+        }
       }
 
       // Tentar detectar shop domain do Shopify

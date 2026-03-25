@@ -1598,6 +1598,9 @@
       '&language=' + encodeURIComponent(storeLanguage) +
       '&locale=' + encodeURIComponent(storeLanguage) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
+      (productCollectionHandles.length
+        ? '&collectionHandles=' + encodeURIComponent(productCollectionHandles.join(','))
+        : '') +
       (collectionTitle ? '&collectionTitle=' + encodeURIComponent(collectionTitle) : '') +
       (collectionTitle ? '&collectionName=' + encodeURIComponent(collectionTitle) : '') +
       (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
@@ -1725,6 +1728,7 @@
           product_name: productInfo.productName || '',
           ...sharedWidgetData,
           collectionHandle: typeof collectionHandle === 'string' ? collectionHandle : '',
+          collectionHandles: productCollectionHandles,
           collectionTitle: typeof collectionTitle === 'string' ? collectionTitle : '',
           collectionName: typeof collectionTitle === 'string' ? collectionTitle : '',
           defaultGender: typeof defaultGender === 'string' ? defaultGender : '',
@@ -1796,6 +1800,7 @@
                 fontFamily: detectedFontFamily, // Enviar fonte detectada
                 shopDomain: shopDomain,
                 collectionHandle: collectionHandle || '',
+                collectionHandles: productCollectionHandles,
                 collectionTitle: collectionTitle || '',
                 collectionName: collectionTitle || '',
                 defaultGender: defaultGender || '',
@@ -1823,6 +1828,7 @@
                 fontFamily: detectedFontFamily,
                 shopDomain: shopDomain,
                 collectionHandle: collectionHandle || '',
+                collectionHandles: productCollectionHandles,
                 collectionTitle: collectionTitle || '',
                 collectionName: collectionTitle || '',
                 defaultGender: defaultGender || '',
@@ -1851,6 +1857,7 @@
               fontFamily: detectedFontFamily, // Enviar fonte detectada
               shopDomain: shopDomain,
               collectionHandle: collectionHandle || '',
+              collectionHandles: productCollectionHandles,
               collectionTitle: collectionTitle || '',
               collectionName: collectionTitle || '',
               defaultGender: defaultGender || '',

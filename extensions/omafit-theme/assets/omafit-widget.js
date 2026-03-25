@@ -807,7 +807,7 @@
           }
         ),
         fetch(
-          `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,is_active`,
+          `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,status`,
           {
             headers: {
               'apikey': supabaseAnonKey,
@@ -837,18 +837,18 @@
                 validPublicId = widgetKeyData[0].public_id;
               }
               
-              // Só verificar is_active se widget_keys foi encontrado
+              // Só verificar status se widget_keys foi encontrado
               // Se não encontrou, permitir funcionar (pode ser primeira instalação)
-              if (widgetKeyData[0].is_active === false) {
+              if (widgetKeyData[0].status === 'inactive') {
                 isWidgetActive = false;
-                console.warn('⚠️ Widget encontrado em widget_keys mas is_active=false');
-              } else if (widgetKeyData[0].is_active === true) {
+                console.warn('⚠️ Widget encontrado em widget_keys mas status=inactive');
+              } else if (widgetKeyData[0].status === 'active') {
                 isWidgetActive = true;
                 console.log('✅ Widget encontrado e ativo em widget_keys. PublicId:', validPublicId);
               } else {
-                // is_active pode ser null/undefined, tratar como true
+                // status pode ser null/undefined, tratar como true
                 isWidgetActive = true;
-                console.log('✅ Widget encontrado em widget_keys (is_active não especificado, tratando como true). PublicId:', validPublicId);
+                console.log('✅ Widget encontrado em widget_keys (status não especificado, tratando como true). PublicId:', validPublicId);
               }
             } else {
               console.log('ℹ️ Nenhum registro encontrado em widget_keys. Permissão para funcionar (primeira instalação).');

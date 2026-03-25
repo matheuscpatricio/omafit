@@ -7,8 +7,28 @@
   {% elsif product and product.collections.size > 0 %}
     data-collection-handle="{{ product.collections.first.handle }}"
   {% endif %}
+  {% comment %}
+    Lista todas as coleções do produto para o script escolher o handle mais específico (ex: cuecas-slips > cuecas).
+    Inclui a coleção da URL se, por algum motivo, não estiver em product.collections.
+  {% endcomment %}
   {% if product and product.collections.size > 0 %}
-    data-collection-handles="{{ product.collections | map: 'handle' | join: ',' }}"
+    {% assign omafit_coll_handles = product.collections | map: 'handle' | join: ',' %}
+    {% if collection %}
+      {% assign omafit_url_coll = collection.handle %}
+      {% assign omafit_url_in_product_colls = false %}
+      {% for c in product.collections %}
+        {% if c.handle == omafit_url_coll %}
+          {% assign omafit_url_in_product_colls = true %}
+          {% break %}
+        {% endif %}
+      {% endfor %}
+      {% unless omafit_url_in_product_colls %}
+        {% assign omafit_coll_handles = omafit_coll_handles | append: ',' | append: omafit_url_coll %}
+      {% endunless %}
+    {% endif %}
+    data-collection-handles="{{ omafit_coll_handles }}"
+  {% elsif collection %}
+    data-collection-handles="{{ collection.handle }}"
   {% endif %}
   {% if product %}
     data-product-id="{{ product.id }}"

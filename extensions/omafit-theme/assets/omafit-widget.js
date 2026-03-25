@@ -1474,11 +1474,33 @@
         if (unique.indexOf(h) === -1) unique.push(h);
       });
 
-      // Prioriza handle mais específico (nome composto, ex: "camisas-polo" > "camisas")
-      // Regras: mais segmentos > maior comprimento > fallback para ordem original.
-      const scored = unique.map(function (h, idx) {
-        const normalized = h.toLowerCase();
-        const tokenCount = normalized.split('-').filter(Boolean).length;
+      const lower = function (s) {
+        return String(s || '').toLowerCase();
+      };
+
+      // Se existe "cuecas-slips", descarta "cuecas" (refinamento por prefixo + - ou _)
+      const isRefinementOf = function (maybeRefined, base) {
+        const x = lower(maybeRefined);
+        const b = lower(base);
+        if (!b.length || b === x) return false;
+        return x.indexOf(b + '-') === 0 || x.indexOf(b + '_') === 0;
+      };
+
+      const filtered = unique.filter(function (h) {
+        for (var i = 0; i < unique.length; i++) {
+          var other = unique[i];
+          if (other === h) continue;
+          if (isRefinementOf(other, h)) return false;
+        }
+        return true;
+      });
+
+      const candidates = filtered.length > 0 ? filtered : unique;
+
+      // Mais segmentos (-/_), maior comprimento; empate mantém ordem de aparição.
+      const scored = candidates.map(function (h, idx) {
+        const normalized = lower(h);
+        const tokenCount = normalized.split(/[-_]+/).filter(Boolean).length;
         const isComposed = tokenCount > 1 ? 1 : 0;
         return {
           handle: h,

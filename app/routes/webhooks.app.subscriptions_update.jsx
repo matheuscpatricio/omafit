@@ -17,11 +17,18 @@ export const action = async ({ request }) => {
     const rawStatus = String(sub?.status || "").toUpperCase();
     const status = rawStatus === "ACTIVE" ? "active" : "inactive";
     const lineItems = Array.isArray(sub?.line_items) ? sub.line_items : [];
-    const recurringItem = lineItems.find((item) => Number.isFinite(Number(item?.plan?.pricing_details?.price?.amount)));
-    const recurringAmount = Number(recurringItem?.plan?.pricing_details?.price?.amount) || null;
-    const planHandle = recurringItem?.plan?.plan_handle
-      ? String(recurringItem.plan.plan_handle).trim().toLowerCase()
-      : null;
+    const recurringAmountFromItem = (item) => {
+      const raw =
+        item?.plan?.pricing_details?.price?.amount ??
+        item?.plan?.pricingDetails?.price?.amount;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    };
+    const recurringItem = lineItems.find((item) => recurringAmountFromItem(item) !== null);
+    const recurringAmount = recurringItem ? recurringAmountFromItem(recurringItem) : null;
+    const rawHandle =
+      recurringItem?.plan?.plan_handle ?? recurringItem?.plan?.planHandle;
+    const planHandle = rawHandle ? String(rawHandle).trim().toLowerCase() : null;
     const planFromPayload = resolvePlanFromSubscription({
       subscriptionName: sub?.name || "",
       recurringAmount: Number.isFinite(recurringAmount) ? recurringAmount : null,

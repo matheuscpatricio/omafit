@@ -10,6 +10,8 @@ import {
   resolvePlanFromSubscription,
   extractRecurringAmountFromSubscription,
   extractPlanHandleFromSubscription,
+  PLAN_IMAGES,
+  PLAN_PRICE_EXTRA,
 } from "../billing-sync.server";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
@@ -240,25 +242,80 @@ export async function loader({ request }) {
       if (diagnostics.bootstrapSucceeded) {
         result = await syncBillingFromShopify(admin, session.shop);
 
-        // Caso clássico: bootstrap cria loja, mas sync normal não consegue promover para ACTIVE.
-        // Força persistência direta para destravar o admin.
+        // Caso clássico: bootstrap cria loja, mas writeBillingToSupabase/sync falham por schema/RLS.
+        // Só força "active" no Supabase se a Shopify ainda tiver assinatura ACTIVE (evita Pro→ondemand ou ativar sem pagamento).
         if (!result) {
-          const forced = await tryForcePersistActiveBilling({
-            supabaseUrl,
-            supabaseKey,
-            shop: session.shop,
-          });
-          if (forced.ok) {
-            return Response.json({
-              ok: true,
-              shop: session.shop,
-              plan: "ondemand",
-              imagesIncluded: 50,
-              pricePerExtra: 0.18,
-              forcePersistStrategy: forced.strategy,
-            });
+          let forcePlan = "ondemand";
+          let shopifyHasActive = false;
+          try {
+            const forceCheckResponse = await admin.graphql(`#graphql
+              query BillingSyncForceCheckActive {
+                currentAppInstallation {
+                  activeSubscriptions {
+                    id
+                    name
+                    status
+                    lineItems {
+                      id
+                      plan {
+                        pricingDetails {
+                          ... on AppRecurringPricing {
+                            price { amount currencyCode }
+                            planHandle
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `);
+            const forceCheckJson = await forceCheckResponse.json();
+            const subs =
+              forceCheckJson?.data?.currentAppInstallation?.activeSubscriptions || [];
+            const active = subs.find(
+              (s) => String(s?.status || "").toUpperCase() === "ACTIVE",
+            );
+            if (active) {
+              shopifyHasActive = true;
+              const recurringAmount = extractRecurringAmountFromSubscription(active);
+              const planHandle = extractPlanHandleFromSubscription(active);
+              const resolved = resolvePlanFromSubscription({
+                subscriptionName: active?.name || "",
+                recurringAmount,
+                planHandle,
+              });
+              forcePlan =
+                resolved === "basic" || resolved === "starter"
+                  ? "ondemand"
+                  : resolved === "growth"
+                    ? "pro"
+                    : resolved || "ondemand";
+            }
+          } catch (forceCheckErr) {
+            console.warn("[api.billing.sync] force-check active subscription failed:", forceCheckErr);
           }
-          diagnostics.bootstrapErrors.push(forced.error || "force persist failed");
+
+          if (shopifyHasActive) {
+            const forced = await tryForcePersistActiveBilling({
+              supabaseUrl,
+              supabaseKey,
+              shop: session.shop,
+              plan: forcePlan,
+            });
+            if (forced.ok) {
+              const np = forcePlan === "pro" ? "pro" : "ondemand";
+              return Response.json({
+                ok: true,
+                shop: session.shop,
+                plan: np,
+                imagesIncluded: PLAN_IMAGES[np] ?? 50,
+                pricePerExtra: PLAN_PRICE_EXTRA[np] ?? 0.18,
+                forcePersistStrategy: forced.strategy,
+              });
+            }
+            diagnostics.bootstrapErrors.push(forced.error || "force persist failed");
+          }
         }
       }
 

@@ -448,7 +448,12 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
     return null;
   }
 
-  const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : (plan || "ondemand");
+  const normalizedPlan =
+    plan === "basic" || plan === "starter"
+      ? "ondemand"
+      : plan === "growth"
+        ? "pro"
+        : plan || "ondemand";
   const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? 0;
   const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? 0.18;
   const binding = await resolveShopUserBinding({

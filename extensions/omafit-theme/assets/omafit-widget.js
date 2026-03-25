@@ -1457,7 +1457,53 @@
       '';
     config.storeName = resolvedStoreName;
     const rootEl = document.getElementById('omafit-widget-root');
-    let collectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
+    const currentCollectionHandle = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandle) ? rootEl.dataset.collectionHandle : '';
+    const productCollectionHandles = (rootEl && rootEl.dataset && rootEl.dataset.collectionHandles)
+      ? rootEl.dataset.collectionHandles.split(',').map(function (item) { return item.trim(); }).filter(Boolean)
+      : [];
+    const pickPreferredCollectionHandle = function (handles, fallbackHandle) {
+      const all = []
+        .concat(Array.isArray(handles) ? handles : [])
+        .concat(fallbackHandle ? [fallbackHandle] : [])
+        .map(function (h) { return String(h || '').trim(); })
+        .filter(Boolean);
+      if (all.length === 0) return '';
+
+      const unique = [];
+      all.forEach(function (h) {
+        if (unique.indexOf(h) === -1) unique.push(h);
+      });
+
+      // Prioriza handle mais específico (nome composto, ex: "camisas-polo" > "camisas")
+      // Regras: mais segmentos > maior comprimento > fallback para ordem original.
+      const scored = unique.map(function (h, idx) {
+        const normalized = h.toLowerCase();
+        const tokenCount = normalized.split('-').filter(Boolean).length;
+        const isComposed = tokenCount > 1 ? 1 : 0;
+        return {
+          handle: h,
+          idx: idx,
+          scoreA: isComposed,
+          scoreB: tokenCount,
+          scoreC: normalized.length
+        };
+      });
+
+      scored.sort(function (a, b) {
+        if (b.scoreA !== a.scoreA) return b.scoreA - a.scoreA;
+        if (b.scoreB !== a.scoreB) return b.scoreB - a.scoreB;
+        if (b.scoreC !== a.scoreC) return b.scoreC - a.scoreC;
+        return a.idx - b.idx;
+      });
+
+      return scored[0].handle || fallbackHandle || '';
+    };
+    let collectionHandle = pickPreferredCollectionHandle(productCollectionHandles, currentCollectionHandle);
+    console.log('🧭 CollectionHandle resolvido para size_chart:', {
+      currentCollectionHandle: currentCollectionHandle || '',
+      productCollectionHandles: productCollectionHandles,
+      selected: collectionHandle || ''
+    });
     let collectionTitle = (rootEl && rootEl.dataset && rootEl.dataset.collectionTitle) ? rootEl.dataset.collectionTitle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
     if (!collectionTitle && collectionHandle) {

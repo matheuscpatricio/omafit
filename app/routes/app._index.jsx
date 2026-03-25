@@ -44,28 +44,32 @@ export default function DashboardPage() {
   const BILLING_PENDING_KEY = 'omafit_pending_billing_activation_at';
   const BILLING_PENDING_MAX_AGE_MS = 10 * 60 * 1000;
 
+  const shopParam = searchParams.get('shop');
+
+  // Carrega ao montar / quando a loja na URL muda.
+  // Não use window "focus": no admin embutido cada clique no iframe pode disparar focus e
+  // setLoading(true), parecendo "recarregar" a interface inteira.
   useEffect(() => {
     loadDashboardData();
-  }, []);
+  }, [shopParam]);
 
-  // Recarregar dados quando a página recebe foco (ex: volta do billing)
+  // Atualização em segundo plano ao voltar de outra aba (ex.: aprovação de billing noutro separador).
   useEffect(() => {
-    const handleFocus = () => {
-      loadDashboardData();
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      loadDashboardData({ silent: true });
     };
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, []);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [shopParam]);
 
-  // Recarregar quando shop muda nos searchParams
-  useEffect(() => {
-    loadDashboardData();
-  }, [searchParams.get('shop')]);
-
-  const loadDashboardData = async () => {
+  const loadDashboardData = async (opts = {}) => {
+    const silent = opts.silent === true;
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
 
       const shop = getShopDomain(searchParams) || null;
 
@@ -166,7 +170,6 @@ export default function DashboardPage() {
         const retrySync = await syncBillingWithRetry(3, 2500);
         if (!retrySync.ok && retrySync.fatal && retrySync.message) {
           setError(retrySync.message);
-          setLoading(false);
           return;
         }
         shopData = await fetchShopData(true);
@@ -178,7 +181,6 @@ export default function DashboardPage() {
         const retrySync = await syncBillingWithRetry(1, 0);
         if (!retrySync.ok && retrySync.fatal && retrySync.message) {
           setError(retrySync.message);
-          setLoading(false);
           return;
         }
         shopData = await fetchShopData(true);
@@ -208,7 +210,6 @@ export default function DashboardPage() {
             remaining: 0
           }
         });
-        setLoading(false);
         return;
       }
 
@@ -249,9 +250,13 @@ export default function DashboardPage() {
 
     } catch (err) {
       console.error('[Dashboard] Erro ao carregar dados:', err);
-      setError(err.message);
+      if (!silent) {
+        setError(err.message);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 

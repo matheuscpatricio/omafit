@@ -2463,14 +2463,14 @@
 
     var variantId = resolved.variant.id;
     console.log('[OmafitCart] variantId final:', variantId);
-    var properties = { _source: 'omafit_tryon' };
-    if (metadata.session_id) properties._omafit_session_id = metadata.session_id;
+    // Não enviar metadados internos como line item properties do Shopify,
+    // para evitar exibição no carrinho/checkout.
+    var properties = {};
     var cartLanguage =
       normalizeLanguageTag(metadata.language) ||
       normalizeLanguageTag(OMAFIT_CONFIG.adminLocale) ||
       normalizeLanguageTag(detectStoreLanguage()) ||
       '';
-    if (cartLanguage) properties._omafit_language = cartLanguage;
 
     if (resolved.variant.available === false) {
       var unavailableMessage =

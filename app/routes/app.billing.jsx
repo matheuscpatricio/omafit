@@ -102,9 +102,11 @@ export default function BillingPage() {
     if (!shopDomain || shopDomain === 'demo-shop.myshopify.com') return null;
     // Remove .myshopify.com se presente, ou usa o shop domain diretamente
     const shopName = shopDomain.replace('.myshopify.com', '');
-    // App handle: geralmente o nome do app em lowercase com hífens
-    // Pode ser configurado via env ou usar padrão
-    const appHandle = 'omafit-1'; // TODO: tornar configurável via env se necessário
+    // App handle do Managed Pricing na Shopify.
+    // Configure VITE_SHOPIFY_APP_HANDLE no ambiente para garantir que o link
+    // aponte para o app correto (evita abrir pricing legado de outro handle).
+    const appHandle = (import.meta.env.VITE_SHOPIFY_APP_HANDLE || 'omafit-1').trim();
+    if (!appHandle) return null;
     return `https://admin.shopify.com/store/${shopName}/charges/${appHandle}/pricing_plans`;
   };
 

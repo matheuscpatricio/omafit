@@ -198,6 +198,9 @@ function AppNav() {
       <Link to={`/app/analytics${search}`} style={navLinkStyle}>
         {t("nav.analytics")}
       </Link>
+      <Link to={`/app/ar-eyewear${search}`} style={navLinkStyle}>
+        {t("nav.arEyewear")}
+      </Link>
     </s-app-nav>
   );
 }

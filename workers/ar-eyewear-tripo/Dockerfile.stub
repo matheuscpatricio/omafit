@@ -1,0 +1,13 @@
+# Worker em modo stub (sem TripoSR / sem GPU). Gera GLB placeholder para testar fila + Storage.
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+COPY requirements-worker.txt .
+RUN pip install --no-cache-dir -r requirements-worker.txt
+
+COPY worker.py postprocess.py ./
+
+ENV WORKER_STUB=1
+ENV POLL_SECONDS=5
+
+CMD ["python3", "worker.py"]

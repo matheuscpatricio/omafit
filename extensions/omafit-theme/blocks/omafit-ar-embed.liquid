@@ -1,0 +1,87 @@
+{% comment %}
+  Omafit AR óculos — metafield product.metafields.omafit.ar_glb_url (url).
+  UI alinhada ao TryOnWidget (etapa info) + link estilo omafit-widget.js; fluxo: info → AR (câmera).
+{% endcomment %}
+{% assign mf = product.metafields.omafit.ar_glb_url %}
+{% assign glb_url = '' %}
+{% if mf != blank and mf.value != blank %}
+  {% assign glb_url = mf.value | strip %}
+{% endif %}
+{% assign tag_filter = block.settings.only_tag | strip %}
+{% assign tag_ok = true %}
+{% if tag_filter != '' %}
+  {% assign tag_ok = false %}
+  {% for t in product.tags %}
+    {% if t == tag_filter %}
+      {% assign tag_ok = true %}
+      {% break %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+
+{% assign product_image_url = '' %}
+{% if product.featured_image %}
+  {% assign product_image_url = product.featured_image | image_url: width: 900 %}
+{% elsif product.images.first %}
+  {% assign product_image_url = product.images.first | image_url: width: 900 %}
+{% endif %}
+
+{% assign logo_url = '' %}
+{% if block.settings.store_logo != blank %}
+  {% assign logo_url = block.settings.store_logo | image_url: width: 240 %}
+{% elsif settings.logo %}
+  {% assign logo_url = settings.logo | image_url: width: 240 %}
+{% endif %}
+
+{% assign locale_code = request.locale.iso_code | default: 'pt' %}
+
+{% if glb_url != blank and tag_ok %}
+  <div
+    id="omafit-ar-root"
+    class="omafit-ar-root"
+    data-glb-url="{{ glb_url | escape }}"
+    data-product-id="{{ product.id }}"
+    data-product-title="{{ product.title | escape }}"
+    data-product-image="{{ product_image_url | escape }}"
+    data-primary-color="{{ block.settings.primary_color | escape }}"
+    data-store-logo="{{ logo_url | escape }}"
+    data-locale="{{ locale_code | escape }}"
+    data-link-text="{{ block.settings.button_label | escape }}"
+  ></div>
+  <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}"></script>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Omafit AR óculos",
+  "target": "body",
+  "enabled_on": { "templates": ["product"] },
+  "settings": [
+    {
+      "type": "text",
+      "id": "button_label",
+      "label": "Texto do link (como o widget de roupa)",
+      "default": "Experimentar óculos (AR)"
+    },
+    {
+      "type": "color",
+      "id": "primary_color",
+      "label": "Cor primária",
+      "default": "#810707"
+    },
+    {
+      "type": "image_picker",
+      "id": "store_logo",
+      "label": "Logo da loja (opcional)",
+      "info": "Se vazio, usa o logo do tema quando existir."
+    },
+    {
+      "type": "text",
+      "id": "only_tag",
+      "label": "Só exibir se o produto tiver a tag (vazio = sempre que houver GLB)",
+      "info": "Ex.: eyewear",
+      "default": ""
+    }
+  ]
+}
+{% endschema %}

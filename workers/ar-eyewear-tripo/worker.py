@@ -28,12 +28,47 @@ import requests
 
 TABLE = "ar_eyewear_assets"
 BUCKET_GLB = "ar-eyewear-glb"
+BUCKET_UPLOADS = "ar-eyewear-uploads"
 HEADERS = {}
 
 
 def sb_url(path: str) -> str:
     base = os.environ["SUPABASE_URL"].rstrip("/")
     return f"{base}{path}"
+
+
+def ensure_storage_buckets():
+    """Cria buckets se não existirem (evita 404 Bucket not found no upload do GLB)."""
+    base = os.environ["SUPABASE_URL"].rstrip("/")
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    hdr = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    for bid, public in (
+        (BUCKET_UPLOADS, False),
+        (BUCKET_GLB, True),
+    ):
+        r = requests.post(
+            f"{base}/storage/v1/bucket",
+            headers=hdr,
+            json={"name": bid, "public": public},
+            timeout=60,
+        )
+        if r.ok:
+            print(f"[worker] bucket ok: {bid}")
+            continue
+        text = (r.text or "").lower()
+        if r.status_code == 409 or "already" in text or "duplicate" in text:
+            print(f"[worker] bucket exists: {bid}")
+            continue
+        print(
+            f"[worker] FATAL: não foi possível criar o bucket '{bid}': "
+            f"{r.status_code} {r.text[:500]}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def rest_headers():
@@ -255,6 +290,7 @@ def main():
     if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
         print("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY", file=sys.stderr)
         sys.exit(1)
+    ensure_storage_buckets()
     poll = float(os.environ.get("POLL_SECONDS", "10"))
     print("[worker] started; stub=", os.environ.get("WORKER_STUB"), "poll=", poll)
     while True:

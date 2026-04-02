@@ -28,6 +28,51 @@ export function isArEyewearConfigured() {
   return Boolean(url && key);
 }
 
+let arEyewearBucketsEnsured = false;
+
+function isBucketAlreadyExistsResponse(status, bodyText) {
+  const t = String(bodyText || "").toLowerCase();
+  if (status === 409) return true;
+  return (
+    t.includes("already exists") ||
+    t.includes("duplicate") ||
+    t.includes("resource already exists") ||
+    t.includes("bucket already exists")
+  );
+}
+
+/**
+ * Cria buckets AR óculos via Storage API (evita "Bucket not found" se o SQL não foi aplicado).
+ */
+export async function ensureArEyewearStorageBuckets() {
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) throw new Error("Supabase not configured");
+  const base = url.replace(/\/$/, "");
+  const specs = [
+    ["ar-eyewear-uploads", false],
+    ["ar-eyewear-glb", true],
+  ];
+  for (const [name, isPublic] of specs) {
+    const res = await fetch(`${base}/storage/v1/bucket`, {
+      method: "POST",
+      headers: headers(key),
+      body: JSON.stringify({ name, public: isPublic }),
+    });
+    if (res.ok) continue;
+    const t = await res.text().catch(() => "");
+    if (isBucketAlreadyExistsResponse(res.status, t)) continue;
+    throw new Error(
+      `Não foi possível criar o bucket Storage "${name}": ${res.status} ${t.slice(0, 400)}`,
+    );
+  }
+}
+
+async function ensureArEyewearBucketsOnce() {
+  if (arEyewearBucketsEnsured) return;
+  await ensureArEyewearStorageBuckets();
+  arEyewearBucketsEnsured = true;
+}
+
 /**
  * Upload bytes to Supabase Storage (bucket must exist).
  * @param {string} bucket
@@ -46,6 +91,9 @@ function encodeStorageObjectPath(path) {
 export async function storageUpload(bucket, path, body, contentType) {
   const { url, key } = getSupabaseConfig();
   if (!url || !key) throw new Error("Supabase not configured");
+  if (String(bucket || "").startsWith("ar-eyewear")) {
+    await ensureArEyewearBucketsOnce();
+  }
   const objectPath = encodeStorageObjectPath(path);
   const uploadUrl = `${url}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`;
   const res = await fetch(uploadUrl, {

@@ -1,9 +1,18 @@
--- Políticas de Storage para AR óculos (executar no SQL Editor do Supabase após criar os buckets).
--- Objetivo: leitura anónima dos GLBs na loja (Three.js / fetch no domínio da Shopify).
--- Uploads: o worker e o app usam service role (ignoram RLS); URLs "public" em bucket privado
--- falham no browser — por isso o worker faz download autenticado (ver worker.py).
+-- Storage AR óculos: criar buckets + política de leitura pública do GLB.
+-- Execute no SQL Editor do Supabase (resolve "Bucket not found" no worker / app).
+--
+-- ar-eyewear-glb      → upload do .glb pelo worker; leitura pública no PDP
+-- ar-eyewear-uploads  → imagens das 3 vistas (app + download pelo worker)
 
--- Ajuste se os IDs dos buckets forem diferentes.
+INSERT INTO storage.buckets (id, name, public)
+VALUES
+  ('ar-eyewear-glb', 'ar-eyewear-glb', true),
+  ('ar-eyewear-uploads', 'ar-eyewear-uploads', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Objetivo: leitura anónima dos GLBs na loja (Three.js / fetch no domínio da Shopify).
+-- Uploads: worker/app usam service role; bucket uploads pode ficar privado.
+
 DROP POLICY IF EXISTS "ar_eyewear_glb_public_read" ON storage.objects;
 CREATE POLICY "ar_eyewear_glb_public_read"
   ON storage.objects FOR SELECT

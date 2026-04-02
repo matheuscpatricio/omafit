@@ -49,9 +49,8 @@ ALTER TABLE public.ar_eyewear_assets ENABLE ROW LEVEL SECURITY;
 -- Sem políticas públicas = apenas service role bypassa RLS
 -- Se precisar leitura anon no futuro, crie policy restrita por shop + JWT custom
 
--- Storage (criar buckets no Dashboard > Storage):
---   ar-eyewear-uploads  (imagens originais; o worker faz download com service role se o bucket for privado)
---   ar-eyewear-glb      (GLB; leitura pública na loja — aplicar também supabase_ar_eyewear_storage_policies.sql)
+-- Storage: os buckets são criados em supabase_ar_eyewear_storage_policies.sql (INSERT em storage.buckets).
+-- Sem isso o worker devolve "Bucket not found" ao subir o GLB.
 
 CREATE OR REPLACE FUNCTION public.ar_eyewear_assets_set_updated_at()
 RETURNS TRIGGER AS $$

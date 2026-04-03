@@ -9,6 +9,7 @@ import {
   patchAsset,
   storageUpload,
   isArEyewearConfigured,
+  arEyewearSupabaseConfigError,
 } from "../ar-eyewear.server";
 import { fetchEyewearProductsForShop } from "../ar-eyewear-products.server";
 
@@ -88,7 +89,12 @@ export async function action({ request }) {
       return Response.json({ error: "AR Eyewear disabled for this shop" }, { status: 403 });
     }
     if (!isArEyewearConfigured()) {
-      return Response.json({ error: "Supabase not configured" }, { status: 500 });
+      return Response.json(
+        {
+          error: arEyewearSupabaseConfigError() || "Supabase not configured",
+        },
+        { status: 500 },
+      );
     }
 
     const ct = request.headers.get("content-type") || "";

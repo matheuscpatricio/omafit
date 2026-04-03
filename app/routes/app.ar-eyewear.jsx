@@ -275,6 +275,11 @@ export default function ArEyewearPage() {
 
   const imgOpts = selectedProduct ? imageSelectOptions(selectedProduct.images || [], t) : [];
 
+  const hasQueuedJobs = useMemo(
+    () => (assets || []).some((a) => a.status === "queued"),
+    [assets],
+  );
+
   return (
     <Page
       title={t("arEyewear.title")}
@@ -290,6 +295,12 @@ export default function ArEyewearPage() {
             <Banner tone="critical" onDismiss={() => setError(null)}>
               {error}
             </Banner>
+          </Layout.Section>
+        )}
+
+        {hasQueuedJobs && (
+          <Layout.Section>
+            <Banner tone="warning">{t("arEyewear.queueWorkerBanner")}</Banner>
           </Layout.Section>
         )}
 

@@ -4,13 +4,17 @@
 
 const TABLE = "ar_eyewear_assets";
 
+/**
+ * AR Eyewear exige service role: anon não cria buckets nem ignora RLS em storage/objects.
+ * URL: preferir SUPABASE_URL no servidor (alinhado ao worker no Railway).
+ */
 function getSupabaseConfig() {
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    "";
+  const url = (
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    ""
+  ).trim();
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   return { url, key };
 }
 
@@ -28,6 +32,22 @@ export function isArEyewearConfigured() {
   return Boolean(url && key);
 }
 
+export function arEyewearSupabaseConfigError() {
+  const url = (
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    ""
+  ).trim();
+  const sr = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  if (!url) {
+    return "Defina SUPABASE_URL ou VITE_SUPABASE_URL no servidor.";
+  }
+  if (!sr) {
+    return "Defina SUPABASE_SERVICE_ROLE_KEY (chave service_role do Supabase, não a anon). Sem ela, buckets e uploads de Storage falham.";
+  }
+  return null;
+}
+
 let arEyewearBucketsEnsured = false;
 
 function isBucketAlreadyExistsResponse(status, bodyText) {
@@ -41,29 +61,79 @@ function isBucketAlreadyExistsResponse(status, bodyText) {
   );
 }
 
+async function listStorageBucketIds(base, key) {
+  const res = await fetch(`${base}/storage/v1/bucket`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  const t = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(
+      `Listar buckets falhou (${res.status}). Verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY. ${t.slice(0, 280)}`,
+    );
+  }
+  let rows;
+  try {
+    rows = JSON.parse(t);
+  } catch {
+    throw new Error(`Resposta inválida ao listar buckets: ${t.slice(0, 200)}`);
+  }
+  const ids = new Set();
+  for (const b of Array.isArray(rows) ? rows : []) {
+    if (b?.id) ids.add(String(b.id));
+    if (b?.name) ids.add(String(b.name));
+  }
+  return ids;
+}
+
+async function tryCreateStorageBucket(base, key, name, isPublic) {
+  const paths = [`${base}/storage/v1/bucket`, `${base}/storage/v1/bucket/`];
+  const bodies = [
+    { name, public: isPublic },
+    { id: name, name, public: isPublic },
+  ];
+  let lastErr = "";
+  for (const path of paths) {
+    for (const body of bodies) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: headers(key),
+        body: JSON.stringify(body),
+      });
+      const t = await res.text().catch(() => "");
+      if (res.ok) return true;
+      if (isBucketAlreadyExistsResponse(res.status, t)) return true;
+      lastErr = `${res.status} ${t.slice(0, 320)}`;
+    }
+  }
+  throw new Error(`Criar bucket "${name}" falhou: ${lastErr}`);
+}
+
 /**
- * Cria buckets AR óculos via Storage API (evita "Bucket not found" se o SQL não foi aplicado).
+ * Garante buckets via API + confirma com listagem (evita "Bucket not found").
  */
 export async function ensureArEyewearStorageBuckets() {
   const { url, key } = getSupabaseConfig();
-  if (!url || !key) throw new Error("Supabase not configured");
+  if (!url || !key) {
+    const hint = arEyewearSupabaseConfigError();
+    throw new Error(hint || "Supabase not configured");
+  }
   const base = url.replace(/\/$/, "");
   const specs = [
     ["ar-eyewear-uploads", false],
     ["ar-eyewear-glb", true],
   ];
+  let ids = await listStorageBucketIds(base, key);
   for (const [name, isPublic] of specs) {
-    const res = await fetch(`${base}/storage/v1/bucket`, {
-      method: "POST",
-      headers: headers(key),
-      body: JSON.stringify({ name, public: isPublic }),
-    });
-    if (res.ok) continue;
-    const t = await res.text().catch(() => "");
-    if (isBucketAlreadyExistsResponse(res.status, t)) continue;
-    throw new Error(
-      `Não foi possível criar o bucket Storage "${name}": ${res.status} ${t.slice(0, 400)}`,
-    );
+    if (ids.has(name)) continue;
+    await tryCreateStorageBucket(base, key, name, isPublic);
+  }
+  ids = await listStorageBucketIds(base, key);
+  for (const [name] of specs) {
+    if (!ids.has(name)) {
+      throw new Error(
+        `O bucket "${name}" não aparece no Storage após criação. Confirme o mesmo projeto em SUPABASE_URL que no dashboard e a chave service_role. Crie o bucket manualmente em Storage → New bucket.`,
+      );
+    }
   }
 }
 
@@ -90,27 +160,43 @@ function encodeStorageObjectPath(path) {
 
 export async function storageUpload(bucket, path, body, contentType) {
   const { url, key } = getSupabaseConfig();
-  if (!url || !key) throw new Error("Supabase not configured");
+  if (!url || !key) {
+    const hint = arEyewearSupabaseConfigError();
+    throw new Error(hint || "Supabase not configured");
+  }
+  const base = url.replace(/\/$/, "");
   if (String(bucket || "").startsWith("ar-eyewear")) {
     await ensureArEyewearBucketsOnce();
   }
   const objectPath = encodeStorageObjectPath(path);
-  const uploadUrl = `${url}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`;
-  const res = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": contentType,
-      "x-upsert": "true",
-    },
-    body: Buffer.isBuffer(body) ? body : Buffer.from(body),
-  });
+  const doUpload = () =>
+    fetch(`${base}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": contentType,
+        "x-upsert": "true",
+      },
+      body: Buffer.isBuffer(body) ? body : Buffer.from(body),
+    });
+  let res = await doUpload();
   if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`Storage upload failed: ${res.status} ${t.slice(0, 300)}`);
+    let errBody = await res.text().catch(() => "");
+    if (
+      String(bucket || "").startsWith("ar-eyewear") &&
+      /bucket not found/i.test(errBody)
+    ) {
+      arEyewearBucketsEnsured = false;
+      await ensureArEyewearBucketsOnce();
+      res = await doUpload();
+      if (!res.ok) errBody = await res.text().catch(() => "");
+    }
+    if (!res.ok) {
+      throw new Error(`Storage upload failed: ${res.status} ${errBody.slice(0, 300)}`);
+    }
   }
-  const publicUrl = `${url}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath}`;
+  const publicUrl = `${base}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath}`;
   return { path, publicUrl };
 }
 

@@ -353,7 +353,8 @@
     "needThreeImages": "Este produto tem menos de 3 imagens na loja. Adicione mais fotos ao produto na Shopify ou use o upload manual.",
     "dividerManual": "Ou envie ficheiros manualmente",
     "productTypeLabel": "Tipo",
-    "categoryLabel": "Categoria"
+    "categoryLabel": "Categoria",
+    "queueWorkerBanner": "Há jobs em fila (queued). Só avançam quando o worker Docker estiver a correr com o mesmo SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY que o app. No Railway, crie um serviço separado para workers/ar-eyewear-tripo, veja os logs de arranque (deve aparecer «buckets OK») e reinicie após alterar variáveis."
   },
   "plans": {
     "ondemand": "On-demand",

@@ -10,6 +10,7 @@ import {
   setProductArGlbMetafield,
   getShopArEyewearEnabled,
   isArEyewearConfigured,
+  arEyewearSupabaseConfigError,
 } from "../ar-eyewear.server";
 
 export async function loader({ request, params }) {
@@ -37,7 +38,12 @@ export async function action({ request, params }) {
       return Response.json({ error: "AR Eyewear disabled" }, { status: 403 });
     }
     if (!isArEyewearConfigured()) {
-      return Response.json({ error: "Supabase not configured" }, { status: 500 });
+      return Response.json(
+        {
+          error: arEyewearSupabaseConfigError() || "Supabase not configured",
+        },
+        { status: 500 },
+      );
     }
 
     const id = params.assetId;

@@ -1,0 +1,16 @@
+# Worker AR óculos isolado (EC2 sem o compose do try-on).
+# Na raiz do repo omafit: copie .env com SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY
+#
+#   docker compose -f docker-compose.ar-eyewear-worker.yml up --build -d
+
+services:
+  ar-eyewear-tripo:
+    build:
+      context: ./workers/ar-eyewear-tripo
+      dockerfile: Dockerfile.stub
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WORKER_STUB: ${AR_EYEWEAR_WORKER_STUB:-1}
+      POLL_SECONDS: ${AR_EYEWEAR_POLL_SECONDS:-10}

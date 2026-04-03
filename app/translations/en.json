@@ -353,7 +353,8 @@
     "needThreeImages": "This product has fewer than 3 images in the store. Add photos in Shopify or use manual upload.",
     "dividerManual": "Or upload files manually",
     "productTypeLabel": "Type",
-    "categoryLabel": "Category"
+    "categoryLabel": "Category",
+    "queueWorkerBanner": "Some jobs are queued. They only run when the Docker worker is running with the same SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY as the app. On Railway, add a service for workers/ar-eyewear-tripo, check startup logs (look for “buckets OK”), and restart after env changes."
   },
   "plans": {
     "ondemand": "On-demand",

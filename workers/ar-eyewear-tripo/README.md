@@ -19,6 +19,10 @@ Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
 | `POLL_SECONDS` | não | Intervalo quando fila vazia (default 10) |
 | `BAKE_TEXTURE` | não | `1` = passa `--bake-texture` ao TripoSR |
 
+## Docker Compose (EC2 com try-on self-hosted)
+
+No repositório **omafit-widget**, em `self-hosted-tryon/docker-compose.yml`, existe o serviço **`ar-eyewear-tripo`**, que faz build a partir desta pasta (por defeito `../../omafit/workers/ar-eyewear-tripo`). Variáveis `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` vêm do mesmo `.env` do try-on.
+
 ## Build
 
 **GPU (produção):**

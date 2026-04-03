@@ -10,6 +10,7 @@ import {
   patchAsset,
   storageUpload,
   isArEyewearConfigured,
+  arEyewearSupabaseConfigError,
 } from "../ar-eyewear.server";
 
 const BUCKET_UPLOADS = "ar-eyewear-uploads";
@@ -44,7 +45,12 @@ export async function loader({ request }) {
       return Response.json({ error: "AR Eyewear disabled for this shop" }, { status: 403 });
     }
     if (!isArEyewearConfigured()) {
-      return Response.json({ error: "Supabase not configured" }, { status: 500 });
+      return Response.json(
+        {
+          error: arEyewearSupabaseConfigError() || "Supabase not configured",
+        },
+        { status: 500 },
+      );
     }
     const rows = await listAssets(session.shop, { limit: 100 });
     return Response.json({ assets: rows });
@@ -61,7 +67,12 @@ export async function action({ request }) {
       return Response.json({ error: "AR Eyewear disabled for this shop" }, { status: 403 });
     }
     if (!isArEyewearConfigured()) {
-      return Response.json({ error: "Supabase not configured" }, { status: 500 });
+      return Response.json(
+        {
+          error: arEyewearSupabaseConfigError() || "Supabase not configured",
+        },
+        { status: 500 },
+      );
     }
 
     const ct = request.headers.get("content-type") || "";

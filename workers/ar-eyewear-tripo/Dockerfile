@@ -7,14 +7,22 @@ FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip git ca-certificates \
+    python3 python3-pip python3-dev \
+    git ca-certificates \
+    build-essential cmake ninja-build pkg-config \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
+
+# pip/scikit-build isolado não vê o g++ do sistema; torchmcubes precisa compilar C++.
+ENV CC=/usr/bin/gcc
+ENV CXX=/usr/bin/g++
 
 WORKDIR /opt
 RUN git clone --depth 1 https://github.com/VAST-AI-Research/TripoSR.git TripoSR
 
 WORKDIR /opt/TripoSR
-RUN pip3 install --upgrade setuptools pip && pip3 install -r requirements.txt
+RUN pip3 install --upgrade setuptools pip wheel && \
+    pip3 install --no-build-isolation --no-cache-dir -r requirements.txt
 
 COPY requirements-worker.txt /opt/TripoSR/requirements-worker.txt
 RUN pip3 install -r requirements-worker.txt

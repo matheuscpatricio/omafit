@@ -175,9 +175,12 @@ def patch_row(row_id: str, payload: dict):
     return body[0] if isinstance(body, list) and body else body
 
 
-def _parse_public_storage_url(url: str) -> tuple[str, str] | None:
+def _parse_public_storage_url(url: str | None) -> tuple[str, str] | None:
     """Extrai bucket e path de .../object/public/<bucket>/<path>."""
-    m = re.search(r"/object/public/([^/]+)/(.+)$", url.split("?", 1)[0])
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    m = re.search(r"/object/public/([^/]+)/(.+)$", raw.split("?", 1)[0])
     if not m:
         return None
     bucket, raw_path = m.group(1), m.group(2)
@@ -189,12 +192,15 @@ def _encode_object_path(path: str) -> str:
     return "/".join(quote(seg, safe="") for seg in path.split("/") if seg)
 
 
-def download_file(url: str, dest: Path):
+def download_file(url: str | None, dest: Path):
     """GET público; se 403 (bucket privado), usa Storage API com service role."""
+    raw = str(url or "").strip()
+    if not raw:
+        raise ValueError("URL de imagem ausente no job")
     dest.parent.mkdir(parents=True, exist_ok=True)
     supabase_url = supabase_base()
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    parsed = _parse_public_storage_url(url)
+    parsed = _parse_public_storage_url(raw)
     if parsed:
         bucket, obj_path = parsed
         api_path = _encode_object_path(obj_path)
@@ -207,7 +213,7 @@ def download_file(url: str, dest: Path):
         if r.ok:
             dest.write_bytes(r.content)
             return
-    urlretrieve(url, dest)
+    urlretrieve(raw, dest)
 
 
 def upload_storage(path: str, data: bytes, content_type: str) -> str:
@@ -276,6 +282,20 @@ def stub_glb(out_path: Path):
 def process_job(row: dict):
     row_id = row["id"]
     shop = row["shop_domain"]
+    front_url = str(row.get("image_front_url") or "").strip()
+    three_url = str(row.get("image_three_quarter_url") or "").strip()
+    profile_url = str(row.get("image_profile_url") or "").strip()
+    missing = [
+        k
+        for k, v in (
+            ("image_front_url", front_url),
+            ("image_three_quarter_url", three_url),
+            ("image_profile_url", profile_url),
+        )
+        if not v
+    ]
+    if missing:
+        raise ValueError(f"job sem URLs de imagem: {', '.join(missing)}")
 
     tmp = Path("/tmp") / f"ar_job_{row_id}_{uuid.uuid4().hex}"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -283,9 +303,9 @@ def process_job(row: dict):
         f1 = tmp / "front.jpg"
         f2 = tmp / "three_quarter.jpg"
         f3 = tmp / "profile.jpg"
-        download_file(row["image_front_url"], f1)
-        download_file(row["image_three_quarter_url"], f2)
-        download_file(row["image_profile_url"], f3)
+        download_file(front_url, f1)
+        download_file(three_url, f2)
+        download_file(profile_url, f3)
 
         out_dir = tmp / "tri_out"
         glb_final = tmp / "model.glb"

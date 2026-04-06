@@ -21,7 +21,9 @@ WORKDIR /opt
 RUN git clone --depth 1 https://github.com/VAST-AI-Research/TripoSR.git TripoSR
 
 WORKDIR /opt/TripoSR
+# Com --no-build-isolation o pip não instala [build-system] do pyproject; torchmcubes precisa de scikit-build-core.
 RUN pip3 install --upgrade setuptools pip wheel && \
+    pip3 install --no-cache-dir scikit-build-core pybind11 ninja packaging && \
     pip3 install --no-build-isolation --no-cache-dir -r requirements.txt
 
 COPY requirements-worker.txt /opt/TripoSR/requirements-worker.txt

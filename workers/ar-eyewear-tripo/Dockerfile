@@ -2,8 +2,11 @@
 # Requer NVIDIA Container Toolkit em runtime: --gpus all
 #
 # Para desenvolvimento sem GPU, use a imagem slim (Dockerfile.stub) ou WORKER_STUB=1.
+#
+# Base devel (não runtime): o CMake do PyTorch cu* exige toolkit CUDA em disco ao compilar
+# torchmcubes; com runtime-only, find_package(Torch) falha com "Caffe2 uses CUDA but cannot find CUDA".
 
-FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

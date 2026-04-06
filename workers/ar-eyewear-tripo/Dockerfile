@@ -30,7 +30,10 @@ WORKDIR /opt/TripoSR
 RUN pip3 install --upgrade setuptools pip wheel && \
     pip3 install --no-cache-dir scikit-build-core pybind11 ninja packaging && \
     pip3 install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
-    pip3 install --no-build-isolation --no-cache-dir -r requirements.txt
+    pip3 install --no-build-isolation --no-cache-dir -r requirements.txt && \
+    pip3 install --no-cache-dir onnxruntime
+
+# rembg importa onnxruntime; o requirements.txt do TripoSR nem sempre declara (só rembg).
 
 COPY requirements-worker.txt /opt/TripoSR/requirements-worker.txt
 RUN pip3 install -r requirements-worker.txt

@@ -643,7 +643,7 @@ async function runArSession({
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
-      readRotRad("arGlbRotX", -90),
+      readRotRad("arGlbRotX", 90),
       readRotRad("arGlbRotY", -90),
       readRotRad("arGlbRotZ", 0),
     );
@@ -718,13 +718,15 @@ async function runArSession({
       targetPos.addScaledVector(zAxis, -0.004);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
 
-      const faceScale = Math.max(0.1, Math.min(0.285, ipdNorm * 1.9));
+      // Escala dinâmica por distância: mais perto => IPD maior => óculos aumenta.
+      // Mapeamento mais amplo para resposta clara ao aproximar/afastar.
+      const faceScale = Math.max(0.08, Math.min(0.42, (ipdNorm - 0.03) * 4.2));
 
       targetPos.addScaledVector(zAxis, -0.012);
-      faceRoot.position.lerp(targetPos, 0.28);
-      faceRoot.quaternion.slerp(targetQuat, 0.28);
+      faceRoot.position.lerp(targetPos, 0.38);
+      faceRoot.quaternion.slerp(targetQuat, 0.38);
       const s = faceRoot.scale.x || faceScale;
-      const nextS = s + (faceScale - s) * 0.28;
+      const nextS = s + (faceScale - s) * 0.42;
       faceRoot.scale.setScalar(nextS);
       return true;
     }

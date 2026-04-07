@@ -303,16 +303,38 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
 
 
 def find_mesh(out_dir: Path) -> Path | None:
+    def _pick_best(candidates):
+        if not candidates:
+            return None
+        # TripoSR às vezes gera múltiplos GLBs; priorizar os que parecem texturizados.
+        textured_hints = ("texture", "textured", "albedo", "color", "colour", "bake", "material")
+        weighted = []
+        for p in candidates:
+            name = p.name.lower()
+            score = 0
+            if p.suffix.lower() == ".glb":
+                score += 100
+            if any(h in name for h in textured_hints):
+                score += 40
+            try:
+                score += int(p.stat().st_size / 1024)  # GLB texturizado tende a ser maior
+            except Exception:
+                pass
+            weighted.append((score, p))
+        weighted.sort(key=lambda x: x[0], reverse=True)
+        return weighted[0][1]
+
+    top = []
     for pattern in ("*.glb", "*.obj", "*.ply"):
-        matches = sorted(out_dir.glob(pattern))
-        if matches:
-            return matches[0]
-    # subpastas
-    for pattern in ("**/*.glb", "**/*.obj"):
-        matches = sorted(out_dir.glob(pattern))
-        if matches:
-            return matches[0]
-    return None
+        top.extend(sorted(out_dir.glob(pattern)))
+    best = _pick_best(top)
+    if best:
+        return best
+
+    deep = []
+    for pattern in ("**/*.glb", "**/*.obj", "**/*.ply"):
+        deep.extend(sorted(out_dir.glob(pattern)))
+    return _pick_best(deep)
 
 
 def stub_glb(out_path: Path):

@@ -620,6 +620,12 @@ async function runArSession({
             if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
             if (mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
             if (colorAttr && "vertexColors" in mat) mat.vertexColors = true;
+            // Em AR com vídeo de fundo, materiais muito metálicos perdem cor perceptível.
+            // Neutraliza PBR para priorizar fidelidade cromática do produto.
+            if ("metalness" in mat) mat.metalness = 0;
+            if ("roughness" in mat) mat.roughness = 1;
+            if ("envMapIntensity" in mat) mat.envMapIntensity = 0;
+            if ("emissiveIntensity" in mat) mat.emissiveIntensity = 1;
             // Preserva cores do GLB sem "lavar" por tone mapping.
             mat.toneMapped = false;
             mat.needsUpdate = true;
@@ -663,7 +669,7 @@ async function runArSession({
     const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
     const zDepthScale = 0.12;
-    const frameToIpdRatio = 1.72; // mais conservador para evitar "óculos gigante"
+    const frameToIpdRatio = 1.84; // ligeiramente maior para melhor encaixe visual
     // Vídeo está espelhado em CSS para desinverter selfie; compensar no tracking.
     const mirrorSelfie = true;
 
@@ -724,7 +730,7 @@ async function runArSession({
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;
       const modelNormWidth = glasses.userData._omafitNormWidth || 1;
-      const faceScale = Math.max(0.05, Math.min(0.22, targetFrameWidth / modelNormWidth));
+      const faceScale = Math.max(0.06, Math.min(0.245, targetFrameWidth / modelNormWidth));
 
       faceRoot.position.lerp(targetPos, 0.38);
       faceRoot.quaternion.slerp(targetQuat, 0.38);

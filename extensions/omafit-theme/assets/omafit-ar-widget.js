@@ -642,16 +642,10 @@ async function main() {
   const linkText = root.dataset.linkText || "Experimentar óculos (AR)";
   const lang = pickLocale(root.dataset.locale);
   const t = COPY[lang] || COPY.pt;
+  const autoOpen =
+    root.dataset.autoOpen === "1" || root.getAttribute("data-auto-open") === "1";
 
   injectGlobalStyles();
-
-  const wrap = el("div", {
-    className: "omafit-ar-widget-wrap",
-    style: { textAlign: "center", marginTop: "16px", marginBottom: "24px" },
-  });
-  const link = createTriggerLink(linkText, primaryColor);
-  wrap.appendChild(link);
-  root.appendChild(wrap);
 
   let modal = null;
 
@@ -687,12 +681,46 @@ async function main() {
     document.body.appendChild(modal);
   }
 
-  link.addEventListener("click", (e) => {
-    e.preventDefault();
+  if (autoOpen) {
     openModal();
+  } else {
+    const wrap = el("div", {
+      className: "omafit-ar-widget-wrap",
+      style: { textAlign: "center", marginTop: "16px", marginBottom: "24px" },
+    });
+    const link = createTriggerLink(linkText, primaryColor);
+    wrap.appendChild(link);
+    root.appendChild(wrap);
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      openModal();
+    });
+  }
+}
+
+function hasArGlbUrlQueryParam() {
+  try {
+    const q = new URLSearchParams(
+      typeof window !== "undefined" ? window.location.search : "",
+    );
+    const v = q.get("arGlbUrl") || q.get("ar_glb_url");
+    return Boolean(v && String(v).trim());
+  } catch {
+    return false;
+  }
+}
+
+function startOmafitAr() {
+  return main().catch((e) => {
+    console.error("[omafit-ar]", e);
   });
 }
 
-main().catch((e) => {
-  console.error("[omafit-ar]", e);
-});
+if (typeof window !== "undefined") {
+  window.__omafitArStart = startOmafitAr;
+}
+
+/** Com arGlbUrl na query (iframe Netlify), o React chama __omafitArStart após montar #omafit-ar-root. */
+if (!hasArGlbUrlQueryParam()) {
+  startOmafitAr();
+}

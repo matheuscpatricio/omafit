@@ -53,6 +53,12 @@
     return false;
   }
 
+  function getOmafitArGlbUrlFromDom() {
+    var ar = document.getElementById("omafit-ar-root");
+    if (!ar) return "";
+    return (ar.getAttribute("data-glb-url") || "").trim();
+  }
+
   /** Remove iframe / link de roupa injetados por este ficheiro (se AR óculos ficou ativo depois). */
   function removeClothingOmafitUi() {
     try {
@@ -71,6 +77,7 @@
 
   function applyOmafitArEyewearSuppression() {
     if (!isOmafitArEyewearPage()) return;
+    if (getOmafitArGlbUrlFromDom()) return;
     removeClothingOmafitUi();
   }
 
@@ -1413,9 +1420,9 @@
 
   // Função que abre o modal do Omafit
   window.openOmafitModal = async function () {
-    if (isOmafitArEyewearPage()) {
+    if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
       if (OMAFIT_DEBUG) {
-        console.log('Omafit: modal de roupa (netlify widget) bloqueado — template com bloco AR óculos.');
+        console.log('Omafit: modal de roupa bloqueado (AR óculos sem GLB no DOM).');
       }
       return;
     }
@@ -1738,8 +1745,9 @@
       widgetUrl = widgetUrl.split('&productImages=')[0];
     }
 
-    if (isOmafitArEyewearPage()) {
-      widgetUrl += '&omafit_mode=eyewear_ar';
+    var glbPass = getOmafitArGlbUrlFromDom();
+    if (glbPass) {
+      widgetUrl += '&arGlbUrl=' + encodeURIComponent(glbPass) + '&omafit_mode=eyewear_ar';
     }
 
     iframe.src = widgetUrl;
@@ -2748,7 +2756,7 @@
 
     link.addEventListener('click', function (e) {
       e.preventDefault();
-      if (isOmafitArEyewearPage()) return;
+      if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) return;
       if (typeof window.openOmafitModal === 'function') {
         window.openOmafitModal();
       }
@@ -2759,9 +2767,9 @@
 
   // Criar link Omafit logo abaixo do botão "Adicionar ao carrinho"
   function insertOmafitLinkUnderAddToCart() {
-    if (isOmafitArEyewearPage()) {
+    if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
       removeClothingOmafitUi();
-      console.log('Omafit: widget de roupa omitido (página com provador AR de óculos).');
+      console.log('Omafit: widget de roupa omitido (AR óculos sem GLB).');
       return;
     }
     if (!OMAFIT_CONFIG) {
@@ -2945,9 +2953,9 @@
   // Inicializar assim que a página e configuração estiverem prontas
   async function initOmafit() {
     try {
-      if (isOmafitArEyewearPage()) {
+      if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
         removeClothingOmafitUi();
-        console.log('Omafit: provador AR de óculos nesta página — widget de roupa não é carregado.');
+        console.log('Omafit: provador AR óculos (sem GLB) — widget de roupa não é carregado.');
         return;
       }
       console.log('🚀 Inicializando Omafit...');

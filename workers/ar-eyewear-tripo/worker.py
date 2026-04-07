@@ -276,9 +276,18 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
         str(prof),
         "--output-dir",
         str(out_dir),
+        # Preferir GLB direto do TripoSR para preservar visual (textura/material/vertex color).
+        "--model-save-format",
+        "glb",
     ]
-    if os.environ.get("BAKE_TEXTURE") == "1":
+    # Mantém compat: por padrão ativa bake para melhorar fidelidade de cor.
+    # Para desligar explicitamente, usar BAKE_TEXTURE=0.
+    bake_texture = os.environ.get("BAKE_TEXTURE", "1")
+    if bake_texture != "0":
         cmd.append("--bake-texture")
+        texture_resolution = os.environ.get("TEXTURE_RESOLUTION", "").strip()
+        if texture_resolution.isdigit():
+            cmd.extend(["--texture-resolution", texture_resolution])
     proc = subprocess.run(
         cmd,
         cwd=str(root),

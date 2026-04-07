@@ -4,11 +4,13 @@
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
 
   /**
-   * Página com provador AR óculos: marcador Liquid (#omafit-suppress-clothing-widget) ou
-   * #omafit-ar-root com data-glb-url (getAttribute + dataset por compatibilidade).
+   * Template com bloco app «Omafit AR óculos» (#omafit-ar-block-placed), ou marcador / GLB no DOM.
+   * Bloqueia iframe omafit.netlify.app/widget mesmo que o link de roupa já tenha sido injetado.
    */
   function isOmafitArEyewearPage() {
+    if (document.getElementById('omafit-ar-block-placed')) return true;
     if (document.getElementById('omafit-suppress-clothing-widget')) return true;
+    if (document.querySelector('.omafit-ar-try-on-link')) return true;
     var ar = document.getElementById('omafit-ar-root');
     if (!ar) return false;
     var glbAttr = (ar.getAttribute('data-glb-url') || '').trim();
@@ -1377,6 +1379,12 @@
 
   // Função que abre o modal do Omafit
   window.openOmafitModal = async function () {
+    if (isOmafitArEyewearPage()) {
+      if (OMAFIT_DEBUG) {
+        console.log('Omafit: modal de roupa (netlify widget) bloqueado — template com bloco AR óculos.');
+      }
+      return;
+    }
     // Carregar fontes apenas quando o usuário abre o modal (não bloqueia carregamento da página)
     loadOmafitFontsWhenNeeded();
 
@@ -2702,6 +2710,7 @@
 
     link.addEventListener('click', function (e) {
       e.preventDefault();
+      if (isOmafitArEyewearPage()) return;
       if (typeof window.openOmafitModal === 'function') {
         window.openOmafitModal();
       }

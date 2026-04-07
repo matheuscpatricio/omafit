@@ -1,7 +1,10 @@
 {% comment %}
   Omafit AR óculos — metafield product.metafields.omafit.ar_glb_url (url).
   UI alinhada ao TryOnWidget (etapa info) + link estilo omafit-widget.js; fluxo: info → AR (câmera).
+  Sempre que este bloco está no template, omafit-widget.js não abre o iframe de roupa (omafit.netlify.app/widget).
+  Usa um template de produto só para óculos, ou remove este bloco dos templates de roupa.
 {% endcomment %}
+<div id="omafit-ar-block-placed" hidden aria-hidden="true"></div>
 {% assign mf = product.metafields.omafit.ar_glb_url %}
 {% assign glb_url = '' %}
 {% if mf != blank and mf.value != blank %}
@@ -34,16 +37,6 @@
 {% endif %}
 
 {% assign locale_code = request.locale.iso_code | default: 'pt' %}
-
-{% comment %}
-  Marcador para omafit-widget.js: produto elegível para AR (tag) ou opção explícita — esconde provador de roupa
-  mesmo sem GLB ainda. data-glb-url em #omafit-ar-root também suprime, mas alguns browsers/atributos falham cedo.
-{% endcomment %}
-{% if block.settings.hide_clothing_tryon %}
-  <div id="omafit-suppress-clothing-widget" hidden aria-hidden="true"></div>
-{% elsif tag_filter != '' and tag_ok %}
-  <div id="omafit-suppress-clothing-widget" hidden aria-hidden="true"></div>
-{% endif %}
 
 {% if glb_url != blank and tag_ok %}
   <div
@@ -90,13 +83,6 @@
       "id": "only_tag",
       "label": "Só exibir se o produto tiver a tag (vazio = sempre que houver GLB)",
       "info": "Ex.: eyewear. Deixa em branco no editor para mostrar sempre que existir GLB."
-    },
-    {
-      "type": "checkbox",
-      "id": "hide_clothing_tryon",
-      "label": "Ocultar provador de roupa Omafit nesta página",
-      "default": false,
-      "info": "Ative em templates só de óculos ou quando o bloco AR está no mesmo product template que o embed de roupa. Também suprimimos se preencheres a tag acima e o produto a tiver, ou se já existir GLB AR."
     }
   ]
 }

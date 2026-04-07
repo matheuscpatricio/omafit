@@ -468,7 +468,14 @@ async function runArSession({
     playsInline: true,
     muted: true,
     autoPlay: true,
-    style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    style: {
+      width: "100%",
+      height: "100%",
+      objectFit: "contain",
+      objectPosition: "50% 50%",
+      display: "block",
+      background: "#000",
+    },
   });
   const canvas = el("canvas", {
     style: {
@@ -477,6 +484,7 @@ async function runArSession({
       top: "0",
       width: "100%",
       height: "100%",
+      objectFit: "contain",
       pointerEvents: "none",
     },
   });
@@ -575,9 +583,63 @@ async function runArSession({
       loader.load(glbUrl, resolve, undefined, reject);
     });
     const glasses = gltf.scene;
-    glasses.scale.setScalar(0.18);
-    glasses.position.set(0, 0, -0.35);
+    glasses.frustumCulled = false;
+    glasses.traverse((child) => {
+      if (child.isMesh) {
+        child.frustumCulled = false;
+        if (child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          for (const mat of mats) {
+            if (mat && "envMapIntensity" in mat) mat.envMapIntensity = 1;
+          }
+        }
+      }
+    });
+    let baseGlbScale = 1;
+    {
+      glasses.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(glasses);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
+      glasses.position.sub(center);
+      baseGlbScale = 1 / maxDim;
+      glasses.scale.setScalar(baseGlbScale);
+    }
     scene.add(glasses);
+    scene.add(new THREE.DirectionalLight(0xffffff, 0.85));
+
+    const camZ = 0.6;
+    const zPlane = -0.36;
+    const distCamToPlane = camZ - zPlane;
+
+    function applyGlassesPoseFromLandmarks(lm) {
+      const eyeL = lm[33];
+      const eyeR = lm[263];
+      if (!eyeL || !eyeR) return;
+
+      const bridge = lm[168];
+      const bx = bridge ? bridge.x : (eyeL.x + eyeR.x) * 0.5;
+      const by = bridge ? bridge.y : (eyeL.y + eyeR.y) * 0.5;
+      const bz = bridge ? bridge.z || 0 : ((eyeL.z || 0) + (eyeR.z || 0)) * 0.5;
+
+      const ndcX = bx * 2 - 1;
+      const ndcY = -(by * 2 - 1);
+
+      const vFov = (camera.fov * Math.PI) / 180;
+      const halfH = Math.tan(vFov / 2) * distCamToPlane;
+      const halfW = halfH * camera.aspect;
+
+      glasses.position.set(ndcX * halfW, ndcY * halfH, zPlane + bz * 0.18);
+
+      const dx = eyeR.x - eyeL.x;
+      const dy = eyeR.y - eyeL.y;
+      glasses.rotation.set(0, 0, -Math.atan2(dy, dx));
+
+      const ipdNorm = Math.hypot(dx, dy) || 0.08;
+      const faceScale = Math.max(0.12, Math.min(2.4, ipdNorm * (halfW + halfH) * 3.8));
+      glasses.scale.setScalar(baseGlbScale * faceScale);
+    }
 
     function frame(now) {
       raf = requestAnimationFrame(frame);
@@ -585,33 +647,7 @@ async function runArSession({
       const res = landmarker.detectForVideo(video, now);
       if (!res.faceLandmarks || !res.faceLandmarks[0]) return;
 
-      const lm = res.faceLandmarks[0];
-      const m = res.facialTransformationMatrixes?.[0]?.data;
-      const eyeL = lm[33];
-      const eyeR = lm[263];
-      let scale = 0.18;
-      if (eyeL && eyeR) {
-        const dist = Math.hypot(eyeR.x - eyeL.x, eyeR.y - eyeL.y);
-        scale = Math.max(0.06, Math.min(0.45, dist * 3.2));
-      }
-      glasses.scale.setScalar(scale);
-
-      if (m && m.length >= 16) {
-        const mat = new THREE.Matrix4().fromArray(m);
-        const pos = new THREE.Vector3();
-        const quat = new THREE.Quaternion();
-        const scl = new THREE.Vector3();
-        mat.decompose(pos, quat, scl);
-        glasses.position.copy(pos);
-        glasses.position.z -= 0.08;
-        glasses.quaternion.copy(quat);
-      } else {
-        const nose = lm[1] || lm[4];
-        if (nose) {
-          glasses.position.set((nose.x - 0.5) * 0.5, -(nose.y - 0.5) * 0.5, -0.38);
-          glasses.quaternion.identity();
-        }
-      }
+      applyGlassesPoseFromLandmarks(res.faceLandmarks[0]);
       renderer.render(scene, camera);
     }
     raf = requestAnimationFrame(frame);

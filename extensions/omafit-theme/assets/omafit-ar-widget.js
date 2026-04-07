@@ -576,11 +576,15 @@ async function runArSession({
     renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
     renderer.setSize(w, h, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.toneMappingExposure = 1;
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 10);
     camera.position.set(0, 0, 0.6);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
     const loader = new GLTFLoader();
     loader.setCrossOrigin("anonymous");
@@ -605,7 +609,12 @@ async function runArSession({
         if (child.material) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
           for (const mat of mats) {
-            if (mat && "envMapIntensity" in mat) mat.envMapIntensity = 1;
+            if (!mat) continue;
+            if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+            if (mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+            // Preserva cores do GLB sem "lavar" por tone mapping.
+            mat.toneMapped = false;
+            mat.needsUpdate = true;
           }
         }
       }
@@ -637,7 +646,7 @@ async function runArSession({
     faceRoot.add(modelFix);
     scene.add(faceRoot);
 
-    const dirLt = new THREE.DirectionalLight(0xffffff, 0.95);
+    const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
     dirLt.position.set(0.35, 0.55, 0.45);
     scene.add(dirLt);
 
@@ -701,15 +710,13 @@ async function runArSession({
       targetPos.addScaledVector(zAxis, -0.004);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
 
-      const vFov = (camera.fov * Math.PI) / 180;
-      const halfH = Math.tan(vFov / 2) * distCamToPlane;
-      const halfW = halfH * camera.aspect;
-      const faceScale = Math.max(0.14, Math.min(1.05, ipdNorm * (halfW + halfH) * 10.2));
+      const faceScale = Math.max(0.095, Math.min(0.26, ipdNorm * 1.75));
 
-      faceRoot.position.lerp(targetPos, 0.35);
-      faceRoot.quaternion.slerp(targetQuat, 0.35);
+      targetPos.addScaledVector(zAxis, -0.012);
+      faceRoot.position.lerp(targetPos, 0.28);
+      faceRoot.quaternion.slerp(targetQuat, 0.28);
       const s = faceRoot.scale.x || faceScale;
-      const nextS = s + (faceScale - s) * 0.35;
+      const nextS = s + (faceScale - s) * 0.28;
       faceRoot.scale.setScalar(nextS);
       return true;
     }

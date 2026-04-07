@@ -8,6 +8,7 @@ import {
   patchAsset,
   ensureArGlbMetafieldDefinition,
   setProductArGlbMetafield,
+  supersedeOtherPublishedAssets,
   getShopArEyewearEnabled,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
@@ -84,6 +85,11 @@ export async function action({ request, params }) {
       }
       await ensureArGlbMetafieldDefinition(admin);
       await setProductArGlbMetafield(admin, row.product_id, draftUrl);
+      await supersedeOtherPublishedAssets({
+        shopDomain: session.shop,
+        productId: row.product_id,
+        keepAssetId: id,
+      });
       const updated = await patchAsset(id, {
         status: "published",
         glb_published_url: draftUrl,

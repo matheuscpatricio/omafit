@@ -291,6 +291,40 @@ export async function patchAsset(id, patch) {
 }
 
 /**
+ * Garante apenas um "published" por produto/loja.
+ * Assets publicados anteriores do mesmo produto viram rejected (substituídos).
+ */
+export async function supersedeOtherPublishedAssets({
+  shopDomain,
+  productId,
+  keepAssetId,
+}) {
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) throw new Error("Supabase not configured");
+  const q = new URLSearchParams({
+    shop_domain: `eq.${shopDomain}`,
+    product_id: `eq.${productId}`,
+    status: "eq.published",
+    id: `neq.${keepAssetId}`,
+  });
+  const res = await fetch(`${url}/rest/v1/${TABLE}?${q.toString()}`, {
+    method: "PATCH",
+    headers: {
+      ...headers(key),
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify({
+      status: "rejected",
+      error_message: `Superseded by published asset ${keepAssetId}`,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Supersede published assets failed: ${res.status} ${t.slice(0, 240)}`);
+  }
+}
+
+/**
  * Claim next queued job (worker). Uses filter status=queued + order created_at.
  * For concurrent workers, add SKIP LOCKED via RPC in a follow-up.
  */

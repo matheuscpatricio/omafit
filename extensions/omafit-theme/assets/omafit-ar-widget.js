@@ -663,7 +663,7 @@ async function runArSession({
     const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
     const zDepthScale = 0.12;
-    const frameToIpdRatio = 2.15; // frame width ~= 2.1-2.3x IPD
+    const frameToIpdRatio = 1.72; // mais conservador para evitar "óculos gigante"
     // Vídeo está espelhado em CSS para desinverter selfie; compensar no tracking.
     const mirrorSelfie = true;
 
@@ -724,7 +724,7 @@ async function runArSession({
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;
       const modelNormWidth = glasses.userData._omafitNormWidth || 1;
-      const faceScale = Math.max(0.06, Math.min(0.7, targetFrameWidth / modelNormWidth));
+      const faceScale = Math.max(0.05, Math.min(0.22, targetFrameWidth / modelNormWidth));
 
       faceRoot.position.lerp(targetPos, 0.38);
       faceRoot.quaternion.slerp(targetQuat, 0.38);

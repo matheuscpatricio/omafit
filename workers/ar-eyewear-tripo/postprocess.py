@@ -13,21 +13,27 @@ def main():
         print(f"Missing input: {inp}", file=sys.stderr)
         sys.exit(1)
     import trimesh
-    loaded = trimesh.load(str(inp), force="mesh")
+    # Preserva materiais/cores do asset original (evita GLB "sem cor").
+    loaded = trimesh.load(str(inp), force="scene")
     if isinstance(loaded, trimesh.Scene):
-        geom = trimesh.util.concatenate(
-            [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
-        )
+        scene = loaded.copy()
     else:
-        geom = loaded
-    geom.merge_vertices()
-    target = min(len(geom.faces), 8000)
-    if len(geom.faces) > target:
-        try:
-            geom = geom.simplify_quadric_decimation(target)
-        except Exception:
-            pass
-    geom.export(str(out))
+        scene = trimesh.Scene(loaded)
+
+    # Só simplifica quando é mesh única; concatenar cena costuma destruir material/UV.
+    geoms = [g for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
+    if len(geoms) == 1:
+        geom = geoms[0]
+        geom.merge_vertices()
+        target = min(len(geom.faces), 8000)
+        if len(geom.faces) > target:
+            try:
+                geom = geom.simplify_quadric_decimation(target)
+                scene = trimesh.Scene(geom)
+            except Exception:
+                pass
+
+    scene.export(str(out))
 
 
 if __name__ == "__main__":

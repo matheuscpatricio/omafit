@@ -535,22 +535,24 @@ async function runArSession({
       import(ESM_GLTF),
     ]);
 
+    const landmarkerOpts = {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.25,
+      minFacePresenceConfidence: 0.25,
+      minTrackingConfidence: 0.25,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: false,
+    };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-      landmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-        runningMode: "VIDEO",
-        numFaces: 1,
-        outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: true,
-      });
+      landmarker = await FaceLandmarker.createFromOptions(vision, landmarkerOpts);
     } catch {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
       landmarker = await FaceLandmarker.createFromOptions(vision, {
+        ...landmarkerOpts,
         baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-        runningMode: "VIDEO",
-        numFaces: 1,
-        outputFacialTransformationMatrixes: true,
       });
     }
 
@@ -560,6 +562,9 @@ async function runArSession({
     });
     video.srcObject = stream;
     await video.play();
+    for (let i = 0; i < 40 && (!video.videoWidth || !video.videoHeight); i += 1) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
 
     loading.style.display = "none";
 
@@ -623,7 +628,7 @@ async function runArSession({
     modelFix.rotation.set(
       readRotRad("arGlbRotX", -90),
       readRotRad("arGlbRotY", 0),
-      readRotRad("arGlbRotZ", 180),
+      readRotRad("arGlbRotZ", 0),
     );
     modelFix.add(glasses);
 
@@ -639,40 +644,51 @@ async function runArSession({
     const camZ = 0.6;
     const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
-    const zDepthScale = 0.24;
+    const zDepthScale = 0.12;
+    /** Só ativar se o vídeo tiver transform: scaleX(-1) no tema — senão deixa desligado. */
+    const mirrorSelfie = cfgRoot?.dataset?.arMirrorSelfie === "1";
 
-    function landmarkToWorld(p) {
+    function normX(px) {
+      return mirrorSelfie ? 1 - px : px;
+    }
+
+    function landmarkToWorldOnPlane(p, useZ) {
       if (!p) return null;
-      const ndcX = p.x * 2 - 1;
+      const xn = normX(p.x);
+      const ndcX = xn * 2 - 1;
       const ndcY = -(p.y * 2 - 1);
       const vFov = (camera.fov * Math.PI) / 180;
       const halfH = Math.tan(vFov / 2) * distCamToPlane;
       const halfW = halfH * camera.aspect;
-      const zz = zPlane + (p.z || 0) * zDepthScale;
+      const zz = zPlane + (useZ ? (p.z || 0) * zDepthScale : 0);
       return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
     }
 
     function applyGlassesPoseFromLandmarks(lm) {
-      const pL = landmarkToWorld(lm[33]);
-      const pR = landmarkToWorld(lm[263]);
-      const pNose = landmarkToWorld(lm[1]);
-      const pBridge = lm[168] ? landmarkToWorld(lm[168]) : null;
-      if (!pL || !pR || !pNose) return;
+      const eL = lm[33];
+      const eR = lm[263];
+      const nose = lm[1];
+      if (!eL || !eR || !nose) return false;
+
+      const ipdNorm = Math.hypot(eR.x - eL.x, eR.y - eL.y);
+      if (ipdNorm < 0.02) return false;
+
+      const pL = landmarkToWorldOnPlane(eL, false);
+      const pR = landmarkToWorldOnPlane(eR, false);
+      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], true) : null;
 
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
       const xAxis = new THREE.Vector3().subVectors(pR, pL);
-      if (xAxis.lengthSq() < 1e-12) return;
+      if (xAxis.lengthSq() < 1e-14) return false;
       xAxis.normalize();
 
       const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
       let yAxis = new THREE.Vector3().crossVectors(xAxis, toCam);
-      if (yAxis.lengthSq() < 1e-12) {
-        yAxis.set(0, 1, 0);
-      } else {
-        yAxis.normalize();
-      }
+      if (yAxis.lengthSq() < 1e-14) yAxis.set(0, 1, 0);
+      else yAxis.normalize();
+
       let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
       if (zAxis.dot(toCam) < 0) {
         zAxis.negate();
@@ -681,21 +697,35 @@ async function runArSession({
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
       faceRoot.position.copy(anchor);
-      faceRoot.position.addScaledVector(zAxis, 0.014);
+      faceRoot.position.addScaledVector(zAxis, 0.012);
       faceRoot.quaternion.setFromRotationMatrix(rotMat);
 
-      const ipdWorld = pL.distanceTo(pR);
-      const faceScale = Math.max(0.28, Math.min(5.5, ipdWorld * 19));
+      const vFov = (camera.fov * Math.PI) / 180;
+      const halfH = Math.tan(vFov / 2) * distCamToPlane;
+      const halfW = halfH * camera.aspect;
+      const faceScale = Math.max(0.14, Math.min(1.05, ipdNorm * (halfW + halfH) * 10.5));
       faceRoot.scale.setScalar(faceScale);
+      return true;
     }
 
-    function frame(now) {
-      raf = requestAnimationFrame(frame);
-      if (!landmarker || !video.videoWidth) return;
-      const res = landmarker.detectForVideo(video, now);
-      if (!res.faceLandmarks || !res.faceLandmarks[0]) return;
+    faceRoot.visible = false;
 
-      applyGlassesPoseFromLandmarks(res.faceLandmarks[0]);
+    function frame() {
+      raf = requestAnimationFrame(frame);
+      if (!landmarker || !video.videoWidth) {
+        renderer.render(scene, camera);
+        return;
+      }
+      const ts = Math.round(performance.now());
+      const res = landmarker.detectForVideo(video, ts);
+      if (!res.faceLandmarks || !res.faceLandmarks[0]) {
+        faceRoot.visible = false;
+        renderer.render(scene, camera);
+        return;
+      }
+
+      const ok = applyGlassesPoseFromLandmarks(res.faceLandmarks[0]);
+      faceRoot.visible = ok;
       renderer.render(scene, camera);
     }
     raf = requestAnimationFrame(frame);

@@ -1704,6 +1704,10 @@
       widgetUrl = widgetUrl.split('&productImages=')[0];
     }
 
+    if (isOmafitArEyewearPage()) {
+      widgetUrl += '&omafit_mode=eyewear_ar';
+    }
+
     iframe.src = widgetUrl;
     iframe.allow = 'camera; microphone; fullscreen';
     iframe.style.cssText =

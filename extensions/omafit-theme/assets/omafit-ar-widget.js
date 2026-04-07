@@ -475,7 +475,7 @@ async function runArSession({
       objectPosition: "50% 50%",
       display: "block",
       background: "#000",
-      transform: "scaleX(1)",
+      transform: "scaleX(-1)",
     },
   });
   const canvas = el("canvas", {
@@ -644,7 +644,7 @@ async function runArSession({
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
       readRotRad("arGlbRotX", -90),
-      readRotRad("arGlbRotY", 90),
+      readRotRad("arGlbRotY", -90),
       readRotRad("arGlbRotZ", 0),
     );
     modelFix.add(glasses);
@@ -662,8 +662,8 @@ async function runArSession({
     const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
     const zDepthScale = 0.12;
-    // Câmera SEM espelho: mantém landmarks e preview no mesmo referencial.
-    const mirrorSelfie = false;
+    // Vídeo está espelhado em CSS para desinverter selfie; compensar no tracking.
+    const mirrorSelfie = true;
 
     function normX(px) {
       return mirrorSelfie ? 1 - px : px;

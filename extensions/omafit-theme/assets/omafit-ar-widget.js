@@ -627,7 +627,7 @@ async function runArSession({
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
       readRotRad("arGlbRotX", -90),
-      readRotRad("arGlbRotY", 180),
+      readRotRad("arGlbRotY", 90),
       readRotRad("arGlbRotZ", 0),
     );
     modelFix.add(glasses);
@@ -697,8 +697,8 @@ async function runArSession({
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
       const targetPos = anchor.clone();
-      targetPos.addScaledVector(yAxis, -0.008);
-      targetPos.addScaledVector(zAxis, 0.01);
+      targetPos.addScaledVector(yAxis, -0.006);
+      targetPos.addScaledVector(zAxis, -0.004);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
 
       const vFov = (camera.fov * Math.PI) / 180;

@@ -382,24 +382,22 @@ def process_job(row: dict):
             mesh = find_mesh(out_dir)
             if not mesh:
                 raise RuntimeError("TripoSR produced no mesh file")
-            if mesh.suffix.lower() == ".glb":
-                shutil.copy(mesh, glb_final)
-            else:
-                pp = subprocess.run(
-                    [
-                        sys.executable,
-                        str(Path(__file__).parent / "postprocess.py"),
-                        str(mesh),
-                        str(glb_final),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            # Sempre passa pelo postprocess para normalizar orientação e preservar fidelidade.
+            pp = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parent / "postprocess.py"),
+                    str(mesh),
+                    str(glb_final),
+                ],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+            if pp.returncode != 0:
+                raise RuntimeError(
+                    f"postprocess exit {pp.returncode}\n{_subprocess_fail_detail(pp)}"
                 )
-                if pp.returncode != 0:
-                    raise RuntimeError(
-                        f"postprocess exit {pp.returncode}\n{_subprocess_fail_detail(pp)}"
-                    )
 
         data = glb_final.read_bytes()
         storage_path = f"{shop.replace('@', '_')}/{row_id}/model.glb"

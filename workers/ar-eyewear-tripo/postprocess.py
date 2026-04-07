@@ -2,6 +2,7 @@
 """Converte mesh TripoSR (OBJ/PLY/etc.) para GLB web-friendly."""
 import sys
 from pathlib import Path
+import math
 
 def main():
     if len(sys.argv) < 3:
@@ -19,6 +20,20 @@ def main():
         scene = loaded.copy()
     else:
         scene = trimesh.Scene(loaded)
+
+    # Normaliza orientação para "deitado" (evita GLB ereto em 90° no AR).
+    # Pode ser ajustado por env sem alterar código: AR_POSTPROCESS_ROTATE_X_DEG
+    # Ex.: -90, 0, 90.
+    rot_x_deg_raw = str(__import__("os").environ.get("AR_POSTPROCESS_ROTATE_X_DEG", "-90")).strip()
+    try:
+        rot_x_deg = float(rot_x_deg_raw)
+    except Exception:
+        rot_x_deg = -90.0
+    if abs(rot_x_deg) > 1e-9:
+        rx = trimesh.transformations.rotation_matrix(
+            math.radians(rot_x_deg), [1.0, 0.0, 0.0]
+        )
+        scene.apply_transform(rx)
 
     # Só simplifica quando é mesh única; concatenar cena costuma destruir material/UV.
     geoms = [g for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)]

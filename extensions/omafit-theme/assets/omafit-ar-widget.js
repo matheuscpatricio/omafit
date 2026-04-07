@@ -650,9 +650,9 @@ async function runArSession({
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
-      readRotRad("arGlbRotX", 84),
-      readRotRad("arGlbRotY", 90),
-      readRotRad("arGlbRotZ", 0),
+      readRotRad("arGlbRotX", 90),
+      readRotRad("arGlbRotY", -90),
+      readRotRad("arGlbRotZ", 180),
     );
     modelFix.add(glasses);
 

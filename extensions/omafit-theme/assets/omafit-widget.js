@@ -55,8 +55,19 @@
 
   function getOmafitArGlbUrlFromDom() {
     var ar = document.getElementById("omafit-ar-root");
-    if (!ar) return "";
-    return (ar.getAttribute("data-glb-url") || "").trim();
+    if (ar) {
+      var fromAttr = (ar.getAttribute("data-glb-url") || "").trim();
+      if (fromAttr) return fromAttr;
+      var ds = ar.dataset && ar.dataset.glbUrl != null ? String(ar.dataset.glbUrl).trim() : "";
+      if (ds) return ds;
+    }
+    try {
+      if (typeof window !== "undefined" && window.__OMAFIT_AR_GLB_URL__) {
+        var w = String(window.__OMAFIT_AR_GLB_URL__).trim();
+        if (w) return w;
+      }
+    } catch (e) {}
+    return "";
   }
 
   /** Remove iframe / link de roupa injetados por este ficheiro (se AR óculos ficou ativo depois). */

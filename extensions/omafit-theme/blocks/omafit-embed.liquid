@@ -55,6 +55,26 @@
   {% endif %}
 ></div>
 
+{% comment %}
+  URL do GLB AR (metafield omafit.ar_glb_url) para o iframe Netlify receber &arGlbUrl=… mesmo sem o bloco "Omafit AR óculos".
+  Sem isto, o widget bloqueava só por heurística (nome/coleção) e mostrava "Provador de roupa indisponível".
+{% endcomment %}
+{% if product %}
+  {% assign omafit_mf_glb = product.metafields.omafit.ar_glb_url %}
+  {% assign omafit_ar_glb_url = '' %}
+  {% if omafit_mf_glb != blank and omafit_mf_glb.value != blank %}
+    {% assign omafit_ar_glb_url = omafit_mf_glb.value | strip %}
+  {% endif %}
+  <script>
+    (function () {
+      try {
+        var u = {{ omafit_ar_glb_url | json }};
+        if (typeof u === 'string' && u.trim()) window.__OMAFIT_AR_GLB_URL__ = u.trim();
+      } catch (e) {}
+    })();
+  </script>
+{% endif %}
+
 <script src="{{ 'omafit-widget.js' | asset_url }}" defer></script>
 
 

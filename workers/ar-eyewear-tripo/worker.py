@@ -239,7 +239,19 @@ def upload_storage(path: str, data: bytes, content_type: str) -> str:
     return public
 
 
-def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> Path:
+def _subprocess_fail_detail(proc: subprocess.CompletedProcess) -> str:
+    parts: list[str] = []
+    if proc.stdout and proc.stdout.strip():
+        parts.append(f"stdout:\n{proc.stdout.strip()}")
+    if proc.stderr and proc.stderr.strip():
+        parts.append(f"stderr:\n{proc.stderr.strip()}")
+    body = "\n\n".join(parts) if parts else "(sem saída capturada)"
+    if len(body) > 6000:
+        body = "…\n" + body[-6000:]
+    return body
+
+
+def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
     root = Path(os.environ.get("TRIPOSR_ROOT", "/opt/TripoSR"))
     run_py = root / "run.py"
     if not run_py.exists():
@@ -256,7 +268,18 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> Path:
     ]
     if os.environ.get("BAKE_TEXTURE") == "1":
         cmd.append("--bake-texture")
-    subprocess.run(cmd, check=True, cwd=str(root))
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    if proc.returncode != 0:
+        detail = _subprocess_fail_detail(proc)
+        raise RuntimeError(
+            f"TripoSR run.py exit {proc.returncode}\n{detail}"
+        )
 
 
 def find_mesh(out_dir: Path) -> Path | None:
@@ -320,10 +343,21 @@ def process_job(row: dict):
             if mesh.suffix.lower() == ".glb":
                 shutil.copy(mesh, glb_final)
             else:
-                subprocess.run(
-                    [sys.executable, str(Path(__file__).parent / "postprocess.py"), str(mesh), str(glb_final)],
-                    check=True,
+                pp = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).parent / "postprocess.py"),
+                        str(mesh),
+                        str(glb_final),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
                 )
+                if pp.returncode != 0:
+                    raise RuntimeError(
+                        f"postprocess exit {pp.returncode}\n{_subprocess_fail_detail(pp)}"
+                    )
 
         data = glb_final.read_bytes()
         storage_path = f"{shop.replace('@', '_')}/{row_id}/model.glb"
@@ -339,7 +373,7 @@ def process_job(row: dict):
         )
         print(f"[worker] OK {row_id} -> {public_url}")
     except Exception as e:
-        msg = str(e)[:2000]
+        msg = str(e)[:12000]
         print(f"[worker] FAIL {row_id}: {msg}", file=sys.stderr)
         patch_row(row_id, {"status": "failed", "error_message": msg})
     finally:

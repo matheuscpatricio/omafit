@@ -627,7 +627,7 @@ async function runArSession({
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
       readRotRad("arGlbRotX", -90),
-      readRotRad("arGlbRotY", 0),
+      readRotRad("arGlbRotY", 180),
       readRotRad("arGlbRotZ", 0),
     );
     modelFix.add(glasses);
@@ -696,15 +696,21 @@ async function runArSession({
       }
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
-      faceRoot.position.copy(anchor);
-      faceRoot.position.addScaledVector(zAxis, 0.012);
-      faceRoot.quaternion.setFromRotationMatrix(rotMat);
+      const targetPos = anchor.clone();
+      targetPos.addScaledVector(yAxis, -0.008);
+      targetPos.addScaledVector(zAxis, 0.01);
+      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
 
       const vFov = (camera.fov * Math.PI) / 180;
       const halfH = Math.tan(vFov / 2) * distCamToPlane;
       const halfW = halfH * camera.aspect;
-      const faceScale = Math.max(0.14, Math.min(1.05, ipdNorm * (halfW + halfH) * 10.5));
-      faceRoot.scale.setScalar(faceScale);
+      const faceScale = Math.max(0.14, Math.min(1.05, ipdNorm * (halfW + halfH) * 10.2));
+
+      faceRoot.position.lerp(targetPos, 0.35);
+      faceRoot.quaternion.slerp(targetQuat, 0.35);
+      const s = faceRoot.scale.x || faceScale;
+      const nextS = s + (faceScale - s) * 0.35;
+      faceRoot.scale.setScalar(nextS);
       return true;
     }
 

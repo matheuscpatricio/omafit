@@ -705,20 +705,32 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      const xAxis = new THREE.Vector3().subVectors(pR, pL);
+      // Orientacao 3D real: usa profundidade dos landmarks para yaw/pitch/roll.
+      const nL = new THREE.Vector3(normX(eL.x), -eL.y, eL.z || 0);
+      const nR = new THREE.Vector3(normX(eR.x), -eR.y, eR.z || 0);
+      const nNose = new THREE.Vector3(normX(nose.x), -nose.y, nose.z || 0);
+      const b = lm[168] || nose;
+      const nBridge = new THREE.Vector3(normX(b.x), -b.y, b.z || 0);
+
+      const xAxis = new THREE.Vector3().subVectors(nR, nL);
       if (xAxis.lengthSq() < 1e-14) return false;
       xAxis.normalize();
 
-      const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
-      let yAxis = new THREE.Vector3().crossVectors(xAxis, toCam);
-      if (yAxis.lengthSq() < 1e-14) yAxis.set(0, 1, 0);
-      else yAxis.normalize();
-
-      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
-      if (zAxis.dot(toCam) < 0) {
-        zAxis.negate();
-        yAxis.crossVectors(zAxis, xAxis).normalize();
+      // Eixo "frente" do rosto: do nariz (ponta) para a ponte.
+      let zAxis = new THREE.Vector3().subVectors(nBridge, nNose);
+      if (zAxis.lengthSq() < 1e-14) {
+        zAxis.set(0, 0, 1);
+      } else {
+        zAxis.normalize();
       }
+
+      let yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
+      if (yAxis.lengthSq() < 1e-14) {
+        yAxis.set(0, 1, 0);
+      } else {
+        yAxis.normalize();
+      }
+      zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
       const targetPos = anchor.clone();

@@ -83,6 +83,7 @@ function injectGlobalStyles() {
     @keyframes omafit-ar-fade-in { from { opacity: 0; } to { opacity: 1; } }
     .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; font-family: 'Outfit', system-ui, sans-serif; }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
+    .omafit-ar-try-on-link:focus { outline: 2px solid #810707; outline-offset: 2px; }
   `;
   document.head.appendChild(s);
   if (!document.querySelector('link[href*="Outfit"][href*="fonts.googleapis"]')) {
@@ -97,7 +98,7 @@ function injectGlobalStyles() {
 function createTriggerLink(text, primaryColor) {
   const link = document.createElement("a");
   link.href = "javascript:void(0);";
-  link.className = "omafit-try-on-link omafit-ar-link";
+  link.className = "omafit-ar-try-on-link omafit-ar-link";
   link.textContent = text;
   link.setAttribute("role", "button");
   link.style.cssText = [
@@ -645,7 +646,7 @@ async function main() {
   injectGlobalStyles();
 
   const wrap = el("div", {
-    className: "omafit-widget",
+    className: "omafit-ar-widget-wrap",
     style: { textAlign: "center", marginTop: "16px", marginBottom: "24px" },
   });
   const link = createTriggerLink(linkText, primaryColor);

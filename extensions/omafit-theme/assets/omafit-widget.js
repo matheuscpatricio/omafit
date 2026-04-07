@@ -3,6 +3,70 @@
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
 
+  /**
+   * Página com provador AR óculos: marcador Liquid (#omafit-suppress-clothing-widget) ou
+   * #omafit-ar-root com data-glb-url (getAttribute + dataset por compatibilidade).
+   */
+  function isOmafitArEyewearPage() {
+    if (document.getElementById('omafit-suppress-clothing-widget')) return true;
+    var ar = document.getElementById('omafit-ar-root');
+    if (!ar) return false;
+    var glbAttr = (ar.getAttribute('data-glb-url') || '').trim();
+    if (glbAttr.length > 0) return true;
+    var d = ar.dataset && ar.dataset.glbUrl != null ? String(ar.dataset.glbUrl).trim() : '';
+    return d.length > 0;
+  }
+
+  /** Remove iframe / link de roupa injetados por este ficheiro (se AR óculos ficou ativo depois). */
+  function removeClothingOmafitUi() {
+    try {
+      document.querySelectorAll('.omafit-modal-overlay').forEach(function (el) {
+        el.remove();
+      });
+      document.querySelectorAll('.omafit-widget').forEach(function (w) {
+        if (w.closest('#omafit-ar-root')) return;
+        if (w.querySelector('.omafit-ar-try-on-link')) return;
+        if (w.querySelector('.omafit-try-on-link')) w.remove();
+      });
+    } catch (e) {
+      if (OMAFIT_DEBUG) console.warn('removeClothingOmafitUi', e);
+    }
+  }
+
+  function applyOmafitArEyewearSuppression() {
+    if (!isOmafitArEyewearPage()) return;
+    removeClothingOmafitUi();
+  }
+
+  var _omafitSuppressRaf = null;
+  function applyOmafitArEyewearSuppressionRaf() {
+    if (_omafitSuppressRaf != null) return;
+    _omafitSuppressRaf = requestAnimationFrame(function () {
+      _omafitSuppressRaf = null;
+      applyOmafitArEyewearSuppression();
+    });
+  }
+
+  /** Corrida: roupa pode injetar antes do DOM AR estar estável — revalidar várias vezes e observar mutações. */
+  function scheduleArEyewearSuppression() {
+    var delays = [0, 50, 150, 400, 1000, 2500, 5000];
+    for (var i = 0; i < delays.length; i++) {
+      setTimeout(applyOmafitArEyewearSuppression, delays[i]);
+    }
+    function attachObserver() {
+      if (!document.body) return;
+      applyOmafitArEyewearSuppression();
+      var mo = new MutationObserver(function () {
+        applyOmafitArEyewearSuppressionRaf();
+      });
+      mo.observe(document.body, { childList: true, subtree: true });
+    }
+    if (document.body) attachObserver();
+    else document.addEventListener('DOMContentLoaded', attachObserver);
+  }
+
+  scheduleArEyewearSuppression();
+
   // Configuração global (será preenchida pela API)
   let OMAFIT_CONFIG = null;
 
@@ -2648,6 +2712,11 @@
 
   // Criar link Omafit logo abaixo do botão "Adicionar ao carrinho"
   function insertOmafitLinkUnderAddToCart() {
+    if (isOmafitArEyewearPage()) {
+      removeClothingOmafitUi();
+      console.log('Omafit: widget de roupa omitido (página com provador AR de óculos).');
+      return;
+    }
     if (!OMAFIT_CONFIG) {
       console.error('Omafit: configuração não carregada, não é possível inserir link');
       // Usar configuração padrão
@@ -2829,6 +2898,11 @@
   // Inicializar assim que a página e configuração estiverem prontas
   async function initOmafit() {
     try {
+      if (isOmafitArEyewearPage()) {
+        removeClothingOmafitUi();
+        console.log('Omafit: provador AR de óculos nesta página — widget de roupa não é carregado.');
+        return;
+      }
       console.log('🚀 Inicializando Omafit...');
 
       // Buscar configuração via API
@@ -2925,6 +2999,7 @@
   
   // Também tentar após um delay (para temas que carregam conteúdo dinamicamente)
   setTimeout(function() {
+    if (isOmafitArEyewearPage()) return;
     if (!document.querySelector('.omafit-try-on-link')) {
       console.log('🔄 Tentando inicializar novamente (retry)...');
       initOmafit();
@@ -2934,6 +3009,7 @@
   // Observar mudanças no DOM (para SPAs)
   if (typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(function(mutations) {
+      if (isOmafitArEyewearPage()) return;
       if (!document.querySelector('.omafit-try-on-link')) {
         const hasProductForm = document.querySelector('form[action*="/cart/add"], button[name="add"]');
         if (hasProductForm) {

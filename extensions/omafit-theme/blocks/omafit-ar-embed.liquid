@@ -35,6 +35,16 @@
 
 {% assign locale_code = request.locale.iso_code | default: 'pt' %}
 
+{% comment %}
+  Marcador para omafit-widget.js: produto elegível para AR (tag) ou opção explícita — esconde provador de roupa
+  mesmo sem GLB ainda. data-glb-url em #omafit-ar-root também suprime, mas alguns browsers/atributos falham cedo.
+{% endcomment %}
+{% if block.settings.hide_clothing_tryon %}
+  <div id="omafit-suppress-clothing-widget" hidden aria-hidden="true"></div>
+{% elsif tag_filter != '' and tag_ok %}
+  <div id="omafit-suppress-clothing-widget" hidden aria-hidden="true"></div>
+{% endif %}
+
 {% if glb_url != blank and tag_ok %}
   <div
     id="omafit-ar-root"
@@ -79,8 +89,14 @@
       "type": "text",
       "id": "only_tag",
       "label": "Só exibir se o produto tiver a tag (vazio = sempre que houver GLB)",
-      "info": "Ex.: eyewear",
-      "default": ""
+      "info": "Ex.: eyewear. Deixa em branco no editor para mostrar sempre que existir GLB."
+    },
+    {
+      "type": "checkbox",
+      "id": "hide_clothing_tryon",
+      "label": "Ocultar provador de roupa Omafit nesta página",
+      "default": false,
+      "info": "Ative em templates só de óculos ou quando o bloco AR está no mesmo product template que o embed de roupa. Também suprimimos se preencheres a tag acima e o produto a tiver, ou se já existir GLB AR."
     }
   ]
 }

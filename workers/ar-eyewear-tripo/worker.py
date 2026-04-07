@@ -21,7 +21,7 @@ import time
 import uuid
 from pathlib import Path
 import re
-from urllib.parse import quote, quote_plus, unquote
+from urllib.parse import quote, unquote
 from urllib.request import urlretrieve
 
 import requests
@@ -144,9 +144,10 @@ def try_claim_row(row_id: str) -> dict | None:
         .isoformat()
         .replace("+00:00", "Z")
     )
-    id_enc = quote_plus(str(row_id))
+    # Mesmo formato que patch_row / PostgREST (evitar quote_plus diferente de encodeURIComponent).
+    rid = str(row_id)
     r = requests.patch(
-        sb_url(f"/rest/v1/{TABLE}?id=eq.{id_enc}&status=eq.queued"),
+        sb_url(f"/rest/v1/{TABLE}?id=eq.{rid}&status=eq.queued"),
         headers=claim_headers(),
         json={
             "status": "processing",
@@ -157,9 +158,19 @@ def try_claim_row(row_id: str) -> dict | None:
     r.raise_for_status()
     body = r.json()
     if not body:
+        print(
+            f"[worker] claim: 0 linhas (corrida ou filtro) id={rid} resp={r.text[:500]!r}",
+            file=sys.stderr,
+        )
         return None
     if isinstance(body, list):
-        return body[0] if body else None
+        if not body:
+            print(
+                f"[worker] claim: lista vazia id={rid} resp={r.text[:500]!r}",
+                file=sys.stderr,
+            )
+            return None
+        return body[0]
     return body
 
 
@@ -390,7 +401,15 @@ def main():
         sys.exit(1)
     ensure_storage_buckets()
     poll = float(os.environ.get("POLL_SECONDS", "10"))
-    print("[worker] started; stub=", os.environ.get("WORKER_STUB"), "poll=", poll)
+    base = supabase_base()
+    print(
+        "[worker] started; stub=",
+        os.environ.get("WORKER_STUB"),
+        "poll=",
+        poll,
+        "supabase=",
+        base[:60] + ("…" if len(base) > 60 else ""),
+    )
     while True:
         try:
             row = fetch_next_queued()

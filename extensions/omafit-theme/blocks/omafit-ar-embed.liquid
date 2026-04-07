@@ -50,6 +50,9 @@
     data-store-logo="{{ logo_url | escape }}"
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
+    data-ar-glb-rot-x="{{ block.settings.ar_glb_rot_x }}"
+    data-ar-glb-rot-y="{{ block.settings.ar_glb_rot_y }}"
+    data-ar-glb-rot-z="{{ block.settings.ar_glb_rot_z }}"
   ></div>
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}"></script>
 {% endif %}
@@ -83,6 +86,32 @@
       "id": "only_tag",
       "label": "Só exibir se o produto tiver a tag (vazio = sempre que houver GLB)",
       "info": "Ex.: eyewear. Deixa em branco no editor para mostrar sempre que existir GLB."
+    },
+    {
+      "type": "header",
+      "content": "Orientação do GLB na câmara AR"
+    },
+    {
+      "type": "paragraph",
+      "content": "Se o modelo aparecer de lado ou torto, ajusta os graus (eixos Three.js: X, Y, Z). Padrão corrige exportações TripoSR típicas."
+    },
+    {
+      "type": "number",
+      "id": "ar_glb_rot_x",
+      "label": "Rotação X (graus)",
+      "default": -90
+    },
+    {
+      "type": "number",
+      "id": "ar_glb_rot_y",
+      "label": "Rotação Y (graus)",
+      "default": 0
+    },
+    {
+      "type": "number",
+      "id": "ar_glb_rot_z",
+      "label": "Rotação Z (graus)",
+      "default": 180
     }
   ]
 }

@@ -582,6 +582,16 @@ async function runArSession({
     const gltf = await new Promise((resolve, reject) => {
       loader.load(glbUrl, resolve, undefined, reject);
     });
+    const cfgRoot = document.getElementById("omafit-ar-root");
+    const degToRad = (deg) => (deg * Math.PI) / 180;
+    function readRotRad(dataKey, fallbackDeg) {
+      if (!cfgRoot?.dataset) return degToRad(fallbackDeg);
+      const raw = cfgRoot.dataset[dataKey];
+      if (raw === undefined || String(raw).trim() === "") return degToRad(fallbackDeg);
+      const v = parseFloat(raw);
+      return Number.isFinite(v) ? degToRad(v) : degToRad(fallbackDeg);
+    }
+
     const glasses = gltf.scene;
     glasses.frustumCulled = false;
     glasses.traverse((child) => {
@@ -606,39 +616,77 @@ async function runArSession({
       baseGlbScale = 1 / maxDim;
       glasses.scale.setScalar(baseGlbScale);
     }
-    scene.add(glasses);
-    scene.add(new THREE.DirectionalLight(0xffffff, 0.85));
+
+    /** Corrige GLB “deitado” (TripoSR / export Z-up ou deitado no plano). Afinar no tema com data-ar-glb-rot-*. */
+    const modelFix = new THREE.Group();
+    modelFix.rotation.order = "YXZ";
+    modelFix.rotation.set(
+      readRotRad("arGlbRotX", -90),
+      readRotRad("arGlbRotY", 0),
+      readRotRad("arGlbRotZ", 180),
+    );
+    modelFix.add(glasses);
+
+    const faceRoot = new THREE.Group();
+    faceRoot.frustumCulled = false;
+    faceRoot.add(modelFix);
+    scene.add(faceRoot);
+
+    const dirLt = new THREE.DirectionalLight(0xffffff, 0.95);
+    dirLt.position.set(0.35, 0.55, 0.45);
+    scene.add(dirLt);
 
     const camZ = 0.6;
-    const zPlane = -0.36;
+    const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
+    const zDepthScale = 0.24;
 
-    function applyGlassesPoseFromLandmarks(lm) {
-      const eyeL = lm[33];
-      const eyeR = lm[263];
-      if (!eyeL || !eyeR) return;
-
-      const bridge = lm[168];
-      const bx = bridge ? bridge.x : (eyeL.x + eyeR.x) * 0.5;
-      const by = bridge ? bridge.y : (eyeL.y + eyeR.y) * 0.5;
-      const bz = bridge ? bridge.z || 0 : ((eyeL.z || 0) + (eyeR.z || 0)) * 0.5;
-
-      const ndcX = bx * 2 - 1;
-      const ndcY = -(by * 2 - 1);
-
+    function landmarkToWorld(p) {
+      if (!p) return null;
+      const ndcX = p.x * 2 - 1;
+      const ndcY = -(p.y * 2 - 1);
       const vFov = (camera.fov * Math.PI) / 180;
       const halfH = Math.tan(vFov / 2) * distCamToPlane;
       const halfW = halfH * camera.aspect;
+      const zz = zPlane + (p.z || 0) * zDepthScale;
+      return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
+    }
 
-      glasses.position.set(ndcX * halfW, ndcY * halfH, zPlane + bz * 0.18);
+    function applyGlassesPoseFromLandmarks(lm) {
+      const pL = landmarkToWorld(lm[33]);
+      const pR = landmarkToWorld(lm[263]);
+      const pNose = landmarkToWorld(lm[1]);
+      const pBridge = lm[168] ? landmarkToWorld(lm[168]) : null;
+      if (!pL || !pR || !pNose) return;
 
-      const dx = eyeR.x - eyeL.x;
-      const dy = eyeR.y - eyeL.y;
-      glasses.rotation.set(0, 0, -Math.atan2(dy, dx));
+      const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
+      const anchor = pBridge || midEyes;
 
-      const ipdNorm = Math.hypot(dx, dy) || 0.08;
-      const faceScale = Math.max(0.12, Math.min(2.4, ipdNorm * (halfW + halfH) * 3.8));
-      glasses.scale.setScalar(baseGlbScale * faceScale);
+      const xAxis = new THREE.Vector3().subVectors(pR, pL);
+      if (xAxis.lengthSq() < 1e-12) return;
+      xAxis.normalize();
+
+      const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
+      let yAxis = new THREE.Vector3().crossVectors(xAxis, toCam);
+      if (yAxis.lengthSq() < 1e-12) {
+        yAxis.set(0, 1, 0);
+      } else {
+        yAxis.normalize();
+      }
+      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+      if (zAxis.dot(toCam) < 0) {
+        zAxis.negate();
+        yAxis.crossVectors(zAxis, xAxis).normalize();
+      }
+
+      const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+      faceRoot.position.copy(anchor);
+      faceRoot.position.addScaledVector(zAxis, 0.014);
+      faceRoot.quaternion.setFromRotationMatrix(rotMat);
+
+      const ipdWorld = pL.distanceTo(pR);
+      const faceScale = Math.max(0.28, Math.min(5.5, ipdWorld * 19));
+      faceRoot.scale.setScalar(faceScale);
     }
 
     function frame(now) {

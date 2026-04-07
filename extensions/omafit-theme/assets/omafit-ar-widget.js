@@ -651,7 +651,7 @@ async function runArSession({
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
       readRotRad("arGlbRotX", 78),
-      readRotRad("arGlbRotY", -90),
+      readRotRad("arGlbRotY", 90),
       readRotRad("arGlbRotZ", 0),
     );
     modelFix.add(glasses);

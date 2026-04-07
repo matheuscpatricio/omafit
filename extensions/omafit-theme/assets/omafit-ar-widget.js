@@ -722,7 +722,7 @@ async function runArSession({
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
       const targetPos = anchor.clone();
-      targetPos.addScaledVector(yAxis, -0.006);
+      targetPos.addScaledVector(yAxis, -0.008);
       targetPos.addScaledVector(zAxis, -0.016);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
 

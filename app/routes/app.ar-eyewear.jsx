@@ -14,7 +14,6 @@ import {
   Banner,
   Spinner,
   Badge,
-  DropZone,
   Select,
   Thumbnail,
   Divider,
@@ -66,7 +65,7 @@ function imageSelectOptions(images, t) {
   return [
     { label: t("arEyewear.selectPlaceholder"), value: "" },
     ...images.map((im, i) => ({
-      label: `${i + 1}. ${(im.altText || `Imagem ${i + 1}`).slice(0, 42)}${(im.altText || "").length > 42 ? "…" : ""}`,
+      label: `${i + 1}. ${(im.altText || t("arEyewear.imageLabel", { n: i + 1 })).slice(0, 42)}${(im.altText || "").length > 42 ? "…" : ""}`,
       value: im.url,
     })),
   ];
@@ -94,8 +93,6 @@ export default function ArEyewearPage() {
   const [productId, setProductId] = useState("");
   const [variantId, setVariantId] = useState("");
   const [frameWidthMm, setFrameWidthMm] = useState("");
-  const [files, setFiles] = useState({ front: null, threeQuarter: null, profile: null });
-  const [uploading, setUploading] = useState(false);
   const [confirmingShop, setConfirmingShop] = useState(false);
   const [actionId, setActionId] = useState(null);
 
@@ -108,11 +105,11 @@ export default function ArEyewearPage() {
       if (!res.ok) throw new Error(data.error || res.statusText);
       setAssets(data.assets || []);
     } catch (e) {
-      setError(e.message || "Error");
+      setError(e.message || t("arEyewear.errorLoadAssets"));
     } finally {
       setAssetsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadProducts = useCallback(async () => {
     setProductsLoading(true);
@@ -125,12 +122,12 @@ export default function ArEyewearPage() {
       if (!res.ok) throw new Error(data.error || res.statusText);
       setProducts(data.products || []);
     } catch (e) {
-      setError((prev) => prev || e.message || "Products error");
+      setError((prev) => prev || e.message || t("arEyewear.errorLoadProducts"));
       setProducts([]);
     } finally {
       setProductsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     loadAssets();
@@ -203,53 +200,9 @@ export default function ArEyewearPage() {
       setFrameWidthMm("");
       await loadAssets();
     } catch (e) {
-      setError(e.message || "Failed");
+      setError(e.message || t("arEyewear.errorSubmit"));
     } finally {
       setConfirmingShop(false);
-    }
-  };
-
-  const onDrop = (key) => (_dropFiles, acceptedFiles) => {
-    if (acceptedFiles?.[0]) {
-      setFiles((f) => ({ ...f, [key]: acceptedFiles[0] }));
-    }
-  };
-
-  const submitUpload = async () => {
-    if (!productId.trim()) {
-      setError(t("arEyewear.errorProductId"));
-      return;
-    }
-    if (!files.front || !files.threeQuarter || !files.profile) {
-      setError(t("arEyewear.errorThreePhotos"));
-      return;
-    }
-    setUploading(true);
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.set("productId", productId.trim());
-      if (variantId.trim()) fd.set("variantId", variantId.trim());
-      if (frameWidthMm.trim()) fd.set("frameWidthMm", frameWidthMm.trim());
-      fd.set("front", files.front);
-      fd.set("threeQuarter", files.threeQuarter);
-      fd.set("profile", files.profile);
-      const res = await fetch("/api/ar-eyewear", {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || res.statusText);
-      setFiles({ front: null, threeQuarter: null, profile: null });
-      setProductId("");
-      setVariantId("");
-      setFrameWidthMm("");
-      await loadAssets();
-    } catch (e) {
-      setError(e.message || "Upload failed");
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -267,7 +220,7 @@ export default function ArEyewearPage() {
       if (!res.ok) throw new Error(data.error || res.statusText);
       await loadAssets();
     } catch (e) {
-      setError(e.message || "Action failed");
+      setError(e.message || t("arEyewear.errorAction"));
     } finally {
       setActionId(null);
     }
@@ -279,6 +232,11 @@ export default function ArEyewearPage() {
     () => (assets || []).some((a) => a.status === "queued"),
     [assets],
   );
+  const productNameById = useMemo(() => {
+    const map = new Map();
+    for (const p of products || []) map.set(String(p.id || ""), p.title || "");
+    return map;
+  }, [products]);
 
   return (
     <Page
@@ -451,70 +409,6 @@ export default function ArEyewearPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                {t("arEyewear.dividerManual")}
-              </Text>
-              <Text as="p" tone="subdued">
-                {t("arEyewear.uploadHelp")}
-              </Text>
-              <TextField
-                label={t("arEyewear.productId")}
-                value={productId}
-                onChange={setProductId}
-                autoComplete="off"
-                helpText={t("arEyewear.productIdHelp")}
-              />
-              <TextField
-                label={t("arEyewear.variantId")}
-                value={variantId}
-                onChange={setVariantId}
-                autoComplete="off"
-                helpText={t("arEyewear.variantIdHelp")}
-              />
-              <TextField
-                label={t("arEyewear.frameWidth")}
-                value={frameWidthMm}
-                onChange={setFrameWidthMm}
-                autoComplete="off"
-                helpText={t("arEyewear.frameWidthHelp")}
-              />
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  {t("arEyewear.photoFront")}
-                </Text>
-                <DropZone accept="image/*" onDrop={onDrop("front")}>
-                  <DropZone.FileUpload />
-                </DropZone>
-                {files.front && <Text as="p">{files.front.name}</Text>}
-              </BlockStack>
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  {t("arEyewear.photoThreeQuarter")}
-                </Text>
-                <DropZone accept="image/*" onDrop={onDrop("threeQuarter")}>
-                  <DropZone.FileUpload />
-                </DropZone>
-                {files.threeQuarter && <Text as="p">{files.threeQuarter.name}</Text>}
-              </BlockStack>
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  {t("arEyewear.photoProfile")}
-                </Text>
-                <DropZone accept="image/*" onDrop={onDrop("profile")}>
-                  <DropZone.FileUpload />
-                </DropZone>
-                {files.profile && <Text as="p">{files.profile.name}</Text>}
-              </BlockStack>
-              <Button variant="primary" loading={uploading} onClick={submitUpload}>
-                {t("arEyewear.submit")}
-              </Button>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
                   {t("arEyewear.listTitle")}
@@ -545,10 +439,11 @@ export default function ArEyewearPage() {
                       <BlockStack gap="300">
                         <InlineStack align="space-between" blockAlign="center">
                           <Text as="p" fontWeight="semibold">
-                            {t("arEyewear.product")} {a.product_id}
-                            {a.variant_id ? ` / ${a.variant_id}` : ""}
+                            {a.product_name || productNameById.get(String(a.product_id || "")) || t("arEyewear.productUnknown")}
                           </Text>
-                          <Badge tone={statusTone(a.status)}>{a.status}</Badge>
+                          <Badge tone={statusTone(a.status)}>
+                            {t(`arEyewear.status.${a.status}`)}
+                          </Badge>
                         </InlineStack>
                         {a.error_message && (
                           <Text as="p" tone="critical">

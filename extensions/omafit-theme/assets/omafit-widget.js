@@ -1557,13 +1557,42 @@
 
     const detectedFontFamily = getStoreFontFamily();
 
-    // Montar configuração - NÃO incluir storeLogo (base64) na URL para evitar 414
-    // O widget buscará do Supabase usando shopDomain
+    function getStoreFontStack() {
+      try {
+        var b = document.body;
+        if (b) {
+          var ff = window.getComputedStyle(b).fontFamily;
+          if (ff && ff !== 'inherit') return ff;
+        }
+      } catch (e) {}
+      return detectedFontFamily;
+    }
+
+    var arRootForBranding = document.getElementById('omafit-ar-root');
+    var arLogoFromDom =
+      arRootForBranding && arRootForBranding.dataset && arRootForBranding.dataset.storeLogo
+        ? String(arRootForBranding.dataset.storeLogo).trim()
+        : '';
+    var arFontFromDom =
+      arRootForBranding && arRootForBranding.dataset && arRootForBranding.dataset.fontFamily
+        ? String(arRootForBranding.dataset.fontFamily).trim()
+        : '';
+
+    var storeLogoUrlForConfig = '';
+    var cfgLogo = OMAFIT_CONFIG.storeLogo ? String(OMAFIT_CONFIG.storeLogo) : '';
+    if (cfgLogo && /^https?:\/\//i.test(cfgLogo)) {
+      storeLogoUrlForConfig = cfgLogo;
+    } else if (arLogoFromDom && /^https?:\/\//i.test(arLogoFromDom)) {
+      storeLogoUrlForConfig = arLogoFromDom;
+    }
+
+    // Montar configuração — inclui storeLogo só se for URL (para o provador AR no iframe ler do config)
+    // Base64 continua só via postMessage para o TryOn de roupa.
     const config = {
       storeName: OMAFIT_CONFIG.storeName || '',
       primaryColor: OMAFIT_CONFIG.colors?.primary || '#810707',
-      // storeLogo será enviado via postMessage
-      fontFamily: detectedFontFamily, // Usar fonte detectada da loja
+      storeLogo: storeLogoUrlForConfig,
+      fontFamily: arFontFromDom || getStoreFontStack(),
       fontWeight: OMAFIT_CONFIG.fontWeight || '',
       fontStyle: OMAFIT_CONFIG.fontStyle || ''
     };

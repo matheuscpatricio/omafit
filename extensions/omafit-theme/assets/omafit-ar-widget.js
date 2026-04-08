@@ -115,16 +115,24 @@ const COPY = {
 
 function injectGlobalStyles() {
   if (document.getElementById("omafit-ar-styles")) return;
+  const root = document.getElementById("omafit-ar-root");
+  const customFont = root?.dataset?.fontFamily?.trim();
+  const shellFont = customFont
+    ? customFont.replace(/[<>]/g, "")
+    : "'Outfit', system-ui, sans-serif";
   const s = document.createElement("style");
   s.id = "omafit-ar-styles";
   s.textContent = `
     @keyframes omafit-ar-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; font-family: 'Outfit', system-ui, sans-serif; }
+    .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; font-family: ${shellFont}; }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
     .omafit-ar-try-on-link:focus { outline: 2px solid #810707; outline-offset: 2px; }
   `;
   document.head.appendChild(s);
-  if (!document.querySelector('link[href*="Outfit"][href*="fonts.googleapis"]')) {
+  if (
+    !customFont &&
+    !document.querySelector('link[href*="Outfit"][href*="fonts.googleapis"]')
+  ) {
     const l = document.createElement("link");
     l.rel = "stylesheet";
     l.href =
@@ -468,9 +476,6 @@ async function runArSession({
   t,
   onClose,
 }) {
-  const debugRunId = `run_${Date.now()}`;
-  let debugLoggedNoFace = false;
-  let debugLoggedPose = false;
   colContent.innerHTML = "";
   const desktopCol = shell.querySelector(".omafit-ar-col-desktop");
   if (desktopCol) desktopCol.style.display = "none";
@@ -639,10 +644,6 @@ async function runArSession({
       const v = parseFloat(raw);
       return Number.isFinite(v) ? degToRad(v) : degToRad(fallbackDeg);
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H1',location:'omafit-ar-widget.js:readRotRad-config',message:'AR rotation dataset raw values',data:{arGlbRotX:cfgRoot?.dataset?.arGlbRotX ?? null,arGlbRotY:cfgRoot?.dataset?.arGlbRotY ?? null,arGlbRotZ:cfgRoot?.dataset?.arGlbRotZ ?? null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-
     const glasses = gltf.scene;
     glasses.frustumCulled = false;
     glasses.traverse((child) => {
@@ -734,17 +735,14 @@ async function runArSession({
       autoOrient.userData._omafitNormWidth = normWidth;
     }
 
-    /** Corrige GLB “deitado” (TripoSR / export Z-up ou deitado no plano). Afinar no tema com data-ar-glb-rot-*. */
+    /** Ajuste fino opcional (graus no tema). Padrão 0: o worker/postprocess já exporta eixos canónicos + autoOrient acima. */
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
       readRotRad("arGlbRotX", 0),
-      readRotRad("arGlbRotY", -90),
-      readRotRad("arGlbRotZ", -90),
+      readRotRad("arGlbRotY", 0),
+      readRotRad("arGlbRotZ", 0),
     );
-    // #region agent log
-    fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H2',location:'omafit-ar-widget.js:modelFix.rotation.set',message:'Applied modelFix rotation degrees',data:{xDeg:Math.round((modelFix.rotation.x*180/Math.PI)*100)/100,yDeg:Math.round((modelFix.rotation.y*180/Math.PI)*100)/100,zDeg:Math.round((modelFix.rotation.z*180/Math.PI)*100)/100,order:modelFix.rotation.order},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     modelFix.add(autoOrient);
 
     const faceRoot = new THREE.Group();
@@ -828,12 +826,6 @@ async function runArSession({
       targetPos.addScaledVector(yAxis, -0.008);
       targetPos.addScaledVector(zAxis, -0.016);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
-      if (!debugLoggedPose) {
-        debugLoggedPose = true;
-        // #region agent log
-        fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H3',location:'omafit-ar-widget.js:applyGlassesPoseFromLandmarks',message:'First pose basis and target quaternion',data:{xAxis:{x:xAxis.x,y:xAxis.y,z:xAxis.z},yAxis:{x:yAxis.x,y:yAxis.y,z:yAxis.z},zAxis:{x:zAxis.x,y:zAxis.y,z:zAxis.z},targetQuat:{x:targetQuat.x,y:targetQuat.y,z:targetQuat.z,w:targetQuat.w}},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-      }
 
       // Escala geométrica: largura do frame proporcional à distância entre pupilas.
       const ipdWorld = pL.distanceTo(pR);
@@ -861,12 +853,6 @@ async function runArSession({
       const ts = Math.round(performance.now());
       const res = landmarker.detectForVideo(video, ts);
       if (!res.faceLandmarks || !res.faceLandmarks[0]) {
-        if (!debugLoggedNoFace) {
-          debugLoggedNoFace = true;
-          // #region agent log
-          fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H4',location:'omafit-ar-widget.js:frame-no-face',message:'Frame without face landmarks',data:{videoWidth:video.videoWidth || 0,videoHeight:video.videoHeight || 0},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
-        }
         faceRoot.visible = false;
         renderer.render(scene, camera);
         return;
@@ -912,6 +898,10 @@ async function main() {
     root.dataset.autoOpen === "1" || root.getAttribute("data-auto-open") === "1";
 
   injectGlobalStyles();
+  const themeFont = root.dataset.fontFamily?.trim();
+  if (themeFont) {
+    root.style.fontFamily = themeFont;
+  }
 
   let modal = null;
 

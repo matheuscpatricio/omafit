@@ -44,6 +44,13 @@ def _canonical_axes_smallest_y_largest_x(scene):
     order = np.argsort(ext)  # crescente: [menor, meio, maior]
     i_small, i_mid, i_large = int(order[0]), int(order[1]), int(order[2])
 
+    # Caixa quase cúbica: permutar eixos ao acaso vira 90°. Só remapear se houver “largura” clara.
+    lo, mid, hi = float(ext[i_small]), float(ext[i_mid]), float(ext[i_large])
+    ratio_hm = hi / max(mid, 1e-9)
+    ratio_ml = mid / max(lo, 1e-9)
+    if ratio_hm < 1.15 and ratio_ml < 1.15:
+        return
+
     r = np.zeros((3, 3), dtype=float)
     r[0, i_large] = 1.0
     r[1, i_small] = 1.0

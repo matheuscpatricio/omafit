@@ -32,13 +32,18 @@
 {% assign logo_url = '' %}
 {% if block.settings.store_logo != blank %}
   {% assign logo_url = block.settings.store_logo | image_url: width: 240 %}
-{% elsif settings.logo %}
+{% elsif shop.brand.logo != blank %}
+  {% assign logo_url = shop.brand.logo | image_url: width: 240 %}
+{% elsif settings.logo != blank %}
   {% assign logo_url = settings.logo | image_url: width: 240 %}
 {% endif %}
 
 {% assign locale_code = request.locale.iso_code | default: 'pt' %}
 
 {% if glb_url != blank and tag_ok %}
+  {% if settings.type_body_font %}
+    <style id="omafit-ar-theme-font-face">{{ settings.type_body_font | font_face: font_display: 'swap' }}</style>
+  {% endif %}
   <div
     id="omafit-ar-root"
     class="omafit-ar-root"
@@ -48,6 +53,9 @@
     data-product-image="{{ product_image_url | escape }}"
     data-primary-color="{{ block.settings.primary_color | escape }}"
     data-store-logo="{{ logo_url | escape }}"
+    {% if settings.type_body_font %}
+      data-font-family="{{ settings.type_body_font.family | escape }}, {{ settings.type_body_font.fallback_families }}"
+    {% endif %}
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-rot-x="{{ block.settings.ar_glb_rot_x }}"
@@ -93,7 +101,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Se o modelo aparecer de lado ou torto, ajusta os graus (eixos Three.js: X, Y, Z). Padrão corrige exportações TripoSR típicas."
+      "content": "O GLB gerado pelo Omafit já vem alinhado (largura no eixo X). Usa rotação só se um modelo antigo ou manual precisar de correção (eixos Three.js: X, Y, Z)."
     },
     {
       "type": "number",
@@ -105,13 +113,13 @@
       "type": "number",
       "id": "ar_glb_rot_y",
       "label": "Rotação Y (graus)",
-      "default": -90
+      "default": 0
     },
     {
       "type": "number",
       "id": "ar_glb_rot_z",
       "label": "Rotação Z (graus)",
-      "default": -90
+      "default": 0
     }
   ]
 }

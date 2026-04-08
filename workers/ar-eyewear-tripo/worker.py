@@ -9,20 +9,27 @@ Env:
   TRIPOSR_ROOT — diretório do clone TripoSR (default /opt/TripoSR)
   WORKER_STUB=1 — sem GPU: gera GLB placeholder (desenvolvimento)
   POLL_SECONDS — default 10
+  TRIPOSR_NO_XVFB=1 — só com DISPLAY real; em headless com bake ativo causa XOpenDisplay
+  XVFB_RUN_PATH — caminho a xvfb-run se PATH não o incluir
+  TRIPOSR_ALWAYS_XVFB — default 1: com bake, usa xvfb-run mesmo se TRIPOSR_NO_XVFB=1 (evita DISPLAY=:0 falso no Docker). 0 + NO_XVFB = X real.
+  TRIPOSR_XVFB_LIBGL_SOFTWARE — default 1: com xvfb-run, LIBGL_ALWAYS_SOFTWARE=1 (Mesa no ecrã virtual). 0 para tentar GLX “real”.
+  TRIPOSR_TIMEOUT_SECONDS — limite para run.py (default 5400); 0 = sem limite
+  POSTPROCESS_TIMEOUT_SECONDS — limite para postprocess.py (default 900)
+  AR_WORKER_STALE_PROCESSING_MINUTES — jobs em processing há mais tempo → failed (default 120); 0 = desliga
 """
 from __future__ import annotations
 
 import datetime
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
-import re
 from urllib.parse import quote, unquote
-from urllib.request import urlretrieve
 
 import requests
 
@@ -224,7 +231,88 @@ def download_file(url: str | None, dest: Path):
         if r.ok:
             dest.write_bytes(r.content)
             return
-    urlretrieve(raw, dest)
+    r = requests.get(raw, timeout=120)
+    r.raise_for_status()
+    dest.write_bytes(r.content)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = str(os.environ.get(name, str(default))).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _run_cmd_with_timeout(
+    cmd: list[str],
+    *,
+    cwd: str | None,
+    env: dict,
+    timeout_sec: float,
+    timeout_label: str,
+) -> subprocess.CompletedProcess:
+    """
+    Corre comando com timeout; mata o grupo de processos (útil com xvfb-run + python).
+    timeout_sec <= 0 desativa o limite.
+    """
+    if timeout_sec <= 0:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+        try:
+            proc.wait(timeout=45)
+        except subprocess.TimeoutExpired:
+            pass
+        raise RuntimeError(
+            f"{timeout_label}: excedeu {int(timeout_sec)}s (processo terminado). "
+            "Aumenta TRIPOSR_TIMEOUT_SECONDS / POSTPROCESS_TIMEOUT_SECONDS se o GPU for lento."
+        ) from None
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def reclaim_stale_processing_rows() -> None:
+    """Evita fila presa em processing para sempre (worker OOM, SIGKILL, hang fora do subprocess)."""
+    mins = _float_env("AR_WORKER_STALE_PROCESSING_MINUTES", 120.0)
+    if mins <= 0:
+        return
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=mins)
+    iso = cutoff.isoformat().replace("+00:00", "Z")
+    ts_enc = quote(iso, safe="")
+    msg = (
+        f"Sem conclusão em {int(mins)} min (worker pode ter reiniciado ou bloqueado). "
+        "Usa «Voltar a fila» no admin ou verifica logs do contentor."
+    )
+    try:
+        r = requests.patch(
+            sb_url(f"/rest/v1/{TABLE}?status=eq.processing&updated_at=lt.{ts_enc}"),
+            headers={**rest_headers(), "Prefer": "return=minimal"},
+            json={"status": "failed", "error_message": msg[:12000]},
+            timeout=60,
+        )
+        r.raise_for_status()
+    except Exception as e:
+        print(f"[worker] reclaim stale processing: {e}", file=sys.stderr)
 
 
 def upload_storage(path: str, data: bytes, content_type: str) -> str:
@@ -250,8 +338,31 @@ def upload_storage(path: str, data: bytes, content_type: str) -> str:
     return public
 
 
-def _triposr_subprocess_env() -> dict:
-    """moderngl/glcontext não incluem /usr/lib/<arch>-linux-gnu na procura por libGL.so."""
+def _resolve_xvfb_run() -> str | None:
+    """xvfb-run tem de existir para --bake-texture (moderngl → XOpenDisplay)."""
+    override = (os.environ.get("XVFB_RUN_PATH") or "").strip()
+    if override and os.path.isfile(override) and os.access(override, os.X_OK):
+        return override
+    for candidate in (
+        "/usr/bin/xvfb-run",
+        "/usr/local/bin/xvfb-run",
+        shutil.which("xvfb-run") or "",
+    ):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _triposr_subprocess_env(*, use_xvfb_wrapper: bool = False) -> dict:
+    """
+    moderngl/glcontext não incluem /usr/lib/<arch>-linux-gnu na procura por libGL.so.
+
+    Com xvfb-run: remove DISPLAY/WAYLAND herdados (ex. :0 do host no compose) que quebram
+    o Xvfb ou fazem o glcontext abrir o ecrã errado → XOpenDisplay. Força software GL no
+    ecrã virtual para evitar GLX NVIDIA + Xvfb incompatíveis.
+
+    Desligar software GL: TRIPOSR_XVFB_LIBGL_SOFTWARE=0
+    """
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     extra = "/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu"
     cur = str(env.get("LD_LIBRARY_PATH", "") or "").strip()
@@ -260,6 +371,20 @@ def _triposr_subprocess_env() -> dict:
             env["LD_LIBRARY_PATH"] = f"{extra}:{cur}"
     else:
         env["LD_LIBRARY_PATH"] = extra
+
+    if use_xvfb_wrapper:
+        for k in (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "__GLX_VENDOR_LIBRARY_NAME",
+        ):
+            env.pop(k, None)
+        if str(os.environ.get("TRIPOSR_XVFB_LIBGL_SOFTWARE", "1")).strip() not in (
+            "0",
+            "false",
+            "no",
+        ):
+            env["LIBGL_ALWAYS_SOFTWARE"] = "1"
     return env
 
 
@@ -302,28 +427,53 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
         if texture_resolution.isdigit():
             cmd.extend(["--texture-resolution", texture_resolution])
 
-    # bake_texture → moderngl precisa de contexto GL; em container sem X11 usa-se Xvfb.
+    # bake_texture → moderngl precisa de contexto GL; em container usa-se Xvfb.
     final_cmd = cmd
-    if bake_texture != "0" and os.environ.get("TRIPOSR_NO_XVFB", "").strip() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        xvfb = shutil.which("xvfb-run")
+    use_xvfb = False
+    no_xvfb = os.environ.get("TRIPOSR_NO_XVFB", "").strip() in ("1", "true", "yes")
+    # Em Docker costuma haver DISPLAY=:0 sem X real + TRIPOSR_NO_XVFB=1 → XOpenDisplay.
+    # Por defeito usa-se xvfb-run sempre que existir; opt-out: TRIPOSR_ALWAYS_XVFB=0 e NO_XVFB=1.
+    always_xvfb = str(os.environ.get("TRIPOSR_ALWAYS_XVFB", "1")).strip() not in (
+        "0",
+        "false",
+        "no",
+    )
+    wrap_xvfb = bake_texture != "0" and (not no_xvfb or always_xvfb)
+
+    if bake_texture != "0" and no_xvfb and not always_xvfb and not (
+        os.environ.get("DISPLAY") or ""
+    ).strip():
+        raise RuntimeError(
+            "TRIPOSR_NO_XVFB=1 sem DISPLAY: o bake de textura (moderngl) precisa de Xvfb. "
+            "Remove TRIPOSR_NO_XVFB ou define DISPLAY. Em Docker, não uses NO_XVFB — o worker "
+            "invoca xvfb-run automaticamente."
+        )
+    if bake_texture != "0" and wrap_xvfb:
+        xvfb = _resolve_xvfb_run()
         if xvfb:
+            use_xvfb = True
+            # `--` garante que argumentos do Python não são confundidos com opções do xvfb-run.
             final_cmd = [
                 xvfb,
                 "-a",
                 "-s",
-                "-screen 0 1024x768x24+32",
+                "-ac -screen 0 1024x768x24 -nolisten tcp",
+                "--",
             ] + cmd
+        else:
+            raise RuntimeError(
+                "BAKE_TEXTURE está ativo mas xvfb-run não foi encontrado "
+                "(instala o pacote `xvfb` na imagem ou define XVFB_RUN_PATH). "
+                "Alternativa: BAKE_TEXTURE=0 para gerar mesh sem bake de textura."
+            )
 
-    proc = subprocess.run(
+    tri_timeout = _float_env("TRIPOSR_TIMEOUT_SECONDS", 5400.0)
+    proc = _run_cmd_with_timeout(
         final_cmd,
         cwd=str(root),
-        capture_output=True,
-        text=True,
-        env=_triposr_subprocess_env(),
+        env=_triposr_subprocess_env(use_xvfb_wrapper=use_xvfb),
+        timeout_sec=tri_timeout,
+        timeout_label="TripoSR run.py",
     )
     if proc.returncode != 0:
         detail = _subprocess_fail_detail(proc)
@@ -413,16 +563,19 @@ def process_job(row: dict):
             if not mesh:
                 raise RuntimeError("TripoSR produced no mesh file")
             # Sempre passa pelo postprocess para normalizar orientação e preservar fidelidade.
-            pp = subprocess.run(
+            pp_dir = str(Path(__file__).resolve().parent)
+            pp_timeout = _float_env("POSTPROCESS_TIMEOUT_SECONDS", 900.0)
+            pp = _run_cmd_with_timeout(
                 [
                     sys.executable,
                     str(Path(__file__).parent / "postprocess.py"),
                     str(mesh),
                     str(glb_final),
                 ],
-                capture_output=True,
-                text=True,
+                cwd=pp_dir,
                 env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                timeout_sec=pp_timeout,
+                timeout_label="postprocess.py",
             )
             if pp.returncode != 0:
                 raise RuntimeError(
@@ -471,6 +624,7 @@ def main():
     )
     while True:
         try:
+            reclaim_stale_processing_rows()
             row = fetch_next_queued()
             if row:
                 claimed = try_claim_row(row["id"])

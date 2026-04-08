@@ -477,7 +477,9 @@ export default function ArEyewearPage() {
                               {t("arEyewear.reject")}
                             </Button>
                           )}
-                          {(a.status === "failed" || a.status === "rejected") && (
+                          {(a.status === "failed" ||
+                            a.status === "rejected" ||
+                            a.status === "processing") && (
                             <Button
                               loading={actionId === `${a.id}-requeue`}
                               onClick={() => doAction(a.id, "requeue")}

@@ -19,6 +19,42 @@ def _scene_concat_meshes(scene):
     return trimesh.util.concatenate(geoms)
 
 
+def _align_principal_axes_scene(scene):
+    """
+    Roda a cena para alinhar aos eixos da OBB (PCA dos vértices), mais estável que só permutar AABB
+    quando a malha está torta no espaço. Compatível com glTF Y-up usado no provador AR.
+
+    Desligar: AR_POSTPROCESS_PCA_ALIGN=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_PCA_ALIGN", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return
+
+    import trimesh
+
+    combined = _scene_concat_meshes(scene)
+    if combined is None or len(combined.vertices) < 8:
+        return
+    try:
+        obb = combined.bounding_box_oriented
+        T = getattr(obb, "transform", None)
+        if T is None:
+            return
+        T = np.asarray(T, dtype=float)
+        if T.shape != (4, 4):
+            return
+        det = np.linalg.det(T[:3, :3])
+        if not np.isfinite(det) or abs(det) < 1e-12:
+            return
+        Tinv = np.linalg.inv(T)
+        scene.apply_transform(Tinv)
+    except Exception:
+        return
+
+
 def _canonical_axes_smallest_y_largest_x(scene):
     """
     Após o mesh estar “deitado”, reatribui eixos para um frame glTF coerente com o provador:
@@ -133,6 +169,14 @@ def main():
 
     # 1) Deitar se o mesh veio “em pé” (um eixo domina). 2) Frame canônico (largura X, fino Y).
     _lay_down_tallest_extent(scene)
+    try:
+        b = scene.bounds
+        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+        scene.apply_translation(-c)
+    except Exception:
+        pass
+
+    _align_principal_axes_scene(scene)
     try:
         b = scene.bounds
         c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5

@@ -11,6 +11,44 @@ const MODEL_URL =
 
 const Z_SHELL = 2147483640;
 
+/**
+ * Desktop costuma falhar com facingMode + resolução (OverconstrainedError).
+ * Tenta várias constraints e cai em { video: true }.
+ */
+function omafitArGetUserMediaStream() {
+  const md = typeof navigator !== "undefined" ? navigator.mediaDevices : null;
+  if (md && typeof md.getUserMedia === "function") {
+    const attempts = [
+      {
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+        audio: false,
+      },
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+      { video: true, audio: false },
+    ];
+    return attempts.reduce(
+      (p, c) => p.catch(() => md.getUserMedia(c)),
+      Promise.reject(new Error("omafit-ar: try next constraint")),
+    );
+  }
+  const legacy =
+    navigator.getUserMedia ||
+    navigator.webkitGetUserMedia ||
+    navigator.mozGetUserMedia ||
+    navigator.msGetUserMedia;
+  if (!legacy) {
+    return Promise.reject(new Error("getUserMedia não disponível neste navegador"));
+  }
+  return new Promise((resolve, reject) => {
+    legacy.call(navigator, { video: true, audio: false }, resolve, reject);
+  });
+}
+
 function darkenHex(hex, amount = 20) {
   const h = String(hex || "#810707").replace("#", "");
   if (h.length !== 6) return "#6a0606";
@@ -430,6 +468,9 @@ async function runArSession({
   t,
   onClose,
 }) {
+  const debugRunId = `run_${Date.now()}`;
+  let debugLoggedNoFace = false;
+  let debugLoggedPose = false;
   colContent.innerHTML = "";
   const desktopCol = shell.querySelector(".omafit-ar-col-desktop");
   if (desktopCol) desktopCol.style.display = "none";
@@ -557,10 +598,7 @@ async function runArSession({
       });
     }
 
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: false,
-    });
+    stream = await omafitArGetUserMediaStream();
     video.srcObject = stream;
     await video.play();
     for (let i = 0; i < 40 && (!video.videoWidth || !video.videoHeight); i += 1) {
@@ -601,6 +639,9 @@ async function runArSession({
       const v = parseFloat(raw);
       return Number.isFinite(v) ? degToRad(v) : degToRad(fallbackDeg);
     }
+    // #region agent log
+    fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H1',location:'omafit-ar-widget.js:readRotRad-config',message:'AR rotation dataset raw values',data:{arGlbRotX:cfgRoot?.dataset?.arGlbRotX ?? null,arGlbRotY:cfgRoot?.dataset?.arGlbRotY ?? null,arGlbRotZ:cfgRoot?.dataset?.arGlbRotZ ?? null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     const glasses = gltf.scene;
     glasses.frustumCulled = false;
@@ -654,6 +695,9 @@ async function runArSession({
       readRotRad("arGlbRotY", -90),
       readRotRad("arGlbRotZ", -90),
     );
+    // #region agent log
+    fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H2',location:'omafit-ar-widget.js:modelFix.rotation.set',message:'Applied modelFix rotation degrees',data:{xDeg:Math.round((modelFix.rotation.x*180/Math.PI)*100)/100,yDeg:Math.round((modelFix.rotation.y*180/Math.PI)*100)/100,zDeg:Math.round((modelFix.rotation.z*180/Math.PI)*100)/100,order:modelFix.rotation.order},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     modelFix.add(glasses);
 
     const faceRoot = new THREE.Group();
@@ -737,6 +781,12 @@ async function runArSession({
       targetPos.addScaledVector(yAxis, -0.008);
       targetPos.addScaledVector(zAxis, -0.016);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
+      if (!debugLoggedPose) {
+        debugLoggedPose = true;
+        // #region agent log
+        fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H3',location:'omafit-ar-widget.js:applyGlassesPoseFromLandmarks',message:'First pose basis and target quaternion',data:{xAxis:{x:xAxis.x,y:xAxis.y,z:xAxis.z},yAxis:{x:yAxis.x,y:yAxis.y,z:yAxis.z},zAxis:{x:zAxis.x,y:zAxis.y,z:zAxis.z},targetQuat:{x:targetQuat.x,y:targetQuat.y,z:targetQuat.z,w:targetQuat.w}},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      }
 
       // Escala geométrica: largura do frame proporcional à distância entre pupilas.
       const ipdWorld = pL.distanceTo(pR);
@@ -763,6 +813,12 @@ async function runArSession({
       const ts = Math.round(performance.now());
       const res = landmarker.detectForVideo(video, ts);
       if (!res.faceLandmarks || !res.faceLandmarks[0]) {
+        if (!debugLoggedNoFace) {
+          debugLoggedNoFace = true;
+          // #region agent log
+          fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H4',location:'omafit-ar-widget.js:frame-no-face',message:'Frame without face landmarks',data:{videoWidth:video.videoWidth || 0,videoHeight:video.videoHeight || 0},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+        }
         faceRoot.visible = false;
         renderer.render(scene, camera);
         return;
@@ -776,7 +832,11 @@ async function runArSession({
   } catch (e) {
     console.error("[omafit-ar]", e);
     const isCam =
-      e.name === "NotAllowedError" || e.name === "PermissionDeniedError";
+      e.name === "NotAllowedError" ||
+      e.name === "PermissionDeniedError" ||
+      e.name === "OverconstrainedError" ||
+      e.name === "NotFoundError" ||
+      e.name === "AbortError";
     const msg = String(e?.message || e || "");
     const isGlb =
       /glb|gltf|fetch|load|404|403|network|failed to fetch|http/i.test(msg) &&

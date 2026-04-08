@@ -8,13 +8,31 @@
 
 FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
 
+# TripoSR --bake-texture usa moderngl → precisa de libGL + X11 (glcontext backend).
+# Sem isto: "libGL.so not found" ao rasterizar o atlas de posições.
 ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev \
     git ca-certificates \
     build-essential cmake ninja-build pkg-config \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    libgl1 \
+    libgl1-mesa-dri \
+    libglib2.0-0 \
+    libx11-6 \
+    libxext6 \
+    xvfb \
+    && rm -rf /var/lib/apt/lists/* \
+    && ARCH="$(uname -m)" \
+    && if [ "$ARCH" = "aarch64" ]; then GLDIR=/usr/lib/aarch64-linux-gnu; \
+       else GLDIR=/usr/lib/x86_64-linux-gnu; fi \
+    && ln -sf "${GLDIR}/libGL.so.1" /usr/lib/libGL.so \
+    && ldconfig
+
+# Dependências GL em subpastas multiarch; glcontext não as inclui por defeito.
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu
 
 # pip/scikit-build isolado não vê o g++ do sistema; torchmcubes precisa compilar C++.
 ENV CC=/usr/bin/gcc

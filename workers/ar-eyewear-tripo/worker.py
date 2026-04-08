@@ -250,6 +250,19 @@ def upload_storage(path: str, data: bytes, content_type: str) -> str:
     return public
 
 
+def _triposr_subprocess_env() -> dict:
+    """moderngl/glcontext não incluem /usr/lib/<arch>-linux-gnu na procura por libGL.so."""
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    extra = "/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu"
+    cur = str(env.get("LD_LIBRARY_PATH", "") or "").strip()
+    if cur:
+        if not any(p in cur for p in ("x86_64-linux-gnu", "aarch64-linux-gnu")):
+            env["LD_LIBRARY_PATH"] = f"{extra}:{cur}"
+    else:
+        env["LD_LIBRARY_PATH"] = extra
+    return env
+
+
 def _subprocess_fail_detail(proc: subprocess.CompletedProcess) -> str:
     parts: list[str] = []
     if proc.stdout and proc.stdout.strip():
@@ -288,12 +301,29 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
         texture_resolution = os.environ.get("TEXTURE_RESOLUTION", "").strip()
         if texture_resolution.isdigit():
             cmd.extend(["--texture-resolution", texture_resolution])
+
+    # bake_texture → moderngl precisa de contexto GL; em container sem X11 usa-se Xvfb.
+    final_cmd = cmd
+    if bake_texture != "0" and os.environ.get("TRIPOSR_NO_XVFB", "").strip() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        xvfb = shutil.which("xvfb-run")
+        if xvfb:
+            final_cmd = [
+                xvfb,
+                "-a",
+                "-s",
+                "-screen 0 1024x768x24+32",
+            ] + cmd
+
     proc = subprocess.run(
-        cmd,
+        final_cmd,
         cwd=str(root),
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        env=_triposr_subprocess_env(),
     )
     if proc.returncode != 0:
         detail = _subprocess_fail_detail(proc)

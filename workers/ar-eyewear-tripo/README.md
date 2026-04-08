@@ -17,7 +17,8 @@ Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
 | `WORKER_STUB` | não | `1` = não roda TripoSR; gera GLB caixa |
 | `TRIPOSR_ROOT` | não | Default `/opt/TripoSR` |
 | `POLL_SECONDS` | não | Intervalo quando fila vazia (default 10) |
-| `BAKE_TEXTURE` | não | `1` = passa `--bake-texture` ao TripoSR |
+| `BAKE_TEXTURE` | não | `1` = passa `--bake-texture` ao TripoSR (exige OpenGL na imagem; ver Dockerfile) |
+| `TRIPOSR_NO_XVFB` | não | `1` = não envolve `run.py` com `xvfb-run` (só se tiver DISPLAY real) |
 
 ## Docker Compose (EC2 com try-on self-hosted)
 
@@ -31,6 +32,8 @@ No repositório **omafit-widget**, em `self-hosted-tryon/docker-compose.yml`, ex
 docker build -f Dockerfile -t omafit-ar-tripo .
 docker run --gpus all -e SUPABASE_URL=... -e SUPABASE_SERVICE_ROLE_KEY=... omafit-ar-tripo
 ```
+
+A imagem GPU inclui `libgl1` + `libgl1-mesa-dri` + `xvfb` porque o bake de textura do TripoSR usa **moderngl**. O `glcontext` só procura `libGL.so` em `/usr/lib` e `LD_LIBRARY_PATH`, não na pasta multiarch (`…/x86_64-linux-gnu/`); por isso a imagem cria um symlink em `/usr/lib/libGL.so` e define `LD_LIBRARY_PATH`. O worker também reforça isto ao chamar o `run.py`.
 
 **Stub (CI / sem GPU):**
 

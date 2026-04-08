@@ -674,17 +674,64 @@ async function runArSession({
         }
       }
     });
+    const autoOrient = new THREE.Group();
+    autoOrient.rotation.order = "YXZ";
+    autoOrient.add(glasses);
+
+    // Canonicaliza orientação do GLB antes do ajuste manual X/Y/Z:
+    // preferir largura (hastes) no eixo X e espessura no eixo Y.
+    const orientCandidatesDeg = [
+      [0, 0, 0],
+      [0, 0, 90],
+      [0, 0, -90],
+      [0, 90, 0],
+      [0, -90, 0],
+      [90, 0, 0],
+      [-90, 0, 0],
+      [90, 90, 0],
+      [90, -90, 0],
+      [-90, 90, 0],
+      [-90, -90, 0],
+      [0, 90, 90],
+      [0, -90, -90],
+    ];
+    const scoreOrientation = () => {
+      autoOrient.updateMatrixWorld(true);
+      const b = new THREE.Box3().setFromObject(autoOrient);
+      const s = b.getSize(new THREE.Vector3());
+      const maxDim = Math.max(s.x, s.y, s.z, 1e-6);
+      const minDim = Math.min(s.x, s.y, s.z, 1e-6);
+      const midDim = s.x + s.y + s.z - maxDim - minDim;
+      const xLargest = s.x / maxDim; // melhor quando ~1
+      const ySmallest = minDim / Math.max(s.y, 1e-6); // melhor quando ~1
+      const zMiddle = 1 - Math.min(1, Math.abs(s.z - midDim) / Math.max(midDim, 1e-6)); // melhor quando ~1
+      return xLargest * 0.6 + ySmallest * 0.3 + zMiddle * 0.1;
+    };
+    let best = orientCandidatesDeg[0];
+    let bestScore = -Infinity;
+    for (const [dx, dy, dz] of orientCandidatesDeg) {
+      autoOrient.rotation.set(degToRad(dx), degToRad(dy), degToRad(dz));
+      const sc = scoreOrientation();
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = [dx, dy, dz];
+      }
+    }
+    autoOrient.rotation.set(degToRad(best[0]), degToRad(best[1]), degToRad(best[2]));
+
     let baseGlbScale = 1;
     {
-      glasses.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(glasses);
+      autoOrient.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(autoOrient);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
-      glasses.position.sub(center);
+      autoOrient.position.sub(center);
       baseGlbScale = 1 / maxDim;
-      glasses.scale.setScalar(baseGlbScale);
-      glasses.userData._omafitNormWidth = Math.max(size.x / maxDim, 1e-4);
+      autoOrient.scale.setScalar(baseGlbScale);
+      const normWidth = Math.max(size.x / maxDim, 1e-4);
+      glasses.userData._omafitNormWidth = normWidth;
+      autoOrient.userData._omafitNormWidth = normWidth;
     }
 
     /** Corrige GLB “deitado” (TripoSR / export Z-up ou deitado no plano). Afinar no tema com data-ar-glb-rot-*. */
@@ -698,7 +745,7 @@ async function runArSession({
     // #region agent log
     fetch('http://127.0.0.1:7779/ingest/736271b4-0216-42af-91db-7273b476c84e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8c9070'},body:JSON.stringify({sessionId:'8c9070',runId:debugRunId,hypothesisId:'H2',location:'omafit-ar-widget.js:modelFix.rotation.set',message:'Applied modelFix rotation degrees',data:{xDeg:Math.round((modelFix.rotation.x*180/Math.PI)*100)/100,yDeg:Math.round((modelFix.rotation.y*180/Math.PI)*100)/100,zDeg:Math.round((modelFix.rotation.z*180/Math.PI)*100)/100,order:modelFix.rotation.order},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
-    modelFix.add(glasses);
+    modelFix.add(autoOrient);
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
@@ -791,7 +838,8 @@ async function runArSession({
       // Escala geométrica: largura do frame proporcional à distância entre pupilas.
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;
-      const modelNormWidth = glasses.userData._omafitNormWidth || 1;
+      const modelNormWidth =
+        autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
       const faceScale = Math.max(0.06, Math.min(0.245, targetFrameWidth / modelNormWidth));
 
       faceRoot.position.lerp(targetPos, 0.38);

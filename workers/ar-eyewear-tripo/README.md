@@ -21,6 +21,9 @@ Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
 | `TRIPOSR_NO_XVFB` | não | `1` = pedido para não usar Xvfb (só útil com X11 real). Em Docker, **remove** também qualquer `DISPLAY=:0` do compose ou mantém `TRIPOSR_ALWAYS_XVFB=1` (default). |
 | `TRIPOSR_ALWAYS_XVFB` | não | Default **1**: com bake, usa `xvfb-run` se existir **mesmo** com `TRIPOSR_NO_XVFB=1` (corrige `DISPLAY` fantasma). `0` + `NO_XVFB` = confias no teu `DISPLAY`. |
 | `TRIPOSR_XVFB_LIBGL_SOFTWARE` | não | Default **1**: força `LIBGL_ALWAYS_SOFTWARE` no subprocess com Xvfb (Mesa no virtual; evita GLX NVIDIA + Xvfb). `0` para desligar. |
+| `TRIPOSR_MANUAL_XVFB` | não | Default **1**: arranca **Xvfb** directamente (`+extension GLX`), espera com **xdpyinfo** e passa `DISPLAY` explícito no env do `run.py` (caminho mais fiável em Docker NVIDIA). `0` para saltar. |
+| `TRIPOSR_USE_PYVIRTUALDISPLAY` | não | Default **1**: se o manual falhar, tenta **PyVirtualDisplay** com `new_display_var` no env + GLX. `0` salta para `xvfb-run`. |
+| Postprocess `AR_POSTPROCESS_XZ_PC_ALIGN` | não | Default **1**: após eixos canónicos, roda a malha no plano XZ para alinhar a maior dispersão (PCA 2D) a **+X** — reduz GLB “de lado”. `0` desliga. |
 | `XVFB_RUN_PATH` | não | Caminho absoluto para `xvfb-run` se não estiver no `PATH` (ex.: `/usr/bin/xvfb-run`) |
 | `TRIPOSR_TIMEOUT_SECONDS` | não | Máximo de segundos para `run.py` (default **5400** ≈ 90 min). `0` = sem limite (não recomendado). |
 | `POSTPROCESS_TIMEOUT_SECONDS` | não | Limite para `postprocess.py` (default **900**). |
@@ -61,7 +64,7 @@ Execute no Supabase: [`../../supabase_create_ar_eyewear_assets.sql`](../../supab
 
 ## Notas
 
-- **Erro `XOpenDisplay: cannot open display` no bake de textura**: o TripoSR com `--bake-texture` usa OpenGL via X11. O worker corre `run.py` dentro de `xvfb-run` e **remove** `DISPLAY`/`WAYLAND` herdados do host; força renderização **software** no Xvfb (`LIBGL_ALWAYS_SOFTWARE`). Se ainda falhar: `BAKE_TEXTURE=0` (mesh/GLB sem bake). No `docker-compose`, **não** passes `DISPLAY=:0` a menos que exista X real.
+- **Erro `XOpenDisplay: cannot open display` no bake**: a imagem **GPU** (`Dockerfile`) faz **patch** a `TripoSR/tsr/bake_texture.py` no build: o moderngl tenta **`backend="egl"`**, depois **`osmesa`**, e só no fim o X11 original. Instala-se `libegl1-mesa`, `libgbm1`, `libosmesa6`. **Rebuild obrigatório** após puxar esta alteração. O worker continua a poder usar Xvfb como rede de segurança se algum ambiente cair no fallback X11. Aviso do **onnxruntime** sobre `/sys/class/drm/...` é habitual em Docker e **não** é a causa do bake. Último recurso: `BAKE_TEXTURE=0`.
 - **Job fica eternamente em “processing”**: o TripoSR/postprocess têm **timeout** (env acima); jobs **zombies** (worker morto) são marcados **failed** após `AR_WORKER_STALE_PROCESSING_MINUTES`. No admin, **Voltar a fila** também está disponível para linhas em `processing`.
 - TripoSR exige GPU NVIDIA com VRAM suficiente (veja o README oficial).
 - Concorrência: o MVP assume um worker; para vários, adicione claim atômico (RPC `FOR UPDATE SKIP LOCKED`).

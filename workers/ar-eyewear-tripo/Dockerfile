@@ -24,6 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-6 \
     libxext6 \
     xvfb \
+    x11-utils \
+    libegl1-mesa \
+    libgbm1 \
+    libosmesa6 \
     && rm -rf /var/lib/apt/lists/* \
     && ARCH="$(uname -m)" \
     && if [ "$ARCH" = "aarch64" ]; then GLDIR=/usr/lib/aarch64-linux-gnu; \
@@ -50,6 +54,40 @@ RUN pip3 install --upgrade setuptools pip wheel && \
     pip3 install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
     pip3 install --no-build-isolation --no-cache-dir -r requirements.txt && \
     pip3 install --no-cache-dir onnxruntime
+
+# Bake: moderngl por defeito usa X11 (XOpenDisplay). Regex com indentação flexível — o clone
+# TripoSR pode ter tabs/espaços diferentes; o patch inline antigo falhava em silêncio com cache.
+RUN python3 <<'PY'
+import re
+from pathlib import Path
+
+path = Path("/opt/TripoSR/tsr/bake_texture.py")
+text = path.read_text()
+pat = re.compile(
+    r"^(\s*)ctx\s*=\s*moderngl\.create_context\(\s*standalone\s*=\s*True\s*\)\s*$",
+    re.MULTILINE,
+)
+m = pat.search(text)
+if not m:
+    raise SystemExit("patch bake_texture: linha moderngl.create_context(standalone=True) não encontrada")
+indent = m.group(1)
+repl = (
+    f"{indent}try:\n"
+    f'{indent}    ctx = moderngl.create_context(standalone=True, backend="egl")\n'
+    f"{indent}except Exception:\n"
+    f"{indent}    try:\n"
+    f'{indent}        ctx = moderngl.create_context(standalone=True, backend="osmesa")\n'
+    f"{indent}    except Exception:\n"
+    f"{indent}        ctx = moderngl.create_context(standalone=True)"
+)
+text2 = pat.sub(repl, text, count=1)
+if text2 == text:
+    raise SystemExit("patch bake_texture: substituição não alterou o ficheiro")
+path.write_text(text2)
+print("patched bake_texture.py: egl -> osmesa -> x11")
+PY
+RUN grep -q 'backend="egl"' /opt/TripoSR/tsr/bake_texture.py \
+    || (echo "ERRO: bake_texture.py sem patch EGL" && exit 1)
 
 # rembg importa onnxruntime; o requirements.txt do TripoSR nem sempre declara (só rembg).
 

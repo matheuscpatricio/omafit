@@ -99,6 +99,48 @@ def _canonical_axes_smallest_y_largest_x(scene):
     scene.apply_transform(t)
 
 
+def _align_elongation_xz_to_positive_x(scene):
+    """
+    No plano horizontal XZ (Y = cima no glTF), roda em torno de Y para alinhar a maior
+    dispersão dos vértices ao eixo +X — corresponde melhor à “largura” da armação (hastes)
+    do que só AABB após permutas, reduzindo óculos visualmente a 90° no GLB.
+
+    Desligar: AR_POSTPROCESS_XZ_PC_ALIGN=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_XZ_PC_ALIGN", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return
+
+    import trimesh
+
+    combined = _scene_concat_meshes(scene)
+    if combined is None or len(combined.vertices) < 24:
+        return
+    try:
+        xz = np.asarray(combined.vertices[:, [0, 2]], dtype=float)
+        xz -= xz.mean(axis=0)
+        if np.linalg.norm(xz) < 1e-9:
+            return
+        cov = np.cov(xz.T)
+        evals, evecs = np.linalg.eigh(cov)
+        if float(evals[-1]) < float(evals[0]) * 1.08:
+            return
+        main = np.asarray(evecs[:, -1], dtype=float)
+        n = float(np.linalg.norm(main))
+        if n < 1e-9:
+            return
+        main /= n
+        ang = math.atan2(float(main[1]), float(main[0]))
+        scene.apply_transform(
+            trimesh.transformations.rotation_matrix(-ang, [0.0, 1.0, 0.0])
+        )
+    except Exception:
+        return
+
+
 def _lay_down_tallest_extent(scene):
     """
     TripoSR costuma devolver o óculos “em pé”: um eixo tem extent bem maior (altura).
@@ -185,6 +227,20 @@ def main():
         pass
 
     _canonical_axes_smallest_y_largest_x(scene)
+    try:
+        b = scene.bounds
+        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+        scene.apply_translation(-c)
+    except Exception:
+        pass
+
+    _align_elongation_xz_to_positive_x(scene)
+    try:
+        b = scene.bounds
+        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+        scene.apply_translation(-c)
+    except Exception:
+        pass
 
     # Rotação fina opcional (defaults neutros — lay+canônico já alinham com o provador Y-up).
     # Ajuste por env se um lote TripoSR ainda sair torto.

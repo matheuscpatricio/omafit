@@ -13,6 +13,8 @@ Env:
   XVFB_RUN_PATH — caminho a xvfb-run se PATH não o incluir
   TRIPOSR_ALWAYS_XVFB — default 1: com bake, usa xvfb-run mesmo se TRIPOSR_NO_XVFB=1 (evita DISPLAY=:0 falso no Docker). 0 + NO_XVFB = X real.
   TRIPOSR_XVFB_LIBGL_SOFTWARE — default 1: com xvfb-run, LIBGL_ALWAYS_SOFTWARE=1 (Mesa no ecrã virtual). 0 para tentar GLX “real”.
+  TRIPOSR_USE_PYVIRTUALDISPLAY — default 1: fallback PyVirtualDisplay + DISPLAY explícito (new_display_var).
+  TRIPOSR_MANUAL_XVFB — default 1: primeiro arranca Xvfb manualmente (+extension GLX, xdpyinfo) e passa DISPLAY no env.
   TRIPOSR_TIMEOUT_SECONDS — limite para run.py (default 5400); 0 = sem limite
   POSTPROCESS_TIMEOUT_SECONDS — limite para postprocess.py (default 900)
   AR_WORKER_STALE_PROCESSING_MINUTES — jobs em processing há mais tempo → failed (default 120); 0 = desliga
@@ -251,10 +253,11 @@ def _run_cmd_with_timeout(
     env: dict,
     timeout_sec: float,
     timeout_label: str,
+    start_new_session: bool = True,
 ) -> subprocess.CompletedProcess:
     """
-    Corre comando com timeout; mata o grupo de processos (útil com xvfb-run + python).
-    timeout_sec <= 0 desativa o limite.
+    Corre comando com timeout. Com xvfb-run, use start_new_session=False — com True o glcontext
+    por vezes continua sem DISPLAY válido (XOpenDisplay) dentro do filho.
     """
     if timeout_sec <= 0:
         return subprocess.run(
@@ -271,14 +274,17 @@ def _run_cmd_with_timeout(
         stderr=subprocess.PIPE,
         text=True,
         env=env,
-        start_new_session=True,
+        start_new_session=start_new_session,
     )
     try:
         out, err = proc.communicate(timeout=timeout_sec)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+        if start_new_session:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+        else:
             proc.kill()
         try:
             proc.wait(timeout=45)
@@ -388,6 +394,140 @@ def _triposr_subprocess_env(*, use_xvfb_wrapper: bool = False) -> dict:
     return env
 
 
+def _normalize_display_var(raw: str) -> str:
+    d = (raw or "").strip()
+    if not d:
+        return ""
+    if not d.startswith(":"):
+        d = f":{d.lstrip(':')}"
+    return d
+
+
+def _triposr_env_for_explicit_display(display_var: str) -> dict:
+    """Env do subprocess TripoSR com DISPLAY explícito (não depender só de os.environ)."""
+    d = _normalize_display_var(display_var)
+    if not d:
+        raise RuntimeError("DISPLAY vazio para o bake (Xvfb não arrancou?)")
+    env = _triposr_subprocess_env(use_xvfb_wrapper=False)
+    for k in (
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "__GLX_VENDOR_LIBRARY_NAME",
+    ):
+        env.pop(k, None)
+    env["DISPLAY"] = d
+    env.setdefault("XDG_RUNTIME_DIR", "/tmp")
+    if str(os.environ.get("TRIPOSR_XVFB_LIBGL_SOFTWARE", "1")).strip() not in (
+        "0",
+        "false",
+        "no",
+    ):
+        env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    return env
+
+
+def _wait_x11_display_ready(display: str, seconds: float = 8.0) -> bool:
+    xd = shutil.which("xdpyinfo")
+    if not xd:
+        time.sleep(0.7)
+        return True
+    disp = _normalize_display_var(display)
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            r = subprocess.run(
+                [xd, "-display", disp],
+                capture_output=True,
+                text=True,
+                timeout=4,
+            )
+            if r.returncode == 0:
+                return True
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        time.sleep(0.08)
+    return False
+
+
+def _run_triposr_under_manual_xvfb(
+    cmd: list[str],
+    root: Path,
+    tri_timeout: float,
+) -> subprocess.CompletedProcess:
+    """
+    Arranca Xvfb directamente, define DISPLAY no env do filho (+ GLX), corre TripoSR, mata Xvfb.
+    Mais fiável que xvfb-run/PyVirtualDisplay em alguns contentores NVIDIA.
+    """
+    xvfb_bin = shutil.which("Xvfb") or "/usr/bin/Xvfb"
+    if not os.path.isfile(xvfb_bin) or not os.access(xvfb_bin, os.X_OK):
+        raise FileNotFoundError("Xvfb")
+
+    import random
+
+    last_err = ""
+    for _ in range(36):
+        n = random.randint(40, 400)
+        disp = f":{n}"
+        proc_x = subprocess.Popen(
+            [
+                xvfb_bin,
+                disp,
+                "-screen",
+                "0",
+                "1024x768x24",
+                "-ac",
+                "-nolisten",
+                "tcp",
+                "-dpi",
+                "96",
+                "+extension",
+                "GLX",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        time.sleep(0.35)
+        if proc_x.poll() is not None:
+            err_b = proc_x.stderr.read() if proc_x.stderr else b""
+            last_err = err_b.decode(errors="replace")[:600]
+            continue
+        if not _wait_x11_display_ready(disp):
+            proc_x.terminate()
+            try:
+                proc_x.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                proc_x.kill()
+            last_err = "xdpyinfo não viu o display a tempo"
+            continue
+        try:
+            env = _triposr_env_for_explicit_display(disp)
+            return _run_cmd_with_timeout(
+                cmd,
+                cwd=str(root),
+                env=env,
+                timeout_sec=tri_timeout,
+                timeout_label="TripoSR run.py",
+                start_new_session=True,
+            )
+        finally:
+            proc_x.terminate()
+            try:
+                proc_x.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc_x.kill()
+                try:
+                    proc_x.wait(timeout=6)
+                except subprocess.TimeoutExpired:
+                    pass
+
+    raise RuntimeError(
+        "Xvfb manual não ficou pronto para moderngl (várias tentativas). "
+        f"Último erro: {last_err or '(sem detalhe)'}. Tenta BAKE_TEXTURE=0 ou verifica pacote xvfb."
+    )
+
+
 def _subprocess_fail_detail(proc: subprocess.CompletedProcess) -> str:
     parts: list[str] = []
     if proc.stdout and proc.stdout.strip():
@@ -428,8 +568,6 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
             cmd.extend(["--texture-resolution", texture_resolution])
 
     # bake_texture → moderngl precisa de contexto GL; em container usa-se Xvfb.
-    final_cmd = cmd
-    use_xvfb = False
     no_xvfb = os.environ.get("TRIPOSR_NO_XVFB", "").strip() in ("1", "true", "yes")
     # Em Docker costuma haver DISPLAY=:0 sem X real + TRIPOSR_NO_XVFB=1 → XOpenDisplay.
     # Por defeito usa-se xvfb-run sempre que existir; opt-out: TRIPOSR_ALWAYS_XVFB=0 e NO_XVFB=1.
@@ -448,33 +586,106 @@ def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
             "Remove TRIPOSR_NO_XVFB ou define DISPLAY. Em Docker, não uses NO_XVFB — o worker "
             "invoca xvfb-run automaticamente."
         )
+
+    tri_timeout = _float_env("TRIPOSR_TIMEOUT_SECONDS", 5400.0)
+    proc: subprocess.CompletedProcess | None = None
+
     if bake_texture != "0" and wrap_xvfb:
-        xvfb = _resolve_xvfb_run()
-        if xvfb:
-            use_xvfb = True
-            # `--` garante que argumentos do Python não são confundidos com opções do xvfb-run.
+        use_manual = str(os.environ.get("TRIPOSR_MANUAL_XVFB", "1")).strip() not in (
+            "0",
+            "false",
+            "no",
+        )
+        if use_manual:
+            try:
+                proc = _run_triposr_under_manual_xvfb(cmd, root, tri_timeout)
+            except (RuntimeError, FileNotFoundError) as e:
+                print(
+                    f"[worker] Xvfb manual não disponível ou falhou ({e}); a tentar PyVirtualDisplay/xvfb-run.",
+                    file=sys.stderr,
+                )
+                proc = None
+        else:
+            proc = None
+
+        prefer_pyvd = str(os.environ.get("TRIPOSR_USE_PYVIRTUALDISPLAY", "1")).strip() not in (
+            "0",
+            "false",
+            "no",
+        )
+        if proc is None and prefer_pyvd:
+            try:
+                from pyvirtualdisplay import Display
+            except ImportError:
+                Display = None  # type: ignore[misc, assignment]
+            if Display is not None:
+                try:
+                    with Display(
+                        backend="xvfb",
+                        visible=False,
+                        size=(1024, 768),
+                        color_depth=24,
+                        extra_args=[
+                            "-ac",
+                            "-nolisten",
+                            "tcp",
+                            "+extension",
+                            "GLX",
+                        ],
+                    ) as disp:
+                        disp_s = (
+                            getattr(disp, "new_display_var", None)
+                            or os.environ.get("DISPLAY")
+                            or ""
+                        )
+                        if not _wait_x11_display_ready(disp_s):
+                            raise RuntimeError("xdpyinfo: display PyVirtualDisplay não respondeu")
+                        proc = _run_cmd_with_timeout(
+                            cmd,
+                            cwd=str(root),
+                            env=_triposr_env_for_explicit_display(disp_s),
+                            timeout_sec=tri_timeout,
+                            timeout_label="TripoSR run.py",
+                            start_new_session=True,
+                        )
+                except Exception as e:
+                    print(
+                        f"[worker] PyVirtualDisplay falhou, a tentar xvfb-run: {e}",
+                        file=sys.stderr,
+                    )
+                    proc = None
+
+        if proc is None:
+            xvfb = _resolve_xvfb_run()
+            if not xvfb:
+                raise RuntimeError(
+                    "BAKE_TEXTURE ativo: instala `xvfb` na imagem ou define BAKE_TEXTURE=0. "
+                    "Falharam Xvfb manual, PyVirtualDisplay e xvfb-run."
+                )
             final_cmd = [
                 xvfb,
                 "-a",
                 "-s",
-                "-ac -screen 0 1024x768x24 -nolisten tcp",
+                "-ac -screen 0 1024x768x24 -nolisten tcp +extension GLX",
                 "--",
             ] + cmd
-        else:
-            raise RuntimeError(
-                "BAKE_TEXTURE está ativo mas xvfb-run não foi encontrado "
-                "(instala o pacote `xvfb` na imagem ou define XVFB_RUN_PATH). "
-                "Alternativa: BAKE_TEXTURE=0 para gerar mesh sem bake de textura."
+            proc = _run_cmd_with_timeout(
+                final_cmd,
+                cwd=str(root),
+                env=_triposr_subprocess_env(use_xvfb_wrapper=True),
+                timeout_sec=tri_timeout,
+                timeout_label="TripoSR run.py",
+                start_new_session=False,
             )
-
-    tri_timeout = _float_env("TRIPOSR_TIMEOUT_SECONDS", 5400.0)
-    proc = _run_cmd_with_timeout(
-        final_cmd,
-        cwd=str(root),
-        env=_triposr_subprocess_env(use_xvfb_wrapper=use_xvfb),
-        timeout_sec=tri_timeout,
-        timeout_label="TripoSR run.py",
-    )
+    else:
+        proc = _run_cmd_with_timeout(
+            cmd,
+            cwd=str(root),
+            env=_triposr_subprocess_env(use_xvfb_wrapper=False),
+            timeout_sec=tri_timeout,
+            timeout_label="TripoSR run.py",
+            start_new_session=True,
+        )
     if proc.returncode != 0:
         detail = _subprocess_fail_detail(proc)
         raise RuntimeError(

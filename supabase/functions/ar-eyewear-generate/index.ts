@@ -94,11 +94,27 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
   let lastStatus = "";
   const logs: string[] = [];
 
+  let statusEndpointUnsupported = false;
   while (Date.now() < deadline) {
-    const sRes = await fetch(statusUrl, { headers });
-    const sTxt = await sRes.text().catch(() => "");
+    let sRes: Response;
+    let sTxt = "";
+    if (!statusEndpointUnsupported) {
+      sRes = await fetch(statusUrl, { headers });
+      sTxt = await sRes.text().catch(() => "");
+      if (sRes.status === 405 || sRes.status === 404) {
+        // Algumas versões da API não expõem /status; faz fallback para /requests/{id}.
+        statusEndpointUnsupported = true;
+        logs.push(`status_endpoint_fallback=${sRes.status}`);
+        sRes = await fetch(resultUrl, { headers });
+        sTxt = await sRes.text().catch(() => "");
+      }
+    } else {
+      sRes = await fetch(resultUrl, { headers });
+      sTxt = await sRes.text().catch(() => "");
+    }
     if (!sRes.ok) {
-      throw new Error(`FAL status failed: ${sRes.status} ${sTxt.slice(0, 300)}`);
+      const label = statusEndpointUnsupported ? "result" : "status";
+      throw new Error(`FAL ${label} failed: ${sRes.status} ${sTxt.slice(0, 300)}`);
     }
     const sJson = sTxt ? JSON.parse(sTxt) : {};
     const status = String(sJson?.status || sJson?.state || sJson?.request_status || "").toUpperCase();

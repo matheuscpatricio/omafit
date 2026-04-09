@@ -550,7 +550,32 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
     json = { raw: txt };
   }
   if (!res.ok) {
-    throw new Error(json?.error || `Edge function failed: ${res.status} ${txt.slice(0, 300)}`);
+    const edgeErr = String(
+      json?.error || `Edge function failed: ${res.status} ${txt.slice(0, 300)}`,
+    );
+    const isFal405 = /FAL status failed:\s*405|FAL status failed\s+405/i.test(edgeErr);
+    if (isFal405 && hasArEyewearFalConfigured()) {
+      const row = await getAssetById(assetId);
+      const imageUrl = String(row?.image_front_url || "").trim();
+      const resolvedShop = String(row?.shop_domain || shopDomain || "").trim();
+      if (imageUrl && resolvedShop) {
+        const glbDraftUrl = await generateGlbDraftViaFal({
+          shopDomain: resolvedShop,
+          assetId: String(assetId || "").trim(),
+          imageUrl,
+        });
+        const asset = await patchAsset(assetId, {
+          status: "pending_review",
+          glb_draft_url: glbDraftUrl,
+          error_message: null,
+          generation_provider: "fal",
+          generation_request_id: null,
+          generation_logs: "fallback=app_server_after_edge_405",
+        });
+        return { ok: true, fallback: "app_server", glbDraftUrl, asset };
+      }
+    }
+    throw new Error(edgeErr);
   }
   return json;
 }
@@ -650,13 +675,31 @@ export async function generateGlbDraftViaFal({
 
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
   let lastStatus = "";
+  let statusEndpointUnsupported = false;
   while (Date.now() < deadline) {
-    const statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}/status?logs=1`, {
-      headers: falHeaders(apiKey),
-    });
-    const statusText = await statusRes.text().catch(() => "");
+    let statusRes;
+    let statusText = "";
+    if (!statusEndpointUnsupported) {
+      statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}/status?logs=1`, {
+        headers: falHeaders(apiKey),
+      });
+      statusText = await statusRes.text().catch(() => "");
+      if (statusRes.status === 405 || statusRes.status === 404) {
+        statusEndpointUnsupported = true;
+        statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}`, {
+          headers: falHeaders(apiKey),
+        });
+        statusText = await statusRes.text().catch(() => "");
+      }
+    } else {
+      statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}`, {
+        headers: falHeaders(apiKey),
+      });
+      statusText = await statusRes.text().catch(() => "");
+    }
     if (!statusRes.ok) {
-      throw new Error(`FAL status failed: ${statusRes.status} ${statusText.slice(0, 300)}`);
+      const label = statusEndpointUnsupported ? "result" : "status";
+      throw new Error(`FAL ${label} failed: ${statusRes.status} ${statusText.slice(0, 300)}`);
     }
     let statusJson = {};
     try {

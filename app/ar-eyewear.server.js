@@ -553,7 +553,7 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
     const edgeErr = String(
       json?.error || `Edge function failed: ${res.status} ${txt.slice(0, 300)}`,
     );
-    const isFal405 = /FAL status failed:\s*405|FAL status failed\s+405/i.test(edgeErr);
+    const isFal405 = /FAL (status|result) failed:\s*405/i.test(edgeErr);
     if (isFal405 && hasArEyewearFalConfigured()) {
       const row = await getAssetById(assetId);
       const imageUrl = String(row?.image_front_url || "").trim();
@@ -596,6 +596,27 @@ function falHeaders(apiKey) {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
+}
+
+const FAL_QUEUE_NS = new Set(["workflows", "comfy"]);
+
+/** Mesma regra que @fal-ai/client: status/result usam só owner/alias na URL da fila. */
+function falQueueBasePath(modelId) {
+  const id = String(modelId || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  const parts = id.split("/").filter(Boolean);
+  if (parts.length === 0) return id;
+  if (FAL_QUEUE_NS.has(parts[0]) && parts.length >= 3) {
+    return parts.slice(0, 3).join("/");
+  }
+  if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+  return id;
+}
+
+function falStatusUrlWithLogs(url) {
+  if (url.includes("logs=")) return url;
+  return url.includes("?") ? `${url}&logs=1` : `${url}?logs=1`;
 }
 
 function* walkStrings(node) {
@@ -673,6 +694,18 @@ export async function generateGlbDraftViaFal({
     throw new Error(`FAL sem request_id: ${submitText.slice(0, 300)}`);
   }
 
+  const queueBase = falQueueBasePath(modelId);
+  const builtStatus = `${baseUrl}/${queueBase}/requests/${requestId}/status`;
+  const builtResult = `${baseUrl}/${queueBase}/requests/${requestId}`;
+  const apiStatus = submitJson?.status_url ?? submitJson?.statusUrl;
+  const apiResponse = submitJson?.response_url ?? submitJson?.responseUrl;
+  const pollStatusUrl =
+    typeof apiStatus === "string" && apiStatus.startsWith("http")
+      ? falStatusUrlWithLogs(apiStatus)
+      : `${builtStatus}?logs=1`;
+  const fetchResultUrl =
+    typeof apiResponse === "string" && apiResponse.startsWith("http") ? apiResponse : builtResult;
+
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
   let lastStatus = "";
   let statusEndpointUnsupported = false;
@@ -680,19 +713,19 @@ export async function generateGlbDraftViaFal({
     let statusRes;
     let statusText = "";
     if (!statusEndpointUnsupported) {
-      statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}/status?logs=1`, {
+      statusRes = await fetch(pollStatusUrl, {
         headers: falHeaders(apiKey),
       });
       statusText = await statusRes.text().catch(() => "");
       if (statusRes.status === 405 || statusRes.status === 404) {
         statusEndpointUnsupported = true;
-        statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}`, {
+        statusRes = await fetch(builtResult, {
           headers: falHeaders(apiKey),
         });
         statusText = await statusRes.text().catch(() => "");
       }
     } else {
-      statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}`, {
+      statusRes = await fetch(builtResult, {
         headers: falHeaders(apiKey),
       });
       statusText = await statusRes.text().catch(() => "");
@@ -724,7 +757,7 @@ export async function generateGlbDraftViaFal({
     throw new Error(`FAL timeout (${timeoutSeconds}s), request_id=${requestId}, status=${lastStatus || "unknown"}`);
   }
 
-  const resultRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}`, {
+  const resultRes = await fetch(fetchResultUrl, {
     headers: falHeaders(apiKey),
   });
   const resultText = await resultRes.text().catch(() => "");

@@ -61,6 +61,25 @@ function extractGlbUrl(payload: unknown): string | null {
   return null;
 }
 
+/** Base do path na fila (igual @fal-ai/client): só owner/alias, não o sufixo do modelo. */
+const FAL_QUEUE_NAMESPACES = new Set(["workflows", "comfy"]);
+
+function falQueueBasePath(modelId: string): string {
+  const id = modelId.replace(/^\/+|\/+$/g, "");
+  const parts = id.split("/").filter(Boolean);
+  if (parts.length === 0) return id;
+  if (FAL_QUEUE_NAMESPACES.has(parts[0]) && parts.length >= 3) {
+    return parts.slice(0, 3).join("/");
+  }
+  if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+  return id;
+}
+
+function falStatusUrlWithLogs(url: string): string {
+  if (url.includes("logs=")) return url;
+  return url.includes("?") ? `${url}&logs=1` : `${url}?logs=1`;
+}
+
 async function callFalAndGetGlbUrl(imageUrl: string) {
   const falKey = env("FAL_API_KEY");
   if (!falKey) throw new Error("FAL_API_KEY não configurada na Edge Function");
@@ -88,8 +107,19 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
   const requestId = String(submitJson?.request_id || submitJson?.requestId || "").trim();
   if (!requestId) throw new Error(`FAL sem request_id: ${submitTxt.slice(0, 300)}`);
 
-  const statusUrl = `${baseUrl}/${modelId}/requests/${requestId}/status?logs=1`;
-  const resultUrl = `${baseUrl}/${modelId}/requests/${requestId}`;
+  const queueBase = falQueueBasePath(modelId);
+  const builtStatusUrl = `${baseUrl}/${queueBase}/requests/${requestId}/status`;
+  const builtResultUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
+  const apiStatusRaw = submitJson?.status_url ?? submitJson?.statusUrl;
+  const apiResponseRaw = submitJson?.response_url ?? submitJson?.responseUrl;
+  const statusUrl =
+    typeof apiStatusRaw === "string" && apiStatusRaw.startsWith("http")
+      ? falStatusUrlWithLogs(apiStatusRaw)
+      : `${builtStatusUrl}?logs=1`;
+  const resultUrl =
+    typeof apiResponseRaw === "string" && apiResponseRaw.startsWith("http")
+      ? apiResponseRaw
+      : builtResultUrl;
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
   let lastStatus = "";
   const logs: string[] = [];
@@ -105,11 +135,11 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
         // Algumas versões da API não expõem /status; faz fallback para /requests/{id}.
         statusEndpointUnsupported = true;
         logs.push(`status_endpoint_fallback=${sRes.status}`);
-        sRes = await fetch(resultUrl, { headers });
+        sRes = await fetch(builtResultUrl, { headers });
         sTxt = await sRes.text().catch(() => "");
       }
     } else {
-      sRes = await fetch(resultUrl, { headers });
+      sRes = await fetch(builtResultUrl, { headers });
       sTxt = await sRes.text().catch(() => "");
     }
     if (!sRes.ok) {

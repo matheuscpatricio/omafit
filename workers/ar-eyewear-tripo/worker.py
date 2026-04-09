@@ -579,6 +579,19 @@ def _fal_model_id() -> str:
     ).strip().strip("/")
 
 
+def _fal_queue_base_path(model_id: str) -> str:
+    """Mesma regra que @fal-ai/client: status/result usam só owner/alias na fila."""
+    mid = str(model_id or "").strip().strip("/")
+    parts = [p for p in mid.split("/") if p]
+    if not parts:
+        return mid
+    if parts[0] in ("workflows", "comfy") and len(parts) >= 3:
+        return "/".join(parts[:3])
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return mid
+
+
 def _pick_fal_image_url(front_url: str, three_url: str, profile_url: str) -> str:
     src = str(os.environ.get("FAL_IMAGE_URL_SOURCE", "front")).strip().lower()
     if src in ("three_quarter", "three-quarter", "three"):
@@ -639,8 +652,9 @@ def run_fal_tripo(front_url: str, three_url: str, profile_url: str, out_glb: Pat
     if not req_id:
         raise RuntimeError(f"FAL submit sem request_id: {str(body)[:1200]}")
 
-    status_url = f"{base}/{model}/requests/{req_id}/status"
-    result_url = f"{base}/{model}/requests/{req_id}"
+    queue_base = _fal_queue_base_path(model)
+    status_url = f"{base}/{queue_base}/requests/{req_id}/status"
+    result_url = f"{base}/{queue_base}/requests/{req_id}"
     timeout_sec = _float_env("FAL_TIMEOUT_SECONDS", 1800.0)
     poll_sec = _float_env("FAL_POLL_SECONDS", 4.0)
     deadline = time.time() + max(30.0, timeout_sec)

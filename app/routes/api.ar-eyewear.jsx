@@ -1,6 +1,6 @@
 /**
  * GET /api/ar-eyewear — lista assets da loja
- * POST /api/ar-eyewear — multipart: front, threeQuarter, profile, productId, variantId?, frameWidthMm?
+ * POST /api/ar-eyewear — multipart: front (obrigatório), threeQuarter?, profile?, productId, variantId?, frameWidthMm?
  */
 import { authenticate } from "../shopify.server";
 import { Buffer } from "node:buffer";
@@ -26,8 +26,12 @@ function extFromType(type) {
   return "jpg";
 }
 
+function isFileField(file) {
+  return file && typeof file.arrayBuffer === "function";
+}
+
 async function validateImage(file) {
-  if (!file || typeof file.arrayBuffer !== "function") {
+  if (!isFileField(file)) {
     return { ok: false, error: "Invalid file" };
   }
   const type = (file.type || "").toLowerCase();
@@ -39,6 +43,13 @@ async function validateImage(file) {
     return { ok: false, error: `Arquivo muito grande (máx ${MAX_BYTES / 1024 / 1024}MB)` };
   }
   return { ok: true, buf, type };
+}
+
+async function validateImageOptional(file) {
+  if (!isFileField(file)) {
+    return { ok: true, skip: true };
+  }
+  return validateImage(file);
 }
 
 export async function loader({ request }) {
@@ -100,8 +111,8 @@ export async function action({ request }) {
     const profile = form.get("profile");
 
     const v1 = await validateImage(front);
-    const v2 = await validateImage(threeQuarter);
-    const v3 = await validateImage(profile);
+    const v2 = await validateImageOptional(threeQuarter);
+    const v3 = await validateImageOptional(profile);
     if (!v1.ok) return Response.json({ error: `front: ${v1.error}` }, { status: 400 });
     if (!v2.ok) return Response.json({ error: `threeQuarter: ${v2.error}` }, { status: 400 });
     if (!v3.ok) return Response.json({ error: `profile: ${v3.error}` }, { status: 400 });
@@ -124,23 +135,31 @@ export async function action({ request }) {
         v1.buf,
         v1.type,
       );
-      const u2 = await storageUpload(
-        BUCKET_UPLOADS,
-        `${base}/three_quarter.${extFromType(v2.type)}`,
-        v2.buf,
-        v2.type,
-      );
-      const u3 = await storageUpload(
-        BUCKET_UPLOADS,
-        `${base}/profile.${extFromType(v3.type)}`,
-        v3.buf,
-        v3.type,
-      );
+      let u2Public = null;
+      let u3Public = null;
+      if (!v2.skip) {
+        const u2 = await storageUpload(
+          BUCKET_UPLOADS,
+          `${base}/three_quarter.${extFromType(v2.type)}`,
+          v2.buf,
+          v2.type,
+        );
+        u2Public = u2.publicUrl;
+      }
+      if (!v3.skip) {
+        const u3 = await storageUpload(
+          BUCKET_UPLOADS,
+          `${base}/profile.${extFromType(v3.type)}`,
+          v3.buf,
+          v3.type,
+        );
+        u3Public = u3.publicUrl;
+      }
 
       await patchAsset(id, {
         image_front_url: u1.publicUrl,
-        image_three_quarter_url: u2.publicUrl,
-        image_profile_url: u3.publicUrl,
+        image_three_quarter_url: u2Public,
+        image_profile_url: u3Public,
         status: "queued",
         error_message: null,
       });

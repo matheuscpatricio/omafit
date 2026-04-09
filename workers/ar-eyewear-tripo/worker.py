@@ -882,19 +882,10 @@ def process_job(row: dict):
     row_id = row["id"]
     shop = row["shop_domain"]
     front_url = str(row.get("image_front_url") or "").strip()
-    three_url = str(row.get("image_three_quarter_url") or "").strip()
-    profile_url = str(row.get("image_profile_url") or "").strip()
-    missing = [
-        k
-        for k, v in (
-            ("image_front_url", front_url),
-            ("image_three_quarter_url", three_url),
-            ("image_profile_url", profile_url),
-        )
-        if not v
-    ]
-    if missing:
-        raise ValueError(f"job sem URLs de imagem: {', '.join(missing)}")
+    if not front_url:
+        raise ValueError("job sem image_front_url")
+    three_url = str(row.get("image_three_quarter_url") or "").strip() or front_url
+    profile_url = str(row.get("image_profile_url") or "").strip() or front_url
 
     tmp = Path("/tmp") / f"ar_job_{row_id}_{uuid.uuid4().hex}"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -903,8 +894,14 @@ def process_job(row: dict):
         f2 = tmp / "three_quarter.jpg"
         f3 = tmp / "profile.jpg"
         download_file(front_url, f1)
-        download_file(three_url, f2)
-        download_file(profile_url, f3)
+        if three_url == front_url:
+            shutil.copy2(f1, f2)
+        else:
+            download_file(three_url, f2)
+        if profile_url == front_url:
+            shutil.copy2(f1, f3)
+        else:
+            download_file(profile_url, f3)
 
         glb_final = tmp / "model.glb"
 

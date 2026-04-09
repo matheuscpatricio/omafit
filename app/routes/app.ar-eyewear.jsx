@@ -86,9 +86,7 @@ export default function ArEyewearPage() {
   const [products, setProducts] = useState([]);
   const [productFilter, setProductFilter] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [slotFront, setSlotFront] = useState("");
-  const [slotThree, setSlotThree] = useState("");
-  const [slotProfile, setSlotProfile] = useState("");
+  const [generationImageUrl, setGenerationImageUrl] = useState("");
 
   const [productId, setProductId] = useState("");
   const [variantId, setVariantId] = useState("");
@@ -149,15 +147,7 @@ export default function ArEyewearPage() {
     setSelectedProduct(p);
     setProductId(String(p.id || ""));
     const imgs = p.images || [];
-    if (imgs.length >= 3) {
-      setSlotFront(imgs[0].url);
-      setSlotThree(imgs[1].url);
-      setSlotProfile(imgs[2].url);
-    } else {
-      setSlotFront(imgs[0]?.url || "");
-      setSlotThree(imgs[1]?.url || "");
-      setSlotProfile(imgs[2]?.url || "");
-    }
+    setGenerationImageUrl(imgs[0]?.url || "");
   };
 
   const submitFromShopify = async () => {
@@ -165,13 +155,8 @@ export default function ArEyewearPage() {
       setError(t("arEyewear.errorProductId"));
       return;
     }
-    if (!slotFront || !slotThree || !slotProfile) {
-      setError(t("arEyewear.errorThreePhotos"));
-      return;
-    }
-    const unique = new Set([slotFront, slotThree, slotProfile]);
-    if (unique.size < 3) {
-      setError(t("arEyewear.needThreeDistinct"));
+    if (!generationImageUrl) {
+      setError(t("arEyewear.errorSelectImage"));
       return;
     }
     setConfirmingShop(true);
@@ -183,9 +168,7 @@ export default function ArEyewearPage() {
         credentials: "include",
         body: JSON.stringify({
           productId: productId.trim(),
-          imageFrontUrl: slotFront,
-          imageThreeQuarterUrl: slotThree,
-          imageProfileUrl: slotProfile,
+          imageFrontUrl: generationImageUrl,
           variantId: variantId.trim() || undefined,
           frameWidthMm: frameWidthMm.trim() || undefined,
         }),
@@ -193,9 +176,7 @@ export default function ArEyewearPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
       setSelectedProduct(null);
-      setSlotFront("");
-      setSlotThree("");
-      setSlotProfile("");
+      setGenerationImageUrl("");
       setVariantId("");
       setFrameWidthMm("");
       await loadAssets();
@@ -347,6 +328,7 @@ export default function ArEyewearPage() {
                   <Text as="p" tone="subdued">
                     {t("arEyewear.shopImagesHelp")}
                   </Text>
+                  <Banner tone="info">{t("arEyewear.whiteBackgroundHint")}</Banner>
                   {selectedProduct.categoryFullName ? (
                     <Text as="p" variant="bodySm" tone="subdued">
                       {t("arEyewear.categoryLabel")}: {selectedProduct.categoryFullName}
@@ -357,26 +339,14 @@ export default function ArEyewearPage() {
                       <Thumbnail key={`${im.url}-${idx}`} source={im.url} alt={im.altText || ""} size="large" />
                     ))}
                   </InlineStack>
-                  {(selectedProduct.images || []).length < 3 ? (
-                    <Banner tone="warning">{t("arEyewear.needThreeImages")}</Banner>
+                  {(selectedProduct.images || []).length === 0 ? (
+                    <Banner tone="warning">{t("arEyewear.needOneImage")}</Banner>
                   ) : null}
                   <Select
-                    label={t("arEyewear.selectFront")}
+                    label={t("arEyewear.selectGenerationImage")}
                     options={imgOpts}
-                    value={slotFront}
-                    onChange={setSlotFront}
-                  />
-                  <Select
-                    label={t("arEyewear.selectThreeQuarter")}
-                    options={imgOpts}
-                    value={slotThree}
-                    onChange={setSlotThree}
-                  />
-                  <Select
-                    label={t("arEyewear.selectProfile")}
-                    options={imgOpts}
-                    value={slotProfile}
-                    onChange={setSlotProfile}
+                    value={generationImageUrl}
+                    onChange={setGenerationImageUrl}
                   />
                   <TextField
                     label={t("arEyewear.variantId")}
@@ -395,10 +365,10 @@ export default function ArEyewearPage() {
                   <Button
                     variant="primary"
                     loading={confirmingShop}
-                    disabled={(selectedProduct.images || []).length < 3}
+                    disabled={(selectedProduct.images || []).length === 0}
                     onClick={submitFromShopify}
                   >
-                    {t("arEyewear.confirmShopImages")}
+                    {t("arEyewear.confirmGenerationImage")}
                   </Button>
                 </BlockStack>
               )}

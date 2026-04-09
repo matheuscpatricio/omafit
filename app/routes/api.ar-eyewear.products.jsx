@@ -1,6 +1,6 @@
 /**
  * GET /api/ar-eyewear/products — produtos óculos (tipo, taxonomia, tags, título) + imagens
- * POST /api/ar-eyewear/products — JSON: confirmar 3 URLs da loja e enfileirar job
+ * POST /api/ar-eyewear/products — JSON: confirmar 1 URL (imagem para geração 3D) e enfileirar job
  */
 import { authenticate } from "../shopify.server";
 import { Buffer } from "node:buffer";
@@ -107,8 +107,6 @@ export async function action({ request }) {
     const body = await request.json();
     const productId = String(body.productId || "").trim();
     const imageFrontUrl = String(body.imageFrontUrl || "").trim();
-    const imageThreeQuarterUrl = String(body.imageThreeQuarterUrl || "").trim();
-    const imageProfileUrl = String(body.imageProfileUrl || "").trim();
     const variantId = String(body.variantId || "").trim() || null;
     const frameWidthMmRaw = body.frameWidthMm;
     const frameWidthMm =
@@ -119,8 +117,8 @@ export async function action({ request }) {
     if (!productId) {
       return Response.json({ error: "productId is required" }, { status: 400 });
     }
-    if (!imageFrontUrl || !imageThreeQuarterUrl || !imageProfileUrl) {
-      return Response.json({ error: "Três URLs de imagem são obrigatórias" }, { status: 400 });
+    if (!imageFrontUrl) {
+      return Response.json({ error: "URL da imagem para geração 3D é obrigatória (imageFrontUrl)" }, { status: 400 });
     }
 
     const row = await insertAssetRow({
@@ -136,8 +134,6 @@ export async function action({ request }) {
 
     try {
       const d1 = await fetchShopifyCdnImage(imageFrontUrl);
-      const d2 = await fetchShopifyCdnImage(imageThreeQuarterUrl);
-      const d3 = await fetchShopifyCdnImage(imageProfileUrl);
 
       const u1 = await storageUpload(
         BUCKET_UPLOADS,
@@ -145,23 +141,11 @@ export async function action({ request }) {
         d1.buf,
         d1.type,
       );
-      const u2 = await storageUpload(
-        BUCKET_UPLOADS,
-        `${base}/three_quarter.${extFromType(d2.type)}`,
-        d2.buf,
-        d2.type,
-      );
-      const u3 = await storageUpload(
-        BUCKET_UPLOADS,
-        `${base}/profile.${extFromType(d3.type)}`,
-        d3.buf,
-        d3.type,
-      );
 
       await patchAsset(id, {
         image_front_url: u1.publicUrl,
-        image_three_quarter_url: u2.publicUrl,
-        image_profile_url: u3.publicUrl,
+        image_three_quarter_url: null,
+        image_profile_url: null,
         status: "queued",
         error_message: null,
       });

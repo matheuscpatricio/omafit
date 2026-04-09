@@ -1,3 +1,8 @@
+/**
+ * Geração 3D via FAL (Tripo). Atenção: no Supabase hospedado o limite da Edge é ~150–400s;
+ * o Tripo pode demorar mais → 500/504. Preferir FAL_API_KEY no servidor Node (app) —
+ * invokeArEyewearGenerate corre no Node quando a chave existe.
+ */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -179,14 +184,34 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
     throw new Error(`FAL timeout (${timeoutSeconds}s), status=${lastStatus || "unknown"}`);
   }
 
-  const rRes = await fetch(fetchResultUrl, { headers });
-  const rTxt = await rRes.text().catch(() => "");
-  if (!rRes.ok) {
-    throw new Error(`FAL result failed: ${rRes.status} ${rTxt.slice(0, 300)}`);
+  const midNorm = modelId.replace(/^\/+|\/+$/g, "");
+  const resultCandidates = [
+    fetchResultUrl,
+    `${baseUrl}/${midNorm}/requests/${requestId}`,
+    pollBodyUrl,
+  ];
+  const uniqueResults = [...new Set(resultCandidates.filter(Boolean))];
+
+  let glbUrl: string | null = null;
+  let lastResultErr = "";
+  for (const tryUrl of uniqueResults) {
+    const rRes = await fetch(tryUrl, { headers });
+    const rTxt = await rRes.text().catch(() => "");
+    if (!rRes.ok) {
+      lastResultErr = `${rRes.status} ${rTxt.slice(0, 220)}`;
+      continue;
+    }
+    let rJson: Record<string, unknown> = {};
+    try {
+      rJson = rTxt ? (JSON.parse(rTxt) as Record<string, unknown>) : {};
+    } catch {
+      rJson = {};
+    }
+    glbUrl = extractGlbUrl(rJson);
+    if (glbUrl) break;
+    lastResultErr = `200 sem GLB (${rTxt.slice(0, 160)})`;
   }
-  const rJson = rTxt ? JSON.parse(rTxt) : {};
-  const glbUrl = extractGlbUrl(rJson);
-  if (!glbUrl) throw new Error(`FAL result sem URL de GLB: ${rTxt.slice(0, 700)}`);
+  if (!glbUrl) throw new Error(`FAL result failed: ${lastResultErr}`);
 
   return { requestId, glbUrl, logs };
 }

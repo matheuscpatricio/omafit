@@ -523,12 +523,59 @@ export function hasArEyewearFalConfigured() {
 }
 
 /**
- * Invoca Edge Function Supabase que gera o GLB via FAL e grava retorno na tabela.
- * Mantém segredo da FAL fora do app/frontend.
+ * Gera GLB via FAL e atualiza o asset.
+ *
+ * Se FAL_API_KEY existir no servidor da app, corre o fluxo completo no Node (polling pode
+ * levar vários minutos). Edge Functions no Supabase limitam a ~150–400s e falham com 500/504
+ * em jobs Tripo longos.
+ *
+ * Sem FAL_API_KEY no servidor, usa a Edge Function (precisa de secret lá; arriscado para jobs longos).
  */
 export async function invokeArEyewearGenerate(assetId, shopDomain) {
   const { url, key } = getSupabaseConfig();
   if (!url || !key) throw new Error("Supabase not configured");
+
+  const id = String(assetId || "").trim();
+  if (!id) throw new Error("assetId obrigatório");
+
+  if (hasArEyewearFalConfigured()) {
+    const row = await getAssetById(id);
+    if (!row) throw new Error("Asset não encontrado");
+    const resolvedShop = String(row.shop_domain || shopDomain || "").trim();
+    if (shopDomain && row.shop_domain !== shopDomain) {
+      throw new Error("shop_domain mismatch");
+    }
+    const imageUrl = String(row.image_front_url || "").trim();
+    if (!imageUrl) throw new Error("Asset sem image_front_url");
+
+    await patchAsset(id, {
+      status: "processing",
+      error_message: null,
+      generation_provider: "fal",
+    });
+
+    const glbDraftUrl = await generateGlbDraftViaFal({
+      shopDomain: resolvedShop,
+      assetId: id,
+      imageUrl,
+    });
+    const asset = await patchAsset(id, {
+      status: "pending_review",
+      glb_draft_url: glbDraftUrl,
+      error_message: null,
+      generation_provider: "fal",
+      generation_request_id: null,
+      generation_logs:
+        "generation_path=app_server (FAL no Node; Edge ~150–400s insuficiente para Tripo)",
+    });
+    return {
+      ok: true,
+      glbDraftUrl,
+      asset,
+      generationPath: "app_server",
+    };
+  }
+
   const fnUrl = `${url.replace(/\/$/, "")}/functions/v1/ar-eyewear-generate`;
   const res = await fetch(fnUrl, {
     method: "POST",
@@ -538,7 +585,7 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      assetId: String(assetId || "").trim(),
+      assetId: id,
       shopDomain: String(shopDomain || "").trim(),
     }),
   });
@@ -550,32 +597,11 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
     json = { raw: txt };
   }
   if (!res.ok) {
-    const edgeErr = String(
-      json?.error || `Edge function failed: ${res.status} ${txt.slice(0, 300)}`,
+    throw new Error(
+      json?.error ||
+        `Edge function failed: ${res.status} ${txt.slice(0, 300)}. ` +
+          "Defina FAL_API_KEY no servidor da app para gerar no Node (recomendado).",
     );
-    const isFal405 = /FAL (status|result) failed:\s*405/i.test(edgeErr);
-    if (isFal405 && hasArEyewearFalConfigured()) {
-      const row = await getAssetById(assetId);
-      const imageUrl = String(row?.image_front_url || "").trim();
-      const resolvedShop = String(row?.shop_domain || shopDomain || "").trim();
-      if (imageUrl && resolvedShop) {
-        const glbDraftUrl = await generateGlbDraftViaFal({
-          shopDomain: resolvedShop,
-          assetId: String(assetId || "").trim(),
-          imageUrl,
-        });
-        const asset = await patchAsset(assetId, {
-          status: "pending_review",
-          glb_draft_url: glbDraftUrl,
-          error_message: null,
-          generation_provider: "fal",
-          generation_request_id: null,
-          generation_logs: "fallback=app_server_after_edge_405",
-        });
-        return { ok: true, fallback: "app_server", glbDraftUrl, asset };
-      }
-    }
-    throw new Error(edgeErr);
   }
   return json;
 }
@@ -767,22 +793,37 @@ export async function generateGlbDraftViaFal({
     throw new Error(`FAL timeout (${timeoutSeconds}s), request_id=${requestId}, status=${lastStatus || "unknown"}`);
   }
 
-  const resultRes = await fetch(fetchResultUrl, {
-    headers: falHeaders(apiKey),
-  });
-  const resultText = await resultRes.text().catch(() => "");
-  if (!resultRes.ok) {
-    throw new Error(`FAL result failed: ${resultRes.status} ${resultText.slice(0, 300)}`);
+  const midNorm = String(modelId || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  const resultUrlCandidates = [
+    fetchResultUrl,
+    `${baseUrl}/${midNorm}/requests/${requestId}`,
+    pollBodyUrl,
+  ];
+  const uniqueResultUrls = [...new Set(resultUrlCandidates.filter(Boolean))];
+
+  let glbUrl = null;
+  let lastResultErr = "";
+  for (const tryUrl of uniqueResultUrls) {
+    const resultRes = await fetch(tryUrl, { headers: falHeaders(apiKey) });
+    const resultText = await resultRes.text().catch(() => "");
+    if (!resultRes.ok) {
+      lastResultErr = `${tryUrl.split("?")[0].slice(-80)} → ${resultRes.status} ${resultText.slice(0, 220)}`;
+      continue;
+    }
+    let resultJson = {};
+    try {
+      resultJson = resultText ? JSON.parse(resultText) : {};
+    } catch {
+      resultJson = {};
+    }
+    glbUrl = extractFalGlbUrl(resultJson);
+    if (glbUrl) break;
+    lastResultErr = `200 sem GLB em JSON (${resultText.slice(0, 180)})`;
   }
-  let resultJson = {};
-  try {
-    resultJson = resultText ? JSON.parse(resultText) : {};
-  } catch {
-    resultJson = {};
-  }
-  const glbUrl = extractFalGlbUrl(resultJson);
   if (!glbUrl) {
-    throw new Error(`FAL result sem URL GLB: ${resultText.slice(0, 600)}`);
+    throw new Error(`FAL result failed: ${lastResultErr}`);
   }
 
   const glbRes = await fetch(glbUrl);

@@ -6,6 +6,7 @@ import { authenticate } from "../shopify.server";
 import {
   getAssetById,
   patchAsset,
+  invokeArEyewearGenerate,
   ensureArGlbMetafieldDefinition,
   setProductArGlbMetafield,
   supersedeOtherPublishedAssets,
@@ -46,7 +47,6 @@ export async function action({ request, params }) {
         { status: 500 },
       );
     }
-
     const id = params.assetId;
     if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
 
@@ -64,12 +64,22 @@ export async function action({ request, params }) {
     }
 
     if (intent === "requeue") {
-      const updated = await patchAsset(id, {
-        status: "queued",
+      await patchAsset(id, {
+        status: "processing",
         error_message: null,
         worker_claimed_at: null,
       });
-      return Response.json({ asset: updated });
+      try {
+        const ret = await invokeArEyewearGenerate(id, session.shop);
+        const latest = await getAssetById(id);
+        return Response.json({ asset: latest || row, generation: ret });
+      } catch (genErr) {
+        const failed = await patchAsset(id, {
+          status: "failed",
+          error_message: genErr.message || "Falha na geração 3D (FAL)",
+        });
+        return Response.json({ asset: failed, error: failed.error_message }, { status: 500 });
+      }
     }
 
     if (intent === "publish") {

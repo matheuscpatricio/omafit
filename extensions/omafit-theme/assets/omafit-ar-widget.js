@@ -711,17 +711,24 @@ async function runArSession({
       const zMiddle = 1 - Math.min(1, Math.abs(s.z - midDim) / Math.max(midDim, 1e-6)); // melhor quando ~1
       return xLargest * 0.6 + ySmallest * 0.3 + zMiddle * 0.1;
     };
-    let best = orientCandidatesDeg[0];
-    let bestScore = -Infinity;
-    for (const [dx, dy, dz] of orientCandidatesDeg) {
-      autoOrient.rotation.set(degToRad(dx), degToRad(dy), degToRad(dz));
-      const sc = scoreOrientation();
-      if (sc > bestScore) {
-        bestScore = sc;
-        best = [dx, dy, dz];
+    // Por padrão, NÃO auto-rotaciona no frontend para preservar o GLB já canônico do worker.
+    const enableAutoOrient =
+      String(cfgRoot?.dataset?.arAutoOrient || "").trim() === "1";
+    if (enableAutoOrient) {
+      let best = orientCandidatesDeg[0];
+      let bestScore = -Infinity;
+      for (const [dx, dy, dz] of orientCandidatesDeg) {
+        autoOrient.rotation.set(degToRad(dx), degToRad(dy), degToRad(dz));
+        const sc = scoreOrientation();
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = [dx, dy, dz];
+        }
       }
+      autoOrient.rotation.set(degToRad(best[0]), degToRad(best[1]), degToRad(best[2]));
+    } else {
+      autoOrient.rotation.set(0, 0, 0);
     }
-    autoOrient.rotation.set(degToRad(best[0]), degToRad(best[1]), degToRad(best[2]));
 
     let baseGlbScale = 1;
     {

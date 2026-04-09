@@ -18,6 +18,13 @@ Env:
   TRIPOSR_TIMEOUT_SECONDS — limite para run.py (default 5400); 0 = sem limite
   POSTPROCESS_TIMEOUT_SECONDS — limite para postprocess.py (default 900)
   AR_WORKER_STALE_PROCESSING_MINUTES — jobs em processing há mais tempo → failed (default 120); 0 = desliga
+  AR_3D_PROVIDER — "triposr" (default) | "fal"
+  FAL_API_KEY — chave da fal.ai (obrigatória quando AR_3D_PROVIDER=fal)
+  FAL_MODEL_ID — default tripo3d/tripo/v2.5/image-to-3d
+  FAL_BASE_URL — default https://queue.fal.run
+  FAL_TIMEOUT_SECONDS — timeout total polling (default 1800)
+  FAL_POLL_SECONDS — intervalo polling (default 4)
+  FAL_IMAGE_URL_SOURCE — front|three_quarter|profile (default front)
 """
 from __future__ import annotations
 
@@ -39,6 +46,15 @@ TABLE = "ar_eyewear_assets"
 BUCKET_GLB = "ar-eyewear-glb"
 BUCKET_UPLOADS = "ar-eyewear-uploads"
 HEADERS = {}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.environ.get(name, "1" if default else "0")).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _provider() -> str:
+    return str(os.environ.get("AR_3D_PROVIDER", "triposr")).strip().lower()
 
 
 def supabase_base() -> str:
@@ -540,6 +556,133 @@ def _subprocess_fail_detail(proc: subprocess.CompletedProcess) -> str:
     return body
 
 
+def _fal_headers() -> dict:
+    key = (os.environ.get("FAL_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError(
+            "FAL_API_KEY ausente (AR_3D_PROVIDER=fal). Defina no ambiente do worker."
+        )
+    return {
+        "Authorization": f"Key {key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _fal_base_url() -> str:
+    return str(os.environ.get("FAL_BASE_URL", "https://queue.fal.run")).strip().rstrip("/")
+
+
+def _fal_model_id() -> str:
+    return str(
+        os.environ.get("FAL_MODEL_ID", "tripo3d/tripo/v2.5/image-to-3d")
+    ).strip().strip("/")
+
+
+def _pick_fal_image_url(front_url: str, three_url: str, profile_url: str) -> str:
+    src = str(os.environ.get("FAL_IMAGE_URL_SOURCE", "front")).strip().lower()
+    if src in ("three_quarter", "three-quarter", "three"):
+        return three_url
+    if src in ("profile", "side"):
+        return profile_url
+    return front_url
+
+
+def _walk_strings(node):
+    if isinstance(node, str):
+        yield node
+        return
+    if isinstance(node, dict):
+        for v in node.values():
+            yield from _walk_strings(v)
+        return
+    if isinstance(node, list):
+        for v in node:
+            yield from _walk_strings(v)
+
+
+def _extract_glb_url_from_fal_payload(payload: dict) -> str | None:
+    # Prioriza extensões GLB/GLTF em qualquer campo do payload.
+    for s in _walk_strings(payload):
+        raw = str(s).strip()
+        low = raw.lower()
+        if low.startswith("http://") or low.startswith("https://"):
+            if ".glb" in low or ".gltf" in low:
+                return raw
+    # Fallback: algumas respostas retornam model_url sem extensão explícita.
+    for s in _walk_strings(payload):
+        raw = str(s).strip()
+        low = raw.lower()
+        if low.startswith("http://") or low.startswith("https://"):
+            if any(k in low for k in ("/model", "/mesh", "/asset", "tripo3d")):
+                return raw
+    return None
+
+
+def run_fal_tripo(front_url: str, three_url: str, profile_url: str, out_glb: Path) -> None:
+    base = _fal_base_url()
+    model = _fal_model_id()
+    hdr = _fal_headers()
+    image_url = _pick_fal_image_url(front_url, three_url, profile_url)
+    if not image_url:
+        raise ValueError("FAL: image_url ausente")
+
+    submit_url = f"{base}/{model}"
+    submit_payload = {"input": {"image_url": image_url}}
+    # Opcional: logs no status endpoint.
+    logs_enabled = _env_bool("FAL_LOGS", True)
+    r = requests.post(submit_url, headers=hdr, json=submit_payload, timeout=120)
+    if not r.ok:
+        raise RuntimeError(f"FAL submit failed {r.status_code}: {(r.text or '')[:800]}")
+    body = r.json() if r.content else {}
+    req_id = str(body.get("request_id") or body.get("requestId") or "").strip()
+    if not req_id:
+        raise RuntimeError(f"FAL submit sem request_id: {str(body)[:1200]}")
+
+    status_url = f"{base}/{model}/requests/{req_id}/status"
+    result_url = f"{base}/{model}/requests/{req_id}"
+    timeout_sec = _float_env("FAL_TIMEOUT_SECONDS", 1800.0)
+    poll_sec = _float_env("FAL_POLL_SECONDS", 4.0)
+    deadline = time.time() + max(30.0, timeout_sec)
+
+    last_status = ""
+    while True:
+        if time.time() > deadline:
+            raise RuntimeError(
+                f"FAL timeout após {int(timeout_sec)}s (request_id={req_id}, last_status={last_status})"
+            )
+        q = {"logs": "1"} if logs_enabled else None
+        s = requests.get(status_url, headers=hdr, params=q, timeout=120)
+        if not s.ok:
+            raise RuntimeError(f"FAL status failed {s.status_code}: {(s.text or '')[:800]}")
+        st_body = s.json() if s.content else {}
+        st_raw = str(
+            st_body.get("status")
+            or st_body.get("state")
+            or st_body.get("request_status")
+            or ""
+        ).strip()
+        st = st_raw.upper()
+        if st and st != last_status:
+            print(f"[worker] FAL request {req_id} status={st}")
+            last_status = st
+        if st in ("COMPLETED", "SUCCEEDED", "SUCCESS", "DONE"):
+            break
+        if st in ("FAILED", "ERROR", "CANCELED", "CANCELLED"):
+            raise RuntimeError(f"FAL request {req_id} failed: {str(st_body)[:1200]}")
+        time.sleep(max(0.6, poll_sec))
+
+    rr = requests.get(result_url, headers=hdr, timeout=120)
+    if not rr.ok:
+        raise RuntimeError(f"FAL result failed {rr.status_code}: {(rr.text or '')[:800]}")
+    result_body = rr.json() if rr.content else {}
+    glb_url = _extract_glb_url_from_fal_payload(result_body)
+    if not glb_url:
+        raise RuntimeError(f"FAL result sem URL de GLB: {str(result_body)[:1800]}")
+    print(f"[worker] FAL request {req_id} -> {glb_url}")
+    download_file(glb_url, out_glb)
+
+
 def run_triposr(front: Path, tq: Path, prof: Path, out_dir: Path) -> None:
     root = Path(os.environ.get("TRIPOSR_ROOT", "/opt/TripoSR"))
     run_py = root / "run.py"
@@ -763,16 +906,22 @@ def process_job(row: dict):
         download_file(three_url, f2)
         download_file(profile_url, f3)
 
-        out_dir = tmp / "tri_out"
         glb_final = tmp / "model.glb"
 
         if os.environ.get("WORKER_STUB") == "1":
             stub_glb(glb_final)
         else:
-            run_triposr(f1, f2, f3, out_dir)
-            mesh = find_mesh(out_dir)
-            if not mesh:
-                raise RuntimeError("TripoSR produced no mesh file")
+            provider = _provider()
+            if provider == "fal":
+                glb_raw = tmp / "fal_model.glb"
+                run_fal_tripo(front_url, three_url, profile_url, glb_raw)
+                mesh = glb_raw
+            else:
+                out_dir = tmp / "tri_out"
+                run_triposr(f1, f2, f3, out_dir)
+                mesh = find_mesh(out_dir)
+                if not mesh:
+                    raise RuntimeError("TripoSR produced no mesh file")
             # Sempre passa pelo postprocess para normalizar orientação e preservar fidelidade.
             pp_dir = str(Path(__file__).resolve().parent)
             pp_timeout = _float_env("POSTPROCESS_TIMEOUT_SECONDS", 900.0)

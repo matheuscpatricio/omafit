@@ -141,6 +141,104 @@ def _align_elongation_xz_to_positive_x(scene):
         return
 
 
+def _snap_to_best_right_angle(scene):
+    """
+    Busca discreta em rotações de 90° para maximizar frame de óculos canônico:
+    X maior (largura), Y menor (espessura), Z intermediário (profundidade).
+
+    Reduz casos residuais de 90° mesmo após PCA/OBB.
+    Desligar: AR_POSTPROCESS_RIGHT_ANGLE_SNAP=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_RIGHT_ANGLE_SNAP", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return
+
+    import trimesh
+
+    candidates_deg = []
+    for rx in (0.0, 90.0, 180.0, -90.0):
+        for ry in (0.0, 90.0, 180.0, -90.0):
+            for rz in (0.0, 90.0, 180.0, -90.0):
+                candidates_deg.append((rx, ry, rz))
+
+    best_rot = (0.0, 0.0, 0.0)
+    best_score = -1e18
+    tie_penalty = 0.0
+    for rx, ry, rz in candidates_deg:
+        test = scene.copy()
+        if abs(rx) > 1e-9:
+            test.apply_transform(
+                trimesh.transformations.rotation_matrix(math.radians(rx), [1.0, 0.0, 0.0])
+            )
+        if abs(ry) > 1e-9:
+            test.apply_transform(
+                trimesh.transformations.rotation_matrix(math.radians(ry), [0.0, 1.0, 0.0])
+            )
+        if abs(rz) > 1e-9:
+            test.apply_transform(
+                trimesh.transformations.rotation_matrix(math.radians(rz), [0.0, 0.0, 1.0])
+            )
+        try:
+            ext = np.asarray(test.bounding_box.extents, dtype=float)
+        except Exception:
+            continue
+        if ext.shape != (3,) or np.any(ext <= 1e-9):
+            continue
+        x, y, z = float(ext[0]), float(ext[1]), float(ext[2])
+        max_dim = max(x, y, z, 1e-9)
+        min_dim = min(x, y, z, 1e-9)
+        mid_dim = x + y + z - max_dim - min_dim
+        x_largest = x / max_dim
+        y_smallest = min_dim / max(y, 1e-9)
+        z_middle = 1.0 - min(1.0, abs(z - mid_dim) / max(mid_dim, 1e-9))
+        # Penaliza rotações grandes sem ganho real para evitar “flip” desnecessário.
+        rot_mag = abs(rx) + abs(ry) + abs(rz)
+        score = x_largest * 0.65 + y_smallest * 0.25 + z_middle * 0.10 - rot_mag * 0.00015
+        if score > best_score:
+            best_score = score
+            best_rot = (rx, ry, rz)
+            tie_penalty = rot_mag
+        elif abs(score - best_score) < 1e-6 and rot_mag < tie_penalty:
+            best_rot = (rx, ry, rz)
+            tie_penalty = rot_mag
+
+    rx, ry, rz = best_rot
+    if abs(rx) > 1e-9:
+        scene.apply_transform(
+            trimesh.transformations.rotation_matrix(math.radians(rx), [1.0, 0.0, 0.0])
+        )
+    if abs(ry) > 1e-9:
+        scene.apply_transform(
+            trimesh.transformations.rotation_matrix(math.radians(ry), [0.0, 1.0, 0.0])
+        )
+    if abs(rz) > 1e-9:
+        scene.apply_transform(
+            trimesh.transformations.rotation_matrix(math.radians(rz), [0.0, 0.0, 1.0])
+        )
+
+
+def _hard_canonical_orientation(scene):
+    """
+    Modo determinístico para óculos:
+    - busca em rotações de 90° (24 combinações),
+    - escolhe a que maximiza X maior, Y menor, Z intermediário.
+
+    Este modo evita depender de heurísticas com thresholds ambíguos que podem deixar o GLB em 90°.
+    Desligar: AR_POSTPROCESS_HARD_CANONICAL=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_HARD_CANONICAL", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return False
+    _snap_to_best_right_angle(scene)
+    return True
+
+
 def _lay_down_tallest_extent(scene):
     """
     TripoSR costuma devolver o óculos “em pé”: um eixo tem extent bem maior (altura).
@@ -210,31 +308,40 @@ def main():
         pass
 
     # 1) Deitar se o mesh veio “em pé” (um eixo domina). 2) Frame canônico (largura X, fino Y).
-    _lay_down_tallest_extent(scene)
-    try:
-        b = scene.bounds
-        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
-        scene.apply_translation(-c)
-    except Exception:
-        pass
+    used_hard = _hard_canonical_orientation(scene)
+    if not used_hard:
+        _lay_down_tallest_extent(scene)
+        try:
+            b = scene.bounds
+            c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+            scene.apply_translation(-c)
+        except Exception:
+            pass
 
-    _align_principal_axes_scene(scene)
-    try:
-        b = scene.bounds
-        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
-        scene.apply_translation(-c)
-    except Exception:
-        pass
+        _align_principal_axes_scene(scene)
+        try:
+            b = scene.bounds
+            c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+            scene.apply_translation(-c)
+        except Exception:
+            pass
 
-    _canonical_axes_smallest_y_largest_x(scene)
-    try:
-        b = scene.bounds
-        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
-        scene.apply_translation(-c)
-    except Exception:
-        pass
+        _canonical_axes_smallest_y_largest_x(scene)
+        try:
+            b = scene.bounds
+            c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+            scene.apply_translation(-c)
+        except Exception:
+            pass
 
-    _align_elongation_xz_to_positive_x(scene)
+        _align_elongation_xz_to_positive_x(scene)
+        try:
+            b = scene.bounds
+            c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+            scene.apply_translation(-c)
+        except Exception:
+            pass
+        _snap_to_best_right_angle(scene)
     try:
         b = scene.bounds
         c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5

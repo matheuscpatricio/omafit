@@ -517,3 +517,197 @@ export async function setShopArEyewearEnabled(shopDomain, enabled) {
     throw new Error(`shopify_shops patch failed: ${res.status} ${t.slice(0, 200)}`);
   }
 }
+
+export function hasArEyewearFalConfigured() {
+  return Boolean((process.env.FAL_API_KEY || "").trim());
+}
+
+/**
+ * Invoca Edge Function Supabase que gera o GLB via FAL e grava retorno na tabela.
+ * Mantém segredo da FAL fora do app/frontend.
+ */
+export async function invokeArEyewearGenerate(assetId, shopDomain) {
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) throw new Error("Supabase not configured");
+  const fnUrl = `${url.replace(/\/$/, "")}/functions/v1/ar-eyewear-generate`;
+  const res = await fetch(fnUrl, {
+    method: "POST",
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      assetId: String(assetId || "").trim(),
+      shopDomain: String(shopDomain || "").trim(),
+    }),
+  });
+  const txt = await res.text().catch(() => "");
+  let json = {};
+  try {
+    json = txt ? JSON.parse(txt) : {};
+  } catch {
+    json = { raw: txt };
+  }
+  if (!res.ok) {
+    throw new Error(json?.error || `Edge function failed: ${res.status} ${txt.slice(0, 300)}`);
+  }
+  return json;
+}
+
+function falConfig() {
+  return {
+    apiKey: (process.env.FAL_API_KEY || "").trim(),
+    modelId: (process.env.FAL_MODEL_ID || "tripo3d/tripo/v2.5/image-to-3d").trim(),
+    baseUrl: (process.env.FAL_BASE_URL || "https://queue.fal.run").trim().replace(/\/$/, ""),
+    timeoutSeconds: Number(process.env.FAL_TIMEOUT_SECONDS || 1800),
+    pollSeconds: Number(process.env.FAL_POLL_SECONDS || 4),
+  };
+}
+
+function falHeaders(apiKey) {
+  return {
+    Authorization: `Key ${apiKey}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+}
+
+function* walkStrings(node) {
+  if (typeof node === "string") {
+    yield node;
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const v of node) yield* walkStrings(v);
+    return;
+  }
+  if (node && typeof node === "object") {
+    for (const v of Object.values(node)) yield* walkStrings(v);
+  }
+}
+
+function extractFalGlbUrl(payload) {
+  for (const s of walkStrings(payload)) {
+    const raw = String(s || "").trim();
+    const low = raw.toLowerCase();
+    if ((low.startsWith("http://") || low.startsWith("https://")) && (low.includes(".glb") || low.includes(".gltf"))) {
+      return raw;
+    }
+  }
+  for (const s of walkStrings(payload)) {
+    const raw = String(s || "").trim();
+    const low = raw.toLowerCase();
+    if (low.startsWith("http://") || low.startsWith("https://")) {
+      if (low.includes("/model") || low.includes("/mesh") || low.includes("/asset") || low.includes("tripo3d")) {
+        return raw;
+      }
+    }
+  }
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Gera GLB via FAL no backend (sem expor chave no frontend) e sobe para Storage.
+ * Retorna URL pública do draft no bucket ar-eyewear-glb.
+ */
+export async function generateGlbDraftViaFal({
+  shopDomain,
+  assetId,
+  imageUrl,
+}) {
+  const { apiKey, modelId, baseUrl, timeoutSeconds, pollSeconds } = falConfig();
+  if (!apiKey) {
+    throw new Error("FAL_API_KEY não configurada no servidor");
+  }
+  if (!imageUrl) {
+    throw new Error("FAL image_url ausente");
+  }
+
+  const submitRes = await fetch(`${baseUrl}/${modelId}`, {
+    method: "POST",
+    headers: falHeaders(apiKey),
+    body: JSON.stringify({ input: { image_url: imageUrl } }),
+  });
+  const submitText = await submitRes.text().catch(() => "");
+  if (!submitRes.ok) {
+    throw new Error(`FAL submit failed: ${submitRes.status} ${submitText.slice(0, 300)}`);
+  }
+  let submitJson = {};
+  try {
+    submitJson = submitText ? JSON.parse(submitText) : {};
+  } catch {
+    submitJson = {};
+  }
+  const requestId = String(submitJson?.request_id || submitJson?.requestId || "").trim();
+  if (!requestId) {
+    throw new Error(`FAL sem request_id: ${submitText.slice(0, 300)}`);
+  }
+
+  const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
+  let lastStatus = "";
+  while (Date.now() < deadline) {
+    const statusRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}/status?logs=1`, {
+      headers: falHeaders(apiKey),
+    });
+    const statusText = await statusRes.text().catch(() => "");
+    if (!statusRes.ok) {
+      throw new Error(`FAL status failed: ${statusRes.status} ${statusText.slice(0, 300)}`);
+    }
+    let statusJson = {};
+    try {
+      statusJson = statusText ? JSON.parse(statusText) : {};
+    } catch {
+      statusJson = {};
+    }
+    const status = String(
+      statusJson?.status || statusJson?.state || statusJson?.request_status || "",
+    ).toUpperCase();
+    if (status && status !== lastStatus) {
+      lastStatus = status;
+      console.log(`[ar-eyewear] FAL ${requestId} status=${status}`);
+    }
+    if (["COMPLETED", "SUCCEEDED", "SUCCESS", "DONE"].includes(status)) break;
+    if (["FAILED", "ERROR", "CANCELED", "CANCELLED"].includes(status)) {
+      throw new Error(`FAL falhou (${status}): ${statusText.slice(0, 400)}`);
+    }
+    await sleep(Math.max(700, pollSeconds * 1000));
+  }
+  if (Date.now() >= deadline) {
+    throw new Error(`FAL timeout (${timeoutSeconds}s), request_id=${requestId}, status=${lastStatus || "unknown"}`);
+  }
+
+  const resultRes = await fetch(`${baseUrl}/${modelId}/requests/${requestId}`, {
+    headers: falHeaders(apiKey),
+  });
+  const resultText = await resultRes.text().catch(() => "");
+  if (!resultRes.ok) {
+    throw new Error(`FAL result failed: ${resultRes.status} ${resultText.slice(0, 300)}`);
+  }
+  let resultJson = {};
+  try {
+    resultJson = resultText ? JSON.parse(resultText) : {};
+  } catch {
+    resultJson = {};
+  }
+  const glbUrl = extractFalGlbUrl(resultJson);
+  if (!glbUrl) {
+    throw new Error(`FAL result sem URL GLB: ${resultText.slice(0, 600)}`);
+  }
+
+  const glbRes = await fetch(glbUrl);
+  if (!glbRes.ok) {
+    throw new Error(`Download GLB FAL falhou: ${glbRes.status}`);
+  }
+  const glbBuf = Buffer.from(await glbRes.arrayBuffer());
+  if (glbBuf.length < 1000) {
+    throw new Error("GLB retornado pela FAL parece inválido (muito pequeno)");
+  }
+  const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
+  const uploaded = await storageUpload("ar-eyewear-glb", storagePath, glbBuf, "model/gltf-binary");
+  return uploaded.publicUrl;
+}

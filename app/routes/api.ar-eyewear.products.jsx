@@ -3,11 +3,14 @@
  * POST /api/ar-eyewear/products — JSON: confirmar 3 URLs da loja e enfileirar job
  */
 import { authenticate } from "../shopify.server";
+import { Buffer } from "node:buffer";
 import {
   getShopArEyewearEnabled,
   insertAssetRow,
+  getAssetById,
   patchAsset,
   storageUpload,
+  invokeArEyewearGenerate,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
 } from "../ar-eyewear.server";
@@ -96,7 +99,6 @@ export async function action({ request }) {
         { status: 500 },
       );
     }
-
     const ct = request.headers.get("content-type") || "";
     if (!ct.includes("application/json")) {
       return Response.json({ error: "Expected application/json" }, { status: 400 });
@@ -156,14 +158,24 @@ export async function action({ request }) {
         d3.type,
       );
 
-      const updated = await patchAsset(id, {
+      await patchAsset(id, {
         image_front_url: u1.publicUrl,
         image_three_quarter_url: u2.publicUrl,
         image_profile_url: u3.publicUrl,
         status: "queued",
         error_message: null,
       });
-      return Response.json({ asset: updated });
+      try {
+        const ret = await invokeArEyewearGenerate(id, session.shop);
+        const asset = ret?.asset || (await getAssetById(id));
+        return Response.json({ asset, generation: ret });
+      } catch (genErr) {
+        const failed = await patchAsset(id, {
+          status: "failed",
+          error_message: genErr.message || "Falha na Edge Function de geração 3D",
+        });
+        return Response.json({ asset: failed, error: failed.error_message }, { status: 500 });
+      }
     } catch (uploadErr) {
       await patchAsset(id, {
         status: "failed",

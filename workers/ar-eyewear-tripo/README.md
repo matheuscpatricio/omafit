@@ -1,10 +1,12 @@
-# AR Eyewear — worker TripoSR
+# AR Eyewear — worker (TripoSR/FAL)
 
 Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
 
 1. Baixa 3 imagens (URLs em `image_*_url`).
-2. Roda [TripoSR](https://github.com/VAST-AI-Research/TripoSR) (`run.py` com 3 caminhos).
-3. Converte para GLB (`postprocess.py` se a saída for OBJ/PLY).
+2. Gera 3D via provider configurado:
+   - `AR_3D_PROVIDER=triposr` (padrão): roda [TripoSR](https://github.com/VAST-AI-Research/TripoSR).
+   - `AR_3D_PROVIDER=fal`: chama API fal (`tripo3d/tripo/v2.5/image-to-3d`) e baixa GLB.
+3. Normaliza orientação com `postprocess.py`.
 4. Faz upload para o bucket **`ar-eyewear-glb`** (público recomendado para URL no metafield).
 5. Atualiza linha: `status=pending_review`, `glb_draft_url`.
 
@@ -14,6 +16,13 @@ Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
 |----------|-------------|-----------|
 | `SUPABASE_URL` | sim | URL do projeto |
 | `SUPABASE_SERVICE_ROLE_KEY` | sim | Service role (ignora RLS) |
+| `AR_3D_PROVIDER` | não | `triposr` (default) ou `fal` |
+| `FAL_API_KEY` | condicional | Obrigatória quando `AR_3D_PROVIDER=fal` |
+| `FAL_MODEL_ID` | não | Default `tripo3d/tripo/v2.5/image-to-3d` |
+| `FAL_BASE_URL` | não | Default `https://queue.fal.run` |
+| `FAL_TIMEOUT_SECONDS` | não | Timeout total do job FAL (default 1800) |
+| `FAL_POLL_SECONDS` | não | Intervalo de polling FAL (default 4) |
+| `FAL_IMAGE_URL_SOURCE` | não | `front` (default), `three_quarter` ou `profile` |
 | `WORKER_STUB` | não | `1` = não roda TripoSR; gera GLB caixa |
 | `TRIPOSR_ROOT` | não | Default `/opt/TripoSR` |
 | `POLL_SECONDS` | não | Intervalo quando fila vazia (default 10) |
@@ -67,4 +76,5 @@ Execute no Supabase: [`../../supabase_create_ar_eyewear_assets.sql`](../../supab
 - **Erro `XOpenDisplay: cannot open display` no bake**: a imagem **GPU** (`Dockerfile`) faz **patch** a `TripoSR/tsr/bake_texture.py` no build: o moderngl tenta **`backend="egl"`**, depois **`osmesa`**, e só no fim o X11 original. Instala-se `libegl1-mesa`, `libgbm1`, `libosmesa6`. **Rebuild obrigatório** após puxar esta alteração. O worker continua a poder usar Xvfb como rede de segurança se algum ambiente cair no fallback X11. Aviso do **onnxruntime** sobre `/sys/class/drm/...` é habitual em Docker e **não** é a causa do bake. Último recurso: `BAKE_TEXTURE=0`.
 - **Job fica eternamente em “processing”**: o TripoSR/postprocess têm **timeout** (env acima); jobs **zombies** (worker morto) são marcados **failed** após `AR_WORKER_STALE_PROCESSING_MINUTES`. No admin, **Voltar a fila** também está disponível para linhas em `processing`.
 - TripoSR exige GPU NVIDIA com VRAM suficiente (veja o README oficial).
+- Com `AR_3D_PROVIDER=fal`, o worker deixa de depender de GPU local para gerar o GLB; mantém apenas o `postprocess.py` para orientação canônica.
 - Concorrência: o MVP assume um worker; para vários, adicione claim atômico (RPC `FOR UPDATE SKIP LOCKED`).

@@ -61,6 +61,9 @@ function extractGlbUrl(payload: unknown): string | null {
       if (low.includes("/model") || low.includes("/mesh") || low.includes("/asset") || low.includes("tripo3d")) {
         return raw;
       }
+      if (low.includes("fal.media") && (low.includes("tripo") || low.includes("mesh") || low.includes("model"))) {
+        return raw;
+      }
     }
   }
   return null;
@@ -85,19 +88,25 @@ function falStatusUrlWithLogs(url: string): string {
   return url.includes("?") ? `${url}&logs=1` : `${url}?logs=1`;
 }
 
-/** URL para GET do JSON final: path completo do modelo (não usar …/response com GET — dá 422). */
-function falResultFetchUrl(
+/** GET resultado = fal.queue.result: só path curto; nunca …/v2.5/…/requests/… (405). */
+function falQueueResultGetUrls(
   baseUrl: string,
-  modelId: string,
+  queueBase: string,
   requestId: string,
-  statusUrlFromApi: unknown,
-): string {
-  const hint = typeof statusUrlFromApi === "string" ? statusUrlFromApi.trim() : "";
-  if (hint.startsWith("http")) {
-    return hint.replace(/\/status\/?(\?.*)?$/i, "");
-  }
-  const mid = modelId.replace(/^\/+|\/+$/g, "");
-  return `${baseUrl}/${mid}/requests/${requestId}`;
+  submitJson: Record<string, unknown>,
+): string[] {
+  const pollBodyUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
+  const apiStatus = submitJson?.status_url ?? submitJson?.statusUrl;
+  const apiResponse = submitJson?.response_url ?? submitJson?.responseUrl;
+  const fromResponse =
+    typeof apiResponse === "string" && apiResponse.startsWith("http")
+      ? apiResponse.replace(/\/response\/?(\?.*)?$/i, "")
+      : null;
+  const fromStatus =
+    typeof apiStatus === "string" && apiStatus.startsWith("http")
+      ? apiStatus.replace(/\/status\/?(\?.*)?$/i, "")
+      : null;
+  return [...new Set([fromResponse, fromStatus, pollBodyUrl].filter(Boolean))] as string[];
 }
 
 async function callFalAndGetGlbUrl(imageUrl: string) {
@@ -123,7 +132,12 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
   if (!submitRes.ok) {
     throw new Error(`FAL submit failed: ${submitRes.status} ${submitTxt.slice(0, 300)}`);
   }
-  const submitJson = submitTxt ? JSON.parse(submitTxt) : {};
+  let submitJson: Record<string, unknown> = {};
+  try {
+    submitJson = submitTxt ? (JSON.parse(submitTxt) as Record<string, unknown>) : {};
+  } catch {
+    submitJson = {};
+  }
   const requestId = String(submitJson?.request_id || submitJson?.requestId || "").trim();
   if (!requestId) throw new Error(`FAL sem request_id: ${submitTxt.slice(0, 300)}`);
 
@@ -136,7 +150,6 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
     typeof apiStatusRaw === "string" && apiStatusRaw.startsWith("http")
       ? falStatusUrlWithLogs(apiStatusRaw)
       : `${builtStatusUrl}?logs=1`;
-  const fetchResultUrl = falResultFetchUrl(baseUrl, modelId, requestId, apiStatusRaw);
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
   let lastStatus = "";
   const logs: string[] = [];
@@ -163,7 +176,12 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
       const label = statusEndpointUnsupported ? "result" : "status";
       throw new Error(`FAL ${label} failed: ${sRes.status} ${sTxt.slice(0, 300)}`);
     }
-    const sJson = sTxt ? JSON.parse(sTxt) : {};
+    let sJson: Record<string, unknown> = {};
+    try {
+      sJson = sTxt ? (JSON.parse(sTxt) as Record<string, unknown>) : {};
+    } catch {
+      sJson = {};
+    }
     const status = String(sJson?.status || sJson?.state || sJson?.request_status || "").toUpperCase();
     if (status && status !== lastStatus) {
       logs.push(`status=${status}`);
@@ -184,32 +202,40 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
     throw new Error(`FAL timeout (${timeoutSeconds}s), status=${lastStatus || "unknown"}`);
   }
 
-  const midNorm = modelId.replace(/^\/+|\/+$/g, "");
-  const resultCandidates = [
-    fetchResultUrl,
-    `${baseUrl}/${midNorm}/requests/${requestId}`,
-    pollBodyUrl,
-  ];
-  const uniqueResults = [...new Set(resultCandidates.filter(Boolean))];
-
+  const resultUrls = falQueueResultGetUrls(baseUrl, queueBase, requestId, submitJson);
+  const maxAttemptsPerUrl = 12;
   let glbUrl: string | null = null;
   let lastResultErr = "";
-  for (const tryUrl of uniqueResults) {
-    const rRes = await fetch(tryUrl, { headers });
-    const rTxt = await rRes.text().catch(() => "");
-    if (!rRes.ok) {
-      lastResultErr = `${rRes.status} ${rTxt.slice(0, 220)}`;
-      continue;
+  urlLoop: for (const tryUrl of resultUrls) {
+    for (let attempt = 0; attempt < maxAttemptsPerUrl; attempt++) {
+      const rRes = await fetch(tryUrl, { headers });
+      const rTxt = await rRes.text().catch(() => "");
+      if (!rRes.ok) {
+        lastResultErr = `${tryUrl.split("?")[0].slice(-96)} → ${rRes.status} ${rTxt.slice(0, 200)}`;
+        const retryStatus =
+          rRes.status === 425 ||
+          rRes.status === 202 ||
+          rRes.status === 404 ||
+          (rRes.status >= 500 && rRes.status < 600);
+        if (retryStatus && attempt < maxAttemptsPerUrl - 1) {
+          await sleep(2000 + attempt * 500);
+          continue;
+        }
+        continue urlLoop;
+      }
+      let rJson: Record<string, unknown> = {};
+      try {
+        rJson = rTxt ? (JSON.parse(rTxt) as Record<string, unknown>) : {};
+      } catch {
+        rJson = {};
+      }
+      glbUrl = extractGlbUrl(rJson);
+      if (glbUrl) break urlLoop;
+      lastResultErr = `200 sem GLB (${rTxt.slice(0, 220)})`;
+      if (attempt < maxAttemptsPerUrl - 1) {
+        await sleep(2000);
+      }
     }
-    let rJson: Record<string, unknown> = {};
-    try {
-      rJson = rTxt ? (JSON.parse(rTxt) as Record<string, unknown>) : {};
-    } catch {
-      rJson = {};
-    }
-    glbUrl = extractGlbUrl(rJson);
-    if (glbUrl) break;
-    lastResultErr = `200 sem GLB (${rTxt.slice(0, 160)})`;
   }
   if (!glbUrl) throw new Error(`FAL result failed: ${lastResultErr}`);
 

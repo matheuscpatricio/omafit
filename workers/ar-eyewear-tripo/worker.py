@@ -654,8 +654,8 @@ def run_fal_tripo(front_url: str, three_url: str, profile_url: str, out_glb: Pat
 
     queue_base = _fal_queue_base_path(model)
     status_url = f"{base}/{queue_base}/requests/{req_id}/status"
-    # Resultado JSON: path completo do modelo (short path como queue_base → 422 image_url).
-    result_url = f"{base}/{model}/requests/{req_id}"
+    # GET resultado = mesmo path curto que @fal-ai/client queue.result() (não o model id completo → 405).
+    result_url = f"{base}/{queue_base}/requests/{req_id}"
     timeout_sec = _float_env("FAL_TIMEOUT_SECONDS", 1800.0)
     poll_sec = _float_env("FAL_POLL_SECONDS", 4.0)
     deadline = time.time() + max(30.0, timeout_sec)

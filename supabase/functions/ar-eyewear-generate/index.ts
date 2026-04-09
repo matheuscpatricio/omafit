@@ -80,6 +80,21 @@ function falStatusUrlWithLogs(url: string): string {
   return url.includes("?") ? `${url}&logs=1` : `${url}?logs=1`;
 }
 
+/** URL para GET do JSON final: path completo do modelo (não usar …/response com GET — dá 422). */
+function falResultFetchUrl(
+  baseUrl: string,
+  modelId: string,
+  requestId: string,
+  statusUrlFromApi: unknown,
+): string {
+  const hint = typeof statusUrlFromApi === "string" ? statusUrlFromApi.trim() : "";
+  if (hint.startsWith("http")) {
+    return hint.replace(/\/status\/?(\?.*)?$/i, "");
+  }
+  const mid = modelId.replace(/^\/+|\/+$/g, "");
+  return `${baseUrl}/${mid}/requests/${requestId}`;
+}
+
 async function callFalAndGetGlbUrl(imageUrl: string) {
   const falKey = env("FAL_API_KEY");
   if (!falKey) throw new Error("FAL_API_KEY não configurada na Edge Function");
@@ -109,17 +124,14 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
 
   const queueBase = falQueueBasePath(modelId);
   const builtStatusUrl = `${baseUrl}/${queueBase}/requests/${requestId}/status`;
-  const builtResultUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
+  /** Só para fallback de poll quando /status falha (mesmo host curto que o SDK). */
+  const pollBodyUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
   const apiStatusRaw = submitJson?.status_url ?? submitJson?.statusUrl;
-  const apiResponseRaw = submitJson?.response_url ?? submitJson?.responseUrl;
   const statusUrl =
     typeof apiStatusRaw === "string" && apiStatusRaw.startsWith("http")
       ? falStatusUrlWithLogs(apiStatusRaw)
       : `${builtStatusUrl}?logs=1`;
-  const resultUrl =
-    typeof apiResponseRaw === "string" && apiResponseRaw.startsWith("http")
-      ? apiResponseRaw
-      : builtResultUrl;
+  const fetchResultUrl = falResultFetchUrl(baseUrl, modelId, requestId, apiStatusRaw);
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
   let lastStatus = "";
   const logs: string[] = [];
@@ -135,11 +147,11 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
         // Algumas versões da API não expõem /status; faz fallback para /requests/{id}.
         statusEndpointUnsupported = true;
         logs.push(`status_endpoint_fallback=${sRes.status}`);
-        sRes = await fetch(builtResultUrl, { headers });
+        sRes = await fetch(pollBodyUrl, { headers });
         sTxt = await sRes.text().catch(() => "");
       }
     } else {
-      sRes = await fetch(builtResultUrl, { headers });
+      sRes = await fetch(pollBodyUrl, { headers });
       sTxt = await sRes.text().catch(() => "");
     }
     if (!sRes.ok) {
@@ -167,7 +179,7 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
     throw new Error(`FAL timeout (${timeoutSeconds}s), status=${lastStatus || "unknown"}`);
   }
 
-  const rRes = await fetch(resultUrl, { headers });
+  const rRes = await fetch(fetchResultUrl, { headers });
   const rTxt = await rRes.text().catch(() => "");
   if (!rRes.ok) {
     throw new Error(`FAL result failed: ${rRes.status} ${rTxt.slice(0, 300)}`);

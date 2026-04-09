@@ -619,6 +619,18 @@ function falStatusUrlWithLogs(url) {
   return url.includes("?") ? `${url}&logs=1` : `${url}?logs=1`;
 }
 
+/** GET do JSON final: path completo do modelo (não usar …/response com GET). */
+function falResultFetchUrl(baseUrl, modelId, requestId, statusUrlFromApi) {
+  const hint = typeof statusUrlFromApi === "string" ? statusUrlFromApi.trim() : "";
+  if (hint.startsWith("http")) {
+    return hint.replace(/\/status\/?(\?.*)?$/i, "");
+  }
+  const mid = String(modelId || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  return `${baseUrl}/${mid}/requests/${requestId}`;
+}
+
 function* walkStrings(node) {
   if (typeof node === "string") {
     yield node;
@@ -696,15 +708,13 @@ export async function generateGlbDraftViaFal({
 
   const queueBase = falQueueBasePath(modelId);
   const builtStatus = `${baseUrl}/${queueBase}/requests/${requestId}/status`;
-  const builtResult = `${baseUrl}/${queueBase}/requests/${requestId}`;
+  const pollBodyUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
   const apiStatus = submitJson?.status_url ?? submitJson?.statusUrl;
-  const apiResponse = submitJson?.response_url ?? submitJson?.responseUrl;
   const pollStatusUrl =
     typeof apiStatus === "string" && apiStatus.startsWith("http")
       ? falStatusUrlWithLogs(apiStatus)
       : `${builtStatus}?logs=1`;
-  const fetchResultUrl =
-    typeof apiResponse === "string" && apiResponse.startsWith("http") ? apiResponse : builtResult;
+  const fetchResultUrl = falResultFetchUrl(baseUrl, modelId, requestId, apiStatus);
 
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
   let lastStatus = "";
@@ -719,13 +729,13 @@ export async function generateGlbDraftViaFal({
       statusText = await statusRes.text().catch(() => "");
       if (statusRes.status === 405 || statusRes.status === 404) {
         statusEndpointUnsupported = true;
-        statusRes = await fetch(builtResult, {
+        statusRes = await fetch(pollBodyUrl, {
           headers: falHeaders(apiKey),
         });
         statusText = await statusRes.text().catch(() => "");
       }
     } else {
-      statusRes = await fetch(builtResult, {
+      statusRes = await fetch(pollBodyUrl, {
         headers: falHeaders(apiKey),
       });
       statusText = await statusRes.text().catch(() => "");

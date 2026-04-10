@@ -730,52 +730,52 @@ async function runArSession({
     }
 
     function applyGlassesPoseFromLandmarks(lm) {
-      const eL = lm[33];
-      const eR = lm[263];
-      const nose = lm[1];
-      if (!eL || !eR || !nose) return false;
+      // Mesmos índices do facemesh do Virtual-Glasses-Try-on (TensorFlow/MediaPipe mesh):
+      // meio dos olhos 168, olhos 143/372, base do nariz 2 — com fallback ao landmarker atual.
+      // Ref: https://github.com/bensonruan/Virtual-Glasses-Try-on/blob/main/js/virtual-glasses.js
+      const eL = lm[143] ?? lm[33];
+      const eR = lm[372] ?? lm[263];
+      const noseB = lm[2] ?? lm[1];
+      const mid = lm[168];
+      if (!eL || !eR || !noseB) return false;
+
+      const midLM = mid
+        ? mid
+        : {
+            x: (eL.x + eR.x) / 2,
+            y: (eL.y + eR.y) / 2,
+            z: ((eL.z || 0) + (eR.z || 0)) / 2,
+          };
 
       const ipdNorm = Math.hypot(eR.x - eL.x, eR.y - eL.y);
       if (ipdNorm < 0.02) return false;
 
-      const pL = landmarkToWorldOnPlane(eL, false);
-      const pR = landmarkToWorldOnPlane(eR, false);
-      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], true) : null;
+      const pL = landmarkToWorldOnPlane(eL, true);
+      const pR = landmarkToWorldOnPlane(eR, true);
+      const anchor = landmarkToWorldOnPlane(midLM, true);
 
-      const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
-      const anchor = pBridge || midEyes;
+      // Vetor "up" como no demo: (meio olhos − base nariz), com Y invertido; X já espelhado (selfie).
+      const mx = normX(midLM.x);
+      const my = midLM.y;
+      const mz = midLM.z || 0;
+      const nx = normX(noseB.x);
+      const ny = noseB.y;
+      const nz = noseB.z || 0;
+      let ux = mx - nx;
+      let uy = -(my - ny);
+      let uz = mz - nz;
+      const lenU = Math.hypot(ux, uy, uz);
+      if (lenU < 1e-6) return false;
+      ux /= lenU;
+      uy /= lenU;
+      uz /= lenU;
 
-      // X = linha dos olhos no espaço mundo (já com o mesmo espelho que o vídeo).
-      const xAxis = new THREE.Vector3().subVectors(pR, pL);
-      if (xAxis.lengthSq() < 1e-14) return false;
-      xAxis.normalize();
-
-      const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
-
-      // “Cima” do rosto: nariz → olhos no plano da câmara (não só toCam×x, que com espelho/selfie
-      // erra o sinal e deixa o óculos de cabeça para baixo ou torcido).
-      const pNose = landmarkToWorldOnPlane(nose, false);
-      let yAxis = new THREE.Vector3().subVectors(midEyes, pNose);
-      if (yAxis.lengthSq() < 1e-14) {
-        yAxis = new THREE.Vector3().crossVectors(toCam, xAxis);
-      }
-      if (yAxis.lengthSq() < 1e-14) return false;
-      yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
-      if (yAxis.lengthSq() < 1e-14) return false;
-      yAxis.normalize();
-
-      // Destro: Z = X × Y aponta para fora do rosto; queremos +Z do modelo virado para a câmara.
-      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
-      if (zAxis.dot(toCam) < 0) {
-        zAxis.negate();
-        yAxis.crossVectors(zAxis, xAxis).normalize();
-      }
-
-      const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
-      const targetPos = anchor.clone();
-      targetPos.addScaledVector(yAxis, -0.008);
-      targetPos.addScaledVector(zAxis, 0.014);
-      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
+      // Rotação do referencial: rotation.y = π, rotation.z = π/2 − acos(up.x) (ordem padrão XYZ).
+      const upClamped = Math.max(-1, Math.min(1, ux));
+      const rotZ = Math.PI / 2 - Math.acos(upClamped);
+      const targetQuat = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(0, Math.PI, rotZ, "XYZ"),
+      );
 
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;
@@ -783,7 +783,7 @@ async function runArSession({
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
       const faceScale = Math.max(0.06, Math.min(0.245, targetFrameWidth / modelNormWidth));
 
-      faceRoot.position.lerp(targetPos, 0.38);
+      faceRoot.position.lerp(anchor, 0.38);
       faceRoot.quaternion.slerp(targetQuat, 0.38);
       const s = faceRoot.scale.x || faceScale;
       const nextS = s + (faceScale - s) * 0.32;

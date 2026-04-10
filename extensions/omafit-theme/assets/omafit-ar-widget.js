@@ -607,7 +607,8 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
+      /** Matriz canónica→rosto (recomendado para anexar modelos 3D; ver Google AI Edge Face Landmarker). */
+      outputFacialTransformationMatrixes: true,
     };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -666,8 +667,9 @@ async function runArSession({
     renderer.toneMappingExposure = 1;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 10);
-    camera.position.set(0, 0, 0.6);
+    // FOV ~63° vertical alinha com a câmara intrínseca usada na matriz facial do Face Landmarker (MediaPipe).
+    const camera = new THREE.PerspectiveCamera(63, w / h, 0.01, 10);
+    camera.position.set(0, 0, 0);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
@@ -737,29 +739,17 @@ async function runArSession({
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
-    /**
-     * Correção fixa entre a base facial (+X hastes, +Y testa, +Z câmara) e o GLB após Tripo/modelFix.
-     * Afinar: AR_BIND_ROT_X_RAD (0 ou π), AR_BIND_ROT_Z_RAD (±π/2, 0, π).
-     */
-    const glassesBind = new THREE.Group();
-    const AR_BIND_ROT_X_RAD = Math.PI;
-    const AR_BIND_ROT_Z_RAD = -Math.PI / 2;
-    const qBindX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), AR_BIND_ROT_X_RAD);
-    const qBindZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), AR_BIND_ROT_Z_RAD);
-    glassesBind.quaternion.multiplyQuaternions(qBindZ, qBindX);
-
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    glassesBind.add(modelFix);
-    faceRoot.add(glassesBind);
+    faceRoot.add(modelFix);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
     dirLt.position.set(0.35, 0.55, 0.45);
     scene.add(dirLt);
 
-    const camZ = 0.6;
-    const zPlane = -0.34;
+    const camZ = 0;
+    const zPlane = -0.42;
     const distCamToPlane = camZ - zPlane;
     const zDepthScale = 0.12;
     const frameToIpdRatio = 1.84; // ligeiramente maior para melhor encaixe visual
@@ -789,9 +779,34 @@ async function runArSession({
     const _yAxis = new THREE.Vector3();
     const _zAxis = new THREE.Vector3();
     const _zWant = new THREE.Vector3();
+    const mpMat = new THREE.Matrix4();
+    const flipXMat = new THREE.Matrix4();
+    const workMat = new THREE.Matrix4();
+    const tmpPos = new THREE.Vector3();
+    const tmpQuat = new THREE.Quaternion();
+    const tmpScl = new THREE.Vector3();
+    const smoothPos = new THREE.Vector3();
+    const smoothQuat = new THREE.Quaternion();
+    let smoothScale = 0.12;
+    let poseSmoothReady = false;
 
-    function applyGlassesPoseFromLandmarks(lm) {
-      // Índices estáveis do Face Landmarker (mesh 478): cantos externos 33/263, ponte 168, ponta nariz 1.
+    function resetFaceRootTransform() {
+      poseSmoothReady = false;
+      faceRoot.matrixAutoUpdate = true;
+      faceRoot.matrix.identity();
+      faceRoot.position.set(0, 0, 0);
+      faceRoot.quaternion.set(0, 0, 0, 1);
+      faceRoot.scale.set(1, 1, 1);
+    }
+
+    /**
+     * Pose principal: matriz facial do MediaPipe (canónico → rosto), espelhada em X para coincidir com o vídeo CSS.
+     * Fallback: base ortonormal a partir de landmarks (mesma câmara 63° / z=0 que a matriz assume).
+     */
+    function applyGlassesPose(res) {
+      const lm = res.faceLandmarks[0];
+      if (!lm) return false;
+
       const eL = lm[33];
       const eR = lm[263];
       const nose = lm[1];
@@ -802,8 +817,47 @@ async function runArSession({
 
       const pL = landmarkToWorldOnPlane(eL, false);
       const pR = landmarkToWorldOnPlane(eR, false);
-      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], true) : null;
+      const ipdWorld = pL.distanceTo(pR);
+      const modelNormWidth =
+        autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
+      const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
+      const mtx = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
+      const raw = mtx && mtx.data;
+      const hasMatrix = raw && raw.length === 16;
+
+      if (hasMatrix) {
+        mpMat.fromArray(raw);
+        flipXMat.makeScale(-1, 1, 1);
+        workMat.multiplyMatrices(flipXMat, mpMat);
+        workMat.decompose(tmpPos, tmpQuat, tmpScl);
+
+        tmpScl.setScalar(faceScale);
+
+        if (!poseSmoothReady) {
+          smoothPos.copy(tmpPos);
+          smoothQuat.copy(tmpQuat);
+          smoothScale = faceScale;
+          poseSmoothReady = true;
+        } else {
+          smoothPos.lerp(tmpPos, 0.36);
+          if (smoothQuat.dot(tmpQuat) < 0) {
+            tmpQuat.set(-tmpQuat.x, -tmpQuat.y, -tmpQuat.z, -tmpQuat.w);
+          }
+          smoothQuat.slerp(tmpQuat, 0.38);
+          smoothScale += (faceScale - smoothScale) * 0.32;
+        }
+
+        tmpScl.setScalar(smoothScale);
+        workMat.compose(smoothPos, smoothQuat, tmpScl);
+        faceRoot.matrixAutoUpdate = false;
+        faceRoot.matrix.copy(workMat);
+        return true;
+      }
+
+      faceRoot.matrixAutoUpdate = true;
+
+      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], true) : null;
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
@@ -822,7 +876,6 @@ async function runArSession({
 
       if (Math.abs(tmpUp.dot(_zWant)) > 0.985) return false;
 
-      // +Z local aponta para a câmara (como a maioria dos GLB); lookAt() usa −Z e deslocava/roda o modelo.
       _yAxis.crossVectors(_zWant, _xAxis);
       if (_yAxis.lengthSq() < 1e-14) return false;
       _yAxis.normalize();
@@ -843,17 +896,10 @@ async function runArSession({
       targetPos.addScaledVector(_yAxis, -0.008);
       targetPos.addScaledVector(_zAxis, 0.014);
 
-      const ipdWorld = pL.distanceTo(pR);
-      const targetFrameWidth = ipdWorld * frameToIpdRatio;
-      const modelNormWidth =
-        autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
-      const faceScale = Math.max(0.06, Math.min(0.245, targetFrameWidth / modelNormWidth));
-
       faceRoot.position.lerp(targetPos, 0.38);
       faceRoot.quaternion.slerp(poseQuatScratch, 0.38);
       const s = faceRoot.scale.x || faceScale;
-      const nextS = s + (faceScale - s) * 0.32;
-      faceRoot.scale.setScalar(nextS);
+      faceRoot.scale.setScalar(s + (faceScale - s) * 0.32);
       return true;
     }
 
@@ -869,12 +915,14 @@ async function runArSession({
       const res = landmarker.detectForVideo(video, ts);
       if (!res.faceLandmarks || !res.faceLandmarks[0]) {
         faceRoot.visible = false;
+        resetFaceRootTransform();
         renderer.render(scene, camera);
         return;
       }
 
-      const ok = applyGlassesPoseFromLandmarks(res.faceLandmarks[0]);
+      const ok = applyGlassesPose(res);
       faceRoot.visible = ok;
+      if (!ok) resetFaceRootTransform();
       renderer.render(scene, camera);
     }
     raf = requestAnimationFrame(frame);

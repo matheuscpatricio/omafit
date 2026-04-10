@@ -737,9 +737,25 @@ async function runArSession({
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
+    /**
+     * Alinha o espaço local do rosto (lookAt) com o eixo em que o GLB ficou após Tripo + modelFix.
+     * Sem isto, makeBasis(x,y,z) costuma deixar o modelo 90° rodado e invertido no ecrã.
+     */
+    const poseAlign = new THREE.Group();
+    poseAlign.rotation.order = "YXZ";
+    const AR_POSE_ALIGN_X_DEG = 180;
+    const AR_POSE_ALIGN_Y_DEG = 0;
+    const AR_POSE_ALIGN_Z_DEG = 90;
+    poseAlign.rotation.set(
+      rad(AR_POSE_ALIGN_X_DEG),
+      rad(AR_POSE_ALIGN_Y_DEG),
+      rad(AR_POSE_ALIGN_Z_DEG),
+    );
+    poseAlign.add(modelFix);
+
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(modelFix);
+    faceRoot.add(poseAlign);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -770,6 +786,12 @@ async function runArSession({
       return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
     }
 
+    const poseHelper = new THREE.Object3D();
+    const poseQuatScratch = new THREE.Quaternion();
+    const tmpUp = new THREE.Vector3();
+    const _vY = new THREE.Vector3();
+    const _vZ = new THREE.Vector3();
+
     function applyGlassesPoseFromLandmarks(lm) {
       // Índices estáveis do Face Landmarker (mesh 478): cantos externos 33/263, ponte 168, ponta nariz 1.
       const eL = lm[33];
@@ -787,33 +809,27 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      const xAxis = new THREE.Vector3().subVectors(pR, pL);
-      if (xAxis.lengthSq() < 1e-14) return false;
-      xAxis.normalize();
-
-      const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
-
       const pNose = landmarkToWorldOnPlane(nose, false);
-      let yAxis = new THREE.Vector3().subVectors(midEyes, pNose);
-      if (yAxis.lengthSq() < 1e-14) {
-        yAxis = new THREE.Vector3().crossVectors(toCam, xAxis);
-      }
-      if (yAxis.lengthSq() < 1e-14) return false;
-      yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
-      if (yAxis.lengthSq() < 1e-14) return false;
-      yAxis.normalize();
+      tmpUp.subVectors(midEyes, pNose);
+      if (tmpUp.lengthSq() < 1e-14) return false;
+      tmpUp.normalize();
 
-      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
-      if (zAxis.dot(toCam) < 0) {
-        zAxis.negate();
-        yAxis.crossVectors(zAxis, xAxis).normalize();
-      }
+      const toCam = new THREE.Vector3().subVectors(camera.position, anchor);
+      if (toCam.lengthSq() < 1e-14) return false;
+      toCam.normalize();
 
-      const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+      if (Math.abs(tmpUp.dot(toCam)) > 0.985) return false;
+
+      poseHelper.position.copy(anchor);
+      poseHelper.up.copy(tmpUp);
+      poseHelper.lookAt(camera.position);
+      poseQuatScratch.copy(poseHelper.quaternion);
+
+      _vY.set(0, 1, 0).applyQuaternion(poseQuatScratch);
+      _vZ.set(0, 0, 1).applyQuaternion(poseQuatScratch);
       const targetPos = anchor.clone();
-      targetPos.addScaledVector(yAxis, -0.008);
-      targetPos.addScaledVector(zAxis, 0.014);
-      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
+      targetPos.addScaledVector(_vY, -0.008);
+      targetPos.addScaledVector(_vZ, 0.014);
 
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;
@@ -822,7 +838,7 @@ async function runArSession({
       const faceScale = Math.max(0.06, Math.min(0.245, targetFrameWidth / modelNormWidth));
 
       faceRoot.position.lerp(targetPos, 0.38);
-      faceRoot.quaternion.slerp(targetQuat, 0.38);
+      faceRoot.quaternion.slerp(poseQuatScratch, 0.38);
       const s = faceRoot.scale.x || faceScale;
       const nextS = s + (faceScale - s) * 0.32;
       faceRoot.scale.setScalar(nextS);

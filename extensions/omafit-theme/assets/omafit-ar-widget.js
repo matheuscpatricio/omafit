@@ -677,58 +677,8 @@ async function runArSession({
     });
     const autoOrient = new THREE.Group();
     autoOrient.rotation.order = "YXZ";
+    autoOrient.rotation.set(0, 0, 0);
     autoOrient.add(glasses);
-
-    // Canonicaliza orientação do GLB antes do ajuste manual X/Y/Z:
-    // preferir largura (hastes) no eixo X e espessura no eixo Y.
-    const orientCandidatesDeg = [
-      [0, 0, 0],
-      [0, 0, 90],
-      [0, 0, -90],
-      [0, 0, 180],
-      [0, 90, 0],
-      [0, -90, 0],
-      [0, 180, 0],
-      [90, 0, 0],
-      [-90, 0, 0],
-      [180, 0, 0],
-      [90, 90, 0],
-      [90, -90, 0],
-      [-90, 90, 0],
-      [-90, -90, 0],
-      [0, 90, 90],
-      [0, -90, -90],
-    ];
-    const scoreOrientation = () => {
-      autoOrient.updateMatrixWorld(true);
-      const b = new THREE.Box3().setFromObject(autoOrient);
-      const s = b.getSize(new THREE.Vector3());
-      const maxDim = Math.max(s.x, s.y, s.z, 1e-6);
-      const minDim = Math.min(s.x, s.y, s.z, 1e-6);
-      const midDim = s.x + s.y + s.z - maxDim - minDim;
-      const xLargest = s.x / maxDim; // melhor quando ~1
-      const ySmallest = minDim / Math.max(s.y, 1e-6); // melhor quando ~1
-      const zMiddle = 1 - Math.min(1, Math.abs(s.z - midDim) / Math.max(midDim, 1e-6)); // melhor quando ~1
-      return xLargest * 0.6 + ySmallest * 0.3 + zMiddle * 0.1;
-    };
-    // Por padrão, NÃO auto-rotaciona no frontend para preservar o GLB já canônico do worker.
-    const enableAutoOrient =
-      String(cfgRoot?.dataset?.arAutoOrient || "").trim() === "1";
-    if (enableAutoOrient) {
-      let best = orientCandidatesDeg[0];
-      let bestScore = -Infinity;
-      for (const [dx, dy, dz] of orientCandidatesDeg) {
-        autoOrient.rotation.set(degToRad(dx), degToRad(dy), degToRad(dz));
-        const sc = scoreOrientation();
-        if (sc > bestScore) {
-          bestScore = sc;
-          best = [dx, dy, dz];
-        }
-      }
-      autoOrient.rotation.set(degToRad(best[0]), degToRad(best[1]), degToRad(best[2]));
-    } else {
-      autoOrient.rotation.set(0, 0, 0);
-    }
 
     let baseGlbScale = 1;
     {
@@ -745,7 +695,7 @@ async function runArSession({
       autoOrient.userData._omafitNormWidth = normWidth;
     }
 
-    /** Ajuste fino opcional (graus no tema). Padrão 0: o worker/postprocess já exporta eixos canónicos + autoOrient acima. */
+    /** Ajuste fino opcional (graus no tema). Com GLB FAL correto, mantém 0,0,0. */
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
     modelFix.rotation.set(
@@ -815,21 +765,24 @@ async function runArSession({
       if (xAxis.lengthSq() < 1e-14) return false;
       xAxis.normalize();
 
-      // Eixo "frente" do rosto: do nariz (ponta) para a ponte.
-      let zAxis = new THREE.Vector3().subVectors(nBridge, nNose);
-      if (zAxis.lengthSq() < 1e-14) {
-        zAxis.set(0, 0, 1);
-      } else {
-        zAxis.normalize();
-      }
-
-      let yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
+      // Cima do rosto (ponta do nariz → ponte), não “frente” para a câmara — evita GLB FAL/Y-up ficar de lado.
+      let yAxis = new THREE.Vector3().subVectors(nBridge, nNose);
       if (yAxis.lengthSq() < 1e-14) {
         yAxis.set(0, 1, 0);
       } else {
         yAxis.normalize();
       }
-      zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+      yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
+      if (yAxis.lengthSq() < 1e-14) {
+        yAxis.set(0, 1, 0);
+        yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
+        if (yAxis.lengthSq() < 1e-14) return false;
+      }
+      yAxis.normalize();
+
+      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis);
+      if (zAxis.lengthSq() < 1e-14) return false;
+      zAxis.normalize();
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
       const targetPos = anchor.clone();

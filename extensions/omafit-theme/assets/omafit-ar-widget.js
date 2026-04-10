@@ -113,24 +113,46 @@ const COPY = {
   },
 };
 
+/** Estilo TryOnWidget: font-family com nomes entre aspas + !important em todo o subtree. */
+function formatCssFontFamilyStack(raw) {
+  const s = String(raw || "")
+    .trim()
+    .replace(/[<>]/g, "");
+  if (!s) return "";
+  return s
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) =>
+      /^(serif|sans-serif|cursive|fantasy|monospace|system-ui)$/i.test(p)
+        ? p
+        : `'${p.replace(/'/g, "\\'")}'`,
+    )
+    .join(", ");
+}
+
 function injectGlobalStyles() {
   if (document.getElementById("omafit-ar-styles")) return;
   const root = document.getElementById("omafit-ar-root");
-  const customFont = root?.dataset?.fontFamily?.trim();
-  const shellFont = customFont
-    ? customFont.replace(/[<>]/g, "")
-    : "'Outfit', system-ui, sans-serif";
+  const rawFont = root?.dataset?.fontFamily?.trim() || "";
+  const stack = formatCssFontFamilyStack(rawFont);
+  const appliedStack = stack || "'Outfit', system-ui, sans-serif";
   const s = document.createElement("style");
   s.id = "omafit-ar-styles";
   s.textContent = `
     @keyframes omafit-ar-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; font-family: ${shellFont}; }
+    .omafit-ar-root, .omafit-ar-root * {
+      font-family: ${appliedStack} !important;
+    }
+    .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
     .omafit-ar-try-on-link:focus { outline: 2px solid #810707; outline-offset: 2px; }
   `;
   document.head.appendChild(s);
+  const hasThemeFontFace = document.getElementById("omafit-ar-theme-font-face");
   if (
-    !customFont &&
+    !hasThemeFontFace &&
+    !rawFont &&
     !document.querySelector('link[href*="Outfit"][href*="fonts.googleapis"]')
   ) {
     const l = document.createElement("link");
@@ -207,7 +229,16 @@ function svgX() {
   return svg;
 }
 
-function buildInfoModal({ primaryColor, logoUrl, productTitle, productImage, t, onClose, onStartAr }) {
+function buildInfoModal({
+  primaryColor,
+  logoUrl,
+  shopName,
+  productTitle,
+  productImage,
+  t,
+  onClose,
+  onStartAr,
+}) {
   const shell = el("div", { className: "omafit-ar-shell" });
   shell.style.cssText = [
     "position: fixed",
@@ -243,10 +274,26 @@ function buildInfoModal({ primaryColor, logoUrl, productTitle, productImage, t, 
   if (logoUrl) {
     const img = el("img", {
       src: logoUrl,
-      alt: "",
-      style: { maxHeight: "48px", width: "auto", objectFit: "contain" },
+      alt: shopName || "",
+      loading: "eager",
+      decoding: "async",
+      style: { maxHeight: "48px", width: "auto", maxWidth: "min(200px, 70vw)", objectFit: "contain" },
     });
     logoWrap.appendChild(img);
+  } else if (shopName) {
+    logoWrap.appendChild(
+      el("span", {
+        textContent: shopName,
+        style: {
+          fontSize: "1.125rem",
+          fontWeight: "600",
+          color: primaryColor,
+          textAlign: "center",
+          lineHeight: "1.2",
+          padding: "0 8px",
+        },
+      }),
+    );
   }
 
   const closeBtn = el(
@@ -607,8 +654,8 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      /** Matriz canónica→rosto (recomendado para anexar modelos 3D; ver Google AI Edge Face Landmarker). */
-      outputFacialTransformationMatrixes: true,
+      /** Matriz facial desligada: com vídeo espelhado + GLB Tripo gerava óculos de lado / invertidos. */
+      outputFacialTransformationMatrixes: false,
     };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -667,9 +714,8 @@ async function runArSession({
     renderer.toneMappingExposure = 1;
 
     const scene = new THREE.Scene();
-    // FOV ~63° vertical alinha com a câmara intrínseca usada na matriz facial do Face Landmarker (MediaPipe).
-    const camera = new THREE.PerspectiveCamera(63, w / h, 0.01, 10);
-    camera.position.set(0, 0, 0);
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 10);
+    camera.position.set(0, 0, 0.6);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
@@ -734,22 +780,32 @@ async function runArSession({
     modelFix.rotation.order = "YXZ";
     const AR_GLB_ROT_X_DEG = -90;
     const AR_GLB_ROT_Y_DEG = 0;
-    const AR_GLB_ROT_Z_DEG = 180;
+    /** Z=180 com tracking por landmarks + espelho piorava orientação; Tripo fica só com −90° X. */
+    const AR_GLB_ROT_Z_DEG = 0;
     const rad = (d) => (d * Math.PI) / 180;
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
+    /**
+     * Corrige GLB canónico (largura X / espessura Y / profundidade Z) relativamente à base facial.
+     * 180° Y + 90° X (YXZ): alinha eixo “deitado” do export com hastes horizontais no ecrã.
+     */
+    const glbBind = new THREE.Group();
+    glbBind.rotation.order = "YXZ";
+    glbBind.rotation.set(rad(180), rad(90), 0);
+    glbBind.add(modelFix);
+
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(modelFix);
+    faceRoot.add(glbBind);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
     dirLt.position.set(0.35, 0.55, 0.45);
     scene.add(dirLt);
 
-    const camZ = 0;
-    const zPlane = -0.42;
+    const camZ = 0.6;
+    const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
     const zDepthScale = 0.12;
     const frameToIpdRatio = 1.84; // ligeiramente maior para melhor encaixe visual
@@ -779,30 +835,13 @@ async function runArSession({
     const _yAxis = new THREE.Vector3();
     const _zAxis = new THREE.Vector3();
     const _zWant = new THREE.Vector3();
-    const mpMat = new THREE.Matrix4();
-    const flipXMat = new THREE.Matrix4();
-    const workMat = new THREE.Matrix4();
-    const tmpPos = new THREE.Vector3();
-    const tmpQuat = new THREE.Quaternion();
-    const tmpScl = new THREE.Vector3();
-    const smoothPos = new THREE.Vector3();
-    const smoothQuat = new THREE.Quaternion();
-    let smoothScale = 0.12;
-    let poseSmoothReady = false;
-
     function resetFaceRootTransform() {
-      poseSmoothReady = false;
-      faceRoot.matrixAutoUpdate = true;
-      faceRoot.matrix.identity();
       faceRoot.position.set(0, 0, 0);
       faceRoot.quaternion.set(0, 0, 0, 1);
       faceRoot.scale.set(1, 1, 1);
     }
 
-    /**
-     * Pose principal: matriz facial do MediaPipe (canónico → rosto), espelhada em X para coincidir com o vídeo CSS.
-     * Fallback: base ortonormal a partir de landmarks (mesma câmara 63° / z=0 que a matriz assume).
-     */
+    /** Pose só por landmarks + base ortonormal (espelho só em normX). */
     function applyGlassesPose(res) {
       const lm = res.faceLandmarks[0];
       if (!lm) return false;
@@ -822,41 +861,6 @@ async function runArSession({
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
       const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
-      const mtx = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
-      const raw = mtx && mtx.data;
-      const hasMatrix = raw && raw.length === 16;
-
-      if (hasMatrix) {
-        mpMat.fromArray(raw);
-        flipXMat.makeScale(-1, 1, 1);
-        workMat.multiplyMatrices(flipXMat, mpMat);
-        workMat.decompose(tmpPos, tmpQuat, tmpScl);
-
-        tmpScl.setScalar(faceScale);
-
-        if (!poseSmoothReady) {
-          smoothPos.copy(tmpPos);
-          smoothQuat.copy(tmpQuat);
-          smoothScale = faceScale;
-          poseSmoothReady = true;
-        } else {
-          smoothPos.lerp(tmpPos, 0.36);
-          if (smoothQuat.dot(tmpQuat) < 0) {
-            tmpQuat.set(-tmpQuat.x, -tmpQuat.y, -tmpQuat.z, -tmpQuat.w);
-          }
-          smoothQuat.slerp(tmpQuat, 0.38);
-          smoothScale += (faceScale - smoothScale) * 0.32;
-        }
-
-        tmpScl.setScalar(smoothScale);
-        workMat.compose(smoothPos, smoothQuat, tmpScl);
-        faceRoot.matrixAutoUpdate = false;
-        faceRoot.matrix.copy(workMat);
-        return true;
-      }
-
-      faceRoot.matrixAutoUpdate = true;
-
       const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], true) : null;
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
@@ -866,6 +870,7 @@ async function runArSession({
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
 
+      /* Linha entre olhos (263→33) no espaço já espelhado (normX); +X local do óculos = hastes. */
       _xAxis.subVectors(pR, pL);
       if (_xAxis.lengthSq() < 1e-14) return false;
       _xAxis.normalize();
@@ -953,7 +958,8 @@ async function main() {
   const primaryColor = root.dataset.primaryColor || "#810707";
   const productTitle = root.dataset.productTitle || "Produto";
   const productImage = root.dataset.productImage || "";
-  const logoUrl = root.dataset.storeLogo || "";
+  const logoUrl = (root.dataset.storeLogo || "").trim();
+  const shopName = (root.dataset.shopName || "").trim();
   const linkText = root.dataset.linkText || "Experimentar óculos (AR)";
   const lang = pickLocale(root.dataset.locale);
   const t = COPY[lang] || COPY.pt;
@@ -961,10 +967,6 @@ async function main() {
     root.dataset.autoOpen === "1" || root.getAttribute("data-auto-open") === "1";
 
   injectGlobalStyles();
-  const themeFont = root.dataset.fontFamily?.trim();
-  if (themeFont) {
-    root.style.fontFamily = themeFont;
-  }
 
   let modal = null;
 
@@ -980,6 +982,7 @@ async function main() {
     modal = buildInfoModal({
       primaryColor,
       logoUrl,
+      shopName,
       productTitle,
       productImage,
       t,

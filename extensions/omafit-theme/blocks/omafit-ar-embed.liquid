@@ -53,6 +53,7 @@
     data-product-image="{{ product_image_url | escape }}"
     data-primary-color="{{ block.settings.primary_color | escape }}"
     data-store-logo="{{ logo_url | escape }}"
+    data-shop-name="{{ shop.name | escape }}"
     {% if settings.type_body_font %}
       data-font-family="{{ settings.type_body_font.family | escape }}, {{ settings.type_body_font.fallback_families }}"
     {% endif %}
@@ -98,7 +99,7 @@
     },
     {
       "type": "paragraph",
-      "content": "A rotação do modelo no AR é fixa no código do widget: X = −90°, Y = 0°, Z = 180° (ordem YXZ, Three.js), como no pipeline TripoSR legado. Não há correção automática nem campos no tema."
+      "content": "Rotação GLB no código: modelFix X = −90°, Y/Z = 0° (YXZ) + grupo glbBind (180° Y, 90° X). Ajuste no tema só via imagem do bloco ou pedido de alteração ao ficheiro omafit-ar-widget.js."
     }
   ]
 }

@@ -72,6 +72,8 @@
     data-font-family="{{ ar_font_stack | escape }}"
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
+    data-benson-3d-up="10"
+    data-benson-3d-scale="0.01"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -113,7 +115,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Pose estilo Benson Ruan (Euler y=π, z=π/2−acos(up.x)); GLB: modelFix −90° X. Ver omafit-ar-widget.js."
+      "content": "Pose = drawglasses do repo Benson (câmara setup3dCamera + índices 168/143/372/2). Ajuste data-benson-3d-up / data-benson-3d-scale no bloco ou no JS."
     }
   ]
 }

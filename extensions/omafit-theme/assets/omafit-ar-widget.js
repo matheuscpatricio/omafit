@@ -11,6 +11,26 @@ const MODEL_URL =
 
 const Z_SHELL = 2147483640;
 
+// #region agent log
+/** Debug ingest (sessão 8c9070) — não remover até verificação pós-correção. */
+function __omafitArDbgLog(payload) {
+  const base = {
+    sessionId: "8c9070",
+    timestamp: Date.now(),
+    runId: typeof payload.runId === "string" ? payload.runId : "pre-fix",
+    ...payload,
+  };
+  fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8c9070" },
+    body: JSON.stringify(base),
+  }).catch(() => {});
+}
+// #endregion
+
+let __omafitArDbgPoseOkOnce = false;
+let __omafitArDbgPoseFailOnce = false;
+
 /**
  * Desktop costuma falhar com facingMode + resolução (OverconstrainedError).
  * Tenta várias constraints e cai em { video: true }.
@@ -194,6 +214,20 @@ function injectGlobalStyles(root) {
       "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap";
     document.head.appendChild(l);
   }
+
+  // #region agent log
+  __omafitArDbgLog({
+    location: "omafit-ar-widget.js:injectGlobalStyles",
+    message: "styles injected",
+    hypothesisId: "H1",
+    data: {
+      rawFontLen: String(rawFont || "").length,
+      dataFontAttrLen: String(root?.dataset?.fontFamily || "").trim().length,
+      hasThemeFontFace: Boolean(document.getElementById("omafit-ar-theme-font-face")),
+      appliedStackPrefix: String(appliedStack || "").slice(0, 120),
+    },
+  });
+  // #endregion
 }
 
 function createTriggerLink(text, primaryColor) {
@@ -272,6 +306,19 @@ function buildInfoModal({
   onClose,
   onStartAr,
 }) {
+  // #region agent log
+  __omafitArDbgLog({
+    location: "omafit-ar-widget.js:buildInfoModal",
+    message: "modal header inputs",
+    hypothesisId: "H3",
+    data: {
+      hasLogoUrl: Boolean(String(logoUrl || "").trim()),
+      logoUrlLen: String(logoUrl || "").length,
+      shopNameLen: String(shopName || "").trim().length,
+    },
+  });
+  // #endregion
+
   const shell = el("div", { className: "omafit-ar-shell" });
   shell.style.cssText = [
     "position: fixed",
@@ -312,6 +359,22 @@ function buildInfoModal({
       decoding: "async",
       style: { maxHeight: "48px", width: "auto", maxWidth: "min(200px, 70vw)", objectFit: "contain" },
     });
+    // #region agent log
+    img.addEventListener("error", () => {
+      let host = "";
+      try {
+        host = new URL(logoUrl, typeof location !== "undefined" ? location.href : undefined).hostname;
+      } catch {
+        host = "bad-url";
+      }
+      __omafitArDbgLog({
+        location: "omafit-ar-widget.js:buildInfoModal",
+        message: "logo img load error",
+        hypothesisId: "H3",
+        data: { logoHost: host },
+      });
+    });
+    // #endregion
     logoWrap.appendChild(img);
   } else if (shopName) {
     logoWrap.appendChild(
@@ -624,6 +687,9 @@ async function runArSession({
       width: "100%",
       height: "100%",
       pointerEvents: "none",
+      /* Mesmo espelho que o vídeo: sem isto o GLB segue coords “corrigidas” mas o pixel grid do canvas não coincide com o frame visto. */
+      transform: "scaleX(-1)",
+      transformOrigin: "50% 50%",
     },
   });
 
@@ -828,6 +894,18 @@ async function runArSession({
     glbBind.rotation.set(0, rad(90), rad(180));
     glbBind.add(modelFix);
 
+    // #region agent log
+    __omafitArDbgLog({
+      location: "omafit-ar-widget.js:runArSession",
+      message: "glb scene bound",
+      hypothesisId: "H5",
+      data: {
+        glbBindYXZdeg: { x: 0, y: 90, z: 180 },
+        modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
+      },
+    });
+    // #endregion
+
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
     faceRoot.add(glbBind);
@@ -842,8 +920,8 @@ async function runArSession({
     const distCamToPlane = camZ - zPlane;
     const zDepthScale = 0.12;
     const frameToIpdRatio = 1.84; // ligeiramente maior para melhor encaixe visual
-    // Vídeo está espelhado em CSS para desinverter selfie; compensar no tracking.
-    const mirrorSelfie = true;
+    /** Vídeo + canvas espelhados em CSS — usar x normalizado do landmark tal como no bitmap (igual ao buffer do vídeo). */
+    const mirrorSelfie = false;
 
     function normX(px) {
       return mirrorSelfie ? 1 - px : px;
@@ -930,6 +1008,18 @@ async function runArSession({
       rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
       poseQuatScratch.setFromRotationMatrix(rotMatScratch);
 
+      // #region agent log
+      if (!__omafitArDbgPoseOkOnce) {
+        __omafitArDbgPoseOkOnce = true;
+        __omafitArDbgLog({
+          location: "omafit-ar-widget.js:applyGlassesPose",
+          message: "first pose ok",
+          hypothesisId: "H5",
+          data: { mirrorSelfie, ipdNorm: Math.round(ipdNorm * 1000) / 1000, poseW: Math.round(poseQuatScratch.w * 1000) / 1000 },
+        });
+      }
+      // #endregion
+
       const targetPos = anchor.clone();
       targetPos.addScaledVector(_yAxis, -0.008);
       targetPos.addScaledVector(_zAxis, 0.014);
@@ -959,6 +1049,17 @@ async function runArSession({
       }
 
       const ok = applyGlassesPose(res);
+      // #region agent log
+      if (!ok && !__omafitArDbgPoseFailOnce) {
+        __omafitArDbgPoseFailOnce = true;
+        __omafitArDbgLog({
+          location: "omafit-ar-widget.js:frame",
+          message: "pose false with landmarks",
+          hypothesisId: "H5",
+          data: { hadLm: true },
+        });
+      }
+      // #endregion
       faceRoot.visible = ok;
       if (!ok) resetFaceRootTransform();
       renderer.render(scene, camera);
@@ -1011,6 +1112,27 @@ async function main() {
   const autoOpen =
     root.dataset.autoOpen === "1" || root.getAttribute("data-auto-open") === "1";
 
+  // #region agent log
+  let glbHost = "";
+  try {
+    glbHost = new URL(glbUrl, typeof location !== "undefined" ? location.href : undefined).hostname;
+  } catch {
+    glbHost = "invalid";
+  }
+  __omafitArDbgLog({
+    location: "omafit-ar-widget.js:main",
+    message: "main entry dataset snapshot",
+    hypothesisId: "H1",
+    data: {
+      glbHost,
+      fontAttrLen: String(root.dataset.fontFamily || "").trim().length,
+      fontAttrRawPrefix: String(root.getAttribute("data-font-family") || "").slice(0, 80),
+      logoDataLen: String(logoUrl || "").length,
+      hasLogo: Boolean(String(logoUrl || "").trim()),
+    },
+  });
+  // #endregion
+
   injectGlobalStyles(root);
 
   let modal = null;
@@ -1046,6 +1168,23 @@ async function main() {
       },
     });
     document.body.appendChild(modal);
+    // #region agent log
+    requestAnimationFrame(() => {
+      const probe = modal.querySelector("h3");
+      let ff = "";
+      try {
+        ff = probe ? getComputedStyle(probe).fontFamily : "";
+      } catch {
+        ff = "err";
+      }
+      __omafitArDbgLog({
+        location: "omafit-ar-widget.js:openModal",
+        message: "h3 computed font after modal mount",
+        hypothesisId: "H2",
+        data: { fontFamilySample: String(ff).slice(0, 200) },
+      });
+    });
+    // #endregion
   }
 
   if (autoOpen) {
@@ -1094,6 +1233,21 @@ if (typeof window !== "undefined") {
  */
 function bootOmafitArWidget() {
   if (hasArGlbUrlQueryParam()) return;
+  // #region agent log
+  const scr =
+    typeof document !== "undefined"
+      ? document.querySelector('script[src*="omafit-ar-widget"]')
+      : null;
+  __omafitArDbgLog({
+    location: "omafit-ar-widget.js:bootOmafitArWidget",
+    message: "boot start",
+    hypothesisId: "H4",
+    data: {
+      readyState: typeof document !== "undefined" ? document.readyState : "n/a",
+      scriptSrcSuffix: scr && scr.src ? String(scr.src).slice(-140) : "",
+    },
+  });
+  // #endregion
   let rafBoot = 0;
   const maxRaf = 720;
   function tick() {
@@ -1102,12 +1256,39 @@ function bootOmafitArWidget() {
       ? (root.dataset.glbUrl || root.getAttribute("data-glb-url") || "").trim()
       : "";
     if (root && glb) {
+      // #region agent log
+      let h = "";
+      try {
+        h = new URL(glb, typeof location !== "undefined" ? location.href : undefined).hostname;
+      } catch {
+        h = "bad";
+      }
+      __omafitArDbgLog({
+        location: "omafit-ar-widget.js:boot.tick",
+        message: "root+glb ready calling start",
+        hypothesisId: "H4",
+        data: { rafBoot, glbHost: h },
+      });
+      // #endregion
       startOmafitAr().catch((e) => {
         console.error("[omafit-ar]", e);
       });
       return;
     }
-    if (++rafBoot > maxRaf) return;
+    if (++rafBoot > maxRaf) {
+      // #region agent log
+      __omafitArDbgLog({
+        location: "omafit-ar-widget.js:boot.tick",
+        message: "boot timeout without root+glb",
+        hypothesisId: "H4",
+        data: {
+          rafBoot,
+          hasRootEl: Boolean(document.getElementById("omafit-ar-root")),
+        },
+      });
+      // #endregion
+      return;
+    }
     requestAnimationFrame(tick);
   }
   if (document.readyState === "loading") {

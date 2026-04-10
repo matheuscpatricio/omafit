@@ -678,7 +678,17 @@ async function runArSession({
     const autoOrient = new THREE.Group();
     autoOrient.rotation.order = "YXZ";
     autoOrient.rotation.set(0, 0, 0);
-    autoOrient.add(glasses);
+    // Tripo/FAL + glTF: correção típica quando o mesh aparece invertido / 90° no plano do rosto.
+    // Desativar no tema: checkbox “Sem correção automática do GLB”.
+    const glbBasisAlign = new THREE.Group();
+    glbBasisAlign.rotation.order = "YXZ";
+    const skipGlbBasis =
+      String(cfgRoot?.dataset?.arSkipGlbBasisAlign || "").trim() === "1";
+    if (!skipGlbBasis) {
+      glbBasisAlign.rotation.set(Math.PI, 0, -Math.PI / 2);
+    }
+    glbBasisAlign.add(glasses);
+    autoOrient.add(glbBasisAlign);
 
     let baseGlbScale = 1;
     {
@@ -754,36 +764,30 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      // Base estável: X ao longo da linha dos olhos no mundo (projeção coerente com a câmara).
-      // IMPORTANTE: yAxis deve ser toCam × xAxis, NÃO xAxis × toCam.
-      // Com câmara em +Z e rosto em z negativo, toCam ≈ (0,0,+1) e xAxis ≈ (±1,0,0).
-      // xAxis × toCam = (1,0,0)×(0,0,1) = (0,-1,0) → “cima” do rosto vira -Y mundial = óculos de cabeça para baixo.
-      // toCam × xAxis = (0,0,1)×(1,0,0) = (0,+1,0) → +Y mundial, coerente com glTF Y-up no rosto.
+      // X = linha dos olhos no espaço mundo (já com o mesmo espelho que o vídeo).
       const xAxis = new THREE.Vector3().subVectors(pR, pL);
       if (xAxis.lengthSq() < 1e-14) return false;
       xAxis.normalize();
 
       const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
-      const worldUp = new THREE.Vector3(0, 1, 0);
 
-      let yAxis = new THREE.Vector3().crossVectors(toCam, xAxis);
+      // “Cima” do rosto: nariz → olhos no plano da câmara (não só toCam×x, que com espelho/selfie
+      // erra o sinal e deixa o óculos de cabeça para baixo ou torcido).
+      const pNose = landmarkToWorldOnPlane(nose, false);
+      let yAxis = new THREE.Vector3().subVectors(midEyes, pNose);
       if (yAxis.lengthSq() < 1e-14) {
-        yAxis.copy(worldUp);
-        yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
-        if (yAxis.lengthSq() < 1e-14) return false;
+        yAxis = new THREE.Vector3().crossVectors(toCam, xAxis);
       }
+      if (yAxis.lengthSq() < 1e-14) return false;
+      yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
+      if (yAxis.lengthSq() < 1e-14) return false;
       yAxis.normalize();
-      // Se a linha dos olhos ficou invertida (espelho / eixos), toCam×x aponta para baixo; alinhar “cima” ao +Y.
-      if (yAxis.dot(worldUp) < 0) yAxis.negate();
 
+      // Destro: Z = X × Y aponta para fora do rosto; queremos +Z do modelo virado para a câmara.
       let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
       if (zAxis.dot(toCam) < 0) {
         zAxis.negate();
         yAxis.crossVectors(zAxis, xAxis).normalize();
-        if (yAxis.dot(worldUp) < 0) {
-          yAxis.negate();
-          zAxis.crossVectors(xAxis, yAxis).normalize();
-        }
       }
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);

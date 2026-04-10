@@ -61,6 +61,7 @@
     data-ar-glb-rot-x="{{ block.settings.ar_glb_rot_x }}"
     data-ar-glb-rot-y="{{ block.settings.ar_glb_rot_y }}"
     data-ar-glb-rot-z="{{ block.settings.ar_glb_rot_z }}"
+    data-ar-skip-glb-basis-align="{% if block.settings.ar_skip_glb_basis_align %}1{% else %}0{% endif %}"
   ></div>
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}"></script>
 {% endif %}
@@ -101,7 +102,17 @@
     },
     {
       "type": "paragraph",
-      "content": "Com GLB FAL/Tripo alinhado, deixa X, Y e Z a 0. Usa rotação só para ajuste fino pontual (eixos Three.js)."
+      "content": "O tema aplica uma correção de eixos do GLB (Tripo/FAL) para o AR. Desativa só se o modelo já estiver perfeito sem ela."
+    },
+    {
+      "type": "checkbox",
+      "id": "ar_skip_glb_basis_align",
+      "label": "Sem correção automática do GLB (só se o óculos já estiver certo no AR)",
+      "default": false
+    },
+    {
+      "type": "paragraph",
+      "content": "Rotação manual (graus) só para retouches; com correção automática, costuma bastar 0, 0, 0."
     },
     {
       "type": "number",

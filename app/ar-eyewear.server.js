@@ -3,6 +3,7 @@
  */
 
 import { fal } from "@fal-ai/client";
+import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
 
 const TABLE = "ar_eyewear_assets";
 
@@ -726,9 +727,15 @@ export async function generateGlbDraftViaFal({
   if (!glbRes.ok) {
     throw new Error(`Download GLB FAL falhou: ${glbRes.status}`);
   }
-  const glbBuf = Buffer.from(await glbRes.arrayBuffer());
+  let glbBuf = Buffer.from(await glbRes.arrayBuffer());
   if (glbBuf.length < 1000) {
     throw new Error("GLB retornado pela FAL parece inválido (muito pequeno)");
+  }
+  // Igual ao worker (`postprocess.py` após FAL): normaliza eixos para o provador AR (largura X, fino Y).
+  try {
+    glbBuf = await canonicalizeArEyewearGlbBuffer(glbBuf);
+  } catch (e) {
+    console.warn("[ar-eyewear] canonicalize GLB (FAL) ignorado:", e?.message || e);
   }
   const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
   const uploaded = await storageUpload("ar-eyewear-glb", storagePath, glbBuf, "model/gltf-binary");

@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "@fal-ai/client": "^1.9.5",
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
     "@prisma/client": "^6.16.3",
     "@react-router/dev": "^7.9.3",
     "@react-router/fs-routes": "^7.9.3",

@@ -703,7 +703,13 @@ async function runArSession({
       readRotRad("arGlbRotY", 0),
       readRotRad("arGlbRotZ", 0),
     );
-    modelFix.add(autoOrient);
+    // GLB FAL/Tripo (Y-up) vs frame MediaPipe + vídeo espelhado: sem isto o modelo pode ficar
+    // invertido e rodado no plano do rosto. Ajuste fino continua em modelFix (tema X/Y/Z).
+    const glbPoseFix = new THREE.Group();
+    glbPoseFix.rotation.order = "YXZ";
+    glbPoseFix.rotation.set(Math.PI, 0, Math.PI / 2);
+    modelFix.add(glbPoseFix);
+    glbPoseFix.add(autoOrient);
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;

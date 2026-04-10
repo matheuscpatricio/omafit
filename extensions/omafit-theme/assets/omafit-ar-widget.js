@@ -737,9 +737,21 @@ async function runArSession({
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
+    /**
+     * Correção fixa entre a base facial (+X hastes, +Y testa, +Z câmara) e o GLB após Tripo/modelFix.
+     * Afinar: AR_BIND_ROT_X_RAD (0 ou π), AR_BIND_ROT_Z_RAD (±π/2, 0, π).
+     */
+    const glassesBind = new THREE.Group();
+    const AR_BIND_ROT_X_RAD = Math.PI;
+    const AR_BIND_ROT_Z_RAD = -Math.PI / 2;
+    const qBindX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), AR_BIND_ROT_X_RAD);
+    const qBindZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), AR_BIND_ROT_Z_RAD);
+    glassesBind.quaternion.multiplyQuaternions(qBindZ, qBindX);
+
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(modelFix);
+    glassesBind.add(modelFix);
+    faceRoot.add(glassesBind);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);

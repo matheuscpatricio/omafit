@@ -131,22 +131,55 @@ function formatCssFontFamilyStack(raw) {
     .join(", ");
 }
 
-function injectGlobalStyles() {
-  if (document.getElementById("omafit-ar-styles")) return;
-  const root = document.getElementById("omafit-ar-root");
-  const rawFont = root?.dataset?.fontFamily?.trim() || "";
+/** Lê fonte do tema: data attribute → variáveis CSS (Dawn) → body computado. */
+function resolveArFontFamilyStack(root) {
+  const fromAttr = (root?.dataset?.fontFamily || "").trim();
+  if (fromAttr) return fromAttr;
+  try {
+    const el = document.documentElement;
+    const v =
+      (getComputedStyle(el).getPropertyValue("--font-body-family") || "").trim() ||
+      (getComputedStyle(el).getPropertyValue("--font-heading-family") || "").trim();
+    if (v) return v.replace(/^["']|["']$/g, "");
+  } catch {
+    /* ignore */
+  }
+  try {
+    const b = document.body;
+    if (b) {
+      const ff = getComputedStyle(b).fontFamily;
+      if (ff && ff !== "inherit" && ff !== "initial") return ff;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
+function injectGlobalStyles(root) {
+  const old = document.getElementById("omafit-ar-styles");
+  if (old) old.remove();
+
+  const rawFont = resolveArFontFamilyStack(root);
   const stack = formatCssFontFamilyStack(rawFont);
   const appliedStack = stack || "'Outfit', system-ui, sans-serif";
+  const primary =
+    (root?.dataset?.primaryColor || root?.style?.getPropertyValue("--omafit-ar-primary") || "#810707")
+      .trim()
+      .replace(/[<>]/g, "") || "#810707";
+
   const s = document.createElement("style");
   s.id = "omafit-ar-styles";
   s.textContent = `
     @keyframes omafit-ar-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    .omafit-ar-root, .omafit-ar-root * {
+    /* Modal AR está em document.body (fora de #omafit-ar-root) — incluir .omafit-ar-shell como no TryOnWidget. */
+    #omafit-ar-root, #omafit-ar-root *,
+    .omafit-ar-shell, .omafit-ar-shell * {
       font-family: ${appliedStack} !important;
     }
     .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
-    .omafit-ar-try-on-link:focus { outline: 2px solid #810707; outline-offset: 2px; }
+    .omafit-ar-try-on-link:focus { outline: 2px solid ${primary}; outline-offset: 2px; }
   `;
   document.head.appendChild(s);
   const hasThemeFontFace = document.getElementById("omafit-ar-theme-font-face");
@@ -787,12 +820,12 @@ async function runArSession({
     modelFix.add(autoOrient);
 
     /**
-     * Corrige GLB canónico (largura X / espessura Y / profundidade Z) relativamente à base facial.
-     * 180° Y + 90° X (YXZ): alinha eixo “deitado” do export com hastes horizontais no ecrã.
+     * Correção estática GLB↔rosto (Tripo canónico X=largura). YXZ: 180° Z inverte “cabeça para baixo”
+     * no plano do ecrã; 90° Y corrige “virado para o lado” típico com vídeo espelhado + −90° X no modelFix.
      */
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(rad(180), rad(90), 0);
+    glbBind.rotation.set(0, rad(90), rad(180));
     glbBind.add(modelFix);
 
     const faceRoot = new THREE.Group();
@@ -948,25 +981,37 @@ async function runArSession({
   }
 }
 
+let __omafitArMainStarted = false;
+
 async function main() {
   const root = document.getElementById("omafit-ar-root");
   if (!root) return;
+  if (__omafitArMainStarted) return;
+  __omafitArMainStarted = true;
 
-  const glbUrl = root.dataset.glbUrl;
-  if (!glbUrl) return;
+  const glbUrl = (
+    root.dataset.glbUrl ||
+    root.getAttribute("data-glb-url") ||
+    ""
+  ).trim();
+  if (!glbUrl) {
+    __omafitArMainStarted = false;
+    return;
+  }
 
   const primaryColor = root.dataset.primaryColor || "#810707";
   const productTitle = root.dataset.productTitle || "Produto";
   const productImage = root.dataset.productImage || "";
-  const logoUrl = (root.dataset.storeLogo || "").trim();
-  const shopName = (root.dataset.shopName || "").trim();
+  let logoUrl = (root.dataset.storeLogo || root.getAttribute("data-store-logo") || "").trim();
+  if (logoUrl.startsWith("//")) logoUrl = `https:${logoUrl}`;
+  const shopName = (root.dataset.shopName || root.getAttribute("data-shop-name") || "").trim();
   const linkText = root.dataset.linkText || "Experimentar óculos (AR)";
   const lang = pickLocale(root.dataset.locale);
   const t = COPY[lang] || COPY.pt;
   const autoOpen =
     root.dataset.autoOpen === "1" || root.getAttribute("data-auto-open") === "1";
 
-  injectGlobalStyles();
+  injectGlobalStyles(root);
 
   let modal = null;
 
@@ -1035,6 +1080,7 @@ function hasArGlbUrlQueryParam() {
 function startOmafitAr() {
   return main().catch((e) => {
     console.error("[omafit-ar]", e);
+    __omafitArMainStarted = false;
   });
 }
 
@@ -1042,7 +1088,33 @@ if (typeof window !== "undefined") {
   window.__omafitArStart = startOmafitAr;
 }
 
-/** Com arGlbUrl na query (iframe Netlify), o React chama __omafitArStart após montar #omafit-ar-root. */
-if (!hasArGlbUrlQueryParam()) {
-  startOmafitAr();
+/**
+ * Arranque fiável: o módulo pode executar antes do bloco body injetar #omafit-ar-root;
+ * `injectGlobalStyles` antigo com `return` impedia fontes novas após refresh parcial.
+ */
+function bootOmafitArWidget() {
+  if (hasArGlbUrlQueryParam()) return;
+  let rafBoot = 0;
+  const maxRaf = 720;
+  function tick() {
+    const root = document.getElementById("omafit-ar-root");
+    const glb = root
+      ? (root.dataset.glbUrl || root.getAttribute("data-glb-url") || "").trim()
+      : "";
+    if (root && glb) {
+      startOmafitAr().catch((e) => {
+        console.error("[omafit-ar]", e);
+      });
+      return;
+    }
+    if (++rafBoot > maxRaf) return;
+    requestAnimationFrame(tick);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => requestAnimationFrame(tick));
+  } else {
+    requestAnimationFrame(tick);
+  }
 }
+
+bootOmafitArWidget();

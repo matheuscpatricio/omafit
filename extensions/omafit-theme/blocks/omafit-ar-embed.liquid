@@ -34,19 +34,34 @@
   {% assign logo_url = block.settings.store_logo | image_url: width: 240 %}
 {% elsif shop.brand.logo != blank %}
   {% assign logo_url = shop.brand.logo | image_url: width: 240 %}
+{% elsif shop.brand.square_logo != blank %}
+  {% assign logo_url = shop.brand.square_logo | image_url: width: 240 %}
 {% elsif settings.logo != blank %}
   {% assign logo_url = settings.logo | image_url: width: 240 %}
 {% endif %}
 
+{% comment %} Stack de fontes para o widget (body ou heading — muitos temas não preenchem só body). {% endcomment %}
+{% liquid
+  assign ar_font_stack = ''
+  if settings.type_body_font != blank
+    assign ar_font_stack = settings.type_body_font.family | append: ', ' | append: settings.type_body_font.fallback_families
+  elsif settings.type_heading_font != blank
+    assign ar_font_stack = settings.type_heading_font.family | append: ', ' | append: settings.type_heading_font.fallback_families
+  endif
+%}
+
 {% assign locale_code = request.locale.iso_code | default: 'pt' %}
 
 {% if glb_url != blank and tag_ok %}
-  {% if settings.type_body_font %}
+  {% if settings.type_body_font != blank %}
     <style id="omafit-ar-theme-font-face">{{ settings.type_body_font | font_face: font_display: 'swap' }}</style>
+  {% elsif settings.type_heading_font != blank %}
+    <style id="omafit-ar-theme-font-face">{{ settings.type_heading_font | font_face: font_display: 'swap' }}</style>
   {% endif %}
   <div
     id="omafit-ar-root"
     class="omafit-ar-root"
+    style="--omafit-ar-primary: {{ block.settings.primary_color | escape }};"
     data-glb-url="{{ glb_url | escape }}"
     data-product-id="{{ product.id }}"
     data-product-title="{{ product.title | escape }}"
@@ -54,13 +69,12 @@
     data-primary-color="{{ block.settings.primary_color | escape }}"
     data-store-logo="{{ logo_url | escape }}"
     data-shop-name="{{ shop.name | escape }}"
-    {% if settings.type_body_font %}
-      data-font-family="{{ settings.type_body_font.family | escape }}, {{ settings.type_body_font.fallback_families }}"
-    {% endif %}
+    data-font-family="{{ ar_font_stack | escape }}"
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
   ></div>
-  <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}"></script>
+  {% comment %} block.id força novo URL após deploy (cache CDN/navegador). {% endcomment %}
+  <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}"></script>
 {% endif %}
 
 {% schema %}
@@ -99,7 +113,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Rotação GLB no código: modelFix X = −90°, Y/Z = 0° (YXZ) + grupo glbBind (180° Y, 90° X). Ajuste no tema só via imagem do bloco ou pedido de alteração ao ficheiro omafit-ar-widget.js."
+      "content": "Rotação GLB no código: modelFix X = −90°, Y/Z = 0° (YXZ) + grupo glbBind (0° X, 90° Y, 180° Z em YXZ). Ajuste no tema só via imagem do bloco ou alteração ao ficheiro omafit-ar-widget.js."
     }
   ]
 }

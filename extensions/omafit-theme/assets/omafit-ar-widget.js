@@ -754,24 +754,36 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      // Base estável: eixo X só a partir de pontos já projetados no mundo (mesma escala que a câmara).
-      // O z normalizado dos landmarks não é métrico como x/y — misturá-los na base ortonormal
-      // torcia o modelo (parecia 3D mas “torto”). O eixo “cima” vem do plano facial vs. direção à câmara.
+      // Base estável: X ao longo da linha dos olhos no mundo (projeção coerente com a câmara).
+      // IMPORTANTE: yAxis deve ser toCam × xAxis, NÃO xAxis × toCam.
+      // Com câmara em +Z e rosto em z negativo, toCam ≈ (0,0,+1) e xAxis ≈ (±1,0,0).
+      // xAxis × toCam = (1,0,0)×(0,0,1) = (0,-1,0) → “cima” do rosto vira -Y mundial = óculos de cabeça para baixo.
+      // toCam × xAxis = (0,0,1)×(1,0,0) = (0,+1,0) → +Y mundial, coerente com glTF Y-up no rosto.
       const xAxis = new THREE.Vector3().subVectors(pR, pL);
       if (xAxis.lengthSq() < 1e-14) return false;
       xAxis.normalize();
 
       const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
-      let yAxis = new THREE.Vector3().crossVectors(xAxis, toCam);
+      const worldUp = new THREE.Vector3(0, 1, 0);
+
+      let yAxis = new THREE.Vector3().crossVectors(toCam, xAxis);
       if (yAxis.lengthSq() < 1e-14) {
-        yAxis.set(0, 1, 0);
-      } else {
-        yAxis.normalize();
+        yAxis.copy(worldUp);
+        yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
+        if (yAxis.lengthSq() < 1e-14) return false;
       }
+      yAxis.normalize();
+      // Se a linha dos olhos ficou invertida (espelho / eixos), toCam×x aponta para baixo; alinhar “cima” ao +Y.
+      if (yAxis.dot(worldUp) < 0) yAxis.negate();
+
       let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
       if (zAxis.dot(toCam) < 0) {
         zAxis.negate();
         yAxis.crossVectors(zAxis, xAxis).normalize();
+        if (yAxis.dot(worldUp) < 0) {
+          yAxis.negate();
+          zAxis.crossVectors(xAxis, yAxis).normalize();
+        }
       }
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);

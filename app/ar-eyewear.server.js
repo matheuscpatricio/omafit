@@ -2,6 +2,8 @@
  * AR Eyewear — Supabase REST + Storage helpers (service role no servidor).
  */
 
+import { fal } from "@fal-ai/client";
+
 const TABLE = "ar_eyewear_assets";
 
 /**
@@ -554,19 +556,22 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
       generation_provider: "fal",
     });
 
-    const glbDraftUrl = await generateGlbDraftViaFal({
+    const falOut = await generateGlbDraftViaFal({
       shopDomain: resolvedShop,
       assetId: id,
       imageUrl,
     });
+    const glbDraftUrl = falOut.publicUrl;
+    const logTail = (falOut.generationLogs || "").trim();
     const asset = await patchAsset(id, {
       status: "pending_review",
       glb_draft_url: glbDraftUrl,
       error_message: null,
       generation_provider: "fal",
-      generation_request_id: null,
+      generation_request_id: falOut.requestId,
       generation_logs:
-        "generation_path=app_server (FAL no Node; Edge ~150–400s insuficiente para Tripo)",
+        (logTail ? `${logTail}\n` : "") +
+        "generation_path=app_server (FAL @fal-ai/client subscribe no Node)",
     });
     return {
       ok: true,
@@ -616,55 +621,6 @@ function falConfig() {
   };
 }
 
-function falHeaders(apiKey) {
-  return {
-    Authorization: `Key ${apiKey}`,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-}
-
-const FAL_QUEUE_NS = new Set(["workflows", "comfy"]);
-
-/** Mesma regra que @fal-ai/client: status/result usam só owner/alias na URL da fila. */
-function falQueueBasePath(modelId) {
-  const id = String(modelId || "")
-    .trim()
-    .replace(/^\/+|\/+$/g, "");
-  const parts = id.split("/").filter(Boolean);
-  if (parts.length === 0) return id;
-  if (FAL_QUEUE_NS.has(parts[0]) && parts.length >= 3) {
-    return parts.slice(0, 3).join("/");
-  }
-  if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
-  return id;
-}
-
-function falStatusUrlWithLogs(url) {
-  if (url.includes("logs=")) return url;
-  return url.includes("?") ? `${url}&logs=1` : `${url}?logs=1`;
-}
-
-/**
- * GET do resultado (igual fal.queue.result): só path curto owner/alias.
- * Ordem: response_url sem /response, status_url sem /status, pollBodyUrl.
- * Path completo …/v2.5/image-to-3d/requests/… → 405 na FAL.
- */
-function falQueueResultGetUrls(baseUrl, queueBase, requestId, submitJson) {
-  const pollBodyUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
-  const apiStatus = submitJson?.status_url ?? submitJson?.statusUrl;
-  const apiResponse = submitJson?.response_url ?? submitJson?.responseUrl;
-  const fromResponse =
-    typeof apiResponse === "string" && apiResponse.startsWith("http")
-      ? apiResponse.replace(/\/response\/?(\?.*)?$/i, "")
-      : null;
-  const fromStatus =
-    typeof apiStatus === "string" && apiStatus.startsWith("http")
-      ? apiStatus.replace(/\/status\/?(\?.*)?$/i, "")
-      : null;
-  return [...new Set([fromResponse, fromStatus, pollBodyUrl].filter(Boolean))];
-}
-
 function* walkStrings(node) {
   if (typeof node === "string") {
     yield node;
@@ -702,20 +658,17 @@ function extractFalGlbUrl(payload) {
   return null;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
  * Gera GLB via FAL no backend (sem expor chave no frontend) e sobe para Storage.
- * Retorna URL pública do draft no bucket ar-eyewear-glb.
+ * Usa @fal-ai/client fal.subscribe() como na documentação oficial do Tripo (fila + resultado).
+ * Retorna URL pública do draft, requestId da FAL e linhas de log da fila.
  */
 export async function generateGlbDraftViaFal({
   shopDomain,
   assetId,
   imageUrl,
 }) {
-  const { apiKey, modelId, baseUrl, timeoutSeconds, pollSeconds } = falConfig();
+  const { apiKey, modelId, timeoutSeconds, pollSeconds } = falConfig();
   if (!apiKey) {
     throw new Error("FAL_API_KEY não configurada no servidor");
   }
@@ -723,122 +676,50 @@ export async function generateGlbDraftViaFal({
     throw new Error("FAL image_url ausente");
   }
 
-  const submitRes = await fetch(`${baseUrl}/${modelId}`, {
-    method: "POST",
-    headers: falHeaders(apiKey),
-    body: JSON.stringify({ input: { image_url: imageUrl } }),
-  });
-  const submitText = await submitRes.text().catch(() => "");
-  if (!submitRes.ok) {
-    throw new Error(`FAL submit failed: ${submitRes.status} ${submitText.slice(0, 300)}`);
-  }
-  let submitJson = {};
+  const model = String(modelId || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  fal.config({ credentials: apiKey });
+
+  const clientTimeoutMs = Math.min(
+    Math.max((Number(timeoutSeconds) || 1800) * 1000, 120_000),
+    3_600_000,
+  );
+  const pollIntervalMs = Math.max(500, (Number(pollSeconds) || 4) * 1000);
+
+  const logLines = [];
+  let result;
   try {
-    submitJson = submitText ? JSON.parse(submitText) : {};
-  } catch {
-    submitJson = {};
-  }
-  const requestId = String(submitJson?.request_id || submitJson?.requestId || "").trim();
-  if (!requestId) {
-    throw new Error(`FAL sem request_id: ${submitText.slice(0, 300)}`);
-  }
-
-  const queueBase = falQueueBasePath(modelId);
-  const builtStatus = `${baseUrl}/${queueBase}/requests/${requestId}/status`;
-  const pollBodyUrl = `${baseUrl}/${queueBase}/requests/${requestId}`;
-  const apiStatus = submitJson?.status_url ?? submitJson?.statusUrl;
-  const pollStatusUrl =
-    typeof apiStatus === "string" && apiStatus.startsWith("http")
-      ? falStatusUrlWithLogs(apiStatus)
-      : `${builtStatus}?logs=1`;
-  const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
-  let lastStatus = "";
-  let statusEndpointUnsupported = false;
-  while (Date.now() < deadline) {
-    let statusRes;
-    let statusText = "";
-    if (!statusEndpointUnsupported) {
-      statusRes = await fetch(pollStatusUrl, {
-        headers: falHeaders(apiKey),
-      });
-      statusText = await statusRes.text().catch(() => "");
-      if (statusRes.status === 405 || statusRes.status === 404) {
-        statusEndpointUnsupported = true;
-        statusRes = await fetch(pollBodyUrl, {
-          headers: falHeaders(apiKey),
-        });
-        statusText = await statusRes.text().catch(() => "");
-      }
-    } else {
-      statusRes = await fetch(pollBodyUrl, {
-        headers: falHeaders(apiKey),
-      });
-      statusText = await statusRes.text().catch(() => "");
-    }
-    if (!statusRes.ok) {
-      const label = statusEndpointUnsupported ? "result" : "status";
-      throw new Error(`FAL ${label} failed: ${statusRes.status} ${statusText.slice(0, 300)}`);
-    }
-    let statusJson = {};
-    try {
-      statusJson = statusText ? JSON.parse(statusText) : {};
-    } catch {
-      statusJson = {};
-    }
-    const status = String(
-      statusJson?.status || statusJson?.state || statusJson?.request_status || "",
-    ).toUpperCase();
-    if (status && status !== lastStatus) {
-      lastStatus = status;
-      console.log(`[ar-eyewear] FAL ${requestId} status=${status}`);
-    }
-    if (["COMPLETED", "SUCCEEDED", "SUCCESS", "DONE"].includes(status)) break;
-    if (["FAILED", "ERROR", "CANCELED", "CANCELLED"].includes(status)) {
-      throw new Error(`FAL falhou (${status}): ${statusText.slice(0, 400)}`);
-    }
-    await sleep(Math.max(700, pollSeconds * 1000));
-  }
-  if (Date.now() >= deadline) {
-    throw new Error(`FAL timeout (${timeoutSeconds}s), request_id=${requestId}, status=${lastStatus || "unknown"}`);
-  }
-
-  const resultUrls = falQueueResultGetUrls(baseUrl, queueBase, requestId, submitJson);
-  const maxAttemptsPerUrl = 12;
-  let glbUrl = null;
-  let lastResultErr = "";
-  urlLoop: for (const tryUrl of resultUrls) {
-    for (let attempt = 0; attempt < maxAttemptsPerUrl; attempt++) {
-      const resultRes = await fetch(tryUrl, { headers: falHeaders(apiKey) });
-      const resultText = await resultRes.text().catch(() => "");
-      if (!resultRes.ok) {
-        lastResultErr = `${tryUrl.split("?")[0].slice(-96)} → ${resultRes.status} ${resultText.slice(0, 200)}`;
-        const retryStatus =
-          resultRes.status === 425 ||
-          resultRes.status === 202 ||
-          resultRes.status === 404 ||
-          (resultRes.status >= 500 && resultRes.status < 600);
-        if (retryStatus && attempt < maxAttemptsPerUrl - 1) {
-          await sleep(2000 + attempt * 500);
-          continue;
+    result = await fal.subscribe(model, {
+      input: { image_url: imageUrl },
+      logs: true,
+      pollInterval: pollIntervalMs,
+      timeout: clientTimeoutMs,
+      onQueueUpdate: (update) => {
+        const st = update?.status;
+        if (st) {
+          logLines.push(`status=${st}`);
+          console.log(`[ar-eyewear] FAL ${model} status=${st}`);
         }
-        continue urlLoop;
-      }
-      let resultJson = {};
-      try {
-        resultJson = resultText ? JSON.parse(resultText) : {};
-      } catch {
-        resultJson = {};
-      }
-      glbUrl = extractFalGlbUrl(resultJson);
-      if (glbUrl) break urlLoop;
-      lastResultErr = `200 sem GLB (${resultText.slice(0, 220)})`;
-      if (attempt < maxAttemptsPerUrl - 1) {
-        await sleep(2000);
-      }
-    }
+        const stepLogs = update?.logs;
+        if (Array.isArray(stepLogs)) {
+          for (const l of stepLogs) {
+            const msg = String(l?.message || "").trim();
+            if (msg) logLines.push(msg);
+          }
+        }
+      },
+    });
+  } catch (e) {
+    const body = e?.body ?? e?.response?.data;
+    const extra = body ? ` ${JSON.stringify(body).slice(0, 500)}` : "";
+    throw new Error(`FAL subscribe falhou: ${e?.message || e}${extra}`);
   }
+
+  const data = result?.data ?? result;
+  const glbUrl = extractFalGlbUrl(data);
   if (!glbUrl) {
-    throw new Error(`FAL result failed: ${lastResultErr}`);
+    throw new Error(`FAL result sem URL GLB: ${JSON.stringify(data).slice(0, 600)}`);
   }
 
   const glbRes = await fetch(glbUrl);
@@ -851,5 +732,11 @@ export async function generateGlbDraftViaFal({
   }
   const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
   const uploaded = await storageUpload("ar-eyewear-glb", storagePath, glbBuf, "model/gltf-binary");
-  return uploaded.publicUrl;
+  const requestId = String(result?.requestId || "").trim();
+  const generationLogs = logLines.slice(-120).join("\n");
+  return {
+    publicUrl: uploaded.publicUrl,
+    requestId: requestId || null,
+    generationLogs: generationLogs || null,
+  };
 }

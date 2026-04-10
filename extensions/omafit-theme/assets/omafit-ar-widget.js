@@ -885,12 +885,12 @@ async function runArSession({
     modelFix.add(autoOrient);
 
     /**
-     * glbBind (pai): 180° Z depois do −90° X do filho — corrige “cabeça para baixo” sem o 90° Y antigo (de lado).
-     * Ordem world: R_glbBind * R_modelFix no vértice.
+     * glbBind: +90° Y roda a frente das lentes (Tripo/local −X) para +Z (em direção à câmara em 0,0,0.6).
+     * Sem 180° Z aqui — com (0,0,180) a armação ficava invertida; (0,90,180) antigo somava efeitos errados.
      */
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(0, 0, rad(180));
+    glbBind.rotation.set(0, rad(90), 0);
     glbBind.add(modelFix);
 
     // #region agent log
@@ -899,7 +899,7 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 0, z: 180 },
+        glbBindYXZdeg: { x: 0, y: 90, z: 0 },
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },
     });

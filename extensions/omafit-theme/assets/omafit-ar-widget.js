@@ -750,7 +750,7 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
+      outputFacialTransformationMatrixes: true,
     };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -809,21 +809,10 @@ async function runArSession({
     renderer.toneMappingExposure = 1;
 
     const scene = new THREE.Scene();
-    const omaRootEl = document.getElementById("omafit-ar-root");
-    const BENSON_3D_UP = parseFloat(omaRootEl?.dataset?.benson3dUp || "10");
-    const BENSON_3D_SCALE = parseFloat(omaRootEl?.dataset?.benson3dScale || "0.01");
-    /** setup3dCamera (vídeo) — https://github.com/bensonruan/Virtual-Glasses-Try-on/blob/main/js/virtual-glasses.js */
-    const halfFovRad = ((45 * 0.5) * Math.PI) / 180;
-    const bensonLookAt = new THREE.Vector3();
-    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 2000);
-    const bensonCamZ = -(h / 2) / Math.tan(halfFovRad);
-    camera.position.set(w / 2, -h / 2, bensonCamZ);
-    bensonLookAt.set(w / 2, -h / 2, 0);
-    camera.lookAt(bensonLookAt);
-    camera.updateProjectionMatrix();
-    camera.add(new THREE.PointLight(0xffffff, 0.8));
-    scene.add(camera);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 10);
+    camera.position.set(0, 0, 0.6);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
     const loader = new GLTFLoader();
     loader.setCrossOrigin("anonymous");
@@ -891,10 +880,6 @@ async function runArSession({
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
-    /**
-     * Pose tipo Benson Ruan (virtual-glasses.js): Euler no root, sem glbBind extra.
-     * @see https://github.com/bensonruan/Virtual-Glasses-Try-on/blob/main/js/virtual-glasses.js drawglasses
-     */
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
     glbBind.rotation.set(0, 0, 0);
@@ -907,7 +892,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: 0, y: 0, z: 0 },
-        poseMode: "benson-drawglasses-exact",
+        poseMode: "contain-plane+matrix",
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },
     });
@@ -918,105 +903,174 @@ async function runArSession({
     faceRoot.add(glbBind);
     scene.add(faceRoot);
 
-    /** drawglasses — mesmos índices Facemesh do README do repo. */
-    const glassesKeyPoints = { midEye: 168, leftEye: 143, noseBottom: 2, rightEye: 372 };
-    function scaledMeshLike(lm, idx, vw, vh) {
-      const p = lm[idx];
-      if (!p) return null;
-      const x = p.x * vw;
-      const y = p.y * vh;
-      const z = (p.z || 0) * vw;
-      return [x, y, z];
+    const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
+    dirLt.position.set(0.35, 0.55, 0.45);
+    scene.add(dirLt);
+
+    const camZ = 0.6;
+    const zPlane = -0.34;
+    const distCamToPlane = camZ - zPlane;
+    const zDepthScale = 0.12;
+    const frameToIpdRatio = 1.84;
+    const mirrorSelfie = false;
+
+    function normX(px) {
+      return mirrorSelfie ? 1 - px : px;
     }
 
-    function syncBensonCameraFromVideo() {
+    /** Rectângulo do vídeo com object-fit:contain dentro do elemento (arFit/canvas). */
+    function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
+      const cw = Math.max(1, containerW);
+      const ch = Math.max(1, containerH);
+      const arC = cw / ch;
+      const arI = intrinsicW / intrinsicH;
+      if (arC > arI) {
+        const drawH = ch;
+        const drawW = ch * arI;
+        return { ox: (cw - drawW) * 0.5, oy: 0, drawW, drawH };
+      }
+      const drawW = cw;
+      const drawH = cw / arI;
+      return { ox: 0, oy: (ch - drawH) * 0.5, drawW, drawH };
+    }
+
+    function landmarkToWorldOnPlane(p, useZ) {
+      if (!p) return null;
       const vw = video.videoWidth || w;
       const vh = video.videoHeight || h;
-      if (vw < 8 || vh < 8) return;
-      if (camera.userData._lvw === vw && camera.userData._lvh === vh) return;
-      camera.userData._lvw = vw;
-      camera.userData._lvh = vh;
-      const cz = -(vh / 2) / Math.tan(halfFovRad);
-      camera.aspect = vw / vh;
-      camera.position.set(vw / 2, -vh / 2, cz);
-      bensonLookAt.set(vw / 2, -vh / 2, 0);
-      camera.lookAt(bensonLookAt);
-      camera.updateProjectionMatrix();
-      renderer.setSize(vw, vh, false);
+      const dispW = Math.max(1, arFit.clientWidth || vw);
+      const dispH = Math.max(1, arFit.clientHeight || vh);
+      const r = getObjectFitContainRect(dispW, dispH, vw, vh);
+      const xn = normX(p.x);
+      const bx = r.ox + xn * r.drawW;
+      const by = r.oy + p.y * r.drawH;
+      const bufX = (bx / dispW) * vw;
+      const bufY = (by / dispH) * vh;
+      const ndcX = (bufX / vw) * 2 - 1;
+      const ndcY = -((bufY / vh) * 2 - 1);
+      const vFov = (camera.fov * Math.PI) / 180;
+      const halfH = Math.tan(vFov / 2) * distCamToPlane;
+      const halfW = halfH * camera.aspect;
+      const zz = zPlane + (useZ ? (p.z || 0) * zDepthScale * vw : 0);
+      return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
     }
+
+    const poseQuatScratch = new THREE.Quaternion();
+    const rotMatScratch = new THREE.Matrix4();
+    const mpBasisMat = new THREE.Matrix4();
+    const mpDecompPos = new THREE.Vector3();
+    const mpDecompQuat = new THREE.Quaternion();
+    const mpDecompSc = new THREE.Vector3();
+    const tmpUp = new THREE.Vector3();
+    const _xAxis = new THREE.Vector3();
+    const _yAxis = new THREE.Vector3();
+    const _zAxis = new THREE.Vector3();
+    const _zWant = new THREE.Vector3();
 
     function resetFaceRootTransform() {
       faceRoot.position.set(0, 0, 0);
-      faceRoot.rotation.set(0, 0, 0, "XYZ");
       faceRoot.quaternion.set(0, 0, 0, 1);
       faceRoot.scale.set(1, 1, 1);
     }
 
-    /**
-     * Cópia literal da lógica de drawglasses (scaledMesh em “pixels” + câmara do setup3dCamera).
-     * @see https://github.com/bensonruan/Virtual-Glasses-Try-on/blob/main/js/virtual-glasses.js
-     */
     function applyGlassesPose(res) {
       const lm = res.faceLandmarks[0];
       if (!lm) return false;
 
-      const vw = video.videoWidth || w;
-      const vh = video.videoHeight || h;
-      if (vw < 8 || vh < 8) return false;
+      const eL = lm[33];
+      const eR = lm[263];
+      const nose = lm[1];
+      if (!eL || !eR || !nose) return false;
 
-      const pointMidEye = scaledMeshLike(lm, glassesKeyPoints.midEye, vw, vh);
-      const pointleftEye = scaledMeshLike(lm, glassesKeyPoints.leftEye, vw, vh);
-      const pointrightEye = scaledMeshLike(lm, glassesKeyPoints.rightEye, vw, vh);
-      let pointNoseBottom = scaledMeshLike(lm, glassesKeyPoints.noseBottom, vw, vh);
-      if (!pointNoseBottom) pointNoseBottom = scaledMeshLike(lm, 1, vw, vh);
-      if (!pointMidEye || !pointleftEye || !pointrightEye || !pointNoseBottom) return false;
+      const ipdNorm = Math.hypot(eR.x - eL.x, eR.y - eL.y);
+      if (ipdNorm < 0.02) return false;
 
-      const ipdPx = Math.hypot(pointrightEye[0] - pointleftEye[0], pointrightEye[1] - pointleftEye[1]);
-      if (ipdPx < 2) return false;
+      const pL = landmarkToWorldOnPlane(eL, false);
+      const pR = landmarkToWorldOnPlane(eR, false);
+      const ipdWorld = pL.distanceTo(pR);
+      const modelNormWidth =
+        autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
+      const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
-      faceRoot.position.set(
-        pointMidEye[0],
-        -pointMidEye[1] + BENSON_3D_UP,
-        -camera.position.z + pointMidEye[2],
-      );
+      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], false) : null;
+      const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
+      const anchor = pBridge || midEyes;
 
-      let upx = pointMidEye[0] - pointNoseBottom[0];
-      let upy = -(pointMidEye[1] - pointNoseBottom[1]);
-      let upz = pointMidEye[2] - pointNoseBottom[2];
-      const ulen = Math.hypot(upx, upy, upz) || 1;
-      upx /= ulen;
-      upy /= ulen;
-      upz /= ulen;
+      const pNose = landmarkToWorldOnPlane(nose, false);
+      tmpUp.subVectors(midEyes, pNose);
+      if (tmpUp.lengthSq() < 1e-14) return false;
+      tmpUp.normalize();
 
-      const eyeDist = Math.hypot(
-        pointleftEye[0] - pointrightEye[0],
-        pointleftEye[1] - pointrightEye[1],
-        pointleftEye[2] - pointrightEye[2],
-      );
-      const sc = eyeDist * BENSON_3D_SCALE;
-      faceRoot.scale.set(sc, sc, sc);
+      _xAxis.subVectors(pR, pL);
+      if (_xAxis.lengthSq() < 1e-14) return false;
+      _xAxis.normalize();
 
-      faceRoot.rotation.y = Math.PI;
-      faceRoot.rotation.z = Math.PI / 2 - Math.acos(THREE.MathUtils.clamp(upx, -1, 1));
-      faceRoot.rotation.x = 0;
-      faceRoot.rotation.order = "XYZ";
+      _zWant.subVectors(camera.position, anchor);
+      if (_zWant.lengthSq() < 1e-14) return false;
+      _zWant.normalize();
+
+      if (Math.abs(tmpUp.dot(_zWant)) > 0.985) return false;
+
+      _yAxis.crossVectors(_zWant, _xAxis);
+      if (_yAxis.lengthSq() < 1e-14) return false;
+      _yAxis.normalize();
+      if (_yAxis.dot(tmpUp) < 0) _yAxis.negate();
+
+      _zAxis.crossVectors(_xAxis, _yAxis);
+      if (_zAxis.lengthSq() < 1e-14) return false;
+      _zAxis.normalize();
+      if (_zAxis.dot(_zWant) < 0) {
+        _yAxis.negate();
+        _zAxis.crossVectors(_xAxis, _yAxis).normalize();
+      }
+
+      rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
+
+      let quatFromMatrix = false;
+      const fms = res.facialTransformationMatrixes;
+      const fm = fms && fms.length ? fms[0] : null;
+      if (fm && fm.data && fm.data.length >= 16) {
+        mpBasisMat.fromArray(fm.data);
+        mpBasisMat.transpose();
+        const det = mpBasisMat.determinant();
+        if (Number.isFinite(det) && Math.abs(det) > 1e-10) {
+          mpBasisMat.decompose(mpDecompPos, mpDecompQuat, mpDecompSc);
+          if (Number.isFinite(mpDecompQuat.w) && mpDecompQuat.lengthSq() > 0.25) {
+            mpDecompQuat.normalize();
+            poseQuatScratch.copy(mpDecompQuat);
+            quatFromMatrix = true;
+          }
+        }
+      }
+      if (!quatFromMatrix) {
+        poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+      }
 
       // #region agent log
       if (!__omafitArDbgPoseOkOnce) {
         __omafitArDbgPoseOkOnce = true;
         __omafitArDbgLog({
           location: "omafit-ar-widget.js:applyGlassesPose",
-          message: "first pose ok (drawglasses exact)",
+          message: "first pose ok",
           hypothesisId: "H5",
           data: {
-            bensonUp: BENSON_3D_UP,
-            bensonScale: BENSON_3D_SCALE,
-            ipdPx: Math.round(ipdPx * 10) / 10,
+            quatFromMatrix,
+            ipdNorm: Math.round(ipdNorm * 1000) / 1000,
+            poseW: Math.round(poseQuatScratch.w * 1000) / 1000,
           },
         });
       }
       // #endregion
 
+      const targetPos = anchor.clone();
+      targetPos.addScaledVector(_yAxis, -0.008);
+      targetPos.addScaledVector(_zAxis, 0.014);
+
+      const a = 0.38;
+      faceRoot.position.lerp(targetPos, a);
+      faceRoot.quaternion.slerp(poseQuatScratch, a);
+      const s = faceRoot.scale.x || faceScale;
+      faceRoot.scale.setScalar(s + (faceScale - s) * 0.32);
       return true;
     }
 
@@ -1028,7 +1082,14 @@ async function runArSession({
         renderer.render(scene, camera);
         return;
       }
-      syncBensonCameraFromVideo();
+      const vwF = video.videoWidth || w;
+      const vhF = video.videoHeight || h;
+      if (camera.userData._aspW !== vwF || camera.userData._aspH !== vhF) {
+        camera.userData._aspW = vwF;
+        camera.userData._aspH = vhF;
+        camera.aspect = vwF / vhF;
+        camera.updateProjectionMatrix();
+      }
       const ts = Math.round(performance.now());
       const res = landmarker.detectForVideo(video, ts);
       if (!res.faceLandmarks || !res.faceLandmarks[0]) {

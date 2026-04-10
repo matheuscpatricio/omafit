@@ -885,13 +885,22 @@ async function runArSession({
     modelFix.add(autoOrient);
 
     /**
-     * glbBind: +90° Y roda a frente das lentes (Tripo/local −X) para +Z (em direção à câmara em 0,0,0.6).
-     * Sem 180° Z aqui — com (0,0,180) a armação ficava invertida; (0,90,180) antigo somava efeitos errados.
+     * glbBind: rotação Y para alinhar eixo “frente” do GLB com a câmara; Z removido para não inverter armação.
      */
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(0, rad(90), 0);
+    /** +90° Y ainda deixava lentes para a esquerda; +180° Y alinha frente do GLB Tripo com a câmara. */
+    glbBind.rotation.set(0, rad(180), 0);
     glbBind.add(modelFix);
+
+    /**
+     * Offset fixo de pitch no espaço local da cabeça: com olhos/nariz só no plano, a base ortonormal
+     * tende a inclinar o óculos até levantares o queixo; −18° X compensa em rosto neutro (afinar se preciso).
+     */
+    const poseTiltFix = new THREE.Group();
+    poseTiltFix.rotation.order = "YXZ";
+    poseTiltFix.rotation.set(rad(-18), 0, 0);
+    poseTiltFix.add(glbBind);
 
     // #region agent log
     __omafitArDbgLog({
@@ -899,7 +908,8 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 90, z: 0 },
+        glbBindYXZdeg: { x: 0, y: 180, z: 0 },
+        poseTiltFixXdeg: -18,
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },
     });
@@ -907,7 +917,7 @@ async function runArSession({
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(glbBind);
+    faceRoot.add(poseTiltFix);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -964,8 +974,8 @@ async function runArSession({
       const ipdNorm = Math.hypot(eR.x - eL.x, eR.y - eL.y);
       if (ipdNorm < 0.02) return false;
 
-      const pL = landmarkToWorldOnPlane(eL, false);
-      const pR = landmarkToWorldOnPlane(eR, false);
+      const pL = landmarkToWorldOnPlane(eL, true);
+      const pR = landmarkToWorldOnPlane(eR, true);
       const ipdWorld = pL.distanceTo(pR);
       const modelNormWidth =
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
@@ -975,7 +985,7 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      const pNose = landmarkToWorldOnPlane(nose, false);
+      const pNose = landmarkToWorldOnPlane(nose, true);
       tmpUp.subVectors(midEyes, pNose);
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();

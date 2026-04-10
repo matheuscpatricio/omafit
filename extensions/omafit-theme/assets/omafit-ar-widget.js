@@ -703,13 +703,7 @@ async function runArSession({
       readRotRad("arGlbRotY", 0),
       readRotRad("arGlbRotZ", 0),
     );
-    // GLB FAL/Tripo (Y-up) vs frame MediaPipe + vídeo espelhado: sem isto o modelo pode ficar
-    // invertido e rodado no plano do rosto. Ajuste fino continua em modelFix (tema X/Y/Z).
-    const glbPoseFix = new THREE.Group();
-    glbPoseFix.rotation.order = "YXZ";
-    glbPoseFix.rotation.set(Math.PI, 0, Math.PI / 2);
-    modelFix.add(glbPoseFix);
-    glbPoseFix.add(autoOrient);
+    modelFix.add(autoOrient);
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
@@ -760,43 +754,32 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      // Orientacao 3D real: usa profundidade dos landmarks para yaw/pitch/roll.
-      const nL = new THREE.Vector3(normX(eL.x), -eL.y, eL.z || 0);
-      const nR = new THREE.Vector3(normX(eR.x), -eR.y, eR.z || 0);
-      const nNose = new THREE.Vector3(normX(nose.x), -nose.y, nose.z || 0);
-      const b = lm[168] || nose;
-      const nBridge = new THREE.Vector3(normX(b.x), -b.y, b.z || 0);
-
-      const xAxis = new THREE.Vector3().subVectors(nR, nL);
+      // Base estável: eixo X só a partir de pontos já projetados no mundo (mesma escala que a câmara).
+      // O z normalizado dos landmarks não é métrico como x/y — misturá-los na base ortonormal
+      // torcia o modelo (parecia 3D mas “torto”). O eixo “cima” vem do plano facial vs. direção à câmara.
+      const xAxis = new THREE.Vector3().subVectors(pR, pL);
       if (xAxis.lengthSq() < 1e-14) return false;
       xAxis.normalize();
 
-      // Cima do rosto (ponta do nariz → ponte), não “frente” para a câmara — evita GLB FAL/Y-up ficar de lado.
-      let yAxis = new THREE.Vector3().subVectors(nBridge, nNose);
+      const toCam = new THREE.Vector3().subVectors(camera.position, anchor).normalize();
+      let yAxis = new THREE.Vector3().crossVectors(xAxis, toCam);
       if (yAxis.lengthSq() < 1e-14) {
         yAxis.set(0, 1, 0);
       } else {
         yAxis.normalize();
       }
-      yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
-      if (yAxis.lengthSq() < 1e-14) {
-        yAxis.set(0, 1, 0);
-        yAxis.sub(xAxis.clone().multiplyScalar(xAxis.dot(yAxis)));
-        if (yAxis.lengthSq() < 1e-14) return false;
+      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+      if (zAxis.dot(toCam) < 0) {
+        zAxis.negate();
+        yAxis.crossVectors(zAxis, xAxis).normalize();
       }
-      yAxis.normalize();
-
-      let zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis);
-      if (zAxis.lengthSq() < 1e-14) return false;
-      zAxis.normalize();
 
       const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
       const targetPos = anchor.clone();
       targetPos.addScaledVector(yAxis, -0.008);
-      targetPos.addScaledVector(zAxis, -0.016);
+      targetPos.addScaledVector(zAxis, 0.014);
       const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMat);
 
-      // Escala geométrica: largura do frame proporcional à distância entre pupilas.
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;
       const modelNormWidth =

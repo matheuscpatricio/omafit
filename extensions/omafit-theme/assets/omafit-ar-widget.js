@@ -737,25 +737,9 @@ async function runArSession({
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
-    /**
-     * Alinha o espaço local do rosto (lookAt) com o eixo em que o GLB ficou após Tripo + modelFix.
-     * Sem isto, makeBasis(x,y,z) costuma deixar o modelo 90° rodado e invertido no ecrã.
-     */
-    const poseAlign = new THREE.Group();
-    poseAlign.rotation.order = "YXZ";
-    const AR_POSE_ALIGN_X_DEG = 180;
-    const AR_POSE_ALIGN_Y_DEG = 0;
-    const AR_POSE_ALIGN_Z_DEG = 90;
-    poseAlign.rotation.set(
-      rad(AR_POSE_ALIGN_X_DEG),
-      rad(AR_POSE_ALIGN_Y_DEG),
-      rad(AR_POSE_ALIGN_Z_DEG),
-    );
-    poseAlign.add(modelFix);
-
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(poseAlign);
+    faceRoot.add(modelFix);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -786,11 +770,13 @@ async function runArSession({
       return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
     }
 
-    const poseHelper = new THREE.Object3D();
     const poseQuatScratch = new THREE.Quaternion();
+    const rotMatScratch = new THREE.Matrix4();
     const tmpUp = new THREE.Vector3();
-    const _vY = new THREE.Vector3();
-    const _vZ = new THREE.Vector3();
+    const _xAxis = new THREE.Vector3();
+    const _yAxis = new THREE.Vector3();
+    const _zAxis = new THREE.Vector3();
+    const _zWant = new THREE.Vector3();
 
     function applyGlassesPoseFromLandmarks(lm) {
       // Índices estáveis do Face Landmarker (mesh 478): cantos externos 33/263, ponte 168, ponta nariz 1.
@@ -814,22 +800,36 @@ async function runArSession({
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
 
-      const toCam = new THREE.Vector3().subVectors(camera.position, anchor);
-      if (toCam.lengthSq() < 1e-14) return false;
-      toCam.normalize();
+      _xAxis.subVectors(pR, pL);
+      if (_xAxis.lengthSq() < 1e-14) return false;
+      _xAxis.normalize();
 
-      if (Math.abs(tmpUp.dot(toCam)) > 0.985) return false;
+      _zWant.subVectors(camera.position, anchor);
+      if (_zWant.lengthSq() < 1e-14) return false;
+      _zWant.normalize();
 
-      poseHelper.position.copy(anchor);
-      poseHelper.up.copy(tmpUp);
-      poseHelper.lookAt(camera.position);
-      poseQuatScratch.copy(poseHelper.quaternion);
+      if (Math.abs(tmpUp.dot(_zWant)) > 0.985) return false;
 
-      _vY.set(0, 1, 0).applyQuaternion(poseQuatScratch);
-      _vZ.set(0, 0, 1).applyQuaternion(poseQuatScratch);
+      // +Z local aponta para a câmara (como a maioria dos GLB); lookAt() usa −Z e deslocava/roda o modelo.
+      _yAxis.crossVectors(_zWant, _xAxis);
+      if (_yAxis.lengthSq() < 1e-14) return false;
+      _yAxis.normalize();
+      if (_yAxis.dot(tmpUp) < 0) _yAxis.negate();
+
+      _zAxis.crossVectors(_xAxis, _yAxis);
+      if (_zAxis.lengthSq() < 1e-14) return false;
+      _zAxis.normalize();
+      if (_zAxis.dot(_zWant) < 0) {
+        _yAxis.negate();
+        _zAxis.crossVectors(_xAxis, _yAxis).normalize();
+      }
+
+      rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
+      poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+
       const targetPos = anchor.clone();
-      targetPos.addScaledVector(_vY, -0.008);
-      targetPos.addScaledVector(_vZ, 0.014);
+      targetPos.addScaledVector(_yAxis, -0.008);
+      targetPos.addScaledVector(_zAxis, 0.014);
 
       const ipdWorld = pL.distanceTo(pR);
       const targetFrameWidth = ipdWorld * frameToIpdRatio;

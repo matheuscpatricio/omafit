@@ -753,8 +753,8 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      /** Matriz facial desligada: com vídeo espelhado + GLB Tripo gerava óculos de lado / invertidos. */
-      outputFacialTransformationMatrixes: false,
+      /** Matriz canónica→rosto (MediaPipe): rotação mais estável que makeBasis só com plano. */
+      outputFacialTransformationMatrixes: true,
     };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -884,23 +884,11 @@ async function runArSession({
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
-    /**
-     * glbBind: rotação Y para alinhar eixo “frente” do GLB com a câmara; Z removido para não inverter armação.
-     */
+    /** Rotação GLB Tripo relativamente ao referencial da cabeça (matriz MediaPipe). */
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    /** +90° Y ainda deixava lentes para a esquerda; +180° Y alinha frente do GLB Tripo com a câmara. */
-    glbBind.rotation.set(0, rad(180), 0);
+    glbBind.rotation.set(0, rad(90), 0);
     glbBind.add(modelFix);
-
-    /**
-     * Offset fixo de pitch no espaço local da cabeça: com olhos/nariz só no plano, a base ortonormal
-     * tende a inclinar o óculos até levantares o queixo; −18° X compensa em rosto neutro (afinar se preciso).
-     */
-    const poseTiltFix = new THREE.Group();
-    poseTiltFix.rotation.order = "YXZ";
-    poseTiltFix.rotation.set(rad(-18), 0, 0);
-    poseTiltFix.add(glbBind);
 
     // #region agent log
     __omafitArDbgLog({
@@ -908,8 +896,8 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 180, z: 0 },
-        poseTiltFixXdeg: -18,
+        glbBindYXZdeg: { x: 0, y: 90, z: 0 },
+        poseMode: "matrix+basis",
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },
     });
@@ -917,7 +905,7 @@ async function runArSession({
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(poseTiltFix);
+    faceRoot.add(glbBind);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -950,6 +938,10 @@ async function runArSession({
 
     const poseQuatScratch = new THREE.Quaternion();
     const rotMatScratch = new THREE.Matrix4();
+    const mpBasisMat = new THREE.Matrix4();
+    const mpDecompPos = new THREE.Vector3();
+    const mpDecompQuat = new THREE.Quaternion();
+    const mpDecompSc = new THREE.Vector3();
     const tmpUp = new THREE.Vector3();
     const _xAxis = new THREE.Vector3();
     const _yAxis = new THREE.Vector3();
@@ -974,18 +966,18 @@ async function runArSession({
       const ipdNorm = Math.hypot(eR.x - eL.x, eR.y - eL.y);
       if (ipdNorm < 0.02) return false;
 
-      const pL = landmarkToWorldOnPlane(eL, true);
-      const pR = landmarkToWorldOnPlane(eR, true);
+      const pL = landmarkToWorldOnPlane(eL, false);
+      const pR = landmarkToWorldOnPlane(eR, false);
       const ipdWorld = pL.distanceTo(pR);
       const modelNormWidth =
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
       const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
-      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], true) : null;
+      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], false) : null;
       const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      const pNose = landmarkToWorldOnPlane(nose, true);
+      const pNose = landmarkToWorldOnPlane(nose, false);
       tmpUp.subVectors(midEyes, pNose);
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
@@ -1015,7 +1007,27 @@ async function runArSession({
       }
 
       rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
-      poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+
+      let quatFromMatrix = false;
+      const fms = res.facialTransformationMatrixes;
+      const fm = fms && fms.length ? fms[0] : null;
+      if (fm && fm.data && fm.data.length >= 16) {
+        mpBasisMat.fromArray(fm.data);
+        /** THREE usa column-major; a API Tasks devolve row-major neste output. */
+        mpBasisMat.transpose();
+        const det = mpBasisMat.determinant();
+        if (Number.isFinite(det) && Math.abs(det) > 1e-10) {
+          mpBasisMat.decompose(mpDecompPos, mpDecompQuat, mpDecompSc);
+          if (Number.isFinite(mpDecompQuat.w) && mpDecompQuat.lengthSq() > 0.25) {
+            mpDecompQuat.normalize();
+            poseQuatScratch.copy(mpDecompQuat);
+            quatFromMatrix = true;
+          }
+        }
+      }
+      if (!quatFromMatrix) {
+        poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+      }
 
       // #region agent log
       if (!__omafitArDbgPoseOkOnce) {
@@ -1024,7 +1036,12 @@ async function runArSession({
           location: "omafit-ar-widget.js:applyGlassesPose",
           message: "first pose ok",
           hypothesisId: "H5",
-          data: { mirrorSelfie, ipdNorm: Math.round(ipdNorm * 1000) / 1000, poseW: Math.round(poseQuatScratch.w * 1000) / 1000 },
+          data: {
+            mirrorSelfie,
+            ipdNorm: Math.round(ipdNorm * 1000) / 1000,
+            poseW: Math.round(poseQuatScratch.w * 1000) / 1000,
+            quatFromMatrix,
+          },
         });
       }
       // #endregion

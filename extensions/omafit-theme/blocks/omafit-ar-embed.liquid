@@ -73,8 +73,8 @@
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
   ></div>
-  {% comment %} block.id força novo URL após deploy (cache CDN/navegador). {% endcomment %}
-  <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}"></script>
+  {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
+  <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
 {% endif %}
 
 {% schema %}
@@ -113,7 +113,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Rotação GLB: modelFix −90° X; glbBind 180° Y; poseTiltFix −18° X. Ajuste em omafit-ar-widget.js → runArSession."
+      "content": "Pose: matriz facial MediaPipe + fallback makeBasis; GLB: modelFix −90° X, glbBind +90° Y. Ajuste em omafit-ar-widget.js."
     }
   ]
 }

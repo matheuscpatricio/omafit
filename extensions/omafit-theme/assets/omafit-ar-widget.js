@@ -635,15 +635,6 @@ async function runArSession({
     const gltf = await new Promise((resolve, reject) => {
       loader.load(glbUrl, resolve, undefined, reject);
     });
-    const cfgRoot = document.getElementById("omafit-ar-root");
-    const degToRad = (deg) => (deg * Math.PI) / 180;
-    function readRotRad(dataKey, fallbackDeg) {
-      if (!cfgRoot?.dataset) return degToRad(fallbackDeg);
-      const raw = cfgRoot.dataset[dataKey];
-      if (raw === undefined || String(raw).trim() === "") return degToRad(fallbackDeg);
-      const v = parseFloat(raw);
-      return Number.isFinite(v) ? degToRad(v) : degToRad(fallbackDeg);
-    }
     const glasses = gltf.scene;
     glasses.frustumCulled = false;
     glasses.traverse((child) => {
@@ -678,17 +669,7 @@ async function runArSession({
     const autoOrient = new THREE.Group();
     autoOrient.rotation.order = "YXZ";
     autoOrient.rotation.set(0, 0, 0);
-    // Tripo/FAL + glTF: correção típica quando o mesh aparece invertido / 90° no plano do rosto.
-    // Desativar no tema: checkbox “Sem correção automática do GLB”.
-    const glbBasisAlign = new THREE.Group();
-    glbBasisAlign.rotation.order = "YXZ";
-    const skipGlbBasis =
-      String(cfgRoot?.dataset?.arSkipGlbBasisAlign || "").trim() === "1";
-    if (!skipGlbBasis) {
-      glbBasisAlign.rotation.set(Math.PI, 0, -Math.PI / 2);
-    }
-    glbBasisAlign.add(glasses);
-    autoOrient.add(glbBasisAlign);
+    autoOrient.add(glasses);
 
     let baseGlbScale = 1;
     {
@@ -705,14 +686,14 @@ async function runArSession({
       autoOrient.userData._omafitNormWidth = normWidth;
     }
 
-    /** Ajuste fino opcional (graus no tema). Com GLB FAL correto, mantém 0,0,0. */
+    /** Rotação fixa do GLB (graus, ordem YXZ) — alinhamento TripoSR/export “deitado”; sem heurística automática. */
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
-    modelFix.rotation.set(
-      readRotRad("arGlbRotX", 0),
-      readRotRad("arGlbRotY", 0),
-      readRotRad("arGlbRotZ", 0),
-    );
+    const AR_GLB_ROT_X_DEG = -90;
+    const AR_GLB_ROT_Y_DEG = 0;
+    const AR_GLB_ROT_Z_DEG = 180;
+    const rad = (d) => (d * Math.PI) / 180;
+    modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
     const faceRoot = new THREE.Group();

@@ -874,24 +874,23 @@ async function runArSession({
       autoOrient.userData._omafitNormWidth = normWidth;
     }
 
-    /** Rotação fixa do GLB (graus, ordem YXZ) — alinhamento TripoSR/export “deitado”; sem heurística automática. */
+    /** Rotação fixa do GLB (graus, ordem YXZ) — TripoSR costuma vir “deitado” no eixo largura. */
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
     const AR_GLB_ROT_X_DEG = -90;
     const AR_GLB_ROT_Y_DEG = 0;
-    /** Z=180 com tracking por landmarks + espelho piorava orientação; Tripo fica só com −90° X. */
     const AR_GLB_ROT_Z_DEG = 0;
     const rad = (d) => (d * Math.PI) / 180;
     modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
     modelFix.add(autoOrient);
 
     /**
-     * Correção estática GLB↔rosto (Tripo canónico X=largura). YXZ: 180° Z inverte “cabeça para baixo”
-     * no plano do ecrã; 90° Y corrige “virado para o lado” típico com vídeo espelhado + −90° X no modelFix.
+     * glbBind (pai): 180° Z depois do −90° X do filho — corrige “cabeça para baixo” sem o 90° Y antigo (de lado).
+     * Ordem world: R_glbBind * R_modelFix no vértice.
      */
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(0, rad(90), rad(180));
+    glbBind.rotation.set(0, 0, rad(180));
     glbBind.add(modelFix);
 
     // #region agent log
@@ -900,7 +899,7 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 90, z: 180 },
+        glbBindYXZdeg: { x: 0, y: 0, z: 180 },
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },
     });

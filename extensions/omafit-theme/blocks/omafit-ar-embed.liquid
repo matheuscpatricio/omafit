@@ -75,6 +75,9 @@
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
     data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
     data-ar-invert-pose-quat="{{ block.settings.ar_invert_pose_quat | default: '' | strip | escape }}"
+    data-ar-pose-source="{{ block.settings.ar_pose_source | default: '' | strip | escape }}"
+    data-ar-pose-basis="{{ block.settings.ar_pose_basis | default: '' | strip | escape }}"
+    data-ar-mp-matrix-notranspose="{{ block.settings.ar_mp_matrix_notranspose | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -116,7 +119,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Sem inverter a câmara (sem scaleX no vídeo). Landmarks x brutos por defeito. GLB: Euler no glbBind. Opcional: normX só com espelho=1; quaternion invertida só com invert=1."
+      "content": "Pose por defeito: landmarks + makeBasis (coerente com raycast). pose-source=matrix ativa FaceGeometry (experimental). Renderer/canvas sincronizam com videoWidth/Height. GLB: Euler glbBind."
     },
     {
       "type": "text",
@@ -129,6 +132,24 @@
       "id": "ar_invert_pose_quat",
       "label": "Inverter quaternion da pose",
       "info": "Vazio = desligado. 1 / true / on = ligado (só se precisares). data-ar-invert-pose-quat."
+    },
+    {
+      "type": "text",
+      "id": "ar_pose_source",
+      "label": "Fonte da rotação da pose",
+      "info": "Vazio = landmarks (makeBasis). matrix = matriz FaceGeometry (só com isto o modelo pede a matriz). data-ar-pose-source."
+    },
+    {
+      "type": "text",
+      "id": "ar_pose_basis",
+      "label": "Forçar só landmarks (makeBasis)",
+      "info": "1 = ignorar matriz mesmo com pose-source=matrix. data-ar-pose-basis."
+    },
+    {
+      "type": "text",
+      "id": "ar_mp_matrix_notranspose",
+      "label": "Matriz MP sem transpor",
+      "info": "Vazio = transpor packed (row→column Three). 1 se a rotação com matriz estiver errada. data-ar-mp-matrix-notranspose."
     },
     {
       "type": "text",

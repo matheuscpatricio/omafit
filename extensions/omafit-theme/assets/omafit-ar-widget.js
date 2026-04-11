@@ -689,9 +689,6 @@ async function runArSession({
       width: "100%",
       height: "100%",
       display: "block",
-      /** Igual ao <video>: sem isto o bitmap WebGL estica no contentor e o overlay não coincide com o frame. */
-      objectFit: "contain",
-      objectPosition: "50% 50%",
       background: "transparent",
       pointerEvents: "none",
     },
@@ -764,9 +761,19 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      /** Matriz facial: espaço alvo pouco documentado; misturar com makeBasis piora a pose. */
+      /**
+       * Matriz FaceGeometry: rotação está noutro referencial que o raycast+zPlane; misturar com posição
+       * calculada no nosso plano (H4.4) piora a pose. Só ligar com `data-ar-pose-source="matrix"`.
+       */
       outputFacialTransformationMatrixes: false,
     };
+    const __arRootPose = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const poseSourceRaw = (__arRootPose?.dataset?.arPoseSource ? String(__arRootPose.dataset.arPoseSource) : "")
+      .trim()
+      .toLowerCase();
+    const useMatrixPose = poseSourceRaw === "matrix";
+    if (useMatrixPose) landmarkerOpts.outputFacialTransformationMatrixes = true;
+
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
       landmarker = await FaceLandmarker.createFromOptions(vision, landmarkerOpts);
@@ -932,7 +939,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "canvasObjectFitContain+projectedFaceUp+raycast+z+inner133/362+pixelRatio1",
+        poseMode: "makeBasisDefault+matrixOpt+syncRendererSize+directNdc+raycast+z+pixelRatio1",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -1005,14 +1012,25 @@ async function runArSession({
       const vh = video.videoHeight || h;
       const dispW = Math.max(1, arFit.clientWidth || vw);
       const dispH = Math.max(1, arFit.clientHeight || vh);
-      const r = getObjectFitContainRect(dispW, dispH, vw, vh);
+      const aspectFit = dispW / dispH;
+      const aspectVid = vw / vh;
+      /** Quando o contentor tem o mesmo aspect que o frame, NDC linear evita erros do rect object-fit. */
+      const useDirectNdc = Math.abs(aspectFit - aspectVid) < 0.006;
       const xn = normX(p.x);
-      const bx = r.ox + xn * r.drawW;
-      const by = r.oy + p.y * r.drawH;
-      const bufX = (bx / dispW) * vw;
-      const bufY = (by / dispH) * vh;
-      const ndcX = (bufX / vw) * 2 - 1;
-      const ndcY = -((bufY / vh) * 2 - 1);
+      let ndcX;
+      let ndcY;
+      if (useDirectNdc) {
+        ndcX = xn * 2 - 1;
+        ndcY = -(p.y * 2 - 1);
+      } else {
+        const r = getObjectFitContainRect(dispW, dispH, vw, vh);
+        const bx = r.ox + xn * r.drawW;
+        const by = r.oy + p.y * r.drawH;
+        const bufX = (bx / dispW) * vw;
+        const bufY = (by / dispH) * vh;
+        ndcX = (bufX / vw) * 2 - 1;
+        ndcY = -((bufY / vh) * 2 - 1);
+      }
       arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
       const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);
       if (hit == null) {
@@ -1030,6 +1048,9 @@ async function runArSession({
 
     const poseQuatScratch = new THREE.Quaternion();
     const rotMatScratch = new THREE.Matrix4();
+    const mpFaceMat = new THREE.Matrix4();
+    const mpTmpPos = new THREE.Vector3();
+    const mpTmpScl = new THREE.Vector3();
     const tmpUp = new THREE.Vector3();
     const _xAxis = new THREE.Vector3();
     const _yAxis = new THREE.Vector3();
@@ -1110,8 +1131,36 @@ async function runArSession({
         _zAxis.crossVectors(_xAxis, _yAxis).normalize();
       }
 
-      rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
-      poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+      const mtx = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
+      const mtxData = mtx && mtx.data;
+      const basisRaw = (arCfgRoot?.dataset?.arPoseBasis ? String(arCfgRoot.dataset.arPoseBasis) : "")
+        .trim()
+        .toLowerCase();
+      const forceBasisOnly = basisRaw === "1" || basisRaw === "true" || basisRaw === "on";
+      let usedMpMatrix = false;
+      if (!forceBasisOnly && useMatrixPose && mtxData && mtxData.length >= 16) {
+        mpFaceMat.fromArray(mtxData);
+        /** Packed do proto costuma ser row-major; Three `fromArray` é column-major → transpor. `data-ar-mp-matrix-notranspose="1"` para testar. */
+        const noTr = (arCfgRoot?.dataset?.arMpMatrixNotranspose ? String(arCfgRoot.dataset.arMpMatrixNotranspose) : "")
+          .trim()
+          .toLowerCase();
+        if (noTr !== "1" && noTr !== "true" && noTr !== "on") mpFaceMat.transpose();
+        mpFaceMat.decompose(mpTmpPos, poseQuatScratch, mpTmpScl);
+        poseQuatScratch.normalize();
+        const qFin = [poseQuatScratch.x, poseQuatScratch.y, poseQuatScratch.z, poseQuatScratch.w].every(
+          Number.isFinite,
+        );
+        const ql =
+          poseQuatScratch.x ** 2 +
+          poseQuatScratch.y ** 2 +
+          poseQuatScratch.z ** 2 +
+          poseQuatScratch.w ** 2;
+        usedMpMatrix = qFin && Math.abs(ql - 1) < 0.05;
+      }
+      if (!usedMpMatrix) {
+        rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
+        poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+      }
       /** Opcional: `data-ar-invert-pose-quat="1"` no #omafit-ar-root (correção rara de convenção). */
       const invQRaw = (arCfgRoot?.dataset?.arInvertPoseQuat ? String(arCfgRoot.dataset.arInvertPoseQuat) : "")
         .trim()
@@ -1135,8 +1184,11 @@ async function runArSession({
       // #endregion
 
       const targetPos = anchor.clone();
-      targetPos.addScaledVector(_yAxis, -0.008);
-      targetPos.addScaledVector(_zAxis, 0.014);
+      /** Mesma base que `poseQuatScratch` (+Y / +Z locais da cabeça → mundo). */
+      tmpUp.set(0, 1, 0).applyQuaternion(poseQuatScratch);
+      _zWant.set(0, 0, 1).applyQuaternion(poseQuatScratch);
+      targetPos.addScaledVector(tmpUp, -0.008);
+      targetPos.addScaledVector(_zWant, 0.014);
 
       const a = 0.38;
       faceRoot.position.lerp(targetPos, a);
@@ -1156,9 +1208,19 @@ async function runArSession({
       }
       const vwF = video.videoWidth || w;
       const vhF = video.videoHeight || h;
-      if (camera.userData._aspW !== vwF || camera.userData._aspH !== vhF) {
+      if (
+        vwF > 0 &&
+        vhF > 0 &&
+        (renderer.domElement.width !== vwF ||
+          renderer.domElement.height !== vhF ||
+          camera.userData._aspW !== vwF ||
+          camera.userData._aspH !== vhF)
+      ) {
         camera.userData._aspW = vwF;
         camera.userData._aspH = vhF;
+        canvas.width = vwF;
+        canvas.height = vhF;
+        renderer.setSize(vwF, vhF, false);
         camera.aspect = vwF / vhF;
         camera.updateProjectionMatrix();
       }

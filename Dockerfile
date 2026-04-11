@@ -1,5 +1,7 @@
 # Estágio 1: build (precisa de devDependencies: vite, react-router, etc.)
-FROM node:20-alpine AS builder
+# Espelho oficial em ECR Public — evita auth.docker.io (IPv6 / rede inacessível em alguns CI).
+# @see https://gallery.ecr.aws/docker/library/node
+FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -13,7 +15,7 @@ COPY . .
 RUN npm run build
 
 # Estágio 2: produção (só o necessário para rodar)
-FROM node:20-alpine
+FROM public.ecr.aws/docker/library/node:20-alpine
 RUN apk add --no-cache openssl
 
 EXPOSE 3000

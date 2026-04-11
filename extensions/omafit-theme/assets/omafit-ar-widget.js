@@ -991,7 +991,7 @@ async function runArSession({
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
         poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
-        poseMode: "videoTexPlaneBg+makeBasis+syncRenderer+containMap+raycast+z",
+        poseMode: "videoTexPlane+ndcYMediaPipeTop+lookAtRy180+syncRenderer+raycast+z",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -1048,11 +1048,12 @@ async function runArSession({
       return normXMirror ? 1 - px : px;
     }
 
-    /** Inverte eixo interpupilar (133↔362): corrige “virado para um lado” em algumas câmaras. `data-ar-flip-ipd-axis="1"`. */
+    /** `data-ar-flip-ipd-axis="1"`: rotação local 180° Z após lookAt (substitui inversão do eixo X na antiga makeBasis). */
     const flipIpdRaw = (arCfgRoot?.dataset?.arFlipIpdAxis ? String(arCfgRoot.dataset.arFlipIpdAxis) : "")
       .trim()
       .toLowerCase();
     const flipIpdAxis = flipIpdRaw === "1" || flipIpdRaw === "true" || flipIpdRaw === "on";
+    const qFlipIpdZ180 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI, "YXZ"));
 
     /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
     function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
@@ -1105,15 +1106,14 @@ async function runArSession({
     }
 
     const poseQuatScratch = new THREE.Quaternion();
-    const rotMatScratch = new THREE.Matrix4();
+    const qLookAtRy180 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0, "YXZ"));
     const mpFaceMat = new THREE.Matrix4();
     const mpTmpPos = new THREE.Vector3();
     const mpTmpScl = new THREE.Vector3();
     const tmpUp = new THREE.Vector3();
-    const _xAxis = new THREE.Vector3();
-    const _yAxis = new THREE.Vector3();
-    const _zAxis = new THREE.Vector3();
     const _zWant = new THREE.Vector3();
+    /** Rotação da cabeça: lookAt(câmara) + 180° Y para +Z do glTF apontar à câmara (substitui makeBasis). */
+    const oHeadPose = new THREE.Object3D();
 
     function resetFaceRootTransform() {
       faceRoot.position.set(0, 0, 0);
@@ -1164,34 +1164,6 @@ async function runArSession({
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
 
-      const innerRLm = lm[133];
-      const innerLLm = lm[362];
-      if (innerRLm && innerLLm) {
-        const pIr = landmarkToWorldOnPlane(innerRLm, useZ);
-        const pIl = landmarkToWorldOnPlane(innerLLm, useZ);
-        if (flipIpdAxis) _xAxis.subVectors(pIl, pIr);
-        else _xAxis.subVectors(pIr, pIl);
-      } else if (flipIpdAxis) {
-        _xAxis.subVectors(pEyeLeft, pEyeRight);
-      } else {
-        _xAxis.subVectors(pEyeRight, pEyeLeft);
-      }
-      if (_xAxis.lengthSq() < 1e-14) return false;
-      _xAxis.normalize();
-
-      _yAxis.crossVectors(_zWant, _xAxis);
-      if (_yAxis.lengthSq() < 1e-14) return false;
-      _yAxis.normalize();
-      if (_yAxis.dot(tmpUp) < 0) _yAxis.negate();
-
-      _zAxis.crossVectors(_xAxis, _yAxis);
-      if (_zAxis.lengthSq() < 1e-14) return false;
-      _zAxis.normalize();
-      if (_zAxis.dot(_zWant) < 0) {
-        _yAxis.negate();
-        _zAxis.crossVectors(_xAxis, _yAxis).normalize();
-      }
-
       const mtx = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
       const mtxData = mtx && mtx.data;
       const basisRaw = (arCfgRoot?.dataset?.arPoseBasis ? String(arCfgRoot.dataset.arPoseBasis) : "")
@@ -1219,8 +1191,12 @@ async function runArSession({
         usedMpMatrix = qFin && Math.abs(ql - 1) < 0.05;
       }
       if (!usedMpMatrix) {
-        rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
-        poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+        oHeadPose.position.copy(anchor);
+        oHeadPose.up.copy(tmpUp);
+        oHeadPose.lookAt(camera.position);
+        poseQuatScratch.copy(oHeadPose.quaternion);
+        poseQuatScratch.multiply(qLookAtRy180);
+        if (flipIpdAxis) poseQuatScratch.multiply(qFlipIpdZ180);
       }
       /** Opcional: `data-ar-invert-pose-quat="1"` no #omafit-ar-root (correção rara de convenção). */
       const invQRaw = (arCfgRoot?.dataset?.arInvertPoseQuat ? String(arCfgRoot.dataset.arInvertPoseQuat) : "")

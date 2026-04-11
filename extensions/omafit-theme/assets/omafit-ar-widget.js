@@ -920,7 +920,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "contain+raycastPlane+z+inner133/362",
+        poseMode: "mirrorUser+orthoIpd+raycast+z+inner133/362",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -947,7 +947,27 @@ async function runArSession({
     /** Mesma convenção que a câmara a olhar para −Z. */
     const arViewDir = new THREE.Vector3(0, 0, -1);
     const frameToIpdRatio = 1.84;
-    const mirrorSelfie = false;
+    /**
+     * Espelho horizontal da selfie: landmarks MediaPipe seguem o buffer do vídeo; em câmara frontal o
+     * utilizador espera espelho. `data-ar-mirror-selfie`: "1"|"0"|"auto" (omisso = auto: user → espelho).
+     * Isto NÃO é o mesmo que ajustar só Eulers no GLB (já testado), nem matriz facial (descartada), nem só
+     * raycast vs fórmula ndc (já alinhado à PerspectiveCamera).
+     */
+    const arCfgMirror = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    let mirrorSelfie = false;
+    try {
+      const tr = stream.getVideoTracks()[0];
+      const st = tr && tr.getSettings ? tr.getSettings() : {};
+      const facing = String(st.facingMode || "").toLowerCase();
+      const ov = (arCfgMirror?.dataset?.arMirrorSelfie ? String(arCfgMirror.dataset.arMirrorSelfie) : "")
+        .trim()
+        .toLowerCase();
+      if (ov === "1" || ov === "true" || ov === "on") mirrorSelfie = true;
+      else if (ov === "0" || ov === "false" || ov === "off") mirrorSelfie = false;
+      else mirrorSelfie = facing === "user";
+    } catch {
+      mirrorSelfie = true;
+    }
 
     function normX(px) {
       return mirrorSelfie ? 1 - px : px;
@@ -1020,7 +1040,7 @@ async function runArSession({
       const lm = res.faceLandmarks[0];
       if (!lm) return false;
 
-      /** MediaPipe: 33 = olho direito, 263 = esquerdo; 133/362 = cantos internos (melhor eixo X 3D). */
+      /** MediaPipe: 33 = olho direito, 263 = esquerdo; 133/362 = cantos internos. */
       const eyeRightLm = lm[33];
       const eyeLeftLm = lm[263];
       const nose = lm[1];
@@ -1046,6 +1066,10 @@ async function runArSession({
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
 
+      _zWant.subVectors(camera.position, anchor);
+      if (_zWant.lengthSq() < 1e-14) return false;
+      _zWant.normalize();
+
       const innerRLm = lm[133];
       const innerLLm = lm[362];
       if (innerRLm && innerLLm) {
@@ -1057,10 +1081,16 @@ async function runArSession({
       }
       if (_xAxis.lengthSq() < 1e-14) return false;
       _xAxis.normalize();
-
-      _zWant.subVectors(camera.position, anchor);
-      if (_zWant.lengthSq() < 1e-14) return false;
-      _zWant.normalize();
+      /** Remove componente do eixo olhos ao longo da vista (evita torção / “virado” em yaw-roll). */
+      const xAlongView = _xAxis.dot(_zWant);
+      _xAxis.addScaledVector(_zWant, -xAlongView);
+      if (_xAxis.lengthSq() < 1e-12) {
+        _xAxis.subVectors(pEyeRight, pEyeLeft);
+        if (_xAxis.lengthSq() < 1e-14) return false;
+        _xAxis.normalize();
+      } else {
+        _xAxis.normalize();
+      }
 
       if (Math.abs(tmpUp.dot(_zWant)) > 0.985) return false;
 

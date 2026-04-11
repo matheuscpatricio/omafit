@@ -73,6 +73,7 @@
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
+    data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -114,7 +115,13 @@
     },
     {
       "type": "paragraph",
-      "content": "Euler fixo só no glbBind (ordem YXZ); modelFix a 0°. Vazio = fusão do antigo −90° X (modelFix) + 0,90,180° (glbBind). Graus \"x,y,z\" no campo abaixo."
+      "content": "Pose AR: espelho da selfie (câmara user) + eixo interpupilar projetado no plano da vista; Euler só no glbBind. Já testado e não resolve sozinho: só Eulers GLB, matriz facial MediaPipe, dois nós de graus."
+    },
+    {
+      "type": "text",
+      "id": "ar_mirror_selfie",
+      "label": "Espelho horizontal (selfie)",
+      "info": "Vazio=auto (câmara frontal → espelho). 0=desligado, 1=ligado. Atributo: data-ar-mirror-selfie."
     },
     {
       "type": "text",

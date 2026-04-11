@@ -6,6 +6,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { fal } from "npm:@fal-ai/client@1.9.5";
+import { canonicalizeArEyewearGlbBuffer } from "../../../shared/ar-eyewear-glb-canonicalize.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -156,8 +157,13 @@ Deno.serve(async (req: Request) => {
 
     const glbRes = await fetch(glbUrl);
     if (!glbRes.ok) throw new Error(`Download GLB FAL falhou: ${glbRes.status}`);
-    const glbBytes = new Uint8Array(await glbRes.arrayBuffer());
+    let glbBytes = new Uint8Array(await glbRes.arrayBuffer());
     if (glbBytes.byteLength < 1000) throw new Error("GLB FAL inválido (muito pequeno)");
+    try {
+      glbBytes = await canonicalizeArEyewearGlbBuffer(glbBytes);
+    } catch (canonErr) {
+      console.warn("[ar-eyewear-generate] canonicalize GLB ignorado:", String((canonErr as Error)?.message || canonErr));
+    }
 
     const path = `${String(row.shop_domain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
     const { error: upErr } = await supabase.storage

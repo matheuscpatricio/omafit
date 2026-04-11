@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@gltf-transform/core": "npm:@gltf-transform/core@4.3.0",
+    "@gltf-transform/extensions": "npm:@gltf-transform/extensions@4.3.0"
+  }
+}

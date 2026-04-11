@@ -130,7 +130,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Motor AR: MindAR.js + Three (hiukim/mind-ar-js). Ajustes abaixo: âncora na malha facial, espelho e escala. Euler glbBind/poseCorr continuam a orientar o GLB."
+      "content": "Motor AR: MindAR.js + Three (hiukim/mind-ar-js). âncora, espelho e escala. Euler glbBind/poseCorr são opcionais (vazio = identidade — o MindAR já alinha ao rosto)."
     },
     {
       "type": "text",
@@ -236,7 +236,7 @@
       "type": "text",
       "id": "ar_model_yxz",
       "label": "Euler glbBind (graus X,Y,Z)",
-      "info": "Atributo HTML: data-ar-glb-yxz. Vazio = defeito do script. data-ar-model-yxz ainda é lido se glb estiver vazio."
+      "info": "Opcional com MindAR: vazio = 0,0,0 (usa a orientação do GLB no landmark). Só preencha se um export concreto precisar de giro extra. data-ar-glb-yxz."
     }
   ]
 }

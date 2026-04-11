@@ -77,5 +77,5 @@ Execute no Supabase: [`../../supabase_create_ar_eyewear_assets.sql`](../../supab
 - **Job fica eternamente em “processing”**: o TripoSR/postprocess têm **timeout** (env acima); jobs **zombies** (worker morto) são marcados **failed** após `AR_WORKER_STALE_PROCESSING_MINUTES`. No admin, **Voltar a fila** também está disponível para linhas em `processing`.
 - TripoSR exige GPU NVIDIA com VRAM suficiente (veja o README oficial).
 - Com `AR_3D_PROVIDER=fal`, o worker deixa de depender de GPU local para gerar o GLB; mantém apenas o `postprocess.py` para orientação canônica.
-- Geração **FAL na app Shopify** (`FAL_API_KEY` no servidor Node / `generateGlbDraftViaFal`): o GLB também passa por canonicalização em `app/ar-eyewear-glb-canonicalize.server.js` (mesma ideia que `_snap_to_best_right_angle` no `postprocess.py`). A Edge `ar-eyewear-generate` (só Deno) continua a enviar o GLB bruto da FAL — prefira chave no Node ou o worker para eixos alinhados ao provador.
+- Geração **FAL** (Node `generateGlbDraftViaFal` ou Edge `ar-eyewear-generate`): o GLB passa pela mesma canonicalização em `shared/ar-eyewear-glb-canonicalize.mjs` (equivalente a `_snap_to_best_right_angle` no `postprocess.py` do worker).
 - Concorrência: o MVP assume um worker; para vários, adicione claim atômico (RPC `FOR UPDATE SKIP LOCKED`).

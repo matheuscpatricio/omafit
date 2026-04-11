@@ -729,15 +729,14 @@ async function runArSession({
 
     const anchor = mindarThree.addAnchor(anchorIndex);
 
-    const qM0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(rad(-90), 0, 0, "YXZ"));
-    const qG0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rad(90), rad(180), "YXZ"));
-    const e0 = new THREE.Euler().setFromQuaternion(qG0.clone().multiply(qM0), "YXZ");
-    const defX = (e0.x * 180) / Math.PI;
-    const defY = (e0.y * 180) / Math.PI;
-    const defZ = (e0.z * 180) / Math.PI;
+    /**
+     * O MindAR já coloca o grupo no referencial do landmark (ex. 168); não usar os Euler por defeito
+     * do antigo modo VTG/MediaPipe — duplicavam correção com GLBs já canonicalizados e “entortavam” no AR.
+     * `data-ar-glb-yxz` / `data-ar-model-yxz`: só quando precisares de ajuste fino por export.
+     */
     const rawGlb = (arCfg?.dataset?.arGlbYxz ? String(arCfg.dataset.arGlbYxz) : "").trim();
     const rawModel = (arCfg?.dataset?.arModelYxz ? String(arCfg.dataset.arModelYxz) : "").trim();
-    const glbDeg = parseYxzDegString(rawGlb || rawModel, defX, defY, defZ);
+    const glbDeg = parseYxzDegString(rawGlb || rawModel, 0, 0, 0);
     const poseCorrDeg = parseYxzDegString(
       (arCfg?.dataset?.arPoseCorrYxz ? String(arCfg.dataset.arPoseCorrYxz) : "").trim(),
       0,
@@ -783,9 +782,18 @@ async function runArSession({
     autoOrient.add(glasses);
     autoOrient.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(autoOrient);
+    /** GLB válido mas sem meshes/POSITION → bbox vazia; evita escala infinita e erro opaco no render. */
+    if (typeof box.isEmpty === "function" && box.isEmpty()) {
+      throw new Error(
+        "omafit-ar: GLB sem geometria visível (cena vazia ou só nós sem vértices). Confirma o export e o URL público.",
+      );
+    }
     const center = box.getCenter(new THREE.Vector3());
     const sz = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(sz.x, sz.y, sz.z, 1e-6);
+    if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
+      throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
+    }
     autoOrient.position.sub(center);
     autoOrient.scale.setScalar((0.085 / maxDim) * modelScaleMul);
 
@@ -827,9 +835,8 @@ async function runArSession({
       location: "omafit-ar-widget.js:runArSession",
       message: "mindar face started",
       hypothesisId: "H5-mindar",
-      data: { anchorIndex, disableFaceMirror },
+      data: { anchorIndex, disableFaceMirror, glbBindYxz: glbDeg },
     });
-    raf = requestAnimationFrame(frame);
   } catch (e) {
     console.error("[omafit-ar]", e);
     const isCam =

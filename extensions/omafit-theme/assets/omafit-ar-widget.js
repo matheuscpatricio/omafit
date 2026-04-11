@@ -913,6 +913,13 @@ async function runArSession({
     glbBind.rotation.set(rad(AR_GLB_BIND_X_DEG), rad(AR_GLB_BIND_Y_DEG), rad(AR_GLB_BIND_Z_DEG));
     glbBind.add(modelFix);
 
+    /** Corrige referencial cabeça↔modelo (não é o Euler do GLB). Vazio = 0,180,180° YXZ; "0,0,0" desliga. */
+    const rawPoseFix = (arCfgRoot?.dataset?.arPoseFixYxz ? String(arCfgRoot.dataset.arPoseFixYxz) : "").trim();
+    const poseFixDeg = parseYxzDegString(rawPoseFix, 0, 180, 180);
+    const poseFix = new THREE.Group();
+    poseFix.rotation.order = "YXZ";
+    poseFix.rotation.set(rad(poseFixDeg.x), rad(poseFixDeg.y), rad(poseFixDeg.z));
+
     // #region agent log
     __omafitArDbgLog({
       location: "omafit-ar-widget.js:runArSession",
@@ -920,7 +927,8 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "mirrorUser+orthoIpd+raycast+z+inner133/362",
+        poseFixYXZdeg: { x: poseFixDeg.x, y: poseFixDeg.y, z: poseFixDeg.z },
+        poseMode: "mirrorNormX+raycast+z+poseFix+inner133/362",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -928,7 +936,8 @@ async function runArSession({
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(glbBind);
+    faceRoot.add(poseFix);
+    poseFix.add(glbBind);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -1081,16 +1090,6 @@ async function runArSession({
       }
       if (_xAxis.lengthSq() < 1e-14) return false;
       _xAxis.normalize();
-      /** Remove componente do eixo olhos ao longo da vista (evita torção / “virado” em yaw-roll). */
-      const xAlongView = _xAxis.dot(_zWant);
-      _xAxis.addScaledVector(_zWant, -xAlongView);
-      if (_xAxis.lengthSq() < 1e-12) {
-        _xAxis.subVectors(pEyeRight, pEyeLeft);
-        if (_xAxis.lengthSq() < 1e-14) return false;
-        _xAxis.normalize();
-      } else {
-        _xAxis.normalize();
-      }
 
       if (Math.abs(tmpUp.dot(_zWant)) > 0.985) return false;
 

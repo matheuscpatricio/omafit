@@ -754,8 +754,8 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      /** Matriz facial opcional para pose; se falhar, makeBasis + landmarks com profundidade Z. */
-      outputFacialTransformationMatrixes: true,
+      /** Matriz facial: espaço alvo pouco documentado; misturar com makeBasis piora a pose. */
+      outputFacialTransformationMatrixes: false,
     };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -920,7 +920,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "contain+z+inner133/362+facialMatrix55",
+        poseMode: "contain+raycastPlane+z+inner133/362",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -938,8 +938,14 @@ async function runArSession({
     const camZ = 0.6;
     const zPlane = -0.34;
     const distCamToPlane = camZ - zPlane;
-    /** Relativo ao ancho do frame; com `useZ` nos landmarks evita “cara de cartão” no mesmo plano. */
+    /** Relativo à largura do frame; desloca o hit do raio ao longo de −Z (profundidade MediaPipe). */
     const zDepthScale = 0.1;
+    const arFacePlane = new THREE.Plane();
+    arFacePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, zPlane));
+    const arRaycaster = new THREE.Raycaster();
+    const arHit = new THREE.Vector3();
+    /** Mesma convenção que a câmara a olhar para −Z. */
+    const arViewDir = new THREE.Vector3(0, 0, -1);
     const frameToIpdRatio = 1.84;
     const mirrorSelfie = false;
 
@@ -981,19 +987,22 @@ async function runArSession({
       const bufY = (by / dispH) * vh;
       const ndcX = (bufX / vw) * 2 - 1;
       const ndcY = -((bufY / vh) * 2 - 1);
-      const vFov = (camera.fov * Math.PI) / 180;
-      const halfH = Math.tan(vFov / 2) * distCamToPlane;
-      const halfW = halfH * camera.aspect;
-      const zz = zPlane + (useZ ? (p.z || 0) * zDepthScale * vw : 0);
-      return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
+      arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);
+      if (hit == null) {
+        const vFov = (camera.fov * Math.PI) / 180;
+        const halfH = Math.tan(vFov / 2) * distCamToPlane;
+        const halfW = halfH * camera.aspect;
+        const zz = zPlane + (useZ ? (p.z || 0) * zDepthScale * vw : 0);
+        return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
+      }
+      if (useZ) {
+        arHit.addScaledVector(arViewDir, -(p.z || 0) * zDepthScale * vw);
+      }
+      return arHit.clone();
     }
 
     const poseQuatScratch = new THREE.Quaternion();
-    const poseQuatFromMatrix = new THREE.Quaternion();
-    const mpMatScratch = new THREE.Matrix4();
-    const col0 = new THREE.Vector3();
-    const col1 = new THREE.Vector3();
-    const col2 = new THREE.Vector3();
     const rotMatScratch = new THREE.Matrix4();
     const tmpUp = new THREE.Vector3();
     const _xAxis = new THREE.Vector3();
@@ -1005,31 +1014,6 @@ async function runArSession({
       faceRoot.position.set(0, 0, 0);
       faceRoot.quaternion.set(0, 0, 0, 1);
       faceRoot.scale.set(1, 1, 1);
-    }
-
-    /**
-     * Tenta quaternion a partir de `facialTransformationMatrixes` (MediaPipe Face Geometry).
-     * Os 16 floats seguem convenção column-major como THREE.Matrix4; ortogonaliza colunas (escala).
-     */
-    function quatFromFacialMatrix(fm) {
-      const data = fm && fm.data;
-      if (!data || data.length < 16) return false;
-      mpMatScratch.fromArray(data);
-      const e = mpMatScratch.elements;
-      col0.set(e[0], e[1], e[2]);
-      col1.set(e[4], e[5], e[6]);
-      col2.set(e[8], e[9], e[10]);
-      if (col0.lengthSq() < 1e-12 || col1.lengthSq() < 1e-12) return false;
-      col0.normalize();
-      col1.sub(col0.clone().multiplyScalar(col0.dot(col1)));
-      if (col1.lengthSq() < 1e-12) return false;
-      col1.normalize();
-      col2.crossVectors(col0, col1);
-      if (col2.lengthSq() < 1e-12) return false;
-      col2.normalize();
-      rotMatScratch.makeBasis(col0, col1, col2);
-      poseQuatFromMatrix.setFromRotationMatrix(rotMatScratch);
-      return true;
     }
 
     function applyGlassesPose(res) {
@@ -1095,11 +1079,6 @@ async function runArSession({
 
       rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
       poseQuatScratch.setFromRotationMatrix(rotMatScratch);
-
-      const fm = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
-      if (quatFromFacialMatrix(fm)) {
-        poseQuatScratch.slerp(poseQuatFromMatrix, 0.55);
-      }
 
       // #region agent log
       if (!__omafitArDbgPoseOkOnce) {

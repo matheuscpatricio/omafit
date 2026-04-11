@@ -876,16 +876,16 @@ async function runArSession({
     }
 
     /**
-     * Rotação fixa do GLB num só bloco (`modelFix`, ordem YXZ). O antigo `glbBind` com Euler extra foi
-     * fundido aqui (q_glbBind * q_modelFix) para evitar dois conjuntos de graus; `glbBind` fica a 0.
-     * Override: `data-ar-model-yxz` no #omafit-ar-root (graus "x,y,z"); vazio = Euler por defeito abaixo.
+     * Rotação fixa só em `glbBind` (ordem YXZ): fusão do antigo q_glbBind * q_modelFix (−90° X no modelFix
+     * + 0,90,180° no glbBind). `modelFix` sem Euler (0,0,0).
+     * Override: `data-ar-glb-yxz` no #omafit-ar-root; se vazio, tenta `data-ar-model-yxz` (Liquid antigo).
      */
     const rad = (d) => (d * Math.PI) / 180;
     const arCfgRoot = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    function parseYxzDeg(attr, defX, defY, defZ) {
-      const raw = (arCfgRoot?.dataset?.[attr] ? String(arCfgRoot.dataset[attr]) : "").trim();
-      if (!raw) return { x: defX, y: defY, z: defZ };
-      const p = raw.split(/[\s,;]+/).map((s) => Number(s.trim()));
+    function parseYxzDegString(raw, defX, defY, defZ) {
+      const s = String(raw || "").trim();
+      if (!s) return { x: defX, y: defY, z: defZ };
+      const p = s.split(/[\s,;]+/).map((t) => Number(t.trim()));
       if (p.length < 3 || p.some((n) => Number.isNaN(n))) return { x: defX, y: defY, z: defZ };
       return { x: p[0], y: p[1], z: p[2] };
     }
@@ -896,19 +896,21 @@ async function runArSession({
     const defX = (eMerged0.x * 180) / Math.PI;
     const defY = (eMerged0.y * 180) / Math.PI;
     const defZ = (eMerged0.z * 180) / Math.PI;
-    const modelDeg = parseYxzDeg("arModelYxz", defX, defY, defZ);
+    const rawGlb = (arCfgRoot?.dataset?.arGlbYxz ? String(arCfgRoot.dataset.arGlbYxz) : "").trim();
+    const rawModel = (arCfgRoot?.dataset?.arModelYxz ? String(arCfgRoot.dataset.arModelYxz) : "").trim();
+    const glbDeg = parseYxzDegString(rawGlb || rawModel, defX, defY, defZ);
 
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
-    const AR_GLB_ROT_X_DEG = modelDeg.x;
-    const AR_GLB_ROT_Y_DEG = modelDeg.y;
-    const AR_GLB_ROT_Z_DEG = modelDeg.z;
-    modelFix.rotation.set(rad(AR_GLB_ROT_X_DEG), rad(AR_GLB_ROT_Y_DEG), rad(AR_GLB_ROT_Z_DEG));
+    modelFix.rotation.set(0, 0, 0);
     modelFix.add(autoOrient);
 
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(0, 0, 0);
+    const AR_GLB_BIND_X_DEG = glbDeg.x;
+    const AR_GLB_BIND_Y_DEG = glbDeg.y;
+    const AR_GLB_BIND_Z_DEG = glbDeg.z;
+    glbBind.rotation.set(rad(AR_GLB_BIND_X_DEG), rad(AR_GLB_BIND_Y_DEG), rad(AR_GLB_BIND_Z_DEG));
     glbBind.add(modelFix);
 
     // #region agent log
@@ -917,9 +919,9 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 0, z: 0 },
+        glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
         poseMode: "contain-plane+basis",
-        modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
+        modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
     // #endregion

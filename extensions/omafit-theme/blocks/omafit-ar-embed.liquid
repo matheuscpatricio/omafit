@@ -72,7 +72,7 @@
     data-font-family="{{ ar_font_stack | escape }}"
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
-    data-ar-model-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
+    data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -114,13 +114,13 @@
     },
     {
       "type": "paragraph",
-      "content": "Um só Euler (modelFix, ordem YXZ); glbBind sem rotação. Vazio = fusão do antigo −90 X + (0,90,180) no glbBind. Campo abaixo: graus \"x,y,z\" para afinar."
+      "content": "Euler fixo só no glbBind (ordem YXZ); modelFix a 0°. Vazio = fusão do antigo −90° X (modelFix) + 0,90,180° (glbBind). Graus \"x,y,z\" no campo abaixo."
     },
     {
       "type": "text",
       "id": "ar_model_yxz",
-      "label": "Euler GLB fixo (graus X,Y,Z)",
-      "info": "Vazio = valor por defeito do script (equivalente à pilha antiga em dois nós)."
+      "label": "Euler glbBind (graus X,Y,Z)",
+      "info": "Atributo HTML: data-ar-glb-yxz. Vazio = defeito do script. data-ar-model-yxz ainda é lido se glb estiver vazio."
     }
   ]
 }

@@ -887,7 +887,7 @@ async function runArSession({
 
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    /** Tripo: +90° Y alinha frente do GLB com a câmara após modelFix −90° X. */
+    /** Tripo: +90° Y (com modelFix −90° X) alinha frente do GLB; o eixo interpupilar vinha invertido (33/263). */
     glbBind.rotation.set(0, rad(90), 0);
     glbBind.add(modelFix);
 
@@ -983,23 +983,24 @@ async function runArSession({
       const lm = res.faceLandmarks[0];
       if (!lm) return false;
 
-      const eL = lm[33];
-      const eR = lm[263];
+      /** MediaPipe: 33 = olho direito do sujeito, 263 = olho esquerdo (não trocar nomes). */
+      const eyeRightLm = lm[33];
+      const eyeLeftLm = lm[263];
       const nose = lm[1];
-      if (!eL || !eR || !nose) return false;
+      if (!eyeRightLm || !eyeLeftLm || !nose) return false;
 
-      const ipdNorm = Math.hypot(eR.x - eL.x, eR.y - eL.y);
+      const ipdNorm = Math.hypot(eyeRightLm.x - eyeLeftLm.x, eyeRightLm.y - eyeLeftLm.y);
       if (ipdNorm < 0.02) return false;
 
-      const pL = landmarkToWorldOnPlane(eL, false);
-      const pR = landmarkToWorldOnPlane(eR, false);
-      const ipdWorld = pL.distanceTo(pR);
+      const pEyeRight = landmarkToWorldOnPlane(eyeRightLm, false);
+      const pEyeLeft = landmarkToWorldOnPlane(eyeLeftLm, false);
+      const ipdWorld = pEyeRight.distanceTo(pEyeLeft);
       const modelNormWidth =
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
       const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
       const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], false) : null;
-      const midEyes = new THREE.Vector3().addVectors(pL, pR).multiplyScalar(0.5);
+      const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
       const pNose = landmarkToWorldOnPlane(nose, false);
@@ -1007,7 +1008,8 @@ async function runArSession({
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
 
-      _xAxis.subVectors(pR, pL);
+      /** +X = da esquerda anatómica para a direita (eixo das hastes); pR−pL invertia frente/verso. */
+      _xAxis.subVectors(pEyeRight, pEyeLeft);
       if (_xAxis.lengthSq() < 1e-14) return false;
       _xAxis.normalize();
 

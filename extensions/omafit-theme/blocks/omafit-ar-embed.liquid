@@ -82,6 +82,7 @@
     data-ar-pose-corr-yxz="{{ block.settings.ar_pose_corr_yxz | default: '' | strip | escape }}"
     data-ar-flip-ipd-axis="{{ block.settings.ar_flip_ipd_axis | default: '' | strip | escape }}"
     data-ar-pose-lerp="{{ block.settings.ar_pose_lerp | default: '0.92' | strip | escape }}"
+    data-ar-use-mp-matrix="{{ block.settings.ar_use_mp_matrix | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -123,7 +124,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Ao detetar a face, o GLB salta para a pose (snap); depois segue com suavização (lerp). NDC X por defeito = 1. GLB: Euler glbBind."
+      "content": "AR em espaço de pixels (estilo Virtual-Glasses + Three). Matriz MP só com “usar matriz MP” = 1. NDC X por defeito = 1. GLB: Euler glbBind."
     },
     {
       "type": "text",
@@ -167,6 +168,12 @@
       "id": "ar_pose_corr_yxz",
       "label": "Euler poseCorr (graus X,Y,Z)",
       "info": "Entre faceRoot e glbBind. Vazio = 0,0,0. Ex.: 0,180,180 para alguns GLB. data-ar-pose-corr-yxz."
+    },
+    {
+      "type": "text",
+      "id": "ar_use_mp_matrix",
+      "label": "Usar matriz MediaPipe (rotação)",
+      "info": "Vazio = só landmarks (recomendado no modo pixel). 1 = tentar quaternion da matriz facial. data-ar-use-mp-matrix."
     },
     {
       "type": "text",

@@ -870,21 +870,30 @@ async function runArSession({
 
     const scene = new THREE.Scene();
     /**
-     * FOV vertical ~63° alinha à câmara virtual usada na geometria do Face Landmarker (documentação / issues MP).
-     * FOV diferente desloca o raio NDC relativamente ao modelo interno dos landmarks.
+     * Espaço “pixel + profundidade” como em Virtual-Glasses-Try-on (Three + facemesh scaledMesh):
+     * câmara em (W/2, -H/2, z), lookAt (W/2, -H/2, 0); posição do óculos = landmark em px com Y invertido.
+     * @see https://github.com/bensonruan/Virtual-Glasses-Try-on/blob/main/js/virtual-glasses.js
      */
-    const MP_FACE_TASK_VFOV = 63;
-    const camera = new THREE.PerspectiveCamera(MP_FACE_TASK_VFOV, w / h, 0.01, 10);
-    camera.position.set(0, 0, 0.6);
+    const VTG_FOV_DEG = 45;
+    const camera = new THREE.PerspectiveCamera(VTG_FOV_DEG, w / Math.max(1, h), 0.1, 100000);
     camera.up.set(0, 1, 0);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
-    const camZ = 0.6;
-    const zPlane = -0.34;
-    const distCamToPlane = camZ - zPlane;
+    function applyPixelCamera(vw, vh) {
+      const W = Math.max(2, vw);
+      const H = Math.max(2, vh);
+      const halfH = H / 2;
+      const tanHalf = Math.tan((VTG_FOV_DEG * 0.5 * Math.PI) / 180);
+      const camZ = -halfH / tanHalf;
+      camera.aspect = W / H;
+      camera.position.set(W / 2, -H / 2, camZ);
+      camera.lookAt(new THREE.Vector3(W / 2, -H / 2, 0));
+      camera.updateProjectionMatrix();
+    }
+    applyPixelCamera(w, h);
 
-    /** Plano com o mesmo frame que o raycast — elimina desvio entre <video> CSS e canvas WebGL. */
+    /** Plano de vídeo no mesmo espaço de pixels (z ≈ 0). */
     videoTex = new THREE.VideoTexture(video);
     videoTex.colorSpace = THREE.SRGBColorSpace;
     videoTex.minFilter = THREE.LinearFilter;
@@ -900,6 +909,10 @@ async function runArSession({
     videoBg.frustumCulled = false;
     videoBg.renderOrder = -1000;
     scene.add(videoBg);
+
+    const dirLt = new THREE.DirectionalLight(0xffffff, 0.55);
+    dirLt.position.set(w * 0.8, -h * 0.2, w * 0.5);
+    scene.add(dirLt);
 
     const loader = new GLTFLoader();
     loader.setCrossOrigin("anonymous");
@@ -1012,7 +1025,7 @@ async function runArSession({
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
         poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
-        poseMode: "mpFov63+planarLandmarks+mpMatrixQuat+midEyesWearOffset",
+        poseMode: "vtgPixelCam+lmToVtWorld+landmarkBasis",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -1025,27 +1038,16 @@ async function runArSession({
     poseCorr.add(glbBind);
     scene.add(faceRoot);
 
-    const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
-    dirLt.position.set(0.35, 0.55, 0.45);
-    scene.add(dirLt);
-
-    const arFacePlane = new THREE.Plane();
-    arFacePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, zPlane));
     function syncVideoBackgroundPlane() {
       if (!videoBg) return;
-      const vfov = (camera.fov * Math.PI) / 180;
-      const ph = 2 * Math.tan(vfov / 2) * distCamToPlane;
-      const pw = ph * camera.aspect;
-      if (pw > 1e-8 && ph > 1e-8) {
-        /** Espelho X: alinha textura WebGL ao raycast (normXMirror ou sceneMirrorXNdc). */
-        videoBg.scale.set(arVideoMirrorX ? -pw : pw, ph, 1);
-        /** Ligeiramente atrás do plano do raycast para reduzir z-fighting com o GLB. */
-        videoBg.position.set(0, 0, zPlane - 0.002);
-      }
+      const vw = video.videoWidth || w;
+      const vh = video.videoHeight || h;
+      if (vw < 2 || vh < 2) return;
+      videoBg.scale.set(arVideoMirrorX ? -vw : vw, vh, 1);
+      videoBg.position.set(vw / 2, -vh / 2, 0);
+      videoBg.rotation.set(0, 0, 0);
     }
     syncVideoBackgroundPlane();
-    const arRaycaster = new THREE.Raycaster();
-    const arHit = new THREE.Vector3();
     const frameToIpdRatio = 1.84;
     /** Espelhos horizontais: ver `normXMirror` / `sceneMirrorXNdc` (lidos no início da sessão). */
 
@@ -1069,56 +1071,19 @@ async function runArSession({
     })();
     const scaleFollow = 0.72;
 
-    /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
-    function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
-      const cw = Math.max(1, containerW);
-      const ch = Math.max(1, containerH);
-      const arC = cw / ch;
-      const arI = intrinsicW / intrinsicH;
-      const eps = 0.002;
-      if (Math.abs(arC - arI) < eps) {
-        return { ox: 0, oy: 0, drawW: cw, drawH: ch };
-      }
-      if (arC > arI) {
-        const drawH = ch;
-        const drawW = ch * arI;
-        return { ox: (cw - drawW) * 0.5, oy: 0, drawW, drawH };
-      }
-      const drawW = cw;
-      const drawH = cw / arI;
-      return { ox: 0, oy: (ch - drawH) * 0.5, drawW, drawH };
-    }
-
     /**
-     * Projeta só **x,y** normalizados do MP no plano z=zPlane (NDC + Raycaster).
-     * O `z` do landmark **não** entra na posição: em Web costuma distorcer vs câmara real e causa desvio estável
-     * (discussões MP + Three; matriz facial cobre pose 3D quando usada).
+     * Landmarks MediaPipe (0–1) → mundo Three no espaço do frame (como scaledMesh no demo Virtual-Glasses).
      */
-    function landmarkToWorldOnPlane(p) {
-      if (!p) return null;
+    function lmToVtWorld(lm) {
+      if (!lm) return null;
       const vw = video.videoWidth || w;
       const vh = video.videoHeight || h;
-      /** `video.client*` alinha ao rect desenhado do elemento (object-fit), como o olho vê o frame. */
-      const dispW = Math.max(1, video.clientWidth || arFit.clientWidth || vw);
-      const dispH = Math.max(1, video.clientHeight || arFit.clientHeight || vh);
-      const r = getObjectFitContainRect(dispW, dispH, vw, vh);
-      const xn = normX(p.x);
-      const bx = r.ox + xn * r.drawW;
-      const by = r.oy + p.y * r.drawH;
-      const bufX = (bx / dispW) * vw;
-      const bufY = (by / dispH) * vh;
-      let ndcX = (bufX / vw) * 2 - 1;
-      if (sceneMirrorXNdc) ndcX *= -1;
-      const ndcY = -((bufY / vh) * 2 - 1);
-      arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
-      const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);
-      if (hit == null) {
-        const vFov = (camera.fov * Math.PI) / 180;
-        const halfH = Math.tan(vFov / 2) * distCamToPlane;
-        const halfW = halfH * camera.aspect;
-        return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zPlane);
-      }
-      return arHit.clone();
+      let x = normX(lm.x) * vw;
+      if (sceneMirrorXNdc) x = vw - x;
+      const y = -lm.y * vh;
+      /** Profundidade relativa ao plano z≈0 (como mesh Z no demo VTG); evita empurrar para z enorme. */
+      const z = (lm.z || 0) * vh * 2.8 - 6;
+      return new THREE.Vector3(x, y, z);
     }
 
     const poseQuatScratch = new THREE.Quaternion();
@@ -1152,14 +1117,14 @@ async function runArSession({
       const ipdNorm = Math.hypot(eyeRightLm.x - eyeLeftLm.x, eyeRightLm.y - eyeLeftLm.y);
       if (ipdNorm < 0.02) return false;
 
-      const pEyeRight = landmarkToWorldOnPlane(eyeRightLm);
-      const pEyeLeft = landmarkToWorldOnPlane(eyeLeftLm);
+      const pEyeRight = lmToVtWorld(eyeRightLm);
+      const pEyeLeft = lmToVtWorld(eyeLeftLm);
       const ipdWorld = pEyeRight.distanceTo(pEyeLeft);
       const modelNormWidth =
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
-      const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
+      const faceScale = Math.max(0.35, Math.min(900, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
-      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168]) : null;
+      const pBridge = lm[168] ? lmToVtWorld(lm[168]) : null;
       const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
       /** Ancoragem da rotação: ponto entre olhos (estável); ponte só mistura ligeiramente a posição. */
       const anchorRot = midEyes;
@@ -1178,7 +1143,11 @@ async function runArSession({
         .toLowerCase();
       const forceBasisOnly = basisRaw === "1" || basisRaw === "true" || basisRaw === "on";
       let usedMpMatrix = false;
-      if (!forceBasisOnly && !poseLandmarksOnly && mtxData && mtxData.length >= 16) {
+      /** Matriz MP está noutro referencial; no modo pixel (VTG) usar só base olhos + nariz. */
+      const useMpMatrixVtg =
+        (arCfgRoot?.dataset?.arUseMpMatrix ? String(arCfgRoot.dataset.arUseMpMatrix) : "").trim().toLowerCase() ===
+        "1";
+      if (useMpMatrixVtg && !forceBasisOnly && !poseLandmarksOnly && mtxData && mtxData.length >= 16) {
         mpFaceMat.fromArray(mtxData);
         /** Proto / Web: `data` costuma ser row-major; Three `fromArray` espera column-major → transpor. */
         const noTr = (arCfgRoot?.dataset?.arMpMatrixNotranspose ? String(arCfgRoot.dataset.arMpMatrixNotranspose) : "")
@@ -1240,10 +1209,10 @@ async function runArSession({
       // #endregion
 
       /**
-       * Posição do `faceRoot`: `Matrix4.compose` mental = T(world) * R(quat).
-       * Offset em **espaço local da cabeça** (−Y sobe ligeiramente à ponte; +Z afasta da face).
+       * Offset em unidades do frame (pixels), aplicado em espaço local da cabeça.
        */
-      headWearOffsetLocal.set(0, -0.011, 0.017);
+      const vhPose = video.videoHeight || h;
+      headWearOffsetLocal.set(0, -vhPose * 0.02, vhPose * 0.032);
       headWearOffsetLocal.applyQuaternion(poseQuatScratch);
       const targetPos = anchorPos.add(headWearOffsetLocal);
 
@@ -1286,8 +1255,8 @@ async function runArSession({
         canvas.width = vwF;
         canvas.height = vhF;
         renderer.setSize(vwF, vhF, false);
-        camera.aspect = vwF / vhF;
-        camera.updateProjectionMatrix();
+        applyPixelCamera(vwF, vhF);
+        dirLt.position.set(vwF * 0.8, -vhF * 0.2, vwF * 0.5);
         syncVideoBackgroundPlane();
       }
       const ts =

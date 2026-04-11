@@ -787,14 +787,14 @@ async function runArSession({
       .toLowerCase();
     /** `1−x` nos landmarks (espelho “selfie” no espaço normalizado). */
     const normXMirror = mirrorSelfieRaw === "1" || mirrorSelfieRaw === "true" || mirrorSelfieRaw === "on";
-    const sceneXMirrorRaw = (arRootEarly?.dataset?.arSceneXMirror ? String(arRootEarly.dataset.arSceneXMirror) : "")
+    const sceneXMirrorRaw = String(arRootEarly?.dataset?.arSceneXMirror ?? "")
       .trim()
       .toLowerCase();
     /**
-     * Inverte só o eixo X em NDC (frustum) + plano de vídeo — corrige sensação de “câmara/espelho invertido”
-     * sem CSS no `<video>`. Não combinar com `ar-mirror-selfie` salvo teste (dois espelhos).
+     * Por defeito **ligado** (vazio ou 1): nega NDC X + espelha plano WebGL.
+     * Desligar no tema: `data-ar-scene-x-mirror="0"` ou `false` ou `off`.
      */
-    const sceneMirrorXNdc = sceneXMirrorRaw === "1" || sceneXMirrorRaw === "true" || sceneXMirrorRaw === "on";
+    const sceneMirrorXNdc = !/^(0|false|off)$/i.test(sceneXMirrorRaw);
     /** Textura de fundo: scale X negativo exige DoubleSide e deve acompanhar qualquer espelho horizontal. */
     const arVideoMirrorX = normXMirror || sceneMirrorXNdc;
 
@@ -1020,6 +1020,7 @@ async function runArSession({
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
+    faceRoot.matrixAutoUpdate = true;
     faceRoot.add(poseCorr);
     poseCorr.add(glbBind);
     scene.add(faceRoot);
@@ -1057,6 +1058,16 @@ async function runArSession({
       .trim()
       .toLowerCase();
     const flipIpdAxis = flipIpdRaw === "1" || flipIpdRaw === "true" || flipIpdRaw === "on";
+
+    /** Suavização posição/rotação/escala (0.2–1). 1 = cola ao landmark; vazio = 0.92. `data-ar-pose-lerp`. */
+    const poseLerpRaw = (arCfgRoot?.dataset?.arPoseLerp ? String(arCfgRoot.dataset.arPoseLerp) : "").trim();
+    const poseLerpAlpha = (() => {
+      if (!poseLerpRaw) return 0.92;
+      const n = Number(poseLerpRaw);
+      if (!Number.isFinite(n)) return 0.92;
+      return Math.min(1, Math.max(0.2, n));
+    })();
+    const scaleFollow = 0.72;
 
     /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
     function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
@@ -1127,7 +1138,7 @@ async function runArSession({
       faceRoot.scale.set(1, 1, 1);
     }
 
-    function applyGlassesPose(res) {
+    function applyGlassesPose(res, doSnap = false) {
       camera.updateMatrixWorld(true);
       const lm = res.faceLandmarks[0];
       if (!lm) return false;
@@ -1236,15 +1247,22 @@ async function runArSession({
       headWearOffsetLocal.applyQuaternion(poseQuatScratch);
       const targetPos = anchorPos.add(headWearOffsetLocal);
 
-      const a = 0.52;
-      faceRoot.position.lerp(targetPos, a);
-      faceRoot.quaternion.slerp(poseQuatScratch, a);
-      const s = faceRoot.scale.x || faceScale;
-      faceRoot.scale.setScalar(s + (faceScale - s) * 0.32);
+      if (doSnap) {
+        faceRoot.position.copy(targetPos);
+        faceRoot.quaternion.copy(poseQuatScratch);
+        faceRoot.scale.setScalar(faceScale);
+      } else {
+        faceRoot.position.lerp(targetPos, poseLerpAlpha);
+        faceRoot.quaternion.slerp(poseQuatScratch, poseLerpAlpha);
+        const s = faceRoot.scale.x || faceScale;
+        faceRoot.scale.setScalar(s + (faceScale - s) * scaleFollow);
+      }
+      faceRoot.quaternion.normalize();
       return true;
     }
 
     faceRoot.visible = false;
+    let poseHadFaceLastFrame = false;
 
     function frame() {
       raf = requestAnimationFrame(frame);
@@ -1279,13 +1297,14 @@ async function runArSession({
       const res = landmarker.detectForVideo(video, ts);
       if (!res.faceLandmarks || !res.faceLandmarks[0]) {
         faceRoot.visible = false;
+        poseHadFaceLastFrame = false;
         resetFaceRootTransform();
         syncVideoBackgroundPlane();
         renderer.render(scene, camera);
         return;
       }
 
-      const ok = applyGlassesPose(res);
+      const ok = applyGlassesPose(res, !poseHadFaceLastFrame);
       // #region agent log
       if (!ok && !__omafitArDbgPoseFailOnce) {
         __omafitArDbgPoseFailOnce = true;
@@ -1299,6 +1318,7 @@ async function runArSession({
       // #endregion
       faceRoot.visible = ok;
       if (!ok) resetFaceRootTransform();
+      poseHadFaceLastFrame = ok;
       syncVideoBackgroundPlane();
       renderer.render(scene, camera);
     }

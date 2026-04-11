@@ -74,13 +74,14 @@
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
     data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
-    data-ar-scene-x-mirror="{{ block.settings.ar_scene_x_mirror | default: '' | strip | escape }}"
+    data-ar-scene-x-mirror="{{ block.settings.ar_scene_x_mirror | default: '1' | strip | escape }}"
     data-ar-invert-pose-quat="{{ block.settings.ar_invert_pose_quat | default: '' | strip | escape }}"
     data-ar-pose-source="{{ block.settings.ar_pose_source | default: '' | strip | escape }}"
     data-ar-pose-basis="{{ block.settings.ar_pose_basis | default: '' | strip | escape }}"
     data-ar-mp-matrix-notranspose="{{ block.settings.ar_mp_matrix_notranspose | default: '' | strip | escape }}"
     data-ar-pose-corr-yxz="{{ block.settings.ar_pose_corr_yxz | default: '' | strip | escape }}"
     data-ar-flip-ipd-axis="{{ block.settings.ar_flip_ipd_axis | default: '' | strip | escape }}"
+    data-ar-pose-lerp="{{ block.settings.ar_pose_lerp | default: '0.92' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -122,7 +123,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Vídeo como textura WebGL (alinhado ao raycast). pose-corr vazio = 0,0,0 (tenta 0,180,180 se o GLB exportar noutro eixo). flip-ipd-axis=1 se ainda estiver lateral. GLB: Euler glbBind."
+      "content": "Ao detetar a face, o GLB salta para a pose (snap); depois segue com suavização (lerp). NDC X por defeito = 1. GLB: Euler glbBind."
     },
     {
       "type": "text",
@@ -134,7 +135,8 @@
       "type": "text",
       "id": "ar_scene_x_mirror",
       "label": "Inverter eixo X da câmara (NDC)",
-      "info": "1 = negar NDC X + espelhar plano WebGL (teste se o GLB parece do lado errado / câmara invertida). Não combinar com espelho selfie sem testar. data-ar-scene-x-mirror."
+      "default": "1",
+      "info": "Por defeito 1 (NDC X negado + plano WebGL espelhado). Use 0 / false / off para desligar. Evite combinar com “Espelho selfie” sem testar. data-ar-scene-x-mirror."
     },
     {
       "type": "text",
@@ -165,6 +167,13 @@
       "id": "ar_pose_corr_yxz",
       "label": "Euler poseCorr (graus X,Y,Z)",
       "info": "Entre faceRoot e glbBind. Vazio = 0,0,0. Ex.: 0,180,180 para alguns GLB. data-ar-pose-corr-yxz."
+    },
+    {
+      "type": "text",
+      "id": "ar_pose_lerp",
+      "label": "Suavização pose (0.2–1)",
+      "default": "0.92",
+      "info": "1 = máximo seguimento ao rosto; mais baixo = mais suave. Ao perder a face e voltar, o GLB faz snap outra vez. data-ar-pose-lerp."
     },
     {
       "type": "text",

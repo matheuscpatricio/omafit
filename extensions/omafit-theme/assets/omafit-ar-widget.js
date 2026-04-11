@@ -775,6 +775,13 @@ async function runArSession({
       import(ESM_GLTF),
     ]);
 
+    const arRootEarly = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const poseSourceEarly = (arRootEarly?.dataset?.arPoseSource ? String(arRootEarly.dataset.arPoseSource) : "")
+      .trim()
+      .toLowerCase();
+    /** `landmarks` = só base olhos/plano; vazio ou `matrix` = tentar quaternion da matriz MP primeiro (recomendado). */
+    const poseLandmarksOnly = poseSourceEarly === "landmarks";
+
     const landmarkerOpts = {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
       runningMode: "VIDEO",
@@ -783,18 +790,9 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      /**
-       * Matriz FaceGeometry: rotação está noutro referencial que o raycast+zPlane; misturar com posição
-       * calculada no nosso plano (H4.4) piora a pose. Só ligar com `data-ar-pose-source="matrix"`.
-       */
-      outputFacialTransformationMatrixes: false,
+      /** Matriz canónica→face (MP); posição no Three continua planar (sem `z` do landmark no raio). */
+      outputFacialTransformationMatrixes: true,
     };
-    const __arRootPose = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    const poseSourceRaw = (__arRootPose?.dataset?.arPoseSource ? String(__arRootPose.dataset.arPoseSource) : "")
-      .trim()
-      .toLowerCase();
-    const useMatrixPose = poseSourceRaw === "matrix";
-    if (useMatrixPose) landmarkerOpts.outputFacialTransformationMatrixes = true;
 
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -855,7 +853,12 @@ async function runArSession({
     renderer.toneMappingExposure = 1;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 10);
+    /**
+     * FOV vertical ~63° alinha à câmara virtual usada na geometria do Face Landmarker (documentação / issues MP).
+     * FOV diferente desloca o raio NDC relativamente ao modelo interno dos landmarks.
+     */
+    const MP_FACE_TASK_VFOV = 63;
+    const camera = new THREE.PerspectiveCamera(MP_FACE_TASK_VFOV, w / h, 0.01, 10);
     camera.position.set(0, 0, 0.6);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
@@ -991,7 +994,7 @@ async function runArSession({
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
         poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
-        poseMode: "rayDirMpZ+planeScaleWorld+midEyesAnchor+localWearOffset+cameraMatrixWorld",
+        poseMode: "mpFov63+planarLandmarks+mpMatrixQuat+midEyesWearOffset",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -1007,15 +1010,6 @@ async function runArSession({
     dirLt.position.set(0.35, 0.55, 0.45);
     scene.add(dirLt);
 
-    /**
-     * Profundidade MediaPipe `z` → deslocamento em **unidades de mundo** (mesma ordem que o plano z=zPlane).
-     * Nunca multiplicar por `videoWidth` em pixels — isso empurra nariz/olhos para fora do rosto.
-     */
-    function mpZToWorldUnits() {
-      const vFov = (camera.fov * Math.PI) / 180;
-      const halfH = Math.tan(vFov / 2) * distCamToPlane;
-      return Math.max(0.012, Math.min(0.09, halfH * 0.32));
-    }
     const arFacePlane = new THREE.Plane();
     arFacePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, zPlane));
     function syncVideoBackgroundPlane() {
@@ -1079,7 +1073,12 @@ async function runArSession({
       return { ox: 0, oy: (ch - drawH) * 0.5, drawW, drawH };
     }
 
-    function landmarkToWorldOnPlane(p, useZ) {
+    /**
+     * Projeta só **x,y** normalizados do MP no plano z=zPlane (NDC + Raycaster).
+     * O `z` do landmark **não** entra na posição: em Web costuma distorcer vs câmara real e causa desvio estável
+     * (discussões MP + Three; matriz facial cobre pose 3D quando usada).
+     */
+    function landmarkToWorldOnPlane(p) {
       if (!p) return null;
       const vw = video.videoWidth || w;
       const vh = video.videoHeight || h;
@@ -1096,17 +1095,11 @@ async function runArSession({
       const ndcY = -((bufY / vh) * 2 - 1);
       arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
       const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);
-      const zScale = mpZToWorldUnits();
       if (hit == null) {
         const vFov = (camera.fov * Math.PI) / 180;
         const halfH = Math.tan(vFov / 2) * distCamToPlane;
         const halfW = halfH * camera.aspect;
-        const zz = zPlane + (useZ ? -(p.z || 0) * zScale : 0);
-        return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
-      }
-      if (useZ && Number.isFinite(p.z)) {
-        /** Ao longo do raio do pixel (não eixo mundo fixo): coerente com PerspectiveCamera + NDC. */
-        arHit.addScaledVector(arRaycaster.ray.direction, -(p.z || 0) * zScale);
+        return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zPlane);
       }
       return arHit.clone();
     }
@@ -1142,15 +1135,14 @@ async function runArSession({
       const ipdNorm = Math.hypot(eyeRightLm.x - eyeLeftLm.x, eyeRightLm.y - eyeLeftLm.y);
       if (ipdNorm < 0.02) return false;
 
-      const useZ = true;
-      const pEyeRight = landmarkToWorldOnPlane(eyeRightLm, useZ);
-      const pEyeLeft = landmarkToWorldOnPlane(eyeLeftLm, useZ);
+      const pEyeRight = landmarkToWorldOnPlane(eyeRightLm);
+      const pEyeLeft = landmarkToWorldOnPlane(eyeLeftLm);
       const ipdWorld = pEyeRight.distanceTo(pEyeLeft);
       const modelNormWidth =
         autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
       const faceScale = Math.max(0.06, Math.min(0.28, (ipdWorld * frameToIpdRatio) / modelNormWidth));
 
-      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], useZ) : null;
+      const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168]) : null;
       const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
       /** Ancoragem da rotação: ponto entre olhos (estável); ponte só mistura ligeiramente a posição. */
       const anchorRot = midEyes;
@@ -1169,9 +1161,9 @@ async function runArSession({
         .toLowerCase();
       const forceBasisOnly = basisRaw === "1" || basisRaw === "true" || basisRaw === "on";
       let usedMpMatrix = false;
-      if (!forceBasisOnly && useMatrixPose && mtxData && mtxData.length >= 16) {
+      if (!forceBasisOnly && !poseLandmarksOnly && mtxData && mtxData.length >= 16) {
         mpFaceMat.fromArray(mtxData);
-        /** Packed do proto costuma ser row-major; Three `fromArray` é column-major → transpor. `data-ar-mp-matrix-notranspose="1"` para testar. */
+        /** Proto / Web: `data` costuma ser row-major; Three `fromArray` espera column-major → transpor. */
         const noTr = (arCfgRoot?.dataset?.arMpMatrixNotranspose ? String(arCfgRoot.dataset.arMpMatrixNotranspose) : "")
           .trim()
           .toLowerCase();

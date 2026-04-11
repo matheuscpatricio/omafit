@@ -688,6 +688,11 @@ async function runArSession({
       top: "0",
       width: "100%",
       height: "100%",
+      display: "block",
+      /** Igual ao <video>: sem isto o bitmap WebGL estica no contentor e o overlay não coincide com o frame. */
+      objectFit: "contain",
+      objectPosition: "50% 50%",
+      background: "transparent",
       pointerEvents: "none",
     },
   });
@@ -811,10 +816,11 @@ async function runArSession({
     arResizeObserver.observe(arWrap);
     requestAnimationFrame(() => layoutArFit());
 
-    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, premultipliedAlpha: false });
     renderer.setSize(w, h, false);
     /** 1:1 com `video.videoWidth/Height` — DPR>1 com setSize(w,h) altera canvas.width e pode desalinhar ray/landmark vs o que se vê. */
     renderer.setPixelRatio(1);
+    renderer.setClearColor(0x000000, 0);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.toneMappingExposure = 1;
@@ -926,7 +932,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "noCameraMirror+rawOrNormX+worldUpBasis+raycast+z+inner133/362+pixelRatio1",
+        poseMode: "canvasObjectFitContain+projectedFaceUp+raycast+z+inner133/362+pixelRatio1",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -1066,11 +1072,16 @@ async function runArSession({
       _zWant.normalize();
 
       /**
-       * “Up” da cabeça só com nariz↔olhos inclina o eixo Y com a cabeça e pode parecer óculos
-       * “de lado”. Usar +Y mundo projetado no plano perpendicular à vista estabiliza o roll.
+       * Up anatómico (olhos → nariz) com a componente paralela à vista removida: mantém roll alinhado
+       * à cabeça sem “puxar” o referencial quando a cabeça inclina para a frente/trás.
        */
-      tmpUp.set(0, 1, 0);
+      const pNose = landmarkToWorldOnPlane(nose, useZ);
+      tmpUp.subVectors(midEyes, pNose);
       tmpUp.addScaledVector(_zWant, -tmpUp.dot(_zWant));
+      if (tmpUp.lengthSq() < 1e-14) {
+        tmpUp.set(0, 1, 0);
+        tmpUp.addScaledVector(_zWant, -tmpUp.dot(_zWant));
+      }
       if (tmpUp.lengthSq() < 1e-14) return false;
       tmpUp.normalize();
 

@@ -628,24 +628,27 @@ async function runArSession({
 
   const arWrap = el("div", {
     style: {
-      flex: "1",
+      flex: "1 1 auto",
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      minHeight: "0",
+      minHeight: "min(520px, 62dvh)",
+      width: "100%",
+      boxSizing: "border-box",
       background: "#111",
       position: "relative",
     },
   });
 
-  /** Área com a mesma proporção do vídeo que `object-fit: contain` usaria — o canvas deve coincidir pixel a pixel com o frame desenhado. */
+  /** Mesma proporção do vídeo; overflow visível no contentor AR para não cortar o vídeo/canvas ao flex. */
   const arFit = el("div", {
     style: {
       position: "relative",
       flexShrink: "0",
-      overflow: "hidden",
+      overflow: "visible",
       background: "#000",
+      boxSizing: "border-box",
     },
   });
 
@@ -695,7 +698,8 @@ async function runArSession({
   arWrap.appendChild(arFit);
   arWrap.appendChild(loading);
   colContent.style.padding = "0";
-  colContent.style.overflow = "hidden";
+  colContent.style.overflow = "auto";
+  colContent.style.overflowX = "hidden";
   colContent.style.flex = "1";
   colContent.style.display = "flex";
   colContent.style.flexDirection = "column";
@@ -750,7 +754,8 @@ async function runArSession({
       minFacePresenceConfidence: 0.25,
       minTrackingConfidence: 0.25,
       outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: true,
+      /** Matriz canónica ≠ câmara (0,0,0.6); só makeBasis + mapeamento contain estável. */
+      outputFacialTransformationMatrixes: false,
     };
     try {
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -882,7 +887,8 @@ async function runArSession({
 
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(0, 0, 0);
+    /** Tripo: +90° Y alinha frente do GLB com a câmara após modelFix −90° X. */
+    glbBind.rotation.set(0, rad(90), 0);
     glbBind.add(modelFix);
 
     // #region agent log
@@ -891,8 +897,8 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 0, z: 0 },
-        poseMode: "contain-plane+matrix",
+        glbBindYXZdeg: { x: 0, y: 90, z: 0 },
+        poseMode: "contain-plane+basis",
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },
     });
@@ -918,12 +924,16 @@ async function runArSession({
       return mirrorSelfie ? 1 - px : px;
     }
 
-    /** Rectângulo do vídeo com object-fit:contain dentro do elemento (arFit/canvas). */
+    /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
     function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
       const cw = Math.max(1, containerW);
       const ch = Math.max(1, containerH);
       const arC = cw / ch;
       const arI = intrinsicW / intrinsicH;
+      const eps = 0.002;
+      if (Math.abs(arC - arI) < eps) {
+        return { ox: 0, oy: 0, drawW: cw, drawH: ch };
+      }
       if (arC > arI) {
         const drawH = ch;
         const drawW = ch * arI;
@@ -957,10 +967,6 @@ async function runArSession({
 
     const poseQuatScratch = new THREE.Quaternion();
     const rotMatScratch = new THREE.Matrix4();
-    const mpBasisMat = new THREE.Matrix4();
-    const mpDecompPos = new THREE.Vector3();
-    const mpDecompQuat = new THREE.Quaternion();
-    const mpDecompSc = new THREE.Vector3();
     const tmpUp = new THREE.Vector3();
     const _xAxis = new THREE.Vector3();
     const _yAxis = new THREE.Vector3();
@@ -1025,26 +1031,7 @@ async function runArSession({
       }
 
       rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
-
-      let quatFromMatrix = false;
-      const fms = res.facialTransformationMatrixes;
-      const fm = fms && fms.length ? fms[0] : null;
-      if (fm && fm.data && fm.data.length >= 16) {
-        mpBasisMat.fromArray(fm.data);
-        mpBasisMat.transpose();
-        const det = mpBasisMat.determinant();
-        if (Number.isFinite(det) && Math.abs(det) > 1e-10) {
-          mpBasisMat.decompose(mpDecompPos, mpDecompQuat, mpDecompSc);
-          if (Number.isFinite(mpDecompQuat.w) && mpDecompQuat.lengthSq() > 0.25) {
-            mpDecompQuat.normalize();
-            poseQuatScratch.copy(mpDecompQuat);
-            quatFromMatrix = true;
-          }
-        }
-      }
-      if (!quatFromMatrix) {
-        poseQuatScratch.setFromRotationMatrix(rotMatScratch);
-      }
+      poseQuatScratch.setFromRotationMatrix(rotMatScratch);
 
       // #region agent log
       if (!__omafitArDbgPoseOkOnce) {
@@ -1054,7 +1041,6 @@ async function runArSession({
           message: "first pose ok",
           hypothesisId: "H5",
           data: {
-            quatFromMatrix,
             ipdNorm: Math.round(ipdNorm * 1000) / 1000,
             poseW: Math.round(poseQuatScratch.w * 1000) / 1000,
           },

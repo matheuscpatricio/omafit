@@ -991,7 +991,7 @@ async function runArSession({
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
         poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
-        poseMode: "videoTexPlane+zCamBasisRH+worldUpDisambiguate+syncRenderer+raycast+z",
+        poseMode: "rayDirMpZ+planeScaleWorld+midEyesAnchor+localWearOffset+cameraMatrixWorld",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -1007,8 +1007,15 @@ async function runArSession({
     dirLt.position.set(0.35, 0.55, 0.45);
     scene.add(dirLt);
 
-    /** Relativo à largura do frame; desloca o hit do raio ao longo de −Z (profundidade MediaPipe). */
-    const zDepthScale = 0.1;
+    /**
+     * Profundidade MediaPipe `z` → deslocamento em **unidades de mundo** (mesma ordem que o plano z=zPlane).
+     * Nunca multiplicar por `videoWidth` em pixels — isso empurra nariz/olhos para fora do rosto.
+     */
+    function mpZToWorldUnits() {
+      const vFov = (camera.fov * Math.PI) / 180;
+      const halfH = Math.tan(vFov / 2) * distCamToPlane;
+      return Math.max(0.012, Math.min(0.09, halfH * 0.32));
+    }
     const arFacePlane = new THREE.Plane();
     arFacePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, zPlane));
     function syncVideoBackgroundPlane() {
@@ -1025,8 +1032,6 @@ async function runArSession({
     syncVideoBackgroundPlane();
     const arRaycaster = new THREE.Raycaster();
     const arHit = new THREE.Vector3();
-    /** Mesma convenção que a câmara a olhar para −Z. */
-    const arViewDir = new THREE.Vector3(0, 0, -1);
     const frameToIpdRatio = 1.84;
     /**
      * Não espelhar a câmara em CSS (`scaleX(-1)`): o pedido é imagem natural do buffer.
@@ -1091,15 +1096,17 @@ async function runArSession({
       const ndcY = -((bufY / vh) * 2 - 1);
       arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
       const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);
+      const zScale = mpZToWorldUnits();
       if (hit == null) {
         const vFov = (camera.fov * Math.PI) / 180;
         const halfH = Math.tan(vFov / 2) * distCamToPlane;
         const halfW = halfH * camera.aspect;
-        const zz = zPlane + (useZ ? (p.z || 0) * zDepthScale * vw : 0);
+        const zz = zPlane + (useZ ? -(p.z || 0) * zScale : 0);
         return new THREE.Vector3(ndcX * halfW, ndcY * halfH, zz);
       }
-      if (useZ) {
-        arHit.addScaledVector(arViewDir, -(p.z || 0) * zDepthScale * vw);
+      if (useZ && Number.isFinite(p.z)) {
+        /** Ao longo do raio do pixel (não eixo mundo fixo): coerente com PerspectiveCamera + NDC. */
+        arHit.addScaledVector(arRaycaster.ray.direction, -(p.z || 0) * zScale);
       }
       return arHit.clone();
     }
@@ -1109,10 +1116,10 @@ async function runArSession({
     const mpFaceMat = new THREE.Matrix4();
     const mpTmpPos = new THREE.Vector3();
     const mpTmpScl = new THREE.Vector3();
-    const tmpUp = new THREE.Vector3();
     const vecX = new THREE.Vector3();
     const vecY = new THREE.Vector3();
     const _zWant = new THREE.Vector3();
+    const headWearOffsetLocal = new THREE.Vector3();
     const worldUpRef = new THREE.Vector3(0, 1, 0);
 
     function resetFaceRootTransform() {
@@ -1122,6 +1129,7 @@ async function runArSession({
     }
 
     function applyGlassesPose(res) {
+      camera.updateMatrixWorld(true);
       const lm = res.faceLandmarks[0];
       if (!lm) return false;
 
@@ -1144,10 +1152,13 @@ async function runArSession({
 
       const pBridge = lm[168] ? landmarkToWorldOnPlane(lm[168], useZ) : null;
       const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
-      const anchor = pBridge || midEyes;
+      /** Ancoragem da rotação: ponto entre olhos (estável); ponte só mistura ligeiramente a posição. */
+      const anchorRot = midEyes;
+      const anchorPos = midEyes.clone();
+      if (pBridge) anchorPos.lerp(pBridge, 0.22);
 
       /** +Z local da cabeça = direção ancoragem → câmara (frente da face na cena). */
-      _zWant.subVectors(camera.position, anchor);
+      _zWant.subVectors(camera.position, anchorRot);
       if (_zWant.lengthSq() < 1e-14) return false;
       _zWant.normalize();
 
@@ -1219,14 +1230,15 @@ async function runArSession({
       }
       // #endregion
 
-      const targetPos = anchor.clone();
-      /** Mesma base que `poseQuatScratch` (+Y / +Z locais da cabeça → mundo). */
-      tmpUp.set(0, 1, 0).applyQuaternion(poseQuatScratch);
-      _zWant.set(0, 0, 1).applyQuaternion(poseQuatScratch);
-      targetPos.addScaledVector(tmpUp, -0.008);
-      targetPos.addScaledVector(_zWant, 0.014);
+      /**
+       * Posição do `faceRoot`: `Matrix4.compose` mental = T(world) * R(quat).
+       * Offset em **espaço local da cabeça** (−Y sobe ligeiramente à ponte; +Z afasta da face).
+       */
+      headWearOffsetLocal.set(0, -0.011, 0.017);
+      headWearOffsetLocal.applyQuaternion(poseQuatScratch);
+      const targetPos = anchorPos.add(headWearOffsetLocal);
 
-      const a = 0.38;
+      const a = 0.52;
       faceRoot.position.lerp(targetPos, a);
       faceRoot.quaternion.slerp(poseQuatScratch, a);
       const s = faceRoot.scale.x || faceScale;

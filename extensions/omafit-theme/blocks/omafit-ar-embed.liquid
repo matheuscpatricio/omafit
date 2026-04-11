@@ -87,6 +87,8 @@
     data-ar-mindar-anchor="{{ block.settings.ar_mindar_anchor | default: '168' | strip | escape }}"
     data-ar-mindar-disable-mirror="{{ block.settings.ar_mindar_disable_mirror | default: '' | strip | escape }}"
     data-ar-mindar-model-scale="{{ block.settings.ar_mindar_model_scale | default: '' | strip | escape }}"
+    data-ar-mindar-wear-yxz="{{ block.settings.ar_mindar_wear_yxz | default: '' | strip | escape }}"
+    data-ar-mindar-use-face-scale="{{ block.settings.ar_mindar_use_face_scale | default: '' | strip | escape }}"
     data-ar-mindar-filter-min-cf="{{ block.settings.ar_mindar_filter_min_cf | default: '' | strip | escape }}"
     data-ar-mindar-filter-beta="{{ block.settings.ar_mindar_filter_beta | default: '' | strip | escape }}"
   ></div>
@@ -130,7 +132,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Motor AR: MindAR.js + Three (hiukim/mind-ar-js). âncora, espelho e escala. Euler glbBind/poseCorr são opcionais (vazio = identidade — o MindAR já alinha ao rosto)."
+      "content": "Motor AR: MindAR.js + Three (hiukim/mind-ar-js). âncora, espelho e escala. Euler glbBind/poseCorr são opcionais (vazio = identidade — o MindAR já alinha ao rosto). Se o GLB ficar “torto”, experimenta Euler wear (YXZ) ou escala por faceScale."
     },
     {
       "type": "text",
@@ -150,6 +152,18 @@
       "id": "ar_mindar_model_scale",
       "label": "Multiplicador de escala do GLB",
       "info": "Vazio = 1. Ex.: 1.2 para aumentar ligeiramente. data-ar-mindar-model-scale."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_wear_yxz",
+      "label": "Euler wear (graus YXZ, sob a âncora MindAR)",
+      "info": "Vazio = identidade. Se o export glTF tiver eixos diferentes da âncora, tenta ex.: -90,0,0 ou 0,180,0. data-ar-mindar-wear-yxz."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_use_face_scale",
+      "label": "Afinar escala ao rosto (faceScale MindAR)",
+      "info": "1 / true / on = no 1.º frame com face ajusta escala ao faceScale (largura facial). data-ar-mindar-use-face-scale."
     },
     {
       "type": "text",

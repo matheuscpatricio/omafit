@@ -4,11 +4,23 @@
  * @see https://github.com/hiukim/mind-ar-js
  * @see https://hiukim.github.io/mind-ar-js-doc/face-tracking-examples/tryon
  */
-/** Three 0.150.x: compatível com `mindar-face-three` (usa `outputEncoding` / `sRGBEncoding`). */
-const ESM_THREE_MIND = "https://esm.sh/three@0.150.1?target=es2022";
-const ESM_GLTF_MIND = `${ESM_THREE_MIND}/examples/jsm/loaders/GLTFLoader.js`;
-const ESM_MINDAR_FACE_THREE =
-  "https://esm.sh/mind-ar@1.2.5/dist/mindar-face-three.prod.js?bundle&deps=three@0.150.1&target=es2022";
+/**
+ * Regras de renderização (AR face + try-on) que este ficheiro segue:
+ * 1) Um só runtime Three — o mesmo URL de módulo que GLTFLoader e MindAR puxam no esm.sh
+ *    (`…/es2022/three.mjs` + `deps=three@VERSÃO`), sem `bundle` no MindAR.
+ * 2) Hierarquia: modelo sob `anchor.group`, com grupos `GroupCtor` do MindAR e nós opcionais
+ *    wearAlign → poseCorr → glbBind → autoOrient → cena GLB.
+ * 3) Espelho selfie só via opções MindAR (`disableFaceMirror` / data attribute), sem CSS scaleX no vídeo.
+ * 4) Escala: bbox + unidade base + opcional `faceScale` e multiplicador de tema.
+ * 5) GLB canónico no pipeline (worker/API) — aqui só carregamos e afinamos materiais/luzes.
+ */
+const ESM_THREE_VER = "0.150.1";
+const ESM_SH = "https://esm.sh";
+/** Mesmo ficheiro que o GLTFLoader do esm.sh importa — evita dois módulos `three`. */
+const ESM_THREE_MJS = `${ESM_SH}/three@${ESM_THREE_VER}/es2022/three.mjs`;
+const ESM_GLTF_MIND = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/GLTFLoader.js`;
+/** Sem `bundle`: `three` deduplica com `ESM_THREE_MJS`. */
+const ESM_MINDAR_FACE_THREE = `${ESM_SH}/mind-ar@1.2.5/dist/mindar-face-three.prod.js?deps=three@${ESM_THREE_VER}`;
 
 const Z_SHELL = 2147483640;
 
@@ -688,13 +700,15 @@ async function runArSession({
   }
 
   try {
-    const [mindFaceMod, threeMod, { GLTFLoader }] = await Promise.all([
-      import(ESM_MINDAR_FACE_THREE),
-      import(ESM_THREE_MIND),
+    const [threeMod, gltfModule, mindFaceMod] = await Promise.all([
+      import(ESM_THREE_MJS),
       import(ESM_GLTF_MIND),
+      import(ESM_MINDAR_FACE_THREE),
     ]);
+    const THREE =
+      threeMod.default && typeof threeMod.default.Group === "function" ? threeMod.default : threeMod;
+    const { GLTFLoader } = gltfModule;
     const MindARThree = mindFaceMod.MindARThree || mindFaceMod.default;
-    const THREE = threeMod.default && threeMod.default.Vector3 ? threeMod.default : threeMod;
 
     const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
     const rad = (d) => (d * Math.PI) / 180;
@@ -728,6 +742,13 @@ async function runArSession({
     mindarThree.scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
     const anchor = mindarThree.addAnchor(anchorIndex);
+    /** Grupos sob `anchor.group` devem ser da mesma classe `Group` que o MindAR usa (mesmo `three`). */
+    const GroupCtor = anchor.group.constructor;
+    if (!(anchor.group instanceof THREE.Group)) {
+      console.warn(
+        "[omafit-ar] O grupo da âncora MindAR não é instanceof THREE.Group deste bundle — possível segundo runtime de three; o modelo pode ficar torto ou invisível.",
+      );
+    }
 
     /**
      * O MindAR já coloca o grupo no referencial do landmark (ex. 168); não usar os Euler por defeito
@@ -753,6 +774,11 @@ async function runArSession({
       loader.load(glbUrl, resolve, undefined, reject);
     });
     const glasses = gltf.scene;
+    if (!(glasses instanceof THREE.Object3D)) {
+      console.warn(
+        "[omafit-ar] gltf.scene não é instanceof THREE.Object3D deste bundle — verificar loader/CDN.",
+      );
+    }
     glasses.frustumCulled = false;
     glasses.traverse((child) => {
       if (!child.isMesh) return;
@@ -778,7 +804,7 @@ async function runArSession({
       }
     });
 
-    const autoOrient = new THREE.Group();
+    const autoOrient = new GroupCtor();
     autoOrient.add(glasses);
     autoOrient.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(autoOrient);
@@ -795,17 +821,32 @@ async function runArSession({
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
     autoOrient.position.sub(center);
-    autoOrient.scale.setScalar((0.085 / maxDim) * modelScaleMul);
+    /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
+    const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
+    autoOrient.scale.setScalar(baseUnitScale);
+    autoOrient.userData._omafitMaxDim = maxDim;
+    autoOrient.userData._omafitBaseUnitScale = baseUnitScale;
 
-    const poseCorr = new THREE.Group();
+    const poseCorr = new GroupCtor();
     poseCorr.rotation.order = "YXZ";
     poseCorr.rotation.set(rad(poseCorrDeg.x), rad(poseCorrDeg.y), rad(poseCorrDeg.z));
-    const glbBind = new THREE.Group();
+    const glbBind = new GroupCtor();
     glbBind.rotation.order = "YXZ";
     glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
     glbBind.add(autoOrient);
     poseCorr.add(glbBind);
-    anchor.group.add(poseCorr);
+
+    /**
+     * Ajuste opcional GLB→malha MindAR (eixos glTF Y-up vs referencial da âncora). Vazio = identidade.
+     * Ex.: `-90, 0, 0` se o export estiver “de pé” e a âncora esperar outro eixo.
+     */
+    const wearRaw = (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim();
+    const wearDeg = parseYxzDegString(wearRaw, 0, 0, 0);
+    const wearAlign = new GroupCtor();
+    wearAlign.rotation.order = "YXZ";
+    wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
+    wearAlign.add(poseCorr);
+    anchor.group.add(wearAlign);
 
     arResizeObserver = new ResizeObserver(() => {
       try {
@@ -825,7 +866,25 @@ async function runArSession({
 
     await mindarThree.start();
     const { renderer, scene, camera } = mindarThree;
+    let didFaceScaleBlend = false;
+    const useFs = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arMindarUseFaceScale ?? "").trim().toLowerCase(),
+    );
     renderer.setAnimationLoop(() => {
+      if (useFs && !didFaceScaleBlend) {
+        const est = typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
+        const fs = est && Number(est.faceScale);
+        if (Number.isFinite(fs) && fs > 1e-6) {
+          const md = autoOrient.userData._omafitMaxDim;
+          const base = autoOrient.userData._omafitBaseUnitScale;
+          if (Number.isFinite(md) && md > 0 && Number.isFinite(base)) {
+            /** `faceScale` ≈ largura facial métrica; alinhar largura do GLB (~1 após bbox) ao rosto. */
+            const k = 1.15;
+            autoOrient.scale.setScalar((k * fs) / md);
+            didFaceScaleBlend = true;
+          }
+        }
+      }
       renderer.render(scene, camera);
     });
 
@@ -835,7 +894,13 @@ async function runArSession({
       location: "omafit-ar-widget.js:runArSession",
       message: "mindar face started",
       hypothesisId: "H5-mindar",
-      data: { anchorIndex, disableFaceMirror, glbBindYxz: glbDeg },
+      data: {
+        anchorIndex,
+        disableFaceMirror,
+        glbBindYxz: glbDeg,
+        mindarWearYxz: wearDeg,
+        useFaceScale: useFs,
+      },
     });
   } catch (e) {
     console.error("[omafit-ar]", e);

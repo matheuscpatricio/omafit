@@ -876,9 +876,9 @@ async function runArSession({
     }
 
     /**
-     * GLB canonicalizado (X=largura, Y fino, Z médio) + pose makeBasis. TripoSR-style: −90° X no modelFix,
-     * +90° Y no glbBind. +180° Z corrige frente/verso e yaw residual (óculos “virados” / lentes ao contrário).
-     * Afinar sem deploy: `data-ar-model-yxz` e `data-ar-glb-yxz` no #omafit-ar-root (graus, ex. "-90,0,0").
+     * Rotação fixa do GLB num só bloco (`modelFix`, ordem YXZ). O antigo `glbBind` com Euler extra foi
+     * fundido aqui (q_glbBind * q_modelFix) para evitar dois conjuntos de graus; `glbBind` fica a 0.
+     * Override: `data-ar-model-yxz` no #omafit-ar-root (graus "x,y,z"); vazio = Euler por defeito abaixo.
      */
     const rad = (d) => (d * Math.PI) / 180;
     const arCfgRoot = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
@@ -889,8 +889,14 @@ async function runArSession({
       if (p.length < 3 || p.some((n) => Number.isNaN(n))) return { x: defX, y: defY, z: defZ };
       return { x: p[0], y: p[1], z: p[2] };
     }
-    const modelDeg = parseYxzDeg("arModelYxz", -90, 0, 0);
-    const glbDeg = parseYxzDeg("arGlbYxz", 0, 90, 180);
+    const qM0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(rad(-90), 0, 0, "YXZ"));
+    const qG0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rad(90), rad(180), "YXZ"));
+    const qMerged0 = qG0.clone().multiply(qM0);
+    const eMerged0 = new THREE.Euler().setFromQuaternion(qMerged0, "YXZ");
+    const defX = (eMerged0.x * 180) / Math.PI;
+    const defY = (eMerged0.y * 180) / Math.PI;
+    const defZ = (eMerged0.z * 180) / Math.PI;
+    const modelDeg = parseYxzDeg("arModelYxz", defX, defY, defZ);
 
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
@@ -902,7 +908,7 @@ async function runArSession({
 
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
+    glbBind.rotation.set(0, 0, 0);
     glbBind.add(modelFix);
 
     // #region agent log
@@ -911,7 +917,7 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: glbDeg.x, y: glbDeg.y, z: glbDeg.z },
+        glbBindYXZdeg: { x: 0, y: 0, z: 0 },
         poseMode: "contain-plane+basis",
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },

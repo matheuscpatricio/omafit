@@ -74,7 +74,7 @@
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
     data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
-    data-ar-pose-fix-yxz="{{ block.settings.ar_pose_fix_yxz | default: '' | strip | escape }}"
+    data-ar-invert-pose-quat="{{ block.settings.ar_invert_pose_quat | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -116,7 +116,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Pose: espelho (normX) + poseFix 0,180,180° entre cabeça e GLB (ajustável). GLB: só Euler no glbBind. Não resolve sozinho: só Eulers do GLB, matriz facial MP, ortogonalização IPD."
+      "content": "Pose: espelho (normX) + quaternion invertida (corrige referencial face↔Three). GLB: Euler no glbBind. Pixel ratio 1 no canvas. Desativar inversão: campo abaixo = 0."
     },
     {
       "type": "text",
@@ -126,9 +126,9 @@
     },
     {
       "type": "text",
-      "id": "ar_pose_fix_yxz",
-      "label": "Euler poseFix (graus X,Y,Z)",
-      "info": "Entre faceRoot e o GLB; corrige referencial cabeça↔óculos. Vazio=0,180,180. Desligar: 0,0,0. data-ar-pose-fix-yxz."
+      "id": "ar_invert_pose_quat",
+      "label": "Inverter quaternion da pose",
+      "info": "Vazio = ligado (recomendado). 0 / false / off = desligado. data-ar-invert-pose-quat."
     },
     {
       "type": "text",

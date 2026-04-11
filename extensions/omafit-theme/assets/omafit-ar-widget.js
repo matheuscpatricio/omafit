@@ -808,7 +808,8 @@ async function runArSession({
 
     renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
     renderer.setSize(w, h, false);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    /** 1:1 com `video.videoWidth/Height` — DPR>1 com setSize(w,h) altera canvas.width e pode desalinhar ray/landmark vs o que se vê. */
+    renderer.setPixelRatio(1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.toneMappingExposure = 1;
@@ -913,13 +914,6 @@ async function runArSession({
     glbBind.rotation.set(rad(AR_GLB_BIND_X_DEG), rad(AR_GLB_BIND_Y_DEG), rad(AR_GLB_BIND_Z_DEG));
     glbBind.add(modelFix);
 
-    /** Corrige referencial cabeça↔modelo (não é o Euler do GLB). Vazio = 0,180,180° YXZ; "0,0,0" desliga. */
-    const rawPoseFix = (arCfgRoot?.dataset?.arPoseFixYxz ? String(arCfgRoot.dataset.arPoseFixYxz) : "").trim();
-    const poseFixDeg = parseYxzDegString(rawPoseFix, 0, 180, 180);
-    const poseFix = new THREE.Group();
-    poseFix.rotation.order = "YXZ";
-    poseFix.rotation.set(rad(poseFixDeg.x), rad(poseFixDeg.y), rad(poseFixDeg.z));
-
     // #region agent log
     __omafitArDbgLog({
       location: "omafit-ar-widget.js:runArSession",
@@ -927,8 +921,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseFixYXZdeg: { x: poseFixDeg.x, y: poseFixDeg.y, z: poseFixDeg.z },
-        poseMode: "mirrorNormX+raycast+z+poseFix+inner133/362",
+        poseMode: "mirrorNormX+raycast+z+inner133/362+invertQuat+pixelRatio1",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -936,8 +929,7 @@ async function runArSession({
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(poseFix);
-    poseFix.add(glbBind);
+    faceRoot.add(glbBind);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -1108,6 +1100,17 @@ async function runArSession({
 
       rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
       poseQuatScratch.setFromRotationMatrix(rotMatScratch);
+      /**
+       * Inverte a quaternion da pose: convenção comum em face mesh + Three (local↔pai vs colunas da matriz).
+       * Já testámos sem efeito útil: só Eulers GLB, poseFix 0,180,180 em modelo simétrico, matriz facial MP,
+       * ortogonalização IPD, flipHorizontal no detect sem espelhar o vídeo.
+       * Desligar: `data-ar-invert-pose-quat="0"` no #omafit-ar-root.
+       */
+      const invQRaw = (arCfgRoot?.dataset?.arInvertPoseQuat ? String(arCfgRoot.dataset.arInvertPoseQuat) : "")
+        .trim()
+        .toLowerCase();
+      const invertPoseQuat = invQRaw !== "0" && invQRaw !== "false" && invQRaw !== "off";
+      if (invertPoseQuat) poseQuatScratch.invert();
 
       // #region agent log
       if (!__omafitArDbgPoseOkOnce) {

@@ -790,11 +790,8 @@ async function runArSession({
     const sceneXMirrorRaw = String(arRootEarly?.dataset?.arSceneXMirror ?? "")
       .trim()
       .toLowerCase();
-    /**
-     * Por defeito **ligado** (vazio ou 1): nega NDC X + espelha plano WebGL.
-     * Desligar no tema: `data-ar-scene-x-mirror="0"` ou `false` ou `off`.
-     */
-    const sceneMirrorXNdc = !/^(0|false|off)$/i.test(sceneXMirrorRaw);
+    /** Só com `1` / `true` / `on`: espelha X (vazio = desligado — evita GLB deslocado na maioria das câmaras). */
+    const sceneMirrorXNdc = /^(1|true|on)$/i.test(sceneXMirrorRaw);
     /** Textura de fundo: scale X negativo exige DoubleSide e deve acompanhar qualquer espelho horizontal. */
     const arVideoMirrorX = normXMirror || sceneMirrorXNdc;
 
@@ -900,7 +897,7 @@ async function runArSession({
     videoTex.magFilter = THREE.LinearFilter;
     videoBgMat = new THREE.MeshBasicMaterial({
       map: videoTex,
-      depthTest: true,
+      depthTest: false,
       depthWrite: false,
       toneMapped: false,
       side: arVideoMirrorX ? THREE.DoubleSide : THREE.FrontSide,
@@ -1034,6 +1031,7 @@ async function runArSession({
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
     faceRoot.matrixAutoUpdate = true;
+    faceRoot.renderOrder = 10;
     faceRoot.add(poseCorr);
     poseCorr.add(glbBind);
     scene.add(faceRoot);
@@ -1071,18 +1069,47 @@ async function runArSession({
     })();
     const scaleFollow = 0.72;
 
+    /** Rectângulo object-fit:contain do `<video>` → alinha MP ao mesmo espaço que o plano WebGL. */
+    function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
+      const cw = Math.max(1, containerW);
+      const ch = Math.max(1, containerH);
+      const arC = cw / ch;
+      const arI = intrinsicW / intrinsicH;
+      const eps = 0.002;
+      if (Math.abs(arC - arI) < eps) {
+        return { ox: 0, oy: 0, drawW: cw, drawH: ch };
+      }
+      if (arC > arI) {
+        const drawH = ch;
+        const drawW = ch * arI;
+        return { ox: (cw - drawW) * 0.5, oy: 0, drawW, drawH };
+      }
+      const drawW = cw;
+      const drawH = cw / arI;
+      return { ox: 0, oy: (ch - drawH) * 0.5, drawW, drawH };
+    }
+
     /**
-     * Landmarks MediaPipe (0–1) → mundo Three no espaço do frame (como scaledMesh no demo Virtual-Glasses).
+     * Landmarks (0–1) → espaço pixel VTG: mesmo mapeamento que o rect desenhado do vídeo (contain).
+     * @see https://github.com/bensonruan/Virtual-Glasses-Try-on
      */
     function lmToVtWorld(lm) {
       if (!lm) return null;
       const vw = video.videoWidth || w;
       const vh = video.videoHeight || h;
-      let x = normX(lm.x) * vw;
+      const dispW = Math.max(1, video.clientWidth || arFit.clientWidth || vw);
+      const dispH = Math.max(1, video.clientHeight || arFit.clientHeight || vh);
+      const r = getObjectFitContainRect(dispW, dispH, vw, vh);
+      const xn = normX(lm.x);
+      const bx = r.ox + xn * r.drawW;
+      const by = r.oy + lm.y * r.drawH;
+      const bufX = (bx / dispW) * vw;
+      const bufY = (by / dispH) * vh;
+      let x = bufX;
       if (sceneMirrorXNdc) x = vw - x;
-      const y = -lm.y * vh;
-      /** Profundidade relativa ao plano z≈0 (como mesh Z no demo VTG); evita empurrar para z enorme. */
-      const z = (lm.z || 0) * vh * 2.8 - 6;
+      const y = -bufY;
+      /** z ligeiramente negativo = à frente do plano de vídeo em z=0 (mais perto da câmara). */
+      const z = -8 - (lm.z || 0) * vh * 1.1;
       return new THREE.Vector3(x, y, z);
     }
 
@@ -1126,10 +1153,9 @@ async function runArSession({
 
       const pBridge = lm[168] ? lmToVtWorld(lm[168]) : null;
       const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
-      /** Ancoragem da rotação: ponto entre olhos (estável); ponte só mistura ligeiramente a posição. */
+      /** Rotação: entre olhos. Posição: ponte 168 (como VTG) ou média olhos. */
       const anchorRot = midEyes;
-      const anchorPos = midEyes.clone();
-      if (pBridge) anchorPos.lerp(pBridge, 0.22);
+      const anchorPos = pBridge ? pBridge.clone() : midEyes.clone();
 
       /** +Z local da cabeça = direção ancoragem → câmara (frente da face na cena). */
       _zWant.subVectors(camera.position, anchorRot);
@@ -1212,7 +1238,7 @@ async function runArSession({
        * Offset em unidades do frame (pixels), aplicado em espaço local da cabeça.
        */
       const vhPose = video.videoHeight || h;
-      headWearOffsetLocal.set(0, -vhPose * 0.02, vhPose * 0.032);
+      headWearOffsetLocal.set(0, -vhPose * 0.012, vhPose * 0.018);
       headWearOffsetLocal.applyQuaternion(poseQuatScratch);
       const targetPos = anchorPos.add(headWearOffsetLocal);
 

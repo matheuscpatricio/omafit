@@ -74,7 +74,7 @@
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
     data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
-    data-ar-scene-x-mirror="{{ block.settings.ar_scene_x_mirror | default: '1' | strip | escape }}"
+    data-ar-scene-x-mirror="{{ block.settings.ar_scene_x_mirror | default: '' | strip | escape }}"
     data-ar-invert-pose-quat="{{ block.settings.ar_invert_pose_quat | default: '' | strip | escape }}"
     data-ar-pose-source="{{ block.settings.ar_pose_source | default: '' | strip | escape }}"
     data-ar-pose-basis="{{ block.settings.ar_pose_basis | default: '' | strip | escape }}"
@@ -124,7 +124,7 @@
     },
     {
       "type": "paragraph",
-      "content": "AR em espaço de pixels (estilo Virtual-Glasses + Three). Matriz MP só com “usar matriz MP” = 1. NDC X por defeito = 1. GLB: Euler glbBind."
+      "content": "AR em pixels (Virtual-Glasses + Three). Espelho eixo X só se ativar no bloco. Matriz MP opcional. GLB: Euler glbBind."
     },
     {
       "type": "text",
@@ -135,9 +135,8 @@
     {
       "type": "text",
       "id": "ar_scene_x_mirror",
-      "label": "Inverter eixo X da câmara (NDC)",
-      "default": "1",
-      "info": "Por defeito 1 (NDC X negado + plano WebGL espelhado). Use 0 / false / off para desligar. Evite combinar com “Espelho selfie” sem testar. data-ar-scene-x-mirror."
+      "label": "Inverter eixo X (espelho cena)",
+      "info": "Vazio = desligado (recomendado). 1 = espelhar X no mundo + plano WebGL (só se o óculos ficar do lado errado). data-ar-scene-x-mirror."
     },
     {
       "type": "text",

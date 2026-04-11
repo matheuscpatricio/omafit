@@ -116,19 +116,19 @@
     },
     {
       "type": "paragraph",
-      "content": "Pose: espelho (normX) + quaternion invertida (corrige referencial face↔Three). GLB: Euler no glbBind. Pixel ratio 1 no canvas. Desativar inversão: campo abaixo = 0."
+      "content": "Pose: espelho selfie = scaleX(-1) no contentor vídeo+canvas (coordenadas MediaPipe brutas). GLB: Euler no glbBind. Inversão de quaternion só se ativares o campo abaixo com 1."
     },
     {
       "type": "text",
       "id": "ar_mirror_selfie",
       "label": "Espelho horizontal (selfie)",
-      "info": "Vazio=auto (câmara frontal → espelho). 0=desligado, 1=ligado. Atributo: data-ar-mirror-selfie."
+      "info": "Vazio=auto (frontal → espelho no contentor). 0=desligado, 1=ligado. data-ar-mirror-selfie."
     },
     {
       "type": "text",
       "id": "ar_invert_pose_quat",
       "label": "Inverter quaternion da pose",
-      "info": "Vazio = ligado (recomendado). 0 / false / off = desligado. data-ar-invert-pose-quat."
+      "info": "Vazio = desligado. 1 / true / on = ligado (só se precisares). data-ar-invert-pose-quat."
     },
     {
       "type": "text",

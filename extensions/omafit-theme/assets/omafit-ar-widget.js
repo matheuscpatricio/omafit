@@ -679,7 +679,6 @@ async function runArSession({
       objectPosition: "50% 50%",
       display: "block",
       background: "#000",
-      /* Repo Benson: flipHorizontal=false com vídeo — sem espelho CSS (virtual-glasses.js detectFaces). */
     },
   });
   const canvas = el("canvas", {
@@ -712,6 +711,12 @@ async function runArSession({
   let arResizeObserver = null;
 
   const cleanup = () => {
+    try {
+      arFit.style.transform = "";
+      arFit.style.transformOrigin = "";
+    } catch {
+      /* ignore */
+    }
     if (arResizeObserver) {
       arResizeObserver.disconnect();
       arResizeObserver = null;
@@ -921,7 +926,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "mirrorNormX+raycast+z+inner133/362+invertQuat+pixelRatio1",
+        poseMode: "cssMirrorArFit+rawLandmarkX+raycast+z+inner133/362+pixelRatio1",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -949,13 +954,13 @@ async function runArSession({
     const arViewDir = new THREE.Vector3(0, 0, -1);
     const frameToIpdRatio = 1.84;
     /**
-     * Espelho horizontal da selfie: landmarks MediaPipe seguem o buffer do vídeo; em câmara frontal o
-     * utilizador espera espelho. `data-ar-mirror-selfie`: "1"|"0"|"auto" (omisso = auto: user → espelho).
-     * Isto NÃO é o mesmo que ajustar só Eulers no GLB (já testado), nem matriz facial (descartada), nem só
-     * raycast vs fórmula ndc (já alinhado à PerspectiveCamera).
+     * Selfie em espelho: antes usávamos `normX = 1 - x` sem espelhar o vídeo — o buffer do MediaPipe
+     * não coincide com o que se vê e a pose/overlay ficam erradas. Espelhamos o contentor `arFit`
+     * (vídeo + canvas WebGL) com `scaleX(-1)` e usamos sempre `x` normalizado bruto do landmarker.
+     * `data-ar-mirror-selfie`: "1"|"0"|auto (omisso = câmara frontal → espelho).
      */
     const arCfgMirror = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    let mirrorSelfie = false;
+    let mirrorSelfieUi = false;
     try {
       const tr = stream.getVideoTracks()[0];
       const st = tr && tr.getSettings ? tr.getSettings() : {};
@@ -963,15 +968,18 @@ async function runArSession({
       const ov = (arCfgMirror?.dataset?.arMirrorSelfie ? String(arCfgMirror.dataset.arMirrorSelfie) : "")
         .trim()
         .toLowerCase();
-      if (ov === "1" || ov === "true" || ov === "on") mirrorSelfie = true;
-      else if (ov === "0" || ov === "false" || ov === "off") mirrorSelfie = false;
-      else mirrorSelfie = facing === "user";
+      if (ov === "1" || ov === "true" || ov === "on") mirrorSelfieUi = true;
+      else if (ov === "0" || ov === "false" || ov === "off") mirrorSelfieUi = false;
+      else mirrorSelfieUi = facing === "user";
     } catch {
-      mirrorSelfie = true;
+      mirrorSelfieUi = true;
     }
-
-    function normX(px) {
-      return mirrorSelfie ? 1 - px : px;
+    if (mirrorSelfieUi) {
+      arFit.style.transform = "scaleX(-1)";
+      arFit.style.transformOrigin = "50% 50%";
+    } else {
+      arFit.style.transform = "";
+      arFit.style.transformOrigin = "";
     }
 
     /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
@@ -1001,7 +1009,7 @@ async function runArSession({
       const dispW = Math.max(1, arFit.clientWidth || vw);
       const dispH = Math.max(1, arFit.clientHeight || vh);
       const r = getObjectFitContainRect(dispW, dispH, vw, vh);
-      const xn = normX(p.x);
+      const xn = p.x;
       const bx = r.ox + xn * r.drawW;
       const by = r.oy + p.y * r.drawH;
       const bufX = (bx / dispW) * vw;
@@ -1100,16 +1108,11 @@ async function runArSession({
 
       rotMatScratch.makeBasis(_xAxis, _yAxis, _zAxis);
       poseQuatScratch.setFromRotationMatrix(rotMatScratch);
-      /**
-       * Inverte a quaternion da pose: convenção comum em face mesh + Three (local↔pai vs colunas da matriz).
-       * Já testámos sem efeito útil: só Eulers GLB, poseFix 0,180,180 em modelo simétrico, matriz facial MP,
-       * ortogonalização IPD, flipHorizontal no detect sem espelhar o vídeo.
-       * Desligar: `data-ar-invert-pose-quat="0"` no #omafit-ar-root.
-       */
+      /** Opcional: `data-ar-invert-pose-quat="1"` no #omafit-ar-root (correção rara de convenção). */
       const invQRaw = (arCfgRoot?.dataset?.arInvertPoseQuat ? String(arCfgRoot.dataset.arInvertPoseQuat) : "")
         .trim()
         .toLowerCase();
-      const invertPoseQuat = invQRaw !== "0" && invQRaw !== "false" && invQRaw !== "off";
+      const invertPoseQuat = invQRaw === "1" || invQRaw === "true" || invQRaw === "on";
       if (invertPoseQuat) poseQuatScratch.invert();
 
       // #region agent log

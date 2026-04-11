@@ -116,13 +116,13 @@
     },
     {
       "type": "paragraph",
-      "content": "Pose: espelho selfie = scaleX(-1) no contentor vídeo+canvas (coordenadas MediaPipe brutas). GLB: Euler no glbBind. Inversão de quaternion só se ativares o campo abaixo com 1."
+      "content": "Sem inverter a câmara (sem scaleX no vídeo). Landmarks x brutos por defeito. GLB: Euler no glbBind. Opcional: normX só com espelho=1; quaternion invertida só com invert=1."
     },
     {
       "type": "text",
       "id": "ar_mirror_selfie",
-      "label": "Espelho horizontal (selfie)",
-      "info": "Vazio=auto (frontal → espelho no contentor). 0=desligado, 1=ligado. data-ar-mirror-selfie."
+      "label": "Espelho horizontal (landmarks)",
+      "info": "Vazio ou 0 = coordenadas naturais (recomendado; não espelha o vídeo). 1 = aplica 1−x nos landmarks (pode desalinhar do vídeo). data-ar-mirror-selfie."
     },
     {
       "type": "text",

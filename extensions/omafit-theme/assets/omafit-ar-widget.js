@@ -926,7 +926,7 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "cssMirrorArFit+rawLandmarkX+raycast+z+inner133/362+pixelRatio1",
+        poseMode: "noCameraMirror+rawOrNormX+worldUpBasis+raycast+z+inner133/362+pixelRatio1",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -954,32 +954,23 @@ async function runArSession({
     const arViewDir = new THREE.Vector3(0, 0, -1);
     const frameToIpdRatio = 1.84;
     /**
-     * Selfie em espelho: antes usávamos `normX = 1 - x` sem espelhar o vídeo — o buffer do MediaPipe
-     * não coincide com o que se vê e a pose/overlay ficam erradas. Espelhamos o contentor `arFit`
-     * (vídeo + canvas WebGL) com `scaleX(-1)` e usamos sempre `x` normalizado bruto do landmarker.
-     * `data-ar-mirror-selfie`: "1"|"0"|auto (omisso = câmara frontal → espelho).
+     * Não espelhar a câmara em CSS (`scaleX(-1)`): o pedido é imagem natural do buffer.
+     * Por defeito: `x` bruto do MediaPipe (alinhado ao vídeo sem transform).
+     * Só com `data-ar-mirror-selfie="1"` aplica `1-x` (legado / raro; não espelha o vídeo).
      */
     const arCfgMirror = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    let mirrorSelfieUi = false;
+    let normXMirror = false;
     try {
-      const tr = stream.getVideoTracks()[0];
-      const st = tr && tr.getSettings ? tr.getSettings() : {};
-      const facing = String(st.facingMode || "").toLowerCase();
       const ov = (arCfgMirror?.dataset?.arMirrorSelfie ? String(arCfgMirror.dataset.arMirrorSelfie) : "")
         .trim()
         .toLowerCase();
-      if (ov === "1" || ov === "true" || ov === "on") mirrorSelfieUi = true;
-      else if (ov === "0" || ov === "false" || ov === "off") mirrorSelfieUi = false;
-      else mirrorSelfieUi = facing === "user";
+      normXMirror = ov === "1" || ov === "true" || ov === "on";
     } catch {
-      mirrorSelfieUi = true;
+      normXMirror = false;
     }
-    if (mirrorSelfieUi) {
-      arFit.style.transform = "scaleX(-1)";
-      arFit.style.transformOrigin = "50% 50%";
-    } else {
-      arFit.style.transform = "";
-      arFit.style.transformOrigin = "";
+
+    function normX(px) {
+      return normXMirror ? 1 - px : px;
     }
 
     /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
@@ -1009,7 +1000,7 @@ async function runArSession({
       const dispW = Math.max(1, arFit.clientWidth || vw);
       const dispH = Math.max(1, arFit.clientHeight || vh);
       const r = getObjectFitContainRect(dispW, dispH, vw, vh);
-      const xn = p.x;
+      const xn = normX(p.x);
       const bx = r.ox + xn * r.drawW;
       const by = r.oy + p.y * r.drawH;
       const bufX = (bx / dispW) * vw;
@@ -1070,14 +1061,18 @@ async function runArSession({
       const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
       const anchor = pBridge || midEyes;
 
-      const pNose = landmarkToWorldOnPlane(nose, useZ);
-      tmpUp.subVectors(midEyes, pNose);
-      if (tmpUp.lengthSq() < 1e-14) return false;
-      tmpUp.normalize();
-
       _zWant.subVectors(camera.position, anchor);
       if (_zWant.lengthSq() < 1e-14) return false;
       _zWant.normalize();
+
+      /**
+       * “Up” da cabeça só com nariz↔olhos inclina o eixo Y com a cabeça e pode parecer óculos
+       * “de lado”. Usar +Y mundo projetado no plano perpendicular à vista estabiliza o roll.
+       */
+      tmpUp.set(0, 1, 0);
+      tmpUp.addScaledVector(_zWant, -tmpUp.dot(_zWant));
+      if (tmpUp.lengthSq() < 1e-14) return false;
+      tmpUp.normalize();
 
       const innerRLm = lm[133];
       const innerLLm = lm[362];
@@ -1090,8 +1085,6 @@ async function runArSession({
       }
       if (_xAxis.lengthSq() < 1e-14) return false;
       _xAxis.normalize();
-
-      if (Math.abs(tmpUp.dot(_zWant)) > 0.985) return false;
 
       _yAxis.crossVectors(_zWant, _xAxis);
       if (_yAxis.lengthSq() < 1e-14) return false;

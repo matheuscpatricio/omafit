@@ -782,6 +782,22 @@ async function runArSession({
     /** `landmarks` = só base olhos/plano; vazio ou `matrix` = tentar quaternion da matriz MP primeiro (recomendado). */
     const poseLandmarksOnly = poseSourceEarly === "landmarks";
 
+    const mirrorSelfieRaw = (arRootEarly?.dataset?.arMirrorSelfie ? String(arRootEarly.dataset.arMirrorSelfie) : "")
+      .trim()
+      .toLowerCase();
+    /** `1−x` nos landmarks (espelho “selfie” no espaço normalizado). */
+    const normXMirror = mirrorSelfieRaw === "1" || mirrorSelfieRaw === "true" || mirrorSelfieRaw === "on";
+    const sceneXMirrorRaw = (arRootEarly?.dataset?.arSceneXMirror ? String(arRootEarly.dataset.arSceneXMirror) : "")
+      .trim()
+      .toLowerCase();
+    /**
+     * Inverte só o eixo X em NDC (frustum) + plano de vídeo — corrige sensação de “câmara/espelho invertido”
+     * sem CSS no `<video>`. Não combinar com `ar-mirror-selfie` salvo teste (dois espelhos).
+     */
+    const sceneMirrorXNdc = sceneXMirrorRaw === "1" || sceneXMirrorRaw === "true" || sceneXMirrorRaw === "on";
+    /** Textura de fundo: scale X negativo exige DoubleSide e deve acompanhar qualquer espelho horizontal. */
+    const arVideoMirrorX = normXMirror || sceneMirrorXNdc;
+
     const landmarkerOpts = {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
       runningMode: "VIDEO",
@@ -860,6 +876,7 @@ async function runArSession({
     const MP_FACE_TASK_VFOV = 63;
     const camera = new THREE.PerspectiveCamera(MP_FACE_TASK_VFOV, w / h, 0.01, 10);
     camera.position.set(0, 0, 0.6);
+    camera.up.set(0, 1, 0);
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
@@ -877,6 +894,7 @@ async function runArSession({
       depthTest: true,
       depthWrite: false,
       toneMapped: false,
+      side: arVideoMirrorX ? THREE.DoubleSide : THREE.FrontSide,
     });
     videoBg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), videoBgMat);
     videoBg.frustumCulled = false;
@@ -1018,7 +1036,8 @@ async function runArSession({
       const ph = 2 * Math.tan(vfov / 2) * distCamToPlane;
       const pw = ph * camera.aspect;
       if (pw > 1e-8 && ph > 1e-8) {
-        videoBg.scale.set(pw, ph, 1);
+        /** Espelho X: alinha textura WebGL ao raycast (normXMirror ou sceneMirrorXNdc). */
+        videoBg.scale.set(arVideoMirrorX ? -pw : pw, ph, 1);
         /** Ligeiramente atrás do plano do raycast para reduzir z-fighting com o GLB. */
         videoBg.position.set(0, 0, zPlane - 0.002);
       }
@@ -1027,21 +1046,7 @@ async function runArSession({
     const arRaycaster = new THREE.Raycaster();
     const arHit = new THREE.Vector3();
     const frameToIpdRatio = 1.84;
-    /**
-     * Não espelhar a câmara em CSS (`scaleX(-1)`): o pedido é imagem natural do buffer.
-     * Por defeito: `x` bruto do MediaPipe (alinhado ao vídeo sem transform).
-     * Só com `data-ar-mirror-selfie="1"` aplica `1-x` (legado / raro; não espelha o vídeo).
-     */
-    const arCfgMirror = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    let normXMirror = false;
-    try {
-      const ov = (arCfgMirror?.dataset?.arMirrorSelfie ? String(arCfgMirror.dataset.arMirrorSelfie) : "")
-        .trim()
-        .toLowerCase();
-      normXMirror = ov === "1" || ov === "true" || ov === "on";
-    } catch {
-      normXMirror = false;
-    }
+    /** Espelhos horizontais: ver `normXMirror` / `sceneMirrorXNdc` (lidos no início da sessão). */
 
     function normX(px) {
       return normXMirror ? 1 - px : px;
@@ -1091,7 +1096,8 @@ async function runArSession({
       const by = r.oy + p.y * r.drawH;
       const bufX = (bx / dispW) * vw;
       const bufY = (by / dispH) * vh;
-      const ndcX = (bufX / vw) * 2 - 1;
+      let ndcX = (bufX / vw) * 2 - 1;
+      if (sceneMirrorXNdc) ndcX *= -1;
       const ndcY = -((bufY / vh) * 2 - 1);
       arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
       const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);

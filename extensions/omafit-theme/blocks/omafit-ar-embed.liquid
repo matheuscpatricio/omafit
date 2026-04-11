@@ -74,6 +74,7 @@
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
     data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
+    data-ar-scene-x-mirror="{{ block.settings.ar_scene_x_mirror | default: '' | strip | escape }}"
     data-ar-invert-pose-quat="{{ block.settings.ar_invert_pose_quat | default: '' | strip | escape }}"
     data-ar-pose-source="{{ block.settings.ar_pose_source | default: '' | strip | escape }}"
     data-ar-pose-basis="{{ block.settings.ar_pose_basis | default: '' | strip | escape }}"
@@ -126,8 +127,14 @@
     {
       "type": "text",
       "id": "ar_mirror_selfie",
-      "label": "Espelho horizontal (landmarks)",
-      "info": "Vazio ou 0 = coordenadas naturais (recomendado; não espelha o vídeo). 1 = aplica 1−x nos landmarks (pode desalinhar do vídeo). data-ar-mirror-selfie."
+      "label": "Espelho horizontal (landmarks + plano WebGL)",
+      "info": "1 = 1−x nos landmarks e espelha o plano de vídeo no Three (alinhado ao raio). Não usar CSS scaleX no vídeo. data-ar-mirror-selfie."
+    },
+    {
+      "type": "text",
+      "id": "ar_scene_x_mirror",
+      "label": "Inverter eixo X da câmara (NDC)",
+      "info": "1 = negar NDC X + espelhar plano WebGL (teste se o GLB parece do lado errado / câmara invertida). Não combinar com espelho selfie sem testar. data-ar-scene-x-mirror."
     },
     {
       "type": "text",

@@ -875,10 +875,14 @@ async function runArSession({
       autoOrient.userData._omafitNormWidth = normWidth;
     }
 
-    /** Rotação fixa do GLB (graus, ordem YXZ) — TripoSR costuma vir “deitado” no eixo largura. */
+    /**
+     * GLBs servidos pela pipeline Omafit passam por `canonicalizeArEyewearGlbBuffer`: maior extensão em X
+     * (hastes), menor em Y (espessura / normal às lentes), Z intermédio. +90° X alinha Y do ficheiro com +Z
+     * da face (para a câmara); −90° X + 90° Y eram para Tripo cru e deixavam o modelo de lado / espelhado.
+     */
     const modelFix = new THREE.Group();
     modelFix.rotation.order = "YXZ";
-    const AR_GLB_ROT_X_DEG = -90;
+    const AR_GLB_ROT_X_DEG = 90;
     const AR_GLB_ROT_Y_DEG = 0;
     const AR_GLB_ROT_Z_DEG = 0;
     const rad = (d) => (d * Math.PI) / 180;
@@ -887,8 +891,7 @@ async function runArSession({
 
     const glbBind = new THREE.Group();
     glbBind.rotation.order = "YXZ";
-    /** Tripo: +90° Y (com modelFix −90° X) alinha frente do GLB; o eixo interpupilar vinha invertido (33/263). */
-    glbBind.rotation.set(0, rad(90), 0);
+    glbBind.rotation.set(0, 0, 0);
     glbBind.add(modelFix);
 
     // #region agent log
@@ -897,7 +900,7 @@ async function runArSession({
       message: "glb scene bound",
       hypothesisId: "H5",
       data: {
-        glbBindYXZdeg: { x: 0, y: 90, z: 0 },
+        glbBindYXZdeg: { x: 0, y: 0, z: 0 },
         poseMode: "contain-plane+basis",
         modelFixYXZdeg: { x: AR_GLB_ROT_X_DEG, y: AR_GLB_ROT_Y_DEG, z: AR_GLB_ROT_Z_DEG },
       },

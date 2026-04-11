@@ -1,6 +1,7 @@
 {% comment %}
   Omafit AR óculos — metafield product.metafields.omafit.ar_glb_url (url).
   UI alinhada ao TryOnWidget (etapa info) + link estilo omafit-widget.js; fluxo: info → AR (câmera).
+  Tracking facial: MindAR.js (face mesh), como o try-on oficial — hiukim/mind-ar-js.
   Sempre que este bloco está no template, omafit-widget.js não abre o iframe de roupa (omafit.netlify.app/widget).
   Usa um template de produto só para óculos, ou remove este bloco dos templates de roupa.
 {% endcomment %}
@@ -83,6 +84,11 @@
     data-ar-flip-ipd-axis="{{ block.settings.ar_flip_ipd_axis | default: '' | strip | escape }}"
     data-ar-pose-lerp="{{ block.settings.ar_pose_lerp | default: '0.92' | strip | escape }}"
     data-ar-use-mp-matrix="{{ block.settings.ar_use_mp_matrix | default: '' | strip | escape }}"
+    data-ar-mindar-anchor="{{ block.settings.ar_mindar_anchor | default: '168' | strip | escape }}"
+    data-ar-mindar-disable-mirror="{{ block.settings.ar_mindar_disable_mirror | default: '' | strip | escape }}"
+    data-ar-mindar-model-scale="{{ block.settings.ar_mindar_model_scale | default: '' | strip | escape }}"
+    data-ar-mindar-filter-min-cf="{{ block.settings.ar_mindar_filter_min_cf | default: '' | strip | escape }}"
+    data-ar-mindar-filter-beta="{{ block.settings.ar_mindar_filter_beta | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -120,11 +126,50 @@
     },
     {
       "type": "header",
-      "content": "Orientação do GLB na câmara AR"
+      "content": "MindAR (face tracking)"
     },
     {
       "type": "paragraph",
-      "content": "AR em pixels (Virtual-Glasses + Three). Espelho eixo X só se ativar no bloco. Matriz MP opcional. GLB: Euler glbBind."
+      "content": "Motor AR: MindAR.js + Three (hiukim/mind-ar-js). Ajustes abaixo: âncora na malha facial, espelho e escala. Euler glbBind/poseCorr continuam a orientar o GLB."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_anchor",
+      "label": "Índice do landmark âncora",
+      "default": "168",
+      "info": "168 = ponte do nariz (como o demo try-on do MindAR). 0–477. data-ar-mindar-anchor."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_disable_mirror",
+      "label": "Desligar espelho selfie (vídeo)",
+      "info": "1 / true / on = sem scaleX(-1) no vídeo (MindAR disableFaceMirror). data-ar-mindar-disable-mirror."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_model_scale",
+      "label": "Multiplicador de escala do GLB",
+      "info": "Vazio = 1. Ex.: 1.2 para aumentar ligeiramente. data-ar-mindar-model-scale."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_filter_min_cf",
+      "label": "MindAR filterMinCF (opcional)",
+      "info": "Número fino (ex. 0.001). Vazio = defeito da biblioteca. data-ar-mindar-filter-min-cf."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_filter_beta",
+      "label": "MindAR filterBeta (opcional)",
+      "info": "Número (ex. 10). Vazio = defeito da biblioteca. data-ar-mindar-filter-beta."
+    },
+    {
+      "type": "header",
+      "content": "Orientação do GLB (Euler)"
+    },
+    {
+      "type": "paragraph",
+      "content": "Opções MediaPipe/VTG abaixo já não se aplicam ao motor MindAR; mantidas por compatibilidade com temas antigos (atributos ignorados pelo script)."
     },
     {
       "type": "text",

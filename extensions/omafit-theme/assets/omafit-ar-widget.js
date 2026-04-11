@@ -1,13 +1,14 @@
 /**
  * Omafit AR óculos — mesma hierarquia visual da etapa "info" do TryOnWidget + link como omafit-widget.js.
- * Fluxo: (1) modal info → (2) AR com câmera (Three.js + MediaPipe Face Landmarker).
+ * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js), como o try-on oficial.
+ * @see https://github.com/hiukim/mind-ar-js
+ * @see https://hiukim.github.io/mind-ar-js-doc/face-tracking-examples/tryon
  */
-const ESM_THREE = "https://esm.sh/three@0.160.0";
-const ESM_GLTF = "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
-const ESM_VISION = "https://esm.sh/@mediapipe/tasks-vision@0.10.17";
-const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm";
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+/** Three 0.150.x: compatível com `mindar-face-three` (usa `outputEncoding` / `sRGBEncoding`). */
+const ESM_THREE_MIND = "https://esm.sh/three@0.150.1?target=es2022";
+const ESM_GLTF_MIND = `${ESM_THREE_MIND}/examples/jsm/loaders/GLTFLoader.js`;
+const ESM_MINDAR_FACE_THREE =
+  "https://esm.sh/mind-ar@1.2.5/dist/mindar-face-three.prod.js?bundle&deps=three@0.150.1&target=es2022";
 
 const Z_SHELL = 2147483640;
 
@@ -27,47 +28,6 @@ function __omafitArDbgLog(payload) {
   }).catch(() => {});
 }
 // #endregion
-
-let __omafitArDbgPoseOkOnce = false;
-let __omafitArDbgPoseFailOnce = false;
-
-/**
- * Desktop costuma falhar com facingMode + resolução (OverconstrainedError).
- * Tenta várias constraints e cai em { video: true }.
- */
-function omafitArGetUserMediaStream() {
-  const md = typeof navigator !== "undefined" ? navigator.mediaDevices : null;
-  if (md && typeof md.getUserMedia === "function") {
-    const attempts = [
-      {
-        video: {
-          facingMode: { ideal: "user" },
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      },
-      { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-      { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
-      { video: true, audio: false },
-    ];
-    return attempts.reduce(
-      (p, c) => p.catch(() => md.getUserMedia(c)),
-      Promise.reject(new Error("omafit-ar: try next constraint")),
-    );
-  }
-  const legacy =
-    navigator.getUserMedia ||
-    navigator.webkitGetUserMedia ||
-    navigator.mozGetUserMedia ||
-    navigator.msGetUserMedia;
-  if (!legacy) {
-    return Promise.reject(new Error("getUserMedia não disponível neste navegador"));
-  }
-  return new Promise((resolve, reject) => {
-    legacy.call(navigator, { video: true, audio: false }, resolve, reject);
-  });
-}
 
 function darkenHex(hex, amount = 20) {
   const h = String(hex || "#810707").replace("#", "");
@@ -641,16 +601,27 @@ async function runArSession({
     },
   });
 
-  /** Mesma proporção do vídeo; overflow visível no contentor AR para não cortar o vídeo/canvas ao flex. */
+  /** MindAR injeta `<video>` + canvas WebGL dentro de `mindarHost`. */
   const arFit = el("div", {
     style: {
       position: "relative",
-      flexShrink: "0",
-      overflow: "visible",
+      flex: "1 1 auto",
+      width: "100%",
+      minHeight: "min(520px, 62dvh)",
+      overflow: "hidden",
       background: "#000",
       boxSizing: "border-box",
     },
   });
+
+  const mindarHost = el("div", {
+    style: {
+      position: "absolute",
+      inset: "0",
+      overflow: "hidden",
+    },
+  });
+  arFit.appendChild(mindarHost);
 
   const loading = el("div", {
     style: {
@@ -667,40 +638,8 @@ async function runArSession({
     },
   });
   loading.appendChild(document.createTextNode(t.arLoading));
-
-  const video = el("video", {
-    playsInline: true,
-    muted: true,
-    autoPlay: true,
-    style: {
-      width: "100%",
-      height: "100%",
-      objectFit: "contain",
-      objectPosition: "50% 50%",
-      display: "block",
-      background: "#000",
-      /** Quase opaco: alguns browsers não atualizam VideoTexture com opacity 0. */
-      opacity: "0.01",
-      pointerEvents: "none",
-    },
-  });
-  const canvas = el("canvas", {
-    style: {
-      position: "absolute",
-      left: "0",
-      top: "0",
-      width: "100%",
-      height: "100%",
-      display: "block",
-      background: "transparent",
-      pointerEvents: "none",
-    },
-  });
-
-  arFit.appendChild(video);
-  arFit.appendChild(canvas);
+  arFit.appendChild(loading);
   arWrap.appendChild(arFit);
-  arWrap.appendChild(loading);
   colContent.style.padding = "0";
   colContent.style.overflow = "auto";
   colContent.style.overflowX = "hidden";
@@ -709,14 +648,8 @@ async function runArSession({
   colContent.style.flexDirection = "column";
   colContent.appendChild(arWrap);
 
-  let stream;
-  let raf;
-  let renderer;
-  let landmarker;
+  let mindarThree = null;
   let arResizeObserver = null;
-  let videoTex = null;
-  let videoBg = null;
-  let videoBgMat = null;
 
   const cleanup = () => {
     try {
@@ -729,32 +662,18 @@ async function runArSession({
       arResizeObserver.disconnect();
       arResizeObserver = null;
     }
-    if (raf) cancelAnimationFrame(raf);
-    raf = null;
-    if (stream) {
-      stream.getTracks().forEach((tr) => tr.stop());
-      stream = null;
-    }
-    video.srcObject = null;
-    if (renderer) {
-      renderer.dispose();
-      renderer = null;
-    }
-    try {
-      if (videoTex) {
-        videoTex.dispose();
-        videoTex = null;
+    if (mindarThree) {
+      try {
+        mindarThree.renderer?.setAnimationLoop(null);
+      } catch {
+        /* ignore */
       }
-      if (videoBgMat) {
-        videoBgMat.dispose();
-        videoBgMat = null;
+      try {
+        mindarThree.stop();
+      } catch {
+        /* ignore */
       }
-      if (videoBg) {
-        if (videoBg.geometry) videoBg.geometry.dispose();
-        videoBg = null;
-      }
-    } catch {
-      /* ignore */
+      mindarThree = null;
     }
   };
 
@@ -769,147 +688,65 @@ async function runArSession({
   }
 
   try {
-    const [{ FaceLandmarker, FilesetResolver }, THREE, { GLTFLoader }] = await Promise.all([
-      import(ESM_VISION),
-      import(ESM_THREE),
-      import(ESM_GLTF),
+    const [mindFaceMod, threeMod, { GLTFLoader }] = await Promise.all([
+      import(ESM_MINDAR_FACE_THREE),
+      import(ESM_THREE_MIND),
+      import(ESM_GLTF_MIND),
     ]);
+    const MindARThree = mindFaceMod.MindARThree || mindFaceMod.default;
+    const THREE = threeMod.default && threeMod.default.Vector3 ? threeMod.default : threeMod;
 
-    const arRootEarly = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    const poseSourceEarly = (arRootEarly?.dataset?.arPoseSource ? String(arRootEarly.dataset.arPoseSource) : "")
-      .trim()
-      .toLowerCase();
-    /** `landmarks` = só base olhos/plano; vazio ou `matrix` = tentar quaternion da matriz MP primeiro (recomendado). */
-    const poseLandmarksOnly = poseSourceEarly === "landmarks";
+    const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const rad = (d) => (d * Math.PI) / 180;
+    function parseYxzDegString(raw, defX, defY, defZ) {
+      const str = String(raw || "").trim();
+      if (!str) return { x: defX, y: defY, z: defZ };
+      const parts = str.split(/[\s,;]+/).map((t) => Number(t.trim()));
+      if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return { x: defX, y: defY, z: defZ };
+      return { x: parts[0], y: parts[1], z: parts[2] };
+    }
 
-    const mirrorSelfieRaw = (arRootEarly?.dataset?.arMirrorSelfie ? String(arRootEarly.dataset.arMirrorSelfie) : "")
-      .trim()
-      .toLowerCase();
-    /** `1−x` nos landmarks (espelho “selfie” no espaço normalizado). */
-    const normXMirror = mirrorSelfieRaw === "1" || mirrorSelfieRaw === "true" || mirrorSelfieRaw === "on";
-    const sceneXMirrorRaw = String(arRootEarly?.dataset?.arSceneXMirror ?? "")
-      .trim()
-      .toLowerCase();
-    /** Só com `1` / `true` / `on`: espelha X (vazio = desligado — evita GLB deslocado na maioria das câmaras). */
-    const sceneMirrorXNdc = /^(1|true|on)$/i.test(sceneXMirrorRaw);
-    /** Textura de fundo: scale X negativo exige DoubleSide e deve acompanhar qualquer espelho horizontal. */
-    const arVideoMirrorX = normXMirror || sceneMirrorXNdc;
+    const anchorRaw = String(arCfg?.dataset?.arMindarAnchor ?? "168").trim();
+    const anchorIndex = Math.max(0, Math.min(477, Math.floor(Number(anchorRaw)) || 168));
+    const noMirrorRaw = String(arCfg?.dataset?.arMindarDisableMirror ?? "").trim().toLowerCase();
+    const disableFaceMirror = noMirrorRaw === "1" || noMirrorRaw === "true" || noMirrorRaw === "on";
 
-    const landmarkerOpts = {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-      runningMode: "VIDEO",
-      numFaces: 1,
-      minFaceDetectionConfidence: 0.25,
-      minFacePresenceConfidence: 0.25,
-      minTrackingConfidence: 0.25,
-      outputFaceBlendshapes: false,
-      /** Matriz canónica→face (MP); posição no Three continua planar (sem `z` do landmark no raio). */
-      outputFacialTransformationMatrixes: true,
+    const fMin = Number(String(arCfg?.dataset?.arMindarFilterMinCf ?? "").trim());
+    const fBeta = Number(String(arCfg?.dataset?.arMindarFilterBeta ?? "").trim());
+    const mindarOpts = {
+      container: mindarHost,
+      uiLoading: "no",
+      uiScanning: "no",
+      uiError: "no",
+      disableFaceMirror,
     };
+    if (Number.isFinite(fMin)) mindarOpts.filterMinCF = fMin;
+    if (Number.isFinite(fBeta)) mindarOpts.filterBeta = fBeta;
 
-    try {
-      const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-      landmarker = await FaceLandmarker.createFromOptions(vision, landmarkerOpts);
-    } catch {
-      const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-      landmarker = await FaceLandmarker.createFromOptions(vision, {
-        ...landmarkerOpts,
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-      });
-    }
+    mindarThree = new MindARThree(mindarOpts);
+    mindarThree.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    mindarThree.scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
-    stream = await omafitArGetUserMediaStream();
-    video.srcObject = stream;
-    await video.play();
-    for (let i = 0; i < 40 && (!video.videoWidth || !video.videoHeight); i += 1) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    const anchor = mindarThree.addAnchor(anchorIndex);
 
-    loading.style.display = "none";
-
-    const w = video.videoWidth || 640;
-    const h = video.videoHeight || 480;
-    canvas.width = w;
-    canvas.height = h;
-
-    function layoutArFit() {
-      const vw = video.videoWidth || w;
-      const vh = video.videoHeight || h;
-      const rect = arWrap.getBoundingClientRect();
-      const rw = Math.max(1, rect.width);
-      const rh = Math.max(1, rect.height);
-      const ar = vw / vh;
-      let dispW;
-      let dispH;
-      if (rw / rh > ar) {
-        dispH = rh;
-        dispW = rh * ar;
-      } else {
-        dispW = rw;
-        dispH = rw / ar;
-      }
-      arFit.style.width = `${dispW}px`;
-      arFit.style.height = `${dispH}px`;
-    }
-    layoutArFit();
-    arResizeObserver = new ResizeObserver(() => layoutArFit());
-    arResizeObserver.observe(arWrap);
-    requestAnimationFrame(() => layoutArFit());
-
-    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, premultipliedAlpha: false });
-    renderer.setSize(w, h, false);
-    /** 1:1 com `video.videoWidth/Height` — DPR>1 com setSize(w,h) altera canvas.width e pode desalinhar ray/landmark vs o que se vê. */
-    renderer.setPixelRatio(1);
-    renderer.setClearColor(0x000000, 0);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.NoToneMapping;
-    renderer.toneMappingExposure = 1;
-
-    const scene = new THREE.Scene();
-    /**
-     * Espaço “pixel + profundidade” como em Virtual-Glasses-Try-on (Three + facemesh scaledMesh):
-     * câmara em (W/2, -H/2, z), lookAt (W/2, -H/2, 0); posição do óculos = landmark em px com Y invertido.
-     * @see https://github.com/bensonruan/Virtual-Glasses-Try-on/blob/main/js/virtual-glasses.js
-     */
-    const VTG_FOV_DEG = 45;
-    const camera = new THREE.PerspectiveCamera(VTG_FOV_DEG, w / Math.max(1, h), 0.1, 100000);
-    camera.up.set(0, 1, 0);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
-
-    function applyPixelCamera(vw, vh) {
-      const W = Math.max(2, vw);
-      const H = Math.max(2, vh);
-      const halfH = H / 2;
-      const tanHalf = Math.tan((VTG_FOV_DEG * 0.5 * Math.PI) / 180);
-      const camZ = -halfH / tanHalf;
-      camera.aspect = W / H;
-      camera.position.set(W / 2, -H / 2, camZ);
-      camera.lookAt(new THREE.Vector3(W / 2, -H / 2, 0));
-      camera.updateProjectionMatrix();
-    }
-    applyPixelCamera(w, h);
-
-    /** Plano de vídeo no mesmo espaço de pixels (z ≈ 0). */
-    videoTex = new THREE.VideoTexture(video);
-    videoTex.colorSpace = THREE.SRGBColorSpace;
-    videoTex.minFilter = THREE.LinearFilter;
-    videoTex.magFilter = THREE.LinearFilter;
-    videoBgMat = new THREE.MeshBasicMaterial({
-      map: videoTex,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-      side: arVideoMirrorX ? THREE.DoubleSide : THREE.FrontSide,
-    });
-    videoBg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), videoBgMat);
-    videoBg.frustumCulled = false;
-    videoBg.renderOrder = -1000;
-    scene.add(videoBg);
-
-    const dirLt = new THREE.DirectionalLight(0xffffff, 0.55);
-    dirLt.position.set(w * 0.8, -h * 0.2, w * 0.5);
-    scene.add(dirLt);
+    const qM0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(rad(-90), 0, 0, "YXZ"));
+    const qG0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rad(90), rad(180), "YXZ"));
+    const e0 = new THREE.Euler().setFromQuaternion(qG0.clone().multiply(qM0), "YXZ");
+    const defX = (e0.x * 180) / Math.PI;
+    const defY = (e0.y * 180) / Math.PI;
+    const defZ = (e0.z * 180) / Math.PI;
+    const rawGlb = (arCfg?.dataset?.arGlbYxz ? String(arCfg.dataset.arGlbYxz) : "").trim();
+    const rawModel = (arCfg?.dataset?.arModelYxz ? String(arCfg.dataset.arModelYxz) : "").trim();
+    const glbDeg = parseYxzDegString(rawGlb || rawModel, defX, defY, defZ);
+    const poseCorrDeg = parseYxzDegString(
+      (arCfg?.dataset?.arPoseCorrYxz ? String(arCfg.dataset.arPoseCorrYxz) : "").trim(),
+      0,
+      0,
+      0,
+    );
+    const scaleMulRaw = String(arCfg?.dataset?.arMindarModelScale ?? "").trim();
+    const nScale = Number(scaleMulRaw);
+    const modelScaleMul = Number.isFinite(nScale) && nScale > 0 ? nScale : 1;
 
     const loader = new GLTFLoader();
     loader.setCrossOrigin("anonymous");
@@ -919,404 +756,79 @@ async function runArSession({
     const glasses = gltf.scene;
     glasses.frustumCulled = false;
     glasses.traverse((child) => {
-      if (child.isMesh) {
-        child.frustumCulled = false;
-        const colorAttr = child.geometry && child.geometry.getAttribute
-          ? child.geometry.getAttribute("color")
-          : null;
-        if (!child.material && colorAttr) {
-          child.material = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true });
-        }
-        if (child.material) {
-          const mats = Array.isArray(child.material) ? child.material : [child.material];
-          for (const mat of mats) {
-            if (!mat) continue;
-            if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
-            if (mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-            if (colorAttr && "vertexColors" in mat) mat.vertexColors = true;
-            // Em AR com vídeo de fundo, materiais muito metálicos perdem cor perceptível.
-            // Neutraliza PBR para priorizar fidelidade cromática do produto.
-            if ("metalness" in mat) mat.metalness = 0;
-            if ("roughness" in mat) mat.roughness = 1;
-            if ("envMapIntensity" in mat) mat.envMapIntensity = 0;
-            if ("emissiveIntensity" in mat) mat.emissiveIntensity = 1;
-            // Preserva cores do GLB sem "lavar" por tone mapping.
-            mat.toneMapped = false;
-            mat.needsUpdate = true;
-          }
-        }
+      if (!child.isMesh) return;
+      child.frustumCulled = false;
+      const colorAttr =
+        child.geometry && child.geometry.getAttribute ? child.geometry.getAttribute("color") : null;
+      if (!child.material && colorAttr) {
+        child.material = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true });
+      }
+      if (!child.material) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of mats) {
+        if (!mat) continue;
+        if (mat.map && THREE.sRGBEncoding !== undefined) mat.map.encoding = THREE.sRGBEncoding;
+        if (mat.emissiveMap && THREE.sRGBEncoding !== undefined) mat.emissiveMap.encoding = THREE.sRGBEncoding;
+        if (colorAttr && "vertexColors" in mat) mat.vertexColors = true;
+        if ("metalness" in mat) mat.metalness = 0;
+        if ("roughness" in mat) mat.roughness = 1;
+        if ("envMapIntensity" in mat) mat.envMapIntensity = 0;
+        if ("emissiveIntensity" in mat) mat.emissiveIntensity = 1;
+        mat.toneMapped = false;
+        mat.needsUpdate = true;
       }
     });
+
     const autoOrient = new THREE.Group();
-    autoOrient.rotation.order = "YXZ";
-    autoOrient.rotation.set(0, 0, 0);
     autoOrient.add(glasses);
+    autoOrient.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(autoOrient);
+    const center = box.getCenter(new THREE.Vector3());
+    const sz = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(sz.x, sz.y, sz.z, 1e-6);
+    autoOrient.position.sub(center);
+    autoOrient.scale.setScalar((0.085 / maxDim) * modelScaleMul);
 
-    let baseGlbScale = 1;
-    {
-      autoOrient.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(autoOrient);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
-      autoOrient.position.sub(center);
-      baseGlbScale = 1 / maxDim;
-      autoOrient.scale.setScalar(baseGlbScale);
-      const normWidth = Math.max(size.x / maxDim, 1e-4);
-      glasses.userData._omafitNormWidth = normWidth;
-      autoOrient.userData._omafitNormWidth = normWidth;
-    }
-
-    /**
-     * Rotação fixa só em `glbBind` (ordem YXZ): fusão do antigo q_glbBind * q_modelFix (−90° X no modelFix
-     * + 0,90,180° no glbBind). `modelFix` sem Euler (0,0,0).
-     * Override: `data-ar-glb-yxz` no #omafit-ar-root; se vazio, tenta `data-ar-model-yxz` (Liquid antigo).
-     */
-    const rad = (d) => (d * Math.PI) / 180;
-    const arCfgRoot = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    function parseYxzDegString(raw, defX, defY, defZ) {
-      const s = String(raw || "").trim();
-      if (!s) return { x: defX, y: defY, z: defZ };
-      const p = s.split(/[\s,;]+/).map((t) => Number(t.trim()));
-      if (p.length < 3 || p.some((n) => Number.isNaN(n))) return { x: defX, y: defY, z: defZ };
-      return { x: p[0], y: p[1], z: p[2] };
-    }
-    const qM0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(rad(-90), 0, 0, "YXZ"));
-    const qG0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rad(90), rad(180), "YXZ"));
-    const qMerged0 = qG0.clone().multiply(qM0);
-    const eMerged0 = new THREE.Euler().setFromQuaternion(qMerged0, "YXZ");
-    const defX = (eMerged0.x * 180) / Math.PI;
-    const defY = (eMerged0.y * 180) / Math.PI;
-    const defZ = (eMerged0.z * 180) / Math.PI;
-    const rawGlb = (arCfgRoot?.dataset?.arGlbYxz ? String(arCfgRoot.dataset.arGlbYxz) : "").trim();
-    const rawModel = (arCfgRoot?.dataset?.arModelYxz ? String(arCfgRoot.dataset.arModelYxz) : "").trim();
-    const glbDeg = parseYxzDegString(rawGlb || rawModel, defX, defY, defZ);
-
-    const modelFix = new THREE.Group();
-    modelFix.rotation.order = "YXZ";
-    modelFix.rotation.set(0, 0, 0);
-    modelFix.add(autoOrient);
-
-    const glbBind = new THREE.Group();
-    glbBind.rotation.order = "YXZ";
-    const AR_GLB_BIND_X_DEG = glbDeg.x;
-    const AR_GLB_BIND_Y_DEG = glbDeg.y;
-    const AR_GLB_BIND_Z_DEG = glbDeg.z;
-    glbBind.rotation.set(rad(AR_GLB_BIND_X_DEG), rad(AR_GLB_BIND_Y_DEG), rad(AR_GLB_BIND_Z_DEG));
-    glbBind.add(modelFix);
-
-    /**
-     * Ajuste fino cabeça↔GLB (YXZ). Vazio = 0,0,0; ex. 0,180,180 se o export precisar.
-     */
-    const rawPoseCorr = (arCfgRoot?.dataset?.arPoseCorrYxz ? String(arCfgRoot.dataset.arPoseCorrYxz) : "").trim();
-    const poseCorrDeg = parseYxzDegString(rawPoseCorr, 0, 0, 0);
     const poseCorr = new THREE.Group();
     poseCorr.rotation.order = "YXZ";
     poseCorr.rotation.set(rad(poseCorrDeg.x), rad(poseCorrDeg.y), rad(poseCorrDeg.z));
+    const glbBind = new THREE.Group();
+    glbBind.rotation.order = "YXZ";
+    glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
+    glbBind.add(autoOrient);
+    poseCorr.add(glbBind);
+    anchor.group.add(poseCorr);
 
-    // #region agent log
+    arResizeObserver = new ResizeObserver(() => {
+      try {
+        window.dispatchEvent(new Event("resize"));
+      } catch {
+        /* ignore */
+      }
+    });
+    arResizeObserver.observe(arWrap);
+    requestAnimationFrame(() => {
+      try {
+        window.dispatchEvent(new Event("resize"));
+      } catch {
+        /* ignore */
+      }
+    });
+
+    await mindarThree.start();
+    const { renderer, scene, camera } = mindarThree;
+    renderer.setAnimationLoop(() => {
+      renderer.render(scene, camera);
+    });
+
+    loading.style.display = "none";
+
     __omafitArDbgLog({
       location: "omafit-ar-widget.js:runArSession",
-      message: "glb scene bound",
-      hypothesisId: "H5",
-      data: {
-        glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
-        poseMode: "vtgPixelCam+lmToVtWorld+landmarkBasis",
-        modelFixYXZdeg: { x: 0, y: 0, z: 0 },
-      },
+      message: "mindar face started",
+      hypothesisId: "H5-mindar",
+      data: { anchorIndex, disableFaceMirror },
     });
-    // #endregion
-
-    const faceRoot = new THREE.Group();
-    faceRoot.frustumCulled = false;
-    faceRoot.matrixAutoUpdate = true;
-    faceRoot.renderOrder = 10;
-    faceRoot.add(poseCorr);
-    poseCorr.add(glbBind);
-    scene.add(faceRoot);
-
-    function syncVideoBackgroundPlane() {
-      if (!videoBg) return;
-      const vw = video.videoWidth || w;
-      const vh = video.videoHeight || h;
-      if (vw < 2 || vh < 2) return;
-      videoBg.scale.set(arVideoMirrorX ? -vw : vw, vh, 1);
-      videoBg.position.set(vw / 2, -vh / 2, 0);
-      videoBg.rotation.set(0, 0, 0);
-    }
-    syncVideoBackgroundPlane();
-    const frameToIpdRatio = 1.84;
-    /** Espelhos horizontais: ver `normXMirror` / `sceneMirrorXNdc` (lidos no início da sessão). */
-
-    function normX(px) {
-      return normXMirror ? 1 - px : px;
-    }
-
-    /** `data-ar-flip-ipd-axis="1"`: inverte sentido do eixo X (olho esquerdo → direito) na base Z×X. */
-    const flipIpdRaw = (arCfgRoot?.dataset?.arFlipIpdAxis ? String(arCfgRoot.dataset.arFlipIpdAxis) : "")
-      .trim()
-      .toLowerCase();
-    const flipIpdAxis = flipIpdRaw === "1" || flipIpdRaw === "true" || flipIpdRaw === "on";
-
-    /** Suavização posição/rotação/escala (0.2–1). 1 = cola ao landmark; vazio = 0.92. `data-ar-pose-lerp`. */
-    const poseLerpRaw = (arCfgRoot?.dataset?.arPoseLerp ? String(arCfgRoot.dataset.arPoseLerp) : "").trim();
-    const poseLerpAlpha = (() => {
-      if (!poseLerpRaw) return 0.92;
-      const n = Number(poseLerpRaw);
-      if (!Number.isFinite(n)) return 0.92;
-      return Math.min(1, Math.max(0.2, n));
-    })();
-    const scaleFollow = 0.72;
-
-    /** Rectângulo object-fit:contain do `<video>` → alinha MP ao mesmo espaço que o plano WebGL. */
-    function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
-      const cw = Math.max(1, containerW);
-      const ch = Math.max(1, containerH);
-      const arC = cw / ch;
-      const arI = intrinsicW / intrinsicH;
-      const eps = 0.002;
-      if (Math.abs(arC - arI) < eps) {
-        return { ox: 0, oy: 0, drawW: cw, drawH: ch };
-      }
-      if (arC > arI) {
-        const drawH = ch;
-        const drawW = ch * arI;
-        return { ox: (cw - drawW) * 0.5, oy: 0, drawW, drawH };
-      }
-      const drawW = cw;
-      const drawH = cw / arI;
-      return { ox: 0, oy: (ch - drawH) * 0.5, drawW, drawH };
-    }
-
-    /**
-     * Landmarks (0–1) → espaço pixel VTG: mesmo mapeamento que o rect desenhado do vídeo (contain).
-     * @see https://github.com/bensonruan/Virtual-Glasses-Try-on
-     */
-    function lmToVtWorld(lm) {
-      if (!lm) return null;
-      const vw = video.videoWidth || w;
-      const vh = video.videoHeight || h;
-      const dispW = Math.max(1, video.clientWidth || arFit.clientWidth || vw);
-      const dispH = Math.max(1, video.clientHeight || arFit.clientHeight || vh);
-      const r = getObjectFitContainRect(dispW, dispH, vw, vh);
-      const xn = normX(lm.x);
-      const bx = r.ox + xn * r.drawW;
-      const by = r.oy + lm.y * r.drawH;
-      const bufX = (bx / dispW) * vw;
-      const bufY = (by / dispH) * vh;
-      let x = bufX;
-      if (sceneMirrorXNdc) x = vw - x;
-      const y = -bufY;
-      /** z ligeiramente negativo = à frente do plano de vídeo em z=0 (mais perto da câmara). */
-      const z = -8 - (lm.z || 0) * vh * 1.1;
-      return new THREE.Vector3(x, y, z);
-    }
-
-    const poseQuatScratch = new THREE.Quaternion();
-    const rotMatScratch = new THREE.Matrix4();
-    const mpFaceMat = new THREE.Matrix4();
-    const mpTmpPos = new THREE.Vector3();
-    const mpTmpScl = new THREE.Vector3();
-    const vecX = new THREE.Vector3();
-    const vecY = new THREE.Vector3();
-    const _zWant = new THREE.Vector3();
-    const headWearOffsetLocal = new THREE.Vector3();
-    const worldUpRef = new THREE.Vector3(0, 1, 0);
-
-    function resetFaceRootTransform() {
-      faceRoot.position.set(0, 0, 0);
-      faceRoot.quaternion.set(0, 0, 0, 1);
-      faceRoot.scale.set(1, 1, 1);
-    }
-
-    function applyGlassesPose(res, doSnap = false) {
-      camera.updateMatrixWorld(true);
-      const lm = res.faceLandmarks[0];
-      if (!lm) return false;
-
-      /** MediaPipe: 33 = olho direito, 263 = esquerdo; 133/362 = cantos internos. */
-      const eyeRightLm = lm[33];
-      const eyeLeftLm = lm[263];
-      const nose = lm[1];
-      if (!eyeRightLm || !eyeLeftLm || !nose) return false;
-
-      const ipdNorm = Math.hypot(eyeRightLm.x - eyeLeftLm.x, eyeRightLm.y - eyeLeftLm.y);
-      if (ipdNorm < 0.02) return false;
-
-      const pEyeRight = lmToVtWorld(eyeRightLm);
-      const pEyeLeft = lmToVtWorld(eyeLeftLm);
-      const ipdWorld = pEyeRight.distanceTo(pEyeLeft);
-      const modelNormWidth =
-        autoOrient.userData._omafitNormWidth || glasses.userData._omafitNormWidth || 1;
-      const faceScale = Math.max(0.35, Math.min(900, (ipdWorld * frameToIpdRatio) / modelNormWidth));
-
-      const pBridge = lm[168] ? lmToVtWorld(lm[168]) : null;
-      const midEyes = new THREE.Vector3().addVectors(pEyeRight, pEyeLeft).multiplyScalar(0.5);
-      /** Rotação: entre olhos. Posição: ponte 168 (como VTG) ou média olhos. */
-      const anchorRot = midEyes;
-      const anchorPos = pBridge ? pBridge.clone() : midEyes.clone();
-
-      /** +Z local da cabeça = direção ancoragem → câmara (frente da face na cena). */
-      _zWant.subVectors(camera.position, anchorRot);
-      if (_zWant.lengthSq() < 1e-14) return false;
-      _zWant.normalize();
-
-      const mtx = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
-      const mtxData = mtx && mtx.data;
-      const basisRaw = (arCfgRoot?.dataset?.arPoseBasis ? String(arCfgRoot.dataset.arPoseBasis) : "")
-        .trim()
-        .toLowerCase();
-      const forceBasisOnly = basisRaw === "1" || basisRaw === "true" || basisRaw === "on";
-      let usedMpMatrix = false;
-      /** Matriz MP está noutro referencial; no modo pixel (VTG) usar só base olhos + nariz. */
-      const useMpMatrixVtg =
-        (arCfgRoot?.dataset?.arUseMpMatrix ? String(arCfgRoot.dataset.arUseMpMatrix) : "").trim().toLowerCase() ===
-        "1";
-      if (useMpMatrixVtg && !forceBasisOnly && !poseLandmarksOnly && mtxData && mtxData.length >= 16) {
-        mpFaceMat.fromArray(mtxData);
-        /** Proto / Web: `data` costuma ser row-major; Three `fromArray` espera column-major → transpor. */
-        const noTr = (arCfgRoot?.dataset?.arMpMatrixNotranspose ? String(arCfgRoot.dataset.arMpMatrixNotranspose) : "")
-          .trim()
-          .toLowerCase();
-        if (noTr !== "1" && noTr !== "true" && noTr !== "on") mpFaceMat.transpose();
-        mpFaceMat.decompose(mpTmpPos, poseQuatScratch, mpTmpScl);
-        poseQuatScratch.normalize();
-        const qFin = [poseQuatScratch.x, poseQuatScratch.y, poseQuatScratch.z, poseQuatScratch.w].every(
-          Number.isFinite,
-        );
-        const ql =
-          poseQuatScratch.x ** 2 +
-          poseQuatScratch.y ** 2 +
-          poseQuatScratch.z ** 2 +
-          poseQuatScratch.w ** 2;
-        usedMpMatrix = qFin && Math.abs(ql - 1) < 0.05;
-      }
-      if (!usedMpMatrix) {
-        /**
-         * Base RH explícita (evita lookAt+post-giro ambíguo com glbBind):
-         * Z = vista; X = interpupilar no plano ⊥ Z; Y = Z×X; depois alinhar Y a +Y mundo para não ficar de cabeça para baixo.
-         */
-        if (flipIpdAxis) vecX.subVectors(pEyeLeft, pEyeRight);
-        else vecX.subVectors(pEyeRight, pEyeLeft);
-        vecX.addScaledVector(_zWant, -vecX.dot(_zWant));
-        if (vecX.lengthSq() < 1e-14) return false;
-        vecX.normalize();
-        vecY.crossVectors(_zWant, vecX);
-        if (vecY.lengthSq() < 1e-14) return false;
-        vecY.normalize();
-        if (vecY.dot(worldUpRef) < 0) {
-          vecY.negate();
-          vecX.negate();
-        }
-        rotMatScratch.makeBasis(vecX, vecY, _zWant);
-        poseQuatScratch.setFromRotationMatrix(rotMatScratch);
-      }
-      /** Opcional: `data-ar-invert-pose-quat="1"` no #omafit-ar-root (correção rara de convenção). */
-      const invQRaw = (arCfgRoot?.dataset?.arInvertPoseQuat ? String(arCfgRoot.dataset.arInvertPoseQuat) : "")
-        .trim()
-        .toLowerCase();
-      const invertPoseQuat = invQRaw === "1" || invQRaw === "true" || invQRaw === "on";
-      if (invertPoseQuat) poseQuatScratch.invert();
-
-      // #region agent log
-      if (!__omafitArDbgPoseOkOnce) {
-        __omafitArDbgPoseOkOnce = true;
-        __omafitArDbgLog({
-          location: "omafit-ar-widget.js:applyGlassesPose",
-          message: "first pose ok",
-          hypothesisId: "H5",
-          data: {
-            ipdNorm: Math.round(ipdNorm * 1000) / 1000,
-            poseW: Math.round(poseQuatScratch.w * 1000) / 1000,
-          },
-        });
-      }
-      // #endregion
-
-      /**
-       * Offset em unidades do frame (pixels), aplicado em espaço local da cabeça.
-       */
-      const vhPose = video.videoHeight || h;
-      headWearOffsetLocal.set(0, -vhPose * 0.012, vhPose * 0.018);
-      headWearOffsetLocal.applyQuaternion(poseQuatScratch);
-      const targetPos = anchorPos.add(headWearOffsetLocal);
-
-      if (doSnap) {
-        faceRoot.position.copy(targetPos);
-        faceRoot.quaternion.copy(poseQuatScratch);
-        faceRoot.scale.setScalar(faceScale);
-      } else {
-        faceRoot.position.lerp(targetPos, poseLerpAlpha);
-        faceRoot.quaternion.slerp(poseQuatScratch, poseLerpAlpha);
-        const s = faceRoot.scale.x || faceScale;
-        faceRoot.scale.setScalar(s + (faceScale - s) * scaleFollow);
-      }
-      faceRoot.quaternion.normalize();
-      return true;
-    }
-
-    faceRoot.visible = false;
-    let poseHadFaceLastFrame = false;
-
-    function frame() {
-      raf = requestAnimationFrame(frame);
-      if (!landmarker || !video.videoWidth) {
-        syncVideoBackgroundPlane();
-        renderer.render(scene, camera);
-        return;
-      }
-      const vwF = video.videoWidth || w;
-      const vhF = video.videoHeight || h;
-      if (
-        vwF > 0 &&
-        vhF > 0 &&
-        (renderer.domElement.width !== vwF ||
-          renderer.domElement.height !== vhF ||
-          camera.userData._aspW !== vwF ||
-          camera.userData._aspH !== vhF)
-      ) {
-        camera.userData._aspW = vwF;
-        camera.userData._aspH = vhF;
-        canvas.width = vwF;
-        canvas.height = vhF;
-        renderer.setSize(vwF, vhF, false);
-        applyPixelCamera(vwF, vhF);
-        dirLt.position.set(vwF * 0.8, -vhF * 0.2, vwF * 0.5);
-        syncVideoBackgroundPlane();
-      }
-      const ts =
-        typeof video.currentTime === "number" && Number.isFinite(video.currentTime)
-          ? Math.round(video.currentTime * 1000)
-          : Math.round(performance.now());
-      const res = landmarker.detectForVideo(video, ts);
-      if (!res.faceLandmarks || !res.faceLandmarks[0]) {
-        faceRoot.visible = false;
-        poseHadFaceLastFrame = false;
-        resetFaceRootTransform();
-        syncVideoBackgroundPlane();
-        renderer.render(scene, camera);
-        return;
-      }
-
-      const ok = applyGlassesPose(res, !poseHadFaceLastFrame);
-      // #region agent log
-      if (!ok && !__omafitArDbgPoseFailOnce) {
-        __omafitArDbgPoseFailOnce = true;
-        __omafitArDbgLog({
-          location: "omafit-ar-widget.js:frame",
-          message: "pose false with landmarks",
-          hypothesisId: "H5",
-          data: { hadLm: true },
-        });
-      }
-      // #endregion
-      faceRoot.visible = ok;
-      if (!ok) resetFaceRootTransform();
-      poseHadFaceLastFrame = ok;
-      syncVideoBackgroundPlane();
-      renderer.render(scene, camera);
-    }
     raf = requestAnimationFrame(frame);
   } catch (e) {
     console.error("[omafit-ar]", e);
@@ -1329,7 +841,7 @@ async function runArSession({
     const msg = String(e?.message || e || "");
     const isGlb =
       /glb|gltf|fetch|load|404|403|network|failed to fetch|http/i.test(msg) &&
-      !/face|landmarker|wasm|vision/i.test(msg);
+      !/face|landmarker|wasm|vision|tensorflow|mind|tfjs|facemesh/i.test(msg);
     loading.textContent = isCam ? t.errCamera : isGlb ? t.errGlb : t.errFace;
     cleanup();
   }

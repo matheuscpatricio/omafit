@@ -679,6 +679,9 @@ async function runArSession({
       objectPosition: "50% 50%",
       display: "block",
       background: "#000",
+      /** Quase opaco: alguns browsers não atualizam VideoTexture com opacity 0. */
+      opacity: "0.01",
+      pointerEvents: "none",
     },
   });
   const canvas = el("canvas", {
@@ -711,6 +714,9 @@ async function runArSession({
   let renderer;
   let landmarker;
   let arResizeObserver = null;
+  let videoTex = null;
+  let videoBg = null;
+  let videoBgMat = null;
 
   const cleanup = () => {
     try {
@@ -733,6 +739,22 @@ async function runArSession({
     if (renderer) {
       renderer.dispose();
       renderer = null;
+    }
+    try {
+      if (videoTex) {
+        videoTex.dispose();
+        videoTex = null;
+      }
+      if (videoBgMat) {
+        videoBgMat.dispose();
+        videoBgMat = null;
+      }
+      if (videoBg) {
+        if (videoBg.geometry) videoBg.geometry.dispose();
+        videoBg = null;
+      }
+    } catch {
+      /* ignore */
     }
   };
 
@@ -838,6 +860,26 @@ async function runArSession({
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
+    const camZ = 0.6;
+    const zPlane = -0.34;
+    const distCamToPlane = camZ - zPlane;
+
+    /** Plano com o mesmo frame que o raycast — elimina desvio entre <video> CSS e canvas WebGL. */
+    videoTex = new THREE.VideoTexture(video);
+    videoTex.colorSpace = THREE.SRGBColorSpace;
+    videoTex.minFilter = THREE.LinearFilter;
+    videoTex.magFilter = THREE.LinearFilter;
+    videoBgMat = new THREE.MeshBasicMaterial({
+      map: videoTex,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    videoBg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), videoBgMat);
+    videoBg.frustumCulled = false;
+    videoBg.renderOrder = -1000;
+    scene.add(videoBg);
+
     const loader = new GLTFLoader();
     loader.setCrossOrigin("anonymous");
     const gltf = await new Promise((resolve, reject) => {
@@ -933,11 +975,10 @@ async function runArSession({
     glbBind.add(modelFix);
 
     /**
-     * Corrige referencial cabeça (makeBasis) ↔ GLB exportado: muitos modelos ficam “de lado / invertidos”
-     * sem este offset. Vazio = 0,180,180° YXZ; `data-ar-pose-corr-yxz="0,0,0"` desliga.
+     * Ajuste fino cabeça↔GLB (YXZ). Vazio = 0,0,0; ex. 0,180,180 se o export precisar.
      */
     const rawPoseCorr = (arCfgRoot?.dataset?.arPoseCorrYxz ? String(arCfgRoot.dataset.arPoseCorrYxz) : "").trim();
-    const poseCorrDeg = parseYxzDegString(rawPoseCorr, 0, 180, 180);
+    const poseCorrDeg = parseYxzDegString(rawPoseCorr, 0, 0, 0);
     const poseCorr = new THREE.Group();
     poseCorr.rotation.order = "YXZ";
     poseCorr.rotation.set(rad(poseCorrDeg.x), rad(poseCorrDeg.y), rad(poseCorrDeg.z));
@@ -950,7 +991,7 @@ async function runArSession({
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
         poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
-        poseMode: "poseCorr0180180+makeBasis+matrixOpt+syncRenderer+directNdc+raycast+z",
+        poseMode: "videoTexPlaneBg+makeBasis+syncRenderer+containMap+raycast+z",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -966,13 +1007,22 @@ async function runArSession({
     dirLt.position.set(0.35, 0.55, 0.45);
     scene.add(dirLt);
 
-    const camZ = 0.6;
-    const zPlane = -0.34;
-    const distCamToPlane = camZ - zPlane;
     /** Relativo à largura do frame; desloca o hit do raio ao longo de −Z (profundidade MediaPipe). */
     const zDepthScale = 0.1;
     const arFacePlane = new THREE.Plane();
     arFacePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, zPlane));
+    function syncVideoBackgroundPlane() {
+      if (!videoBg) return;
+      const vfov = (camera.fov * Math.PI) / 180;
+      const ph = 2 * Math.tan(vfov / 2) * distCamToPlane;
+      const pw = ph * camera.aspect;
+      if (pw > 1e-8 && ph > 1e-8) {
+        videoBg.scale.set(pw, ph, 1);
+        /** Ligeiramente atrás do plano do raycast para reduzir z-fighting com o GLB. */
+        videoBg.position.set(0, 0, zPlane - 0.002);
+      }
+    }
+    syncVideoBackgroundPlane();
     const arRaycaster = new THREE.Raycaster();
     const arHit = new THREE.Vector3();
     /** Mesma convenção que a câmara a olhar para −Z. */
@@ -1028,27 +1078,17 @@ async function runArSession({
       if (!p) return null;
       const vw = video.videoWidth || w;
       const vh = video.videoHeight || h;
-      const dispW = Math.max(1, arFit.clientWidth || vw);
-      const dispH = Math.max(1, arFit.clientHeight || vh);
-      const aspectFit = dispW / dispH;
-      const aspectVid = vw / vh;
-      /** Quando o contentor tem o mesmo aspect que o frame, NDC linear evita erros do rect object-fit. */
-      const useDirectNdc = Math.abs(aspectFit - aspectVid) < 0.006;
+      /** `video.client*` alinha ao rect desenhado do elemento (object-fit), como o olho vê o frame. */
+      const dispW = Math.max(1, video.clientWidth || arFit.clientWidth || vw);
+      const dispH = Math.max(1, video.clientHeight || arFit.clientHeight || vh);
+      const r = getObjectFitContainRect(dispW, dispH, vw, vh);
       const xn = normX(p.x);
-      let ndcX;
-      let ndcY;
-      if (useDirectNdc) {
-        ndcX = xn * 2 - 1;
-        ndcY = -(p.y * 2 - 1);
-      } else {
-        const r = getObjectFitContainRect(dispW, dispH, vw, vh);
-        const bx = r.ox + xn * r.drawW;
-        const by = r.oy + p.y * r.drawH;
-        const bufX = (bx / dispW) * vw;
-        const bufY = (by / dispH) * vh;
-        ndcX = (bufX / vw) * 2 - 1;
-        ndcY = -((bufY / vh) * 2 - 1);
-      }
+      const bx = r.ox + xn * r.drawW;
+      const by = r.oy + p.y * r.drawH;
+      const bufX = (bx / dispW) * vw;
+      const bufY = (by / dispH) * vh;
+      const ndcX = (bufX / vw) * 2 - 1;
+      const ndcY = -((bufY / vh) * 2 - 1);
       arRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
       const hit = arRaycaster.ray.intersectPlane(arFacePlane, arHit);
       if (hit == null) {
@@ -1224,6 +1264,7 @@ async function runArSession({
     function frame() {
       raf = requestAnimationFrame(frame);
       if (!landmarker || !video.videoWidth) {
+        syncVideoBackgroundPlane();
         renderer.render(scene, camera);
         return;
       }
@@ -1244,6 +1285,7 @@ async function runArSession({
         renderer.setSize(vwF, vhF, false);
         camera.aspect = vwF / vhF;
         camera.updateProjectionMatrix();
+        syncVideoBackgroundPlane();
       }
       const ts =
         typeof video.currentTime === "number" && Number.isFinite(video.currentTime)
@@ -1253,6 +1295,7 @@ async function runArSession({
       if (!res.faceLandmarks || !res.faceLandmarks[0]) {
         faceRoot.visible = false;
         resetFaceRootTransform();
+        syncVideoBackgroundPlane();
         renderer.render(scene, camera);
         return;
       }
@@ -1271,6 +1314,7 @@ async function runArSession({
       // #endregion
       faceRoot.visible = ok;
       if (!ok) resetFaceRootTransform();
+      syncVideoBackgroundPlane();
       renderer.render(scene, camera);
     }
     raf = requestAnimationFrame(frame);

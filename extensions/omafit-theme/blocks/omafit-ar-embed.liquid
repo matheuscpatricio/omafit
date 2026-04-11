@@ -78,6 +78,8 @@
     data-ar-pose-source="{{ block.settings.ar_pose_source | default: '' | strip | escape }}"
     data-ar-pose-basis="{{ block.settings.ar_pose_basis | default: '' | strip | escape }}"
     data-ar-mp-matrix-notranspose="{{ block.settings.ar_mp_matrix_notranspose | default: '' | strip | escape }}"
+    data-ar-pose-corr-yxz="{{ block.settings.ar_pose_corr_yxz | default: '' | strip | escape }}"
+    data-ar-flip-ipd-axis="{{ block.settings.ar_flip_ipd_axis | default: '' | strip | escape }}"
   ></div>
   {% comment %} block.id + now quebram cache CDN/browser para o JS AR. {% endcomment %}
   <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
@@ -119,7 +121,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Pose por defeito: landmarks + makeBasis (coerente com raycast). pose-source=matrix ativa FaceGeometry (experimental). Renderer/canvas sincronizam com videoWidth/Height. GLB: Euler glbBind."
+      "content": "Entre a cabeça e o GLB: pose-corr YXZ vazio = 0,180,180° (corrige muitos modelos invertidos/de lado). flip-ipd-axis=1 inverte o eixo interpupilar. GLB: Euler glbBind."
     },
     {
       "type": "text",
@@ -150,6 +152,18 @@
       "id": "ar_mp_matrix_notranspose",
       "label": "Matriz MP sem transpor",
       "info": "Vazio = transpor packed (row→column Three). 1 se a rotação com matriz estiver errada. data-ar-mp-matrix-notranspose."
+    },
+    {
+      "type": "text",
+      "id": "ar_pose_corr_yxz",
+      "label": "Euler poseCorr (graus X,Y,Z)",
+      "info": "Entre faceRoot e glbBind. Vazio = 0,180,180. 0,0,0 = desligar. data-ar-pose-corr-yxz."
+    },
+    {
+      "type": "text",
+      "id": "ar_flip_ipd_axis",
+      "label": "Inverter eixo interpupilar",
+      "info": "Vazio = desligado. 1 = canto esquerdo−direito em vez de direito−esquerdo (se o modelo ficar virado para um lado). data-ar-flip-ipd-axis."
     },
     {
       "type": "text",

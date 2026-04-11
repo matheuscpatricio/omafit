@@ -932,6 +932,16 @@ async function runArSession({
     glbBind.rotation.set(rad(AR_GLB_BIND_X_DEG), rad(AR_GLB_BIND_Y_DEG), rad(AR_GLB_BIND_Z_DEG));
     glbBind.add(modelFix);
 
+    /**
+     * Corrige referencial cabeça (makeBasis) ↔ GLB exportado: muitos modelos ficam “de lado / invertidos”
+     * sem este offset. Vazio = 0,180,180° YXZ; `data-ar-pose-corr-yxz="0,0,0"` desliga.
+     */
+    const rawPoseCorr = (arCfgRoot?.dataset?.arPoseCorrYxz ? String(arCfgRoot.dataset.arPoseCorrYxz) : "").trim();
+    const poseCorrDeg = parseYxzDegString(rawPoseCorr, 0, 180, 180);
+    const poseCorr = new THREE.Group();
+    poseCorr.rotation.order = "YXZ";
+    poseCorr.rotation.set(rad(poseCorrDeg.x), rad(poseCorrDeg.y), rad(poseCorrDeg.z));
+
     // #region agent log
     __omafitArDbgLog({
       location: "omafit-ar-widget.js:runArSession",
@@ -939,7 +949,8 @@ async function runArSession({
       hypothesisId: "H5",
       data: {
         glbBindYXZdeg: { x: AR_GLB_BIND_X_DEG, y: AR_GLB_BIND_Y_DEG, z: AR_GLB_BIND_Z_DEG },
-        poseMode: "makeBasisDefault+matrixOpt+syncRendererSize+directNdc+raycast+z+pixelRatio1",
+        poseCorrYXZdeg: { x: poseCorrDeg.x, y: poseCorrDeg.y, z: poseCorrDeg.z },
+        poseMode: "poseCorr0180180+makeBasis+matrixOpt+syncRenderer+directNdc+raycast+z",
         modelFixYXZdeg: { x: 0, y: 0, z: 0 },
       },
     });
@@ -947,7 +958,8 @@ async function runArSession({
 
     const faceRoot = new THREE.Group();
     faceRoot.frustumCulled = false;
-    faceRoot.add(glbBind);
+    faceRoot.add(poseCorr);
+    poseCorr.add(glbBind);
     scene.add(faceRoot);
 
     const dirLt = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -985,6 +997,12 @@ async function runArSession({
     function normX(px) {
       return normXMirror ? 1 - px : px;
     }
+
+    /** Inverte eixo interpupilar (133↔362): corrige “virado para um lado” em algumas câmaras. `data-ar-flip-ipd-axis="1"`. */
+    const flipIpdRaw = (arCfgRoot?.dataset?.arFlipIpdAxis ? String(arCfgRoot.dataset.arFlipIpdAxis) : "")
+      .trim()
+      .toLowerCase();
+    const flipIpdAxis = flipIpdRaw === "1" || flipIpdRaw === "true" || flipIpdRaw === "on";
 
     /** Rectângulo object-fit:contain; se o contentor já tem o mesmo aspect que o vídeo, usa tudo (evita offsets por float). */
     function getObjectFitContainRect(containerW, containerH, intrinsicW, intrinsicH) {
@@ -1111,7 +1129,10 @@ async function runArSession({
       if (innerRLm && innerLLm) {
         const pIr = landmarkToWorldOnPlane(innerRLm, useZ);
         const pIl = landmarkToWorldOnPlane(innerLLm, useZ);
-        _xAxis.subVectors(pIr, pIl);
+        if (flipIpdAxis) _xAxis.subVectors(pIl, pIr);
+        else _xAxis.subVectors(pIr, pIl);
+      } else if (flipIpdAxis) {
+        _xAxis.subVectors(pEyeLeft, pEyeRight);
       } else {
         _xAxis.subVectors(pEyeRight, pEyeLeft);
       }

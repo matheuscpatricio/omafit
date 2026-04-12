@@ -24,6 +24,25 @@ const ESM_MINDAR_FACE_THREE = `${ESM_SH}/mind-ar@1.2.5/dist/mindar-face-three.pr
 
 const Z_SHELL = 2147483640;
 
+/**
+ * Evita GLB “preso” em cache (Three.Cache + CDN) quando o URL do ficheiro não muda mas o conteúdo sim.
+ * `data-ar-glb-version` no DOM deve mudar quando o produto é guardado (Liquid).
+ */
+function buildGlbLoaderUrl(baseUrl, version) {
+  const u = String(baseUrl || "").trim();
+  const v = String(version || "").trim();
+  if (!u || !v) return u;
+  try {
+    const abs = typeof location !== "undefined" ? location.href : undefined;
+    const x = new URL(u, abs);
+    x.searchParams.set("omafit_ar_v", v);
+    return x.toString();
+  } catch {
+    const sep = u.includes("?") ? "&" : "?";
+    return `${u}${sep}omafit_ar_v=${encodeURIComponent(v)}`;
+  }
+}
+
 /** Pré-carrega Three + GLTFLoader + MindAR no load da página — evita que o 1.º `await import()` no clique expire o gesto e bloqueie `getUserMedia` no desktop. */
 function getOmafitArModuleBundle() {
   if (typeof window === "undefined") {
@@ -274,6 +293,28 @@ function injectGlobalStyles(root, primaryOverride) {
     .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
     .omafit-ar-try-on-link:focus { outline: 2px solid ${primary}; outline-offset: 2px; }
+    /* Temas que metem × via ::before/::after em <button> — sem isto parecem dois X sobrepostos. */
+    /* `div[role=button]` evita regras globais do tema em `button::before` (X duplicado). */
+    .omafit-ar-shell .omafit-ar-close-btn {
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent !important;
+      background-image: none !important;
+      box-shadow: none !important;
+      font-size: 0;
+      line-height: 0;
+      list-style: none;
+    }
+    .omafit-ar-close-btn::before,
+    .omafit-ar-close-btn::after {
+      content: none !important;
+      display: none !important;
+    }
+    .omafit-ar-close-btn svg {
+      display: block;
+      width: 24px;
+      height: 24px;
+    }
   `;
   document.head.appendChild(s);
   const hasThemeFontFace = document.getElementById("omafit-ar-theme-font-face");
@@ -467,9 +508,11 @@ function buildInfoModal({
   }
 
   const closeBtn = el(
-    "button",
+    "div",
     {
-      type: "button",
+      role: "button",
+      tabIndex: 0,
+      className: "omafit-ar-close-btn",
       title: t.close,
       style: {
         width: "40px",
@@ -482,12 +525,19 @@ function buildInfoModal({
         alignItems: "center",
         justifyContent: "center",
         flexShrink: "0",
+        borderRadius: "8px",
       },
     },
     [svgX()],
   );
   closeBtn.setAttribute("data-omafit-ar-close-modal", "1");
   closeBtn.addEventListener("click", onClose);
+  closeBtn.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      onClose();
+    }
+  });
 
   header.appendChild(leftPad);
   header.appendChild(logoWrap);
@@ -792,13 +842,18 @@ async function runArSession({
   };
 
   const headerClose = header.querySelector("[data-omafit-ar-close-modal]");
-  if (headerClose) {
-    const newBtn = headerClose.cloneNode(true);
-    headerClose.parentNode.replaceChild(newBtn, headerClose);
-    newBtn.addEventListener("click", () => {
-      cleanup();
-      onClose();
-    });
+  if (headerClose && headerClose.dataset.omafitArSessionClose !== "1") {
+    headerClose.dataset.omafitArSessionClose = "1";
+    headerClose.addEventListener(
+      "click",
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cleanup();
+        onClose();
+      },
+      { capture: true },
+    );
   }
 
   try {
@@ -922,10 +977,33 @@ async function runArSession({
     const nScale = Number(scaleMulRaw);
     const modelScaleMul = Number.isFinite(nScale) && nScale > 0 ? nScale : 1;
 
+    const fromDom = (() => {
+      const r = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+      const u = r ? (r.dataset.glbUrl || r.getAttribute("data-glb-url") || "").trim() : "";
+      const v = r
+        ? String(r.dataset.arGlbVersion || r.getAttribute("data-ar-glb-version") || "").trim()
+        : "";
+      return { u, v };
+    })();
+    const sessionGlbUrl = fromDom.u || glbUrl;
+    const glbVersion =
+      fromDom.v ||
+      String(arCfg?.dataset?.arGlbVersion || arCfg?.getAttribute?.("data-ar-glb-version") || "").trim();
+    const glbLoadUrl = buildGlbLoaderUrl(sessionGlbUrl, glbVersion) || sessionGlbUrl;
+
     const loader = new GLTFLoader();
     loader.setCrossOrigin("anonymous");
+    try {
+      if (THREE.Cache && typeof THREE.Cache.remove === "function") {
+        THREE.Cache.remove(glbLoadUrl);
+        THREE.Cache.remove(sessionGlbUrl);
+        THREE.Cache.remove(glbUrl);
+      }
+    } catch {
+      /* ignore */
+    }
     const gltf = await new Promise((resolve, reject) => {
-      loader.load(glbUrl, resolve, undefined, reject);
+      loader.load(glbLoadUrl, resolve, undefined, reject);
     });
     const glasses = gltf.scene;
     if (!(glasses instanceof THREE.Object3D)) {
@@ -1210,22 +1288,40 @@ async function runArSession({
 }
 
 let __omafitArMainStarted = false;
+/** Assinatura glbUrl + versão Liquid; permite reiniciar após `shopify:section:load` ou novo GLB. */
+let __omafitArLastRootSig = "";
 
 async function main() {
   const root = document.getElementById("omafit-ar-root");
   if (!root) return;
-  if (__omafitArMainStarted) return;
-  __omafitArMainStarted = true;
 
   const glbUrl = (
     root.dataset.glbUrl ||
     root.getAttribute("data-glb-url") ||
     ""
   ).trim();
+  const glbVer = String(
+    root.dataset.arGlbVersion || root.getAttribute("data-ar-glb-version") || "",
+  ).trim();
+  const rootSig = `${glbUrl}\n${glbVer}`;
+
+  if (__omafitArMainStarted && __omafitArLastRootSig === rootSig) return;
+
+  if (__omafitArMainStarted && __omafitArLastRootSig !== rootSig) {
+    root.querySelector(".omafit-ar-widget-wrap")?.remove();
+    document.querySelector(".omafit-ar-shell")?.remove();
+    document.getElementById("omafit-ar-styles")?.remove();
+  }
+
   if (!glbUrl) {
     __omafitArMainStarted = false;
+    __omafitArLastRootSig = "";
+    disconnectArRootObserver();
     return;
   }
+
+  __omafitArMainStarted = true;
+  __omafitArLastRootSig = rootSig;
 
   const adminBrand = await waitForOmafitWidgetAdminBranding();
   const primaryColor =
@@ -1338,6 +1434,8 @@ async function main() {
       openModal();
     });
   }
+
+  ensureArRootDomObserver();
 }
 
 function hasArGlbUrlQueryParam() {
@@ -1352,10 +1450,69 @@ function hasArGlbUrlQueryParam() {
   }
 }
 
+let __omafitArSectionTimer;
+
+let __omafitArRootObserver = null;
+let __omafitArDomMutationTimer = 0;
+
+function disconnectArRootObserver() {
+  if (__omafitArRootObserver) {
+    __omafitArRootObserver.disconnect();
+    __omafitArRootObserver = null;
+  }
+}
+
+/** Quando o Liquid/JS actualiza `data-glb-url` ou `data-ar-glb-version` sem reload completo. */
+function ensureArRootDomObserver() {
+  if (typeof MutationObserver === "undefined" || typeof document === "undefined") return;
+  const root = document.getElementById("omafit-ar-root");
+  if (!root) return;
+  disconnectArRootObserver();
+  __omafitArRootObserver = new MutationObserver(() => {
+    window.clearTimeout(__omafitArDomMutationTimer);
+    __omafitArDomMutationTimer = window.setTimeout(() => {
+      const r = document.getElementById("omafit-ar-root");
+      if (!r) return;
+      const g = (r.dataset.glbUrl || r.getAttribute("data-glb-url") || "").trim();
+      const v = String(r.dataset.arGlbVersion || r.getAttribute("data-ar-glb-version") || "").trim();
+      const sig = `${g}\n${v}`;
+      if (!g) return;
+      const hasUi =
+        Boolean(r.querySelector(".omafit-ar-widget-wrap")) ||
+        Boolean(document.querySelector(".omafit-ar-shell"));
+      if (sig === __omafitArLastRootSig && hasUi) return;
+      __omafitArMainStarted = false;
+      r.querySelector(".omafit-ar-widget-wrap")?.remove();
+      document.querySelector(".omafit-ar-shell")?.remove();
+      startOmafitAr().catch(() => {});
+    }, 180);
+  });
+  __omafitArRootObserver.observe(root, {
+    attributes: true,
+    attributeFilter: ["data-glb-url", "data-ar-glb-version"],
+  });
+}
+
 function startOmafitAr() {
   return main().catch((e) => {
     console.error("[omafit-ar]", e);
     __omafitArMainStarted = false;
+    __omafitArLastRootSig = "";
+  });
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("shopify:section:load", () => {
+    window.clearTimeout(__omafitArSectionTimer);
+    __omafitArSectionTimer = window.setTimeout(() => {
+      const r = document.getElementById("omafit-ar-root");
+      const g = r && (r.dataset.glbUrl || r.getAttribute("data-glb-url") || "").trim();
+      if (!r || !g) return;
+      __omafitArMainStarted = false;
+      r.querySelector(".omafit-ar-widget-wrap")?.remove();
+      document.querySelector(".omafit-ar-shell")?.remove();
+      startOmafitAr().catch(() => {});
+    }, 160);
   });
 }
 

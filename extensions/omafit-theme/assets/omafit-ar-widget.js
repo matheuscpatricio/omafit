@@ -24,6 +24,24 @@ const ESM_MINDAR_FACE_THREE = `${ESM_SH}/mind-ar@1.2.5/dist/mindar-face-three.pr
 
 const Z_SHELL = 2147483640;
 
+/** Pré-carrega Three + GLTFLoader + MindAR no load da página — evita que o 1.º `await import()` no clique expire o gesto e bloqueie `getUserMedia` no desktop. */
+function getOmafitArModuleBundle() {
+  if (typeof window === "undefined") {
+    return Promise.all([import(ESM_THREE_MJS), import(ESM_GLTF_MIND), import(ESM_MINDAR_FACE_THREE)]);
+  }
+  if (!window.__omafitArModuleBundlePromise) {
+    window.__omafitArModuleBundlePromise = Promise.all([
+      import(ESM_THREE_MJS),
+      import(ESM_GLTF_MIND),
+      import(ESM_MINDAR_FACE_THREE),
+    ]).catch((e) => {
+      window.__omafitArModuleBundlePromise = null;
+      throw e;
+    });
+  }
+  return window.__omafitArModuleBundlePromise;
+}
+
 // #region agent log
 /** Ativa com `window.__OMAFIT_AR_DEBUG_LOG__ = true` antes de abrir o AR (ingest local opcional). */
 function __omafitArDbgLog(payload) {
@@ -73,6 +91,8 @@ const COPY = {
     errFace: "Não foi possível carregar a detecção facial.",
     errGlb: "Não foi possível carregar o modelo 3D (GLB). Verifique se o ficheiro está público e acessível.",
     errGeneric: "AR indisponível neste dispositivo.",
+    errHttps: "Abre a loja em HTTPS (ou localhost). Sem contexto seguro o browser não pede a câmera.",
+    errMediaDevices: "Este browser não expõe a câmera aqui. Experimenta Chrome/Edge actualizado ou outro perfil.",
   },
   en: {
     title: "AR eyewear try-on",
@@ -88,6 +108,8 @@ const COPY = {
     errFace: "Could not load face detection.",
     errGlb: "Could not load the 3D model (GLB). Check that the file is public and reachable.",
     errGeneric: "AR unavailable on this device.",
+    errHttps: "Open the store over HTTPS (or localhost). Without a secure context the browser won't prompt for the camera.",
+    errMediaDevices: "This browser doesn't expose the camera here. Try an updated Chrome/Edge or another profile.",
   },
   es: {
     title: "Probador AR de gafas",
@@ -103,6 +125,8 @@ const COPY = {
     errFace: "No se pudo cargar la detección facial.",
     errGlb: "No se pudo cargar el modelo 3D (GLB). Comprueba que el archivo sea público y accesible.",
     errGeneric: "AR no disponible en este dispositivo.",
+    errHttps: "Abre la tienda en HTTPS (o localhost). Sin contexto seguro el navegador no pedirá la cámara.",
+    errMediaDevices: "Este navegador no expone la cámara aquí. Prueba Chrome/Edge actualizado u otro perfil.",
   },
 };
 
@@ -701,11 +725,7 @@ async function runArSession({
   }
 
   try {
-    const [threeMod, gltfModule, mindFaceMod] = await Promise.all([
-      import(ESM_THREE_MJS),
-      import(ESM_GLTF_MIND),
-      import(ESM_MINDAR_FACE_THREE),
-    ]);
+    const [threeMod, gltfModule, mindFaceMod] = await getOmafitArModuleBundle();
     const THREE =
       threeMod.default && typeof threeMod.default.Group === "function" ? threeMod.default : threeMod;
     const { GLTFLoader } = gltfModule;
@@ -766,6 +786,37 @@ async function runArSession({
         "[omafit-ar] O grupo da âncora MindAR não é instanceof THREE.Group deste bundle — possível segundo runtime de three; o modelo pode ficar torto ou invisível.",
       );
     }
+
+    /**
+     * `getUserMedia` tem de correr ainda dentro do gesto do utilizador (clique “Começar AR”).
+     * Antes o `start()` vinha depois do download do GLB e o Chrome deixava de mostrar o pedido de permissão no desktop.
+     */
+    if (!window.isSecureContext) {
+      loading.textContent = t.errHttps || t.errGeneric;
+      throw new Error("omafit-ar: contexto não seguro (HTTPS).");
+    }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      loading.textContent = t.errMediaDevices || t.errGeneric;
+      throw new Error("omafit-ar: mediaDevices/getUserMedia indisponível.");
+    }
+
+    arResizeObserver = new ResizeObserver(() => {
+      try {
+        window.dispatchEvent(new Event("resize"));
+      } catch {
+        /* ignore */
+      }
+    });
+    arResizeObserver.observe(arWrap);
+    requestAnimationFrame(() => {
+      try {
+        window.dispatchEvent(new Event("resize"));
+      } catch {
+        /* ignore */
+      }
+    });
+
+    await mindarThree.start();
 
     /**
      * O MindAR já coloca o grupo no referencial do landmark (ex. 168); não usar os Euler por defeito
@@ -951,23 +1002,6 @@ async function runArSession({
     ipdSnap.add(wearAlign);
     anchor.group.add(ipdSnap);
 
-    arResizeObserver = new ResizeObserver(() => {
-      try {
-        window.dispatchEvent(new Event("resize"));
-      } catch {
-        /* ignore */
-      }
-    });
-    arResizeObserver.observe(arWrap);
-    requestAnimationFrame(() => {
-      try {
-        window.dispatchEvent(new Event("resize"));
-      } catch {
-        /* ignore */
-      }
-    });
-
-    await mindarThree.start();
     const { renderer, scene, camera } = mindarThree;
     let didFaceScaleBlend = false;
     const useFs = /^1|true|on$/i.test(
@@ -1056,7 +1090,13 @@ async function runArSession({
     const isGlb =
       /glb|gltf|fetch|load|404|403|network|failed to fetch|http/i.test(msg) &&
       !/face|landmarker|wasm|vision|tensorflow|mind|tfjs|facemesh/i.test(msg);
-    loading.textContent = isCam ? t.errCamera : isGlb ? t.errGlb : t.errFace;
+    if (/omafit-ar: contexto não seguro|insecure context/i.test(msg)) {
+      loading.textContent = t.errHttps || t.errGeneric;
+    } else if (/mediaDevices|getUserMedia/i.test(msg)) {
+      loading.textContent = t.errMediaDevices || t.errGeneric;
+    } else {
+      loading.textContent = isCam ? t.errCamera : isGlb ? t.errGlb : t.errFace;
+    }
     cleanup();
   }
 }
@@ -1113,6 +1153,7 @@ async function main() {
   // #endregion
 
   injectGlobalStyles(root);
+  getOmafitArModuleBundle().catch(() => {});
 
   let modal = null;
 

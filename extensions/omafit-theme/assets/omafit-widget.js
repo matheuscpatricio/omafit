@@ -124,6 +124,33 @@
   // Configuração global (será preenchida pela API)
   let OMAFIT_CONFIG = null;
 
+  /** Expõe cor / texto / logo do admin no #omafit-widget-root para o MindAR (omafit-ar-widget.js) ler. */
+  function syncAdminBrandingToWidgetRoot(cfg) {
+    try {
+      if (!cfg) return;
+      var el = document.getElementById('omafit-widget-root');
+      if (!el) return;
+      var primary =
+        (cfg.colors && (cfg.colors.primary || cfg.colors.text)) || '#810707';
+      primary = String(primary || '').trim() || '#810707';
+      var link = String(cfg.linkText || '').trim() || 'Experimentar virtualmente';
+      var raw = cfg.storeLogo != null ? String(cfg.storeLogo).trim() : '';
+      var logo = '';
+      if (raw && /^https?:\/\//i.test(raw)) logo = raw;
+      el.setAttribute('data-omafit-admin-primary', primary);
+      el.setAttribute('data-omafit-admin-link-text', link);
+      if (logo) el.setAttribute('data-omafit-admin-store-logo', logo);
+      else el.removeAttribute('data-omafit-admin-store-logo');
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(
+          new CustomEvent('omafit:widget-config', {
+            detail: { primary: primary, linkText: link, storeLogo: logo },
+          })
+        );
+      }
+    } catch (e) {}
+  }
+
   // Carregar fontes do Google Fonts apenas quando o modal for aberto (evita bloquear carregamento inicial)
   const fontsToLoad = [
     'Outfit:wght@100..900',
@@ -1487,7 +1514,8 @@
     }
 
     OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
-    
+    syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
+
     console.log('📦 OMAFIT_CONFIG antes de abrir modal:', OMAFIT_CONFIG);
 
     const productImage = getProductImageFromPage();
@@ -1568,11 +1596,17 @@
       return detectedFontFamily;
     }
 
+    var widgetRootBrand = document.getElementById('omafit-widget-root');
+    var widgetAdminLogo =
+      widgetRootBrand && widgetRootBrand.getAttribute('data-omafit-admin-store-logo')
+        ? String(widgetRootBrand.getAttribute('data-omafit-admin-store-logo')).trim()
+        : '';
     var arRootForBranding = document.getElementById('omafit-ar-root');
     var arLogoFromDom =
-      arRootForBranding && arRootForBranding.dataset && arRootForBranding.dataset.storeLogo
+      widgetAdminLogo ||
+      (arRootForBranding && arRootForBranding.dataset && arRootForBranding.dataset.storeLogo
         ? String(arRootForBranding.dataset.storeLogo).trim()
-        : '';
+        : '');
     var arFontFromDom =
       arRootForBranding && arRootForBranding.dataset && arRootForBranding.dataset.fontFamily
         ? String(arRootForBranding.dataset.fontFamily).trim()
@@ -2822,6 +2856,7 @@
         shopDomain: ''
       };
     }
+    syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
 
     // Verificar se já existe um link Omafit (evitar duplicatas)
     if (document.querySelector('.omafit-try-on-link')) {
@@ -3028,6 +3063,7 @@
       }
 
       OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
+      syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
 
       console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
 
@@ -3066,6 +3102,7 @@
         if (OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false) {
           insertOmafitLinkUnderAddToCart();
         }
+        syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
       } catch (err) {
         console.error('❌ Erro crítico ao inserir widget:', err);
       }

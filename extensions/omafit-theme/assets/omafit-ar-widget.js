@@ -1,5 +1,5 @@
 /**
- * Omafit AR óculos — mesma hierarquia visual da etapa "info" do TryOnWidget + link como omafit-widget.js.
+ * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
  * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js), como o try-on oficial.
  * @see https://github.com/hiukim/mind-ar-js
  * @see https://hiukim.github.io/mind-ar-js-doc/face-tracking-examples/tryon
@@ -173,16 +173,93 @@ function resolveArFontFamilyStack(root) {
   return "";
 }
 
-function injectGlobalStyles(root) {
+/**
+ * Cor / texto / logo vêm do admin (omafit-widget.js → data-omafit-admin-* no #omafit-widget-root).
+ * O módulo AR pode arrancar antes do defer do widget; espera até timeout ou evento `omafit:widget-config`.
+ */
+function readWidgetRootAdminBranding() {
+  const el = typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
+  if (!el) return null;
+  const primary = (el.getAttribute("data-omafit-admin-primary") || "").trim();
+  const linkText = (el.getAttribute("data-omafit-admin-link-text") || "").trim();
+  const storeLogo = (el.getAttribute("data-omafit-admin-store-logo") || "").trim();
+  if (!primary && !linkText && !storeLogo) return null;
+  return {
+    primary: primary || "#810707",
+    linkText: linkText || "Experimentar virtualmente",
+    storeLogo: storeLogo || "",
+  };
+}
+
+function waitForOmafitWidgetAdminBranding(maxMs = 8000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (v) => {
+      if (settled) return;
+      settled = true;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("omafit:widget-config", onEvt);
+      }
+      resolve(v);
+    };
+    const onEvt = () => {
+      const b = readWidgetRootAdminBranding();
+      settle(
+        b || {
+          primary: "#810707",
+          linkText: "Experimentar virtualmente",
+          storeLogo: "",
+        }
+      );
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("omafit:widget-config", onEvt, { passive: true });
+    }
+    const first = readWidgetRootAdminBranding();
+    if (first && first.primary) {
+      settle(first);
+      return;
+    }
+    const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const loop = () => {
+      const b = readWidgetRootAdminBranding();
+      if (b && b.primary) {
+        settle(b);
+        return;
+      }
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (now - t0 >= maxMs) {
+        settle(
+          b || {
+            primary: "#810707",
+            linkText: "Experimentar óculos (AR)",
+            storeLogo: "",
+          }
+        );
+        return;
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+}
+
+function injectGlobalStyles(root, primaryOverride) {
   const old = document.getElementById("omafit-ar-styles");
   if (old) old.remove();
 
   const rawFont = resolveArFontFamilyStack(root);
   const stack = formatCssFontFamilyStack(rawFont);
   const appliedStack = stack || "'Outfit', system-ui, sans-serif";
+  const fromOverride =
+    typeof primaryOverride === "string" && primaryOverride.trim()
+      ? primaryOverride.trim()
+      : "";
   const primary =
-    (root?.dataset?.primaryColor || root?.style?.getPropertyValue("--omafit-ar-primary") || "#810707")
-      .trim()
+    (fromOverride ||
+      (root?.dataset?.primaryColor || "").trim() ||
+      root?.style?.getPropertyValue("--omafit-ar-primary") ||
+      "#810707")
       .replace(/[<>]/g, "") || "#810707";
 
   const s = document.createElement("style");
@@ -933,7 +1010,7 @@ async function runArSession({
     const glbBind = new GroupCtor();
     glbBind.rotation.order = "YXZ";
     glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
-    /** Posição GLB: bloco «Omafit embed» (#omafit-widget-root) tem prioridade; depois #omafit-ar-root (legado). */
+    /** Posição GLB: #omafit-widget-root tem prioridade; depois #omafit-ar-root. */
     const wearPosRaw = (
       (embedCfg?.dataset?.arMindarWearPosition ? String(embedCfg.dataset.arMindarWearPosition) : "").trim() ||
       (arCfg?.dataset?.arMindarWearPosition ? String(arCfg.dataset.arMindarWearPosition) : "").trim()
@@ -946,7 +1023,7 @@ async function runArSession({
     poseCorr.add(glbBind);
 
     /** Euler wear manual (vazio = identidade); eixo largura + espelho X tratam-se em `glbWideAlign` / `mirrorX`. */
-    /** Euler wear: «Omafit embed» (#omafit-widget-root) tem prioridade; depois #omafit-ar-root. */
+    /** Euler wear: #omafit-widget-root tem prioridade; depois #omafit-ar-root. */
     let wearRaw = (
       (embedCfg?.dataset?.arMindarWearYxz ? String(embedCfg.dataset.arMindarWearYxz) : "").trim() ||
       (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim()
@@ -1086,7 +1163,7 @@ async function runArSession({
         mindarWearPositionFrom: (embedCfg?.dataset?.arMindarWearPosition || "").trim()
           ? "omafit-embed"
           : (arCfg?.dataset?.arMindarWearPosition || "").trim()
-            ? "omafit-ar-embed"
+            ? "omafit-ar-root"
             : "none",
         mindarWearYxz: wearDeg,
         mindarWearRawEmpty: wearRaw.length === 0,
@@ -1145,13 +1222,21 @@ async function main() {
     return;
   }
 
-  const primaryColor = root.dataset.primaryColor || "#810707";
+  const adminBrand = await waitForOmafitWidgetAdminBranding();
+  const primaryColor =
+    (adminBrand?.primary || root.dataset.primaryColor || "#810707").trim().replace(/[<>]/g, "") ||
+    "#810707";
   const productTitle = root.dataset.productTitle || "Produto";
   const productImage = root.dataset.productImage || "";
-  let logoUrl = (root.dataset.storeLogo || root.getAttribute("data-store-logo") || "").trim();
+  let logoUrl = (
+    adminBrand?.storeLogo ||
+    (root.dataset.storeLogo || root.getAttribute("data-store-logo") || "").trim()
+  ).trim();
   if (logoUrl.startsWith("//")) logoUrl = `https:${logoUrl}`;
   const shopName = (root.dataset.shopName || root.getAttribute("data-shop-name") || "").trim();
-  const linkText = root.dataset.linkText || "Experimentar óculos (AR)";
+  const linkText =
+    (adminBrand?.linkText || root.dataset.linkText || "Experimentar óculos (AR)").trim() ||
+    "Experimentar óculos (AR)";
   const lang = pickLocale(root.dataset.locale);
   const t = COPY[lang] || COPY.pt;
   const autoOpen =
@@ -1178,7 +1263,7 @@ async function main() {
   });
   // #endregion
 
-  injectGlobalStyles(root);
+  injectGlobalStyles(root, primaryColor);
   getOmafitArModuleBundle().catch(() => {});
 
   let modal = null;

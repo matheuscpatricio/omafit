@@ -74,6 +74,7 @@
     data-locale="{{ locale_code | escape }}"
     data-link-text="{{ block.settings.button_label | escape }}"
     data-ar-glb-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
+    data-ar-model-yxz="{{ block.settings.ar_model_yxz | default: '' | strip | escape }}"
     data-ar-mirror-selfie="{{ block.settings.ar_mirror_selfie | default: '' | strip | escape }}"
     data-ar-scene-x-mirror="{{ block.settings.ar_scene_x_mirror | default: '' | strip | escape }}"
     data-ar-invert-pose-quat="{{ block.settings.ar_invert_pose_quat | default: '' | strip | escape }}"
@@ -132,7 +133,7 @@
     },
     {
       "type": "paragraph",
-      "content": "Motor AR: MindAR.js + Three (hiukim/mind-ar-js). âncora, espelho e escala. Euler glbBind/poseCorr são opcionais (vazio = identidade — o MindAR já alinha ao rosto). Se o GLB ficar “torto”, experimenta Euler wear (YXZ) ou escala por faceScale."
+      "content": "MindAR.js + Three (hiukim/mind-ar-js). Espelho vídeo: `Desligar espelho MindAR` ou, se vazio, `Espelho selfie`. Euler wear/glbBind/poseCorr, espelho X, flip IPD, invert 180° Y e faceScale afinam o GLB."
     },
     {
       "type": "text",
@@ -145,7 +146,7 @@
       "type": "text",
       "id": "ar_mindar_disable_mirror",
       "label": "Desligar espelho selfie (vídeo)",
-      "info": "1 / true / on = sem scaleX(-1) no vídeo (MindAR disableFaceMirror). data-ar-mindar-disable-mirror."
+      "info": "Se preencher, prevalece sobre `Espelho selfie` abaixo. 1/true/on = vídeo sem espelho (MindAR disableFaceMirror). data-ar-mindar-disable-mirror."
     },
     {
       "type": "text",
@@ -156,8 +157,8 @@
     {
       "type": "text",
       "id": "ar_mindar_wear_yxz",
-      "label": "Euler wear (graus YXZ, sob a âncora MindAR)",
-      "info": "Vazio = identidade. Se o export glTF tiver eixos diferentes da âncora, tenta ex.: -90,0,0 ou 0,180,0. data-ar-mindar-wear-yxz."
+      "label": "Euler wear (graus: X, Y, Z — composição YXZ no Three)",
+      "info": "Três números = graus em X, Y e Z (não trocar a ordem dos números). Ex.: 0,180,0 ou -90,0,0. data-ar-mindar-wear-yxz."
     },
     {
       "type": "text",
@@ -183,25 +184,25 @@
     },
     {
       "type": "paragraph",
-      "content": "Opções MediaPipe/VTG abaixo já não se aplicam ao motor MindAR; mantidas por compatibilidade com temas antigos (atributos ignorados pelo script)."
+      "content": "Com MindAR: Euler glbBind/poseCorr, espelho X + flip interpupilar, invert pose quat e espelho selfie (se `desligar espelho MindAR` vazio) aplicam-se ao modelo/vídeo. As opções só MediaPipe (pose-source, matrix, lerp…) ignoram-se."
     },
     {
       "type": "text",
       "id": "ar_mirror_selfie",
-      "label": "Espelho horizontal (landmarks + plano WebGL)",
-      "info": "1 = 1−x nos landmarks e espelha o plano de vídeo no Three (alinhado ao raio). Não usar CSS scaleX no vídeo. data-ar-mirror-selfie."
+      "label": "Espelho selfie (vídeo MindAR)",
+      "info": "Só usado se `Desligar espelho selfie MindAR` estiver vazio. 1/true/on = vídeo espelhado (defeito); 0/false/off = sem espelho. data-ar-mirror-selfie."
     },
     {
       "type": "text",
       "id": "ar_scene_x_mirror",
-      "label": "Inverter eixo X (espelho cena)",
-      "info": "Vazio = desligado (recomendado). 1 = espelhar X no mundo + plano WebGL (só se o óculos ficar do lado errado). data-ar-scene-x-mirror."
+      "label": "Inverter eixo X do modelo (espelho local)",
+      "info": "Vazio = desligado. 1 = scale.x −1 no GLB sob MindAR (orelha/espelhamento lateral errados). No motor antigo VTG tinha outro efeito. data-ar-scene-x-mirror."
     },
     {
       "type": "text",
       "id": "ar_invert_pose_quat",
-      "label": "Inverter quaternion da pose",
-      "info": "Vazio = desligado. 1 / true / on = ligado (só se precisares). data-ar-invert-pose-quat."
+      "label": "Inverter orientação do modelo (180° Y)",
+      "info": "MindAR: rotação 180° em Y no GLB relativamente à âncora (substituto simples do antigo invert quat VTG). data-ar-invert-pose-quat."
     },
     {
       "type": "text",
@@ -243,14 +244,14 @@
     {
       "type": "text",
       "id": "ar_flip_ipd_axis",
-      "label": "Inverter eixo interpupilar",
-      "info": "Vazio = desligado. 1 = canto esquerdo−direito em vez de direito−esquerdo (se o modelo ficar virado para um lado). data-ar-flip-ipd-axis."
+      "label": "Inverter eixo interpupilar (espelho X local)",
+      "info": "MindAR: scale.x −1 no GLB (como inverter lateral); combinado com `Inverter eixo X` duas vezes anulam-se. data-ar-flip-ipd-axis."
     },
     {
       "type": "text",
       "id": "ar_model_yxz",
       "label": "Euler glbBind (graus X,Y,Z)",
-      "info": "Opcional com MindAR: vazio = 0,0,0 (usa a orientação do GLB no landmark). Só preencha se um export concreto precisar de giro extra. data-ar-glb-yxz."
+      "info": "Opcional com MindAR: vazio = identidade. Exporta para data-ar-glb-yxz e data-ar-model-yxz (mesmo valor)."
     }
   ]
 }

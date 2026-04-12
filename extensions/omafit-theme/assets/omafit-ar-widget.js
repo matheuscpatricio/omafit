@@ -25,8 +25,9 @@ const ESM_MINDAR_FACE_THREE = `${ESM_SH}/mind-ar@1.2.5/dist/mindar-face-three.pr
 const Z_SHELL = 2147483640;
 
 // #region agent log
-/** Debug ingest (sessão 8c9070) — não remover até verificação pós-correção. */
+/** Ativa com `window.__OMAFIT_AR_DEBUG_LOG__ = true` antes de abrir o AR (ingest local opcional). */
 function __omafitArDbgLog(payload) {
+  if (typeof window === "undefined" || !window.__OMAFIT_AR_DEBUG_LOG__) return;
   const base = {
     sessionId: "8c9070",
     timestamp: Date.now(),
@@ -712,7 +713,11 @@ async function runArSession({
 
     const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
     const rad = (d) => (d * Math.PI) / 180;
-    function parseYxzDegString(raw, defX, defY, defZ) {
+    /**
+     * Três números em graus: **ângulo em X, ângulo em Y, ângulo em Z** (não “ordem YXZ” dos números).
+     * Em cada `Group` usamos `rotation.order = "YXZ"` (composição Three.js dos três ângulos).
+     */
+    function parseEulerDegComponents(raw, defX, defY, defZ) {
       const str = String(raw || "").trim();
       if (!str) return { x: defX, y: defY, z: defZ };
       const parts = str.split(/[\s,;]+/).map((t) => Number(t.trim()));
@@ -722,8 +727,20 @@ async function runArSession({
 
     const anchorRaw = String(arCfg?.dataset?.arMindarAnchor ?? "168").trim();
     const anchorIndex = Math.max(0, Math.min(477, Math.floor(Number(anchorRaw)) || 168));
-    const noMirrorRaw = String(arCfg?.dataset?.arMindarDisableMirror ?? "").trim().toLowerCase();
-    const disableFaceMirror = noMirrorRaw === "1" || noMirrorRaw === "true" || noMirrorRaw === "on";
+    const mindarDmRaw = String(arCfg?.dataset?.arMindarDisableMirror ?? "").trim();
+    const mindarDmExplicit = mindarDmRaw.length > 0;
+    const mindarDmOff = /^1|true|on$/i.test(mindarDmRaw.toLowerCase());
+    const legacyMsRaw = String(arCfg?.dataset?.arMirrorSelfie ?? "").trim();
+    const legacyMs = legacyMsRaw.toLowerCase();
+    /** MindAR: espelho selfie no vídeo. `ar_mindar_disable_mirror` tem prioridade se preenchido. */
+    let disableFaceMirror = false;
+    if (mindarDmExplicit) {
+      disableFaceMirror = mindarDmOff;
+    } else if (legacyMs === "1" || legacyMs === "true" || legacyMs === "on") {
+      disableFaceMirror = false;
+    } else if (legacyMs === "0" || legacyMs === "false" || legacyMs === "off") {
+      disableFaceMirror = true;
+    }
 
     const fMin = Number(String(arCfg?.dataset?.arMindarFilterMinCf ?? "").trim());
     const fBeta = Number(String(arCfg?.dataset?.arMindarFilterBeta ?? "").trim());
@@ -757,8 +774,8 @@ async function runArSession({
      */
     const rawGlb = (arCfg?.dataset?.arGlbYxz ? String(arCfg.dataset.arGlbYxz) : "").trim();
     const rawModel = (arCfg?.dataset?.arModelYxz ? String(arCfg.dataset.arModelYxz) : "").trim();
-    const glbDeg = parseYxzDegString(rawGlb || rawModel, 0, 0, 0);
-    const poseCorrDeg = parseYxzDegString(
+    const glbDeg = parseEulerDegComponents(rawGlb || rawModel, 0, 0, 0);
+    const poseCorrDeg = parseEulerDegComponents(
       (arCfg?.dataset?.arPoseCorrYxz ? String(arCfg.dataset.arPoseCorrYxz) : "").trim(),
       0,
       0,
@@ -841,11 +858,39 @@ async function runArSession({
      * Ex.: `-90, 0, 0` se o export estiver “de pé” e a âncora esperar outro eixo.
      */
     const wearRaw = (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim();
-    const wearDeg = parseYxzDegString(wearRaw, 0, 0, 0);
+    const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
     const wearAlign = new GroupCtor();
     wearAlign.rotation.order = "YXZ";
     wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
-    wearAlign.add(poseCorr);
+
+    /** Motor VTG: invertia a pose; no MindAR ≈ girar 180° em Y no modelo relativamente à âncora. */
+    const invertQ = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arInvertPoseQuat ?? "").trim().toLowerCase(),
+    );
+    const poseInvert = new GroupCtor();
+    if (invertQ) {
+      poseInvert.rotation.order = "YXZ";
+      poseInvert.rotation.set(0, Math.PI, 0);
+    }
+
+    /**
+     * `data-ar-scene-x-mirror` e `data-ar-flip-ipd-axis`: espelho local em X (produto dos sinais).
+     * Ambos `1` voltam ao +1 (correção dupla).
+     */
+    const sceneXM = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arSceneXMirror ?? "").trim().toLowerCase(),
+    );
+    const flipIpd = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arFlipIpdAxis ?? "").trim().toLowerCase(),
+    );
+    let mirrorSign = 1;
+    if (sceneXM) mirrorSign *= -1;
+    if (flipIpd) mirrorSign *= -1;
+    const mirrorX = new GroupCtor();
+    if (mirrorSign < 0) mirrorX.scale.x = -1;
+    mirrorX.add(poseCorr);
+    poseInvert.add(mirrorX);
+    wearAlign.add(poseInvert);
     anchor.group.add(wearAlign);
 
     arResizeObserver = new ResizeObserver(() => {
@@ -897,9 +942,14 @@ async function runArSession({
       data: {
         anchorIndex,
         disableFaceMirror,
+        mirrorSelfieLegacy: legacyMsRaw || null,
+        mindarDisableMirrorExplicit: mindarDmExplicit,
         glbBindYxz: glbDeg,
         mindarWearYxz: wearDeg,
         useFaceScale: useFs,
+        sceneXMirror: sceneXM,
+        flipIpdAxis: flipIpd,
+        invertPoseQuat: invertQ,
       },
     });
   } catch (e) {

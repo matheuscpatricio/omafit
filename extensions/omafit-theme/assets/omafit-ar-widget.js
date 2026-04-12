@@ -744,6 +744,14 @@ async function runArSession({
       if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return { x: defX, y: defY, z: defZ };
       return { x: parts[0], y: parts[1], z: parts[2] };
     }
+    /** Três números em metros (deslocamento do GLB no espaço local após `glbBind`). */
+    function parseXyzMeters(raw, defX, defY, defZ) {
+      const str = String(raw || "").trim();
+      if (!str) return { x: defX, y: defY, z: defZ };
+      const parts = str.split(/[\s,;]+/).map((t) => Number(t.trim()));
+      if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return { x: defX, y: defY, z: defZ };
+      return { x: parts[0], y: parts[1], z: parts[2] };
+    }
 
     const anchorRaw = String(arCfg?.dataset?.arMindarAnchor ?? "168").trim();
     const anchorIndex = Math.max(0, Math.min(477, Math.floor(Number(anchorRaw)) || 168));
@@ -924,7 +932,12 @@ async function runArSession({
     const glbBind = new GroupCtor();
     glbBind.rotation.order = "YXZ";
     glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
-    glbBind.add(autoOrient);
+    const wearPosRaw = (arCfg?.dataset?.arMindarWearPosition ? String(arCfg.dataset.arMindarWearPosition) : "").trim();
+    const wearPosM = parseXyzMeters(wearPosRaw, 0, 0, 0);
+    const wearPosition = new GroupCtor();
+    wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
+    wearPosition.add(autoOrient);
+    glbBind.add(wearPosition);
     poseCorr.add(glbBind);
 
     /** Euler wear manual (vazio = identidade); eixo largura + espelho X tratam-se em `glbWideAlign` / `mirrorX`. */
@@ -1062,6 +1075,7 @@ async function runArSession({
         mirrorSelfieLegacy: legacyMsRaw || null,
         mindarDisableMirrorExplicit: mindarDmExplicit,
         glbBindYxz: glbDeg,
+        mindarWearPositionM: wearPosM,
         mindarWearYxz: wearDeg,
         mindarWearRawEmpty: wearRaw.length === 0,
         mindarDisableIpdSnap: disableIpdSnap,

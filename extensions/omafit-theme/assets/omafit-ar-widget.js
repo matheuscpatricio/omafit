@@ -1037,8 +1037,24 @@ async function runArSession({
     });
 
     /**
-     * MindAR espera largura da armação ~eixo X da âncora. Muitos GLB (Tripo/canonicalize falhado)
-     * têm a maior extensão em Y (em pé) ou Z; alinhamos antes do bbox para não escalar/centrar torto.
+     * GLBs gerados pela app Omafit já passam por `canonicalizeArEyewearGlbBuffer` (nó `omafit_ar_canonical`).
+     * Aplicar `glbWideAlign` em cima disso duplica a rotação e deixa o modelo “de lado” / invertido no widget.
+     */
+    let hasOmafitCanonicalNode = false;
+    glasses.traverse((obj) => {
+      if (obj && obj.name === "omafit_ar_canonical") hasOmafitCanonicalNode = true;
+    });
+    const skipGlbWideAlignAttr = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arMindarSkipGlbWideAlign ?? "").trim().toLowerCase(),
+    );
+    const skipGlbWideAlign = hasOmafitCanonicalNode || skipGlbWideAlignAttr;
+
+    /** Um frame: materiais/morphs/skin a estabilizar antes do `Box3` (bbox mais fiável no 1.º render). */
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    glasses.updateMatrixWorld(true);
+
+    /**
+     * MindAR espera largura da armação ~eixo X da âncora. Só para GLB **sem** canónico Omafit / sem largura em X.
      */
     const glbWideAlign = new GroupCtor();
     glbWideAlign.rotation.order = "YXZ";
@@ -1048,15 +1064,20 @@ async function runArSession({
     const wx = szPre.x;
     const wy = szPre.y;
     const wz = szPre.z;
-    const wMax = Math.max(wx, wy, wz, 1e-9);
-    /** Margem mais alta: GLBs já canónicos (largura ≈ X) evitam +90° extra que “virava” a armação. */
-    const tol = 1.14;
-    /** Z maior → largura ao longo da profundidade glTF: rodar +90° Y mapeia +Z local → +X. */
-    if (wz > wx * tol && wz >= wy) {
-      glbWideAlign.rotation.y = Math.PI / 2;
-    } else if (wy > wx * tol && wy >= wz) {
-      /** Y maior → armação “em pé”: rodar +90° Z mapeia +Y local → −X (largura no eixo X). */
-      glbWideAlign.rotation.z = Math.PI / 2;
+    /**
+     * Margem alta: GLBs canónicos (largura ≈ X) não devem apanhar rotação extra — evita “virado”/lado.
+     * Sentidos −90° (em vez de +90°) alinham Tripo/Omafit típicos ao eixo X esperado pelo MindAR na âncora 168.
+     */
+    const tol = 1.38;
+    const xAxisAlreadyWidth = wx >= wy && wx >= wz;
+    if (!skipGlbWideAlign && !xAxisAlreadyWidth) {
+      /** Z maior → largura na profundidade: −90° Y mapeia +Z local → +X (referencial rosto). */
+      if (wz > wx * tol && wz >= wy) {
+        glbWideAlign.rotation.y = -Math.PI / 2;
+      } else if (wy > wx * tol && wy >= wz) {
+        /** Y maior (armação “em pé”): −90° Z alinha largura ao eixo X sem inclinar para a “esquerda”. */
+        glbWideAlign.rotation.z = -Math.PI / 2;
+      }
     }
     glbWideAlign.add(glasses);
 
@@ -1190,6 +1211,7 @@ async function runArSession({
     renderer.setAnimationLoop(() => {
       const estLoop =
         typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
+      /** Até haver `metricLandmarks`, `ipdSnap.quaternion` fica identidade — 1–2 frames podem parecer “desalinhados”. */
       if (!disableIpdSnap) {
         const ml = estLoop && estLoop.metricLandmarks;
         const fm = estLoop && estLoop.faceMatrix;
@@ -1257,6 +1279,9 @@ async function runArSession({
           y: glbWideAlign.rotation.y,
           z: glbWideAlign.rotation.z,
         },
+        hasOmafitCanonicalNode,
+        skipGlbWideAlign,
+        xAxisAlreadyWidth,
         glbPreBboxSize: { x: wx, y: wy, z: wz },
         useFaceScale: useFs,
         sceneXMirror: sceneXM,

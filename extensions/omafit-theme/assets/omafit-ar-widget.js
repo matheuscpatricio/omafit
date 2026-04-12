@@ -865,6 +865,14 @@ async function runArSession({
 
     const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
     const embedCfg = typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
+    /** Valor não vazio em `#omafit-widget-root` sobrepõe `#omafit-ar-root` (evita só o wear no embed e o resto “partido”). */
+    function cfgAttr(camelKey, fallback = "") {
+      const ek = embedCfg?.dataset?.[camelKey];
+      if (ek !== undefined && String(ek).trim() !== "") return String(ek).trim();
+      const ak = arCfg?.dataset?.[camelKey];
+      if (ak !== undefined && String(ak).trim() !== "") return String(ak).trim();
+      return String(fallback ?? "").trim();
+    }
     const rad = (d) => (d * Math.PI) / 180;
     /**
      * Três números em graus: **ângulo em X, ângulo em Y, ângulo em Z** (não “ordem YXZ” dos números).
@@ -886,12 +894,12 @@ async function runArSession({
       return { x: parts[0], y: parts[1], z: parts[2] };
     }
 
-    const anchorRaw = String(arCfg?.dataset?.arMindarAnchor ?? "168").trim();
+    const anchorRaw = cfgAttr("arMindarAnchor", "168");
     const anchorIndex = Math.max(0, Math.min(477, Math.floor(Number(anchorRaw)) || 168));
-    const mindarDmRaw = String(arCfg?.dataset?.arMindarDisableMirror ?? "").trim();
+    const mindarDmRaw = cfgAttr("arMindarDisableMirror", "");
     const mindarDmExplicit = mindarDmRaw.length > 0;
     const mindarDmOff = /^1|true|on$/i.test(mindarDmRaw.toLowerCase());
-    const legacyMsRaw = String(arCfg?.dataset?.arMirrorSelfie ?? "").trim();
+    const legacyMsRaw = cfgAttr("arMirrorSelfie", "");
     const legacyMs = legacyMsRaw.toLowerCase();
     /** MindAR: espelho selfie no vídeo. `ar_mindar_disable_mirror` tem prioridade se preenchido. */
     let disableFaceMirror = false;
@@ -903,8 +911,8 @@ async function runArSession({
       disableFaceMirror = true;
     }
 
-    const fMin = Number(String(arCfg?.dataset?.arMindarFilterMinCf ?? "").trim());
-    const fBeta = Number(String(arCfg?.dataset?.arMindarFilterBeta ?? "").trim());
+    const fMin = Number(String(cfgAttr("arMindarFilterMinCf", "")).trim());
+    const fBeta = Number(String(cfgAttr("arMindarFilterBeta", "")).trim());
     const mindarOpts = {
       container: mindarHost,
       uiLoading: "no",
@@ -964,16 +972,11 @@ async function runArSession({
      * do antigo modo VTG/MediaPipe — duplicavam correção com GLBs já canonicalizados e “entortavam” no AR.
      * `data-ar-glb-yxz` / `data-ar-model-yxz`: só quando precisares de ajuste fino por export.
      */
-    const rawGlb = (arCfg?.dataset?.arGlbYxz ? String(arCfg.dataset.arGlbYxz) : "").trim();
-    const rawModel = (arCfg?.dataset?.arModelYxz ? String(arCfg.dataset.arModelYxz) : "").trim();
+    const rawGlb = cfgAttr("arGlbYxz", "");
+    const rawModel = cfgAttr("arModelYxz", "");
     const glbDeg = parseEulerDegComponents(rawGlb || rawModel, 0, 0, 0);
-    const poseCorrDeg = parseEulerDegComponents(
-      (arCfg?.dataset?.arPoseCorrYxz ? String(arCfg.dataset.arPoseCorrYxz) : "").trim(),
-      0,
-      0,
-      0,
-    );
-    const scaleMulRaw = String(arCfg?.dataset?.arMindarModelScale ?? "").trim();
+    const poseCorrDeg = parseEulerDegComponents(cfgAttr("arPoseCorrYxz", ""), 0, 0, 0);
+    const scaleMulRaw = cfgAttr("arMindarModelScale", "");
     const nScale = Number(scaleMulRaw);
     const modelScaleMul = Number.isFinite(nScale) && nScale > 0 ? nScale : 1;
 
@@ -1044,9 +1047,7 @@ async function runArSession({
     glasses.traverse((obj) => {
       if (obj && obj.name === "omafit_ar_canonical") hasOmafitCanonicalNode = true;
     });
-    const skipGlbWideAlignAttr = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arMindarSkipGlbWideAlign ?? "").trim().toLowerCase(),
-    );
+    const skipGlbWideAlignAttr = /^1|true|on$/i.test(cfgAttr("arMindarSkipGlbWideAlign", "").toLowerCase());
     const skipGlbWideAlign = hasOmafitCanonicalNode || skipGlbWideAlignAttr;
 
     /** Um frame: materiais/morphs/skin a estabilizar antes do `Box3` (bbox mais fiável no 1.º render). */
@@ -1110,11 +1111,7 @@ async function runArSession({
     const glbBind = new GroupCtor();
     glbBind.rotation.order = "YXZ";
     glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
-    /** Posição GLB: #omafit-widget-root tem prioridade; depois #omafit-ar-root. */
-    const wearPosRaw = (
-      (embedCfg?.dataset?.arMindarWearPosition ? String(embedCfg.dataset.arMindarWearPosition) : "").trim() ||
-      (arCfg?.dataset?.arMindarWearPosition ? String(arCfg.dataset.arMindarWearPosition) : "").trim()
-    );
+    const wearPosRaw = cfgAttr("arMindarWearPosition", "");
     const wearPosM = parseXyzMeters(wearPosRaw, 0, 0, 0);
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
@@ -1124,14 +1121,9 @@ async function runArSession({
 
     /** Euler wear manual (vazio = identidade); eixo largura + espelho X tratam-se em `glbWideAlign` / `mirrorX`. */
     /** Euler wear: #omafit-widget-root tem prioridade; depois #omafit-ar-root. */
-    let wearRaw = (
-      (embedCfg?.dataset?.arMindarWearYxz ? String(embedCfg.dataset.arMindarWearYxz) : "").trim() ||
-      (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim()
-    );
+    const wearRaw = cfgAttr("arMindarWearYxz", "");
     const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
-    const disableIpdSnap = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arMindarDisableIpdSnap ?? "").trim().toLowerCase(),
-    );
+    const disableIpdSnap = /^1|true|on$/i.test(cfgAttr("arMindarDisableIpdSnap", "").toLowerCase());
     const wearAlign = new GroupCtor();
     wearAlign.rotation.order = "YXZ";
     /** Com IPD snap o Euler wear entra no quaternion de `ipdSnap` (evita duplicar rotação). */
@@ -1142,9 +1134,7 @@ async function runArSession({
     }
 
     /** Motor VTG: invertia a pose; no MindAR ≈ girar 180° em Y no modelo relativamente à âncora. */
-    const invertQ = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arInvertPoseQuat ?? "").trim().toLowerCase(),
-    );
+    const invertQ = /^1|true|on$/i.test(cfgAttr("arInvertPoseQuat", "").toLowerCase());
     const poseInvert = new GroupCtor();
     if (invertQ) {
       poseInvert.rotation.order = "YXZ";
@@ -1155,15 +1145,14 @@ async function runArSession({
      * Espelho X: com alinhamento IPD activo o defeito é +1 (o snap corrige o eixo); sem IPD mantém −1 se não `skip-default-x-flip`.
      * `data-ar-scene-x-mirror` / `data-ar-flip-ipd-axis` invertem o sinal (ambos 1 → +1).
      */
-    const skipDefXFlip = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arMindarSkipDefaultXFlip ?? "").trim().toLowerCase(),
-    );
-    const sceneXM = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arSceneXMirror ?? "").trim().toLowerCase(),
-    );
-    const flipIpd = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arFlipIpdAxis ?? "").trim().toLowerCase(),
-    );
+    const skipDefXFlip = /^1|true|on$/i.test(cfgAttr("arMindarSkipDefaultXFlip", "").toLowerCase());
+    const sceneXM = /^1|true|on$/i.test(cfgAttr("arSceneXMirror", "").toLowerCase());
+    const flipIpd = /^1|true|on$/i.test(cfgAttr("arFlipIpdAxis", "").toLowerCase());
+    /**
+     * Troca 33↔263: o vector interpupilar fica oposto; corrige óculos “invertidos” quando
+     * `disableFaceMirror` + `skip-default-x-flip` não coincidem com o referencial do MindAR.
+     */
+    const ipdSwapEnds = /^1|true|on$/i.test(cfgAttr("arIpdSwapEnds", "").toLowerCase());
     /**
      * Com IPD snap o alinhamento quaternion já orienta +X à linha interpupilar; o defeito antigo (+1)
      * deixava alguns GLB canónicos espelhados / “de lado”. −1 alinha ao mesmo referencial que sem IPD.
@@ -1197,17 +1186,15 @@ async function runArSession({
         fm[8] * t[0] + fm[9] * t[1] + fm[10] * t[2] + fm[11],
       );
     }
-    const LM_IPD_A = 33;
-    const LM_IPD_B = 263;
+    const LM_IPD_RIGHT = 33;
+    const LM_IPD_LEFT = 263;
 
     ipdSnap.add(wearAlign);
     anchor.group.add(ipdSnap);
 
     const { renderer, scene, camera } = mindarThree;
     let didFaceScaleBlend = false;
-    const useFs = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arMindarUseFaceScale ?? "").trim().toLowerCase(),
-    );
+    const useFs = /^1|true|on$/i.test(cfgAttr("arMindarUseFaceScale", "").toLowerCase());
     renderer.setAnimationLoop(() => {
       const estLoop =
         typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
@@ -1215,9 +1202,11 @@ async function runArSession({
       if (!disableIpdSnap) {
         const ml = estLoop && estLoop.metricLandmarks;
         const fm = estLoop && estLoop.faceMatrix;
-        if (ml && fm && Array.isArray(ml) && ml.length > LM_IPD_B) {
-          const pA = landmarkWorldPos(fm, LM_IPD_A, ml);
-          const pB = landmarkWorldPos(fm, LM_IPD_B, ml);
+        if (ml && fm && Array.isArray(ml) && ml.length > LM_IPD_LEFT) {
+          const idxA = ipdSwapEnds ? LM_IPD_LEFT : LM_IPD_RIGHT;
+          const idxB = ipdSwapEnds ? LM_IPD_RIGHT : LM_IPD_LEFT;
+          const pA = landmarkWorldPos(fm, idxA, ml);
+          const pB = landmarkWorldPos(fm, idxB, ml);
           if (pA && pB && pA.distanceToSquared(pB) > 1e-12) {
             const vW = pB.clone().sub(pA).normalize();
             anchor.group.updateMatrixWorld(true);
@@ -1265,11 +1254,14 @@ async function runArSession({
         mindarDisableMirrorExplicit: mindarDmExplicit,
         glbBindYxz: glbDeg,
         mindarWearPositionM: wearPosM,
-        mindarWearPositionFrom: (embedCfg?.dataset?.arMindarWearPosition || "").trim()
-          ? "omafit-embed"
-          : (arCfg?.dataset?.arMindarWearPosition || "").trim()
-            ? "omafit-ar-root"
-            : "none",
+        mindarWearPositionFrom: embedCfg?.dataset?.arMindarWearPosition != null &&
+          String(embedCfg.dataset.arMindarWearPosition).trim() !== ""
+          ? "omafit-widget-root"
+          : (arCfg?.dataset?.arMindarWearPosition != null &&
+                String(arCfg.dataset.arMindarWearPosition).trim() !== ""
+              ? "omafit-ar-root"
+              : "none"),
+        ipdSwapEnds,
         mindarWearYxz: wearDeg,
         mindarWearRawEmpty: wearRaw.length === 0,
         mindarDisableIpdSnap: disableIpdSnap,

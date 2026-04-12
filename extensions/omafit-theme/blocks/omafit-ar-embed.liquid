@@ -91,6 +91,7 @@
     data-ar-mindar-wear-yxz="{{ block.settings.ar_mindar_wear_yxz | default: '' | strip | escape }}"
     data-ar-mindar-no-wear-default="{{ block.settings.ar_mindar_no_wear_default | default: '' | strip | escape }}"
     data-ar-mindar-skip-default-x-flip="{{ block.settings.ar_mindar_skip_default_x_flip | default: '' | strip | escape }}"
+    data-ar-mindar-disable-ipd-snap="{{ block.settings.ar_mindar_disable_ipd_snap | default: '' | strip | escape }}"
     data-ar-mindar-use-face-scale="{{ block.settings.ar_mindar_use_face_scale | default: '' | strip | escape }}"
     data-ar-mindar-filter-min-cf="{{ block.settings.ar_mindar_filter_min_cf | default: '' | strip | escape }}"
     data-ar-mindar-filter-beta="{{ block.settings.ar_mindar_filter_beta | default: '' | strip | escape }}"
@@ -135,7 +136,7 @@
     },
     {
       "type": "paragraph",
-      "content": "MindAR.js + Three. O GLB alinha a maior dimensão ao eixo X; espelho X −1 por defeito (desliga com `Sem espelho X por defeito`). Euler wear opcional. Espelho vídeo: Desligar MindAR ou Espelho selfie."
+      "content": "MindAR.js + Three. Por defeito o óculos alinha ao vetor interpupilar (landmarks) em tempo real. `Desligar snap IPD` volta ao modo só Euler/espelho. Espelho vídeo: Desligar MindAR ou Espelho selfie."
     },
     {
       "type": "text",
@@ -166,7 +167,13 @@
       "type": "text",
       "id": "ar_mindar_skip_default_x_flip",
       "label": "Sem espelho X por defeito no modelo",
-      "info": "1/true/on = não aplicar scale.x −1 por defeito (se as orelhas ficarem trocadas após o deploy). data-ar-mindar-skip-default-x-flip."
+      "info": "Só quando `Desligar snap IPD` está ligado. 1/true/on = não aplicar scale.x −1 por defeito. data-ar-mindar-skip-default-x-flip."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_disable_ipd_snap",
+      "label": "Desligar snap IPD (alinhamento automático)",
+      "info": "1/true/on = não alinhar o eixo +X ao segmento olho 33→263 (modo antigo só Euler/espelho). data-ar-mindar-disable-ipd-snap."
     },
     {
       "type": "text",

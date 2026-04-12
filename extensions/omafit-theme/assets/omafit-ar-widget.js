@@ -881,9 +881,17 @@ async function runArSession({
     /** Tema antigo gravava 0,180,180 por defeito — ignorar para não anular o alinhamento automático. */
     if (/^0\s*,\s*180\s*,\s*180\s*$/i.test(wearRaw)) wearRaw = "";
     const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
+    const disableIpdSnap = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arMindarDisableIpdSnap ?? "").trim().toLowerCase(),
+    );
     const wearAlign = new GroupCtor();
     wearAlign.rotation.order = "YXZ";
-    wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
+    /** Com IPD snap o Euler wear entra no quaternion de `ipdSnap` (evita duplicar rotação). */
+    if (disableIpdSnap) {
+      wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
+    } else {
+      wearAlign.rotation.set(0, 0, 0);
+    }
 
     /** Motor VTG: invertia a pose; no MindAR ≈ girar 180° em Y no modelo relativamente à âncora. */
     const invertQ = /^1|true|on$/i.test(
@@ -896,8 +904,8 @@ async function runArSession({
     }
 
     /**
-     * Espelho em X: por defeito −1 (GLB Y-up + vídeo selfie MindAR); anular com `data-ar-mindar-skip-default-x-flip`.
-     * `data-ar-scene-x-mirror` / `data-ar-flip-ipd-axis` multiplicam o sinal (ambos 1 → +1).
+     * Espelho X: com alinhamento IPD activo o defeito é +1 (o snap corrige o eixo); sem IPD mantém −1 se não `skip-default-x-flip`.
+     * `data-ar-scene-x-mirror` / `data-ar-flip-ipd-axis` invertem o sinal (ambos 1 → +1).
      */
     const skipDefXFlip = /^1|true|on$/i.test(
       String(arCfg?.dataset?.arMindarSkipDefaultXFlip ?? "").trim().toLowerCase(),
@@ -908,7 +916,7 @@ async function runArSession({
     const flipIpd = /^1|true|on$/i.test(
       String(arCfg?.dataset?.arFlipIpdAxis ?? "").trim().toLowerCase(),
     );
-    let mirrorSign = skipDefXFlip ? 1 : -1;
+    let mirrorSign = disableIpdSnap ? (skipDefXFlip ? 1 : -1) : 1;
     if (sceneXM) mirrorSign *= -1;
     if (flipIpd) mirrorSign *= -1;
     const mirrorX = new GroupCtor();
@@ -916,7 +924,32 @@ async function runArSession({
     mirrorX.add(poseCorr);
     poseInvert.add(mirrorX);
     wearAlign.add(poseInvert);
-    anchor.group.add(wearAlign);
+
+    /** Alinha +X do modelo ao vetor interpupilar (MediaPipe 468: 33 → 263) no espaço local da âncora. */
+    const ipdSnap = new GroupCtor();
+    ipdSnap.name = "omafit_ipd_snap";
+    const _vX = new THREE.Vector3(1, 0, 0);
+    const _u = new THREE.Vector3();
+    const _invAnchorWorld = new THREE.Matrix4();
+    const _qSnap = new THREE.Quaternion();
+    const _qWear = new THREE.Quaternion();
+    const _eulerWear = new THREE.Euler(0, 0, 0, "YXZ");
+    /** Mesma transl. que `getLandmarkMatrix` do MindAR (coluna de transl., sem escala em t). */
+    function landmarkWorldPos(fm, idx, ml) {
+      if (!fm || !ml || idx < 0 || idx >= ml.length) return null;
+      const t = ml[idx];
+      if (!t || t.length < 3) return null;
+      return new THREE.Vector3(
+        fm[0] * t[0] + fm[1] * t[1] + fm[2] * t[2] + fm[3],
+        fm[4] * t[0] + fm[5] * t[1] + fm[6] * t[2] + fm[7],
+        fm[8] * t[0] + fm[9] * t[1] + fm[10] * t[2] + fm[11],
+      );
+    }
+    const LM_IPD_A = 33;
+    const LM_IPD_B = 263;
+
+    ipdSnap.add(wearAlign);
+    anchor.group.add(ipdSnap);
 
     arResizeObserver = new ResizeObserver(() => {
       try {
@@ -941,9 +974,34 @@ async function runArSession({
       String(arCfg?.dataset?.arMindarUseFaceScale ?? "").trim().toLowerCase(),
     );
     renderer.setAnimationLoop(() => {
+      const estLoop =
+        typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
+      if (!disableIpdSnap) {
+        const ml = estLoop && estLoop.metricLandmarks;
+        const fm = estLoop && estLoop.faceMatrix;
+        if (ml && fm && Array.isArray(ml) && ml.length > LM_IPD_B) {
+          const pA = landmarkWorldPos(fm, LM_IPD_A, ml);
+          const pB = landmarkWorldPos(fm, LM_IPD_B, ml);
+          if (pA && pB && pA.distanceToSquared(pB) > 1e-12) {
+            const vW = pB.clone().sub(pA).normalize();
+            anchor.group.updateMatrixWorld(true);
+            _invAnchorWorld.copy(anchor.group.matrixWorld).invert();
+            const dA = vW.clone().transformDirection(_invAnchorWorld).normalize();
+            if (dA.lengthSq() > 0.04) {
+              _eulerWear.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z), "YXZ");
+              _qWear.setFromEuler(_eulerWear);
+              _u.copy(_vX).applyQuaternion(_qWear);
+              _qSnap.setFromUnitVectors(_u, dA);
+              if (Math.abs(_u.dot(dA) + 1) < 1e-4) {
+                _qSnap.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+              }
+              ipdSnap.quaternion.copy(_qSnap).multiply(_qWear);
+            }
+          }
+        }
+      }
       if (useFs && !didFaceScaleBlend) {
-        const est = typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
-        const fs = est && Number(est.faceScale);
+        const fs = estLoop && Number(estLoop.faceScale);
         if (Number.isFinite(fs) && fs > 1e-6) {
           const md = autoOrient.userData._omafitMaxDim;
           const base = autoOrient.userData._omafitBaseUnitScale;
@@ -972,6 +1030,7 @@ async function runArSession({
         glbBindYxz: glbDeg,
         mindarWearYxz: wearDeg,
         mindarWearRawEmpty: wearRaw.length === 0,
+        mindarDisableIpdSnap: disableIpdSnap,
         mindarSkipDefaultXFlip: skipDefXFlip,
         glbWideAlignRad: {
           x: glbWideAlign.rotation.x,

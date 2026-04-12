@@ -946,9 +946,11 @@ async function runArSession({
     poseCorr.add(glbBind);
 
     /** Euler wear manual (vazio = identidade); eixo largura + espelho X tratam-se em `glbWideAlign` / `mirrorX`. */
-    let wearRaw = (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim();
-    /** Tema antigo gravava 0,180,180 por defeito — ignorar para não anular o alinhamento automático. */
-    if (/^0\s*,\s*180\s*,\s*180\s*$/i.test(wearRaw)) wearRaw = "";
+    /** Euler wear: «Omafit embed» (#omafit-widget-root) tem prioridade; depois #omafit-ar-root. */
+    let wearRaw = (
+      (embedCfg?.dataset?.arMindarWearYxz ? String(embedCfg.dataset.arMindarWearYxz) : "").trim() ||
+      (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim()
+    );
     const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
     const disableIpdSnap = /^1|true|on$/i.test(
       String(arCfg?.dataset?.arMindarDisableIpdSnap ?? "").trim().toLowerCase(),
@@ -1277,6 +1279,10 @@ if (typeof window !== "undefined") {
  */
 function bootOmafitArWidget() {
   if (hasArGlbUrlQueryParam()) return;
+  if (typeof window !== "undefined") {
+    if (window.__OMAFIT_AR_WIDGET_BOOT__) return;
+    window.__OMAFIT_AR_WIDGET_BOOT__ = true;
+  }
   // #region agent log
   const scr =
     typeof document !== "undefined"

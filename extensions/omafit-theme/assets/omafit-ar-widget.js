@@ -971,7 +971,8 @@ async function runArSession({
     const wy = szPre.y;
     const wz = szPre.z;
     const wMax = Math.max(wx, wy, wz, 1e-9);
-    const tol = 1.06;
+    /** Margem mais alta: GLBs já canónicos (largura ≈ X) evitam +90° extra que “virava” a armação. */
+    const tol = 1.14;
     /** Z maior → largura ao longo da profundidade glTF: rodar +90° Y mapeia +Z local → +X. */
     if (wz > wx * tol && wz >= wy) {
       glbWideAlign.rotation.y = Math.PI / 2;
@@ -1064,7 +1065,11 @@ async function runArSession({
     const flipIpd = /^1|true|on$/i.test(
       String(arCfg?.dataset?.arFlipIpdAxis ?? "").trim().toLowerCase(),
     );
-    let mirrorSign = disableIpdSnap ? (skipDefXFlip ? 1 : -1) : 1;
+    /**
+     * Com IPD snap o alinhamento quaternion já orienta +X à linha interpupilar; o defeito antigo (+1)
+     * deixava alguns GLB canónicos espelhados / “de lado”. −1 alinha ao mesmo referencial que sem IPD.
+     */
+    let mirrorSign = disableIpdSnap ? (skipDefXFlip ? 1 : -1) : skipDefXFlip ? 1 : -1;
     if (sceneXM) mirrorSign *= -1;
     if (flipIpd) mirrorSign *= -1;
     const mirrorX = new GroupCtor();

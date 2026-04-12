@@ -89,7 +89,6 @@
     data-ar-mindar-disable-mirror="{{ block.settings.ar_mindar_disable_mirror | default: '' | strip | escape }}"
     data-ar-mindar-model-scale="{{ block.settings.ar_mindar_model_scale | default: '' | strip | escape }}"
     data-ar-mindar-wear-yxz="{{ block.settings.ar_mindar_wear_yxz | default: '' | strip | escape }}"
-    data-ar-mindar-wear-position="{{ block.settings.ar_mindar_wear_position | default: '' | strip | escape }}"
     data-ar-mindar-no-wear-default="{{ block.settings.ar_mindar_no_wear_default | default: '' | strip | escape }}"
     data-ar-mindar-skip-default-x-flip="{{ block.settings.ar_mindar_skip_default_x_flip | default: '' | strip | escape }}"
     data-ar-mindar-disable-ipd-snap="{{ block.settings.ar_mindar_disable_ipd_snap | default: '' | strip | escape }}"
@@ -137,7 +136,7 @@
     },
     {
       "type": "paragraph",
-      "content": "MindAR.js + Three. Por defeito o óculos alinha ao vetor interpupilar (landmarks) em tempo real. `Desligar snap IPD` volta ao modo só Euler/espelho. Espelho vídeo: Desligar MindAR ou Espelho selfie."
+      "content": "Para **mover** o GLB: usa o bloco **Omafit embed** (Posição do óculos AR). Aqui: **rodar** (Euler wear / glbBind), snap IPD, espelho. Snap IPD alinha a largura ao rosto; desliga se quiseres só ajustes manuais."
     },
     {
       "type": "text",
@@ -163,12 +162,6 @@
       "id": "ar_mindar_wear_yxz",
       "label": "Euler wear (graus: X, Y, Z — composição YXZ no Three)",
       "info": "Opcional. Vazio = identidade (o script já roda a malha se a largura não estiver em X e aplica espelho X por defeito). Ex. frente/costas: 0,180,0. data-ar-mindar-wear-yxz."
-    },
-    {
-      "type": "text",
-      "id": "ar_mindar_wear_position",
-      "label": "Posição do óculos (metros X, Y, Z)",
-      "info": "Deslocamento após rotação glbBind (antes do resto da cadeia). Vazio = 0,0,0. Ex.: 0, 0.01, -0.005 (1 cm em Y, −5 mm em Z). data-ar-mindar-wear-position."
     },
     {
       "type": "text",

@@ -732,6 +732,7 @@ async function runArSession({
     const MindARThree = mindFaceMod.MindARThree || mindFaceMod.default;
 
     const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const embedCfg = typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
     const rad = (d) => (d * Math.PI) / 180;
     /**
      * Três números em graus: **ângulo em X, ângulo em Y, ângulo em Z** (não “ordem YXZ” dos números).
@@ -932,7 +933,11 @@ async function runArSession({
     const glbBind = new GroupCtor();
     glbBind.rotation.order = "YXZ";
     glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
-    const wearPosRaw = (arCfg?.dataset?.arMindarWearPosition ? String(arCfg.dataset.arMindarWearPosition) : "").trim();
+    /** Posição GLB: bloco «Omafit embed» (#omafit-widget-root) tem prioridade; depois #omafit-ar-root (legado). */
+    const wearPosRaw = (
+      (embedCfg?.dataset?.arMindarWearPosition ? String(embedCfg.dataset.arMindarWearPosition) : "").trim() ||
+      (arCfg?.dataset?.arMindarWearPosition ? String(arCfg.dataset.arMindarWearPosition) : "").trim()
+    );
     const wearPosM = parseXyzMeters(wearPosRaw, 0, 0, 0);
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
@@ -1076,6 +1081,11 @@ async function runArSession({
         mindarDisableMirrorExplicit: mindarDmExplicit,
         glbBindYxz: glbDeg,
         mindarWearPositionM: wearPosM,
+        mindarWearPositionFrom: (embedCfg?.dataset?.arMindarWearPosition || "").trim()
+          ? "omafit-embed"
+          : (arCfg?.dataset?.arMindarWearPosition || "").trim()
+            ? "omafit-ar-embed"
+            : "none",
         mindarWearYxz: wearDeg,
         mindarWearRawEmpty: wearRaw.length === 0,
         mindarDisableIpdSnap: disableIpdSnap,

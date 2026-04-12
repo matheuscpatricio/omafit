@@ -90,6 +90,7 @@
     data-ar-mindar-model-scale="{{ block.settings.ar_mindar_model_scale | default: '' | strip | escape }}"
     data-ar-mindar-wear-yxz="{{ block.settings.ar_mindar_wear_yxz | default: '' | strip | escape }}"
     data-ar-mindar-no-wear-default="{{ block.settings.ar_mindar_no_wear_default | default: '' | strip | escape }}"
+    data-ar-mindar-skip-default-x-flip="{{ block.settings.ar_mindar_skip_default_x_flip | default: '' | strip | escape }}"
     data-ar-mindar-use-face-scale="{{ block.settings.ar_mindar_use_face_scale | default: '' | strip | escape }}"
     data-ar-mindar-filter-min-cf="{{ block.settings.ar_mindar_filter_min_cf | default: '' | strip | escape }}"
     data-ar-mindar-filter-beta="{{ block.settings.ar_mindar_filter_beta | default: '' | strip | escape }}"
@@ -134,7 +135,7 @@
     },
     {
       "type": "paragraph",
-      "content": "MindAR.js + Three. Euler wear vazio = correção 0,180,180 (Omafit + GLB canonical). `Sem correção wear por defeito` = identidade se wear vazio. Espelho vídeo: Desligar MindAR ou Espelho selfie."
+      "content": "MindAR.js + Three. O GLB alinha a maior dimensão ao eixo X; espelho X −1 por defeito (desliga com `Sem espelho X por defeito`). Euler wear opcional. Espelho vídeo: Desligar MindAR ou Espelho selfie."
     },
     {
       "type": "text",
@@ -159,14 +160,19 @@
       "type": "text",
       "id": "ar_mindar_wear_yxz",
       "label": "Euler wear (graus: X, Y, Z — composição YXZ no Three)",
-      "default": "0, 180, 180",
-      "info": "Vazio no tema = correção Omafit 0,180,180 (frente/trás + roll vs MindAR). Preenche com 0,0,0 para identidade pura. data-ar-mindar-wear-yxz."
+      "info": "Opcional. Vazio = identidade (o script já roda a malha se a largura não estiver em X e aplica espelho X por defeito). Ex. frente/costas: 0,180,0. data-ar-mindar-wear-yxz."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_skip_default_x_flip",
+      "label": "Sem espelho X por defeito no modelo",
+      "info": "1/true/on = não aplicar scale.x −1 por defeito (se as orelhas ficarem trocadas após o deploy). data-ar-mindar-skip-default-x-flip."
     },
     {
       "type": "text",
       "id": "ar_mindar_no_wear_default",
-      "label": "Sem correção wear por defeito (só se wear vazio)",
-      "info": "1/true/on = se Euler wear estiver vazio, usar 0,0,0 em vez de 0,180,180. data-ar-mindar-no-wear-default."
+      "label": "(Legado) Sem correção wear por defeito",
+      "info": "Ignorado pelo script atual; deixa em branco. data-ar-mindar-no-wear-default."
     },
     {
       "type": "text",
@@ -203,8 +209,8 @@
     {
       "type": "text",
       "id": "ar_scene_x_mirror",
-      "label": "Inverter eixo X do modelo (espelho local)",
-      "info": "Vazio = desligado. 1 = scale.x −1 no GLB sob MindAR (orelha/espelhamento lateral errados). No motor antigo VTG tinha outro efeito. data-ar-scene-x-mirror."
+      "label": "Alternar espelho X do modelo",
+      "info": "MindAR: o script já aplica scale.x −1 por defeito; 1/true/on inverte esse sinal (se o lado piorar). Combinado com flip interpupilar, os dois 1 anulam-se. data-ar-scene-x-mirror."
     },
     {
       "type": "text",

@@ -821,8 +821,31 @@ async function runArSession({
       }
     });
 
+    /**
+     * MindAR espera largura da armação ~eixo X da âncora. Muitos GLB (Tripo/canonicalize falhado)
+     * têm a maior extensão em Y (em pé) ou Z; alinhamos antes do bbox para não escalar/centrar torto.
+     */
+    const glbWideAlign = new GroupCtor();
+    glbWideAlign.rotation.order = "YXZ";
+    glasses.updateMatrixWorld(true);
+    const boxPre = new THREE.Box3().setFromObject(glasses);
+    const szPre = boxPre.getSize(new THREE.Vector3());
+    const wx = szPre.x;
+    const wy = szPre.y;
+    const wz = szPre.z;
+    const wMax = Math.max(wx, wy, wz, 1e-9);
+    const tol = 1.06;
+    /** Z maior → largura ao longo da profundidade glTF: rodar +90° Y mapeia +Z local → +X. */
+    if (wz > wx * tol && wz >= wy) {
+      glbWideAlign.rotation.y = Math.PI / 2;
+    } else if (wy > wx * tol && wy >= wz) {
+      /** Y maior → armação “em pé”: rodar +90° Z mapeia +Y local → −X (largura no eixo X). */
+      glbWideAlign.rotation.z = Math.PI / 2;
+    }
+    glbWideAlign.add(glasses);
+
     const autoOrient = new GroupCtor();
-    autoOrient.add(glasses);
+    autoOrient.add(glbWideAlign);
     autoOrient.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(autoOrient);
     /** GLB válido mas sem meshes/POSITION → bbox vazia; evita escala infinita e erro opaco no render. */
@@ -853,22 +876,11 @@ async function runArSession({
     glbBind.add(autoOrient);
     poseCorr.add(glbBind);
 
-    /**
-     * GLB canonicalizado (largura X, Y fina, Z profundidade) + matriz facial MindAR/OpenCV costumam
-     * ficar “de costas” e com roll errado. Correção por defeito (graus X,Y,Z) quando o wear está vazio;
-     * `data-ar-mindar-no-wear-default=1` força identidade; qualquer string no wear substitui o defeito.
-     */
-    const noWearDefault = /^1|true|on$/i.test(
-      String(arCfg?.dataset?.arMindarNoWearDefault ?? "").trim().toLowerCase(),
-    );
-    const OMAFIT_MINDAR_WEAR_DEFAULT_STR = "0, 180, 180";
-    const wearRaw = (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim();
-    const wearDeg = parseEulerDegComponents(
-      wearRaw.length > 0 ? wearRaw : noWearDefault ? "0, 0, 0" : OMAFIT_MINDAR_WEAR_DEFAULT_STR,
-      0,
-      0,
-      0,
-    );
+    /** Euler wear manual (vazio = identidade); eixo largura + espelho X tratam-se em `glbWideAlign` / `mirrorX`. */
+    let wearRaw = (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim();
+    /** Tema antigo gravava 0,180,180 por defeito — ignorar para não anular o alinhamento automático. */
+    if (/^0\s*,\s*180\s*,\s*180\s*$/i.test(wearRaw)) wearRaw = "";
+    const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
     const wearAlign = new GroupCtor();
     wearAlign.rotation.order = "YXZ";
     wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
@@ -884,16 +896,19 @@ async function runArSession({
     }
 
     /**
-     * `data-ar-scene-x-mirror` e `data-ar-flip-ipd-axis`: espelho local em X (produto dos sinais).
-     * Ambos `1` voltam ao +1 (correção dupla).
+     * Espelho em X: por defeito −1 (GLB Y-up + vídeo selfie MindAR); anular com `data-ar-mindar-skip-default-x-flip`.
+     * `data-ar-scene-x-mirror` / `data-ar-flip-ipd-axis` multiplicam o sinal (ambos 1 → +1).
      */
+    const skipDefXFlip = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arMindarSkipDefaultXFlip ?? "").trim().toLowerCase(),
+    );
     const sceneXM = /^1|true|on$/i.test(
       String(arCfg?.dataset?.arSceneXMirror ?? "").trim().toLowerCase(),
     );
     const flipIpd = /^1|true|on$/i.test(
       String(arCfg?.dataset?.arFlipIpdAxis ?? "").trim().toLowerCase(),
     );
-    let mirrorSign = 1;
+    let mirrorSign = skipDefXFlip ? 1 : -1;
     if (sceneXM) mirrorSign *= -1;
     if (flipIpd) mirrorSign *= -1;
     const mirrorX = new GroupCtor();
@@ -957,7 +972,13 @@ async function runArSession({
         glbBindYxz: glbDeg,
         mindarWearYxz: wearDeg,
         mindarWearRawEmpty: wearRaw.length === 0,
-        mindarNoWearDefault: noWearDefault,
+        mindarSkipDefaultXFlip: skipDefXFlip,
+        glbWideAlignRad: {
+          x: glbWideAlign.rotation.x,
+          y: glbWideAlign.rotation.y,
+          z: glbWideAlign.rotation.z,
+        },
+        glbPreBboxSize: { x: wx, y: wy, z: wz },
         useFaceScale: useFs,
         sceneXMirror: sceneXM,
         flipIpdAxis: flipIpd,

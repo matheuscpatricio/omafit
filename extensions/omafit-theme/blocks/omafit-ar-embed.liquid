@@ -89,6 +89,7 @@
     data-ar-mindar-disable-mirror="{{ block.settings.ar_mindar_disable_mirror | default: '' | strip | escape }}"
     data-ar-mindar-model-scale="{{ block.settings.ar_mindar_model_scale | default: '' | strip | escape }}"
     data-ar-mindar-wear-yxz="{{ block.settings.ar_mindar_wear_yxz | default: '' | strip | escape }}"
+    data-ar-mindar-no-wear-default="{{ block.settings.ar_mindar_no_wear_default | default: '' | strip | escape }}"
     data-ar-mindar-use-face-scale="{{ block.settings.ar_mindar_use_face_scale | default: '' | strip | escape }}"
     data-ar-mindar-filter-min-cf="{{ block.settings.ar_mindar_filter_min_cf | default: '' | strip | escape }}"
     data-ar-mindar-filter-beta="{{ block.settings.ar_mindar_filter_beta | default: '' | strip | escape }}"
@@ -133,7 +134,7 @@
     },
     {
       "type": "paragraph",
-      "content": "MindAR.js + Three (hiukim/mind-ar-js). Espelho vídeo: `Desligar espelho MindAR` ou, se vazio, `Espelho selfie`. Euler wear/glbBind/poseCorr, espelho X, flip IPD, invert 180° Y e faceScale afinam o GLB."
+      "content": "MindAR.js + Three. Euler wear vazio = correção 0,180,180 (Omafit + GLB canonical). `Sem correção wear por defeito` = identidade se wear vazio. Espelho vídeo: Desligar MindAR ou Espelho selfie."
     },
     {
       "type": "text",
@@ -158,7 +159,14 @@
       "type": "text",
       "id": "ar_mindar_wear_yxz",
       "label": "Euler wear (graus: X, Y, Z — composição YXZ no Three)",
-      "info": "Três números = graus em X, Y e Z (não trocar a ordem dos números). Ex.: 0,180,0 ou -90,0,0. data-ar-mindar-wear-yxz."
+      "default": "0, 180, 180",
+      "info": "Vazio no tema = correção Omafit 0,180,180 (frente/trás + roll vs MindAR). Preenche com 0,0,0 para identidade pura. data-ar-mindar-wear-yxz."
+    },
+    {
+      "type": "text",
+      "id": "ar_mindar_no_wear_default",
+      "label": "Sem correção wear por defeito (só se wear vazio)",
+      "info": "1/true/on = se Euler wear estiver vazio, usar 0,0,0 em vez de 0,180,180. data-ar-mindar-no-wear-default."
     },
     {
       "type": "text",

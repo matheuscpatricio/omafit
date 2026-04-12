@@ -854,11 +854,21 @@ async function runArSession({
     poseCorr.add(glbBind);
 
     /**
-     * Ajuste opcional GLB→malha MindAR (eixos glTF Y-up vs referencial da âncora). Vazio = identidade.
-     * Ex.: `-90, 0, 0` se o export estiver “de pé” e a âncora esperar outro eixo.
+     * GLB canonicalizado (largura X, Y fina, Z profundidade) + matriz facial MindAR/OpenCV costumam
+     * ficar “de costas” e com roll errado. Correção por defeito (graus X,Y,Z) quando o wear está vazio;
+     * `data-ar-mindar-no-wear-default=1` força identidade; qualquer string no wear substitui o defeito.
      */
+    const noWearDefault = /^1|true|on$/i.test(
+      String(arCfg?.dataset?.arMindarNoWearDefault ?? "").trim().toLowerCase(),
+    );
+    const OMAFIT_MINDAR_WEAR_DEFAULT_STR = "0, 180, 180";
     const wearRaw = (arCfg?.dataset?.arMindarWearYxz ? String(arCfg.dataset.arMindarWearYxz) : "").trim();
-    const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
+    const wearDeg = parseEulerDegComponents(
+      wearRaw.length > 0 ? wearRaw : noWearDefault ? "0, 0, 0" : OMAFIT_MINDAR_WEAR_DEFAULT_STR,
+      0,
+      0,
+      0,
+    );
     const wearAlign = new GroupCtor();
     wearAlign.rotation.order = "YXZ";
     wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
@@ -946,6 +956,8 @@ async function runArSession({
         mindarDisableMirrorExplicit: mindarDmExplicit,
         glbBindYxz: glbDeg,
         mindarWearYxz: wearDeg,
+        mindarWearRawEmpty: wearRaw.length === 0,
+        mindarNoWearDefault: noWearDefault,
         useFaceScale: useFs,
         sceneXMirror: sceneXM,
         flipIpdAxis: flipIpd,

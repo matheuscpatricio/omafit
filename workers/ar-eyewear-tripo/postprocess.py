@@ -271,6 +271,7 @@ def _fix_sign_conventions(scene):
     flip_y = False
     flip_z = False
 
+    # Y-sign signal 1: Z-spread at center band (nose pads protrude more in Z than bridge)
     center_mask = np.abs(verts[:, 0] - cx) < hw * 0.35
     cb = verts[center_mask]
     if len(cb) > 8:
@@ -279,8 +280,20 @@ def _fix_sign_conventions(scene):
         if len(top_c) > 2 and len(bot_c) > 2:
             top_zs = float(top_c[:, 2].max() - top_c[:, 2].min())
             bot_zs = float(bot_c[:, 2].max() - bot_c[:, 2].min())
-            if top_zs > bot_zs * 1.25:
+            if top_zs > bot_zs * 1.08:
                 flip_y = True
+
+    # Y-sign signal 2: X-spread at Y extremes — bridge (top) is narrower
+    # in X than bottom rim; if the top 8% of vertices by Y is wider → upside down
+    if not flip_y and len(verts) > 20:
+        sorted_y = verts[verts[:, 1].argsort()]
+        sn = max(8, int(len(sorted_y) * 0.08))
+        b_slice = sorted_y[:sn]
+        t_slice = sorted_y[-sn:]
+        t_x_sp = float(t_slice[:, 0].max() - t_slice[:, 0].min())
+        b_x_sp = float(b_slice[:, 0].max() - b_slice[:, 0].min())
+        if t_x_sp > b_x_sp * 1.08:
+            flip_y = True
 
     outer_mask = np.abs(verts[:, 0] - cx) > hw * 0.6
     outer = verts[outer_mask]

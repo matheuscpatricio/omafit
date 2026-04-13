@@ -197,6 +197,7 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
     const sHH = (sMaxY - sMinY) / 2;
     const sHD = (sMaxZ - sMinZ) / 2;
     if (sHH > 1e-9 && sHW > 1e-9 && sHD > 1e-9) {
+      // Y-sign signal 1: Z-spread at center band (nose pads protrude more in Z than bridge)
       const cb = rot.filter((p) => Math.abs(p[0]) < sHW * 0.35);
       if (cb.length > 8) {
         const tC = cb.filter((p) => p[1] > 0);
@@ -204,8 +205,19 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
         if (tC.length > 2 && bC.length > 2) {
           const tZS = Math.max(...tC.map((p) => p[2])) - Math.min(...tC.map((p) => p[2]));
           const bZS = Math.max(...bC.map((p) => p[2])) - Math.min(...bC.map((p) => p[2]));
-          if (tZS > bZS * 1.25) signFlipY = true;
+          if (tZS > bZS * 1.08) signFlipY = true;
         }
+      }
+      // Y-sign signal 2: X-spread at Y extremes — bridge (top) is narrower
+      // in X than bottom rim; if the top 8% of vertices by Y is wider → upside down
+      if (!signFlipY && rot.length > 20) {
+        const sortedY = rot.slice().sort((a, b) => a[1] - b[1]);
+        const sn = Math.max(8, Math.floor(sortedY.length * 0.08));
+        const bSlice = sortedY.slice(0, sn);
+        const tSlice = sortedY.slice(sortedY.length - sn);
+        const tXSp = Math.max(...tSlice.map((p) => p[0])) - Math.min(...tSlice.map((p) => p[0]));
+        const bXSp = Math.max(...bSlice.map((p) => p[0])) - Math.min(...bSlice.map((p) => p[0]));
+        if (tXSp > bXSp * 1.08) signFlipY = true;
       }
       const outer = rot.filter((p) => Math.abs(p[0]) > sHW * 0.6);
       if (outer.length > 4) {

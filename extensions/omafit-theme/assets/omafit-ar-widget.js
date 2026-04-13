@@ -1117,6 +1117,7 @@ async function runArSession({
         const sfS = sfB.getSize(new THREE.Vector3());
         const shw = sfS.x / 2, shh = sfS.y / 2, shd = sfS.z / 2;
         if (shh > 1e-6 && shw > 1e-6 && shd > 1e-6) {
+          // Y-sign signal 1: Z-spread at center band (nose pads protrude more in Z than bridge)
           const cb = sfPos.filter((v) => Math.abs(v.x - sfC.x) < shw * 0.35);
           if (cb.length > 8) {
             const tC = cb.filter((v) => v.y > sfC.y);
@@ -1124,8 +1125,19 @@ async function runArSession({
             if (tC.length > 2 && bC.length > 2) {
               const tZS = Math.max(...tC.map((v) => v.z)) - Math.min(...tC.map((v) => v.z));
               const bZS = Math.max(...bC.map((v) => v.z)) - Math.min(...bC.map((v) => v.z));
-              if (tZS > bZS * 1.25) _sfFlipY = true;
+              if (tZS > bZS * 1.08) _sfFlipY = true;
             }
+          }
+          // Y-sign signal 2: X-spread at Y extremes — bridge (top) is narrower
+          // in X than bottom rim; if the top 8% of vertices by Y is wider → upside down
+          if (!_sfFlipY && sfPos.length > 20) {
+            const sortedY = sfPos.slice().sort((a, b) => a.y - b.y);
+            const sn = Math.max(8, Math.floor(sortedY.length * 0.08));
+            const bSlice = sortedY.slice(0, sn);
+            const tSlice = sortedY.slice(sortedY.length - sn);
+            const tXSp = Math.max(...tSlice.map((v) => v.x)) - Math.min(...tSlice.map((v) => v.x));
+            const bXSp = Math.max(...bSlice.map((v) => v.x)) - Math.min(...bSlice.map((v) => v.x));
+            if (tXSp > bXSp * 1.08) _sfFlipY = true;
           }
           const outer = sfPos.filter((v) => Math.abs(v.x - sfC.x) > shw * 0.6);
           if (outer.length > 4) {

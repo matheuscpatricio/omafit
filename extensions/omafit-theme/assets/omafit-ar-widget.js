@@ -1234,6 +1234,9 @@ async function runArSession({
     let mirrorSign = disableIpdSnap ? (skipDefXFlip ? 1 : -1) : skipDefXFlip ? 1 : -1;
     if (sceneXM) mirrorSign *= -1;
     if (flipIpd) mirrorSign *= -1;
+    // 180° X (both Y+Z flip) preserves X, but mirrorX would add an unwanted
+    // X-flip; 180° Y/Z already include an X-flip that cancels mirrorX.
+    if (_sfFlipY && _sfFlipZ && !sfOverride) mirrorSign *= -1;
     const mirrorX = new GroupCtor();
     if (mirrorSign < 0) mirrorX.scale.x = -1;
     mirrorX.add(poseCorr);

@@ -1,34 +1,28 @@
-# Configuração do planHandle para mapeamento correto de planos
+# Plan handles (Shopify Managed Pricing) ↔ app Omafit
 
-Para que o plano escolhido na página da Shopify corresponda ao exibido no dashboard, configure os **plan handles** no Partner Dashboard.
+Configure no [Partner Dashboard](https://partners.shopify.com) → App → **Pricing** / **Managed pricing** um plano por linha com **Plan handle** exatamente como abaixo, para o sync (`billing-sync.server.js`) gravar o `plan` certo no Supabase.
 
-## Onde configurar
+## Planos e preços
 
-1. Acesse o [Shopify Partner Dashboard](https://partners.shopify.com)
-2. Selecione seu app → **Managed pricing** (ou **Pricing**)
-3. Para cada plano, defina o **Plan handle** conforme a tabela abaixo
+| Plano        | Plan handle (recomendado) | Mensal (USD) | Try-ons incluídos | Extra (USD) |
+|-------------|---------------------------|----------------|-------------------|-------------|
+| On-demand   | `ondemand` ou `free`      | $0             | 50 (one-time)     | $0,18       |
+| **Growth**  | **`growth`**              | **$89**        | **700 / mês**     | **$0,12**   |
+| Pro         | `pro`                     | $300           | 3.000 / mês       | $0,08       |
+| **Enterprise** | **`enterprise`**     | **$600**       | Ilimitado*        | $0          |
 
-## Mapeamento recomendado
+\*No Supabase usamos `images_included = 2000000` como teto técnico; a UI mostra “ilimitado”. Não são criados usage charges com preço $0.
 
-| Plano no Dashboard | Plan handle (Partner Dashboard) | Resultado no app |
-|--------------------|----------------------------------|------------------|
-| Free / On-demand   | `free` ou `ondemand`             | On-demand (50 imagens grátis one-time, $0.18/img depois) |
-| Pro                | `pro`                            | Pro (3000 imagens, $0.08/img extra) |
+## Mapeamento no código
 
-## Plan handles aceitos
-
-O app reconhece automaticamente estes plan handles:
-
-- **On-demand**: `free`, `ondemand`, `on-demand`, `basic`, `starter`
-- **Pro**: `pro`, `growth`, `professional`
-
-## Valor recorrente (fallback)
-
-Se o plan handle não estiver configurado, o app usa o valor da assinatura:
-
-- **$0/mês** → On-demand
-- **$300/mês** → Pro
+- `app/billing-plans.server.js` — valores canónicos (Shopify + Supabase).
+- `app/billing-sync.server.js` — resolve `plan` por `planHandle`, nome da assinatura ou valor recorrente ($89 → Growth, $300 → Pro, $600 → Enterprise).
+- `app/shopify-billing.server.js` — leitura normalizada para `billing.guard.js`.
 
 ## Verificação
 
-Após configurar, recarregue o dashboard do app. O plano exibido deve corresponder ao selecionado na Shopify. Os logs do servidor incluem `planHandle` e `resolvedPlan` para debug.
+1. Assine cada plano na loja de teste.
+2. Abra o admin Omafit → Billing (ou `/api/billing/sync`).
+3. No Supabase, `shopify_shops`: `plan`, `images_included`, `price_per_extra_image` devem bater com a tabela acima.
+
+Logs do servidor: `[Billing Sync] Resolved:` com `planHandle`, `recurringAmount`, `resolvedPlan`.

@@ -3,6 +3,8 @@
  * Usado por api.billing.start e app.billing.start.
  */
 
+import { SHOPIFY_PLAN_CONFIG, normalizeShopifyPlanKey } from "./billing-plans.server.js";
+
 const APP_SUBSCRIPTION_CREATE = `#graphql
   mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!) {
     appSubscriptionCreate(name: $name, returnUrl: $returnUrl, lineItems: $lineItems) {
@@ -18,67 +20,33 @@ const APP_SUBSCRIPTION_CREATE = `#graphql
   }
 `;
 
-const PLAN_CONFIG = {
-  ondemand: {
-    name: "Omafit On-demand",
-    amount: 0,
-    currency: "USD",
-    imagesIncluded: 50,
-    pricePerExtra: 0.18,
-    cappedAmount: 1000, // Limite máximo de cobrança por período (USD)
-  },
-  pro: {
-    name: "Omafit Pro",
-    amount: 300,
-    currency: "USD",
-    imagesIncluded: 3000,
-    pricePerExtra: 0.08,
-    cappedAmount: 5000, // Limite máximo de cobrança adicional por período (USD)
-  },
-  // Compatibilidade com nomes antigos
-  starter: {
-    name: "Omafit On-demand",
-    amount: 0,
-    currency: "USD",
-    imagesIncluded: 50,
-    pricePerExtra: 0.18,
-    cappedAmount: 1000,
-  },
-  basic: {
-    name: "Omafit On-demand",
-    amount: 0,
-    currency: "USD",
-    imagesIncluded: 50,
-    pricePerExtra: 0.18,
-    cappedAmount: 1000,
-  },
-};
+const PLAN_CONFIG = SHOPIFY_PLAN_CONFIG;
 
 /**
  * Cria a assinatura na Shopify e retorna a confirmationUrl.
  * @param {{ admin: object, session: { shop: string } }} auth
- * @param {string} planKey - "basic" | "growth" | "pro"
+ * @param {string} planKey - ondemand | growth | pro | enterprise | basic | starter
  * @returns {Promise<{ confirmationUrl: string, plan: string }>}
  */
 export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const { admin, session } = auth;
-  const key = (planKey || "").toLowerCase();
-  const normalizedKey = key === "basic" || key === "starter" ? "ondemand" : key === "growth" ? "pro" : key;
-  if (!["ondemand", "pro"].includes(normalizedKey)) {
-    throw new Response(
-      JSON.stringify({
-        error: normalizedKey === "enterprise" ? "Enterprise plan requires direct contact." : "Invalid plan",
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+  const normalizedKey = normalizeShopifyPlanKey(planKey);
+  if (!["ondemand", "growth", "pro", "enterprise"].includes(normalizedKey)) {
+    throw new Response(JSON.stringify({ error: "Invalid plan" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
   const config = PLAN_CONFIG[normalizedKey];
   const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
   const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
   // Line items: 1) Recurring (base), 2) Usage (appUsagePricingDetails) - obrigatório para appUsageRecordCreate
-  const usageTerms = normalizedKey === "ondemand"
-    ? `$${config.pricePerExtra.toFixed(2)} per image (after 50 free one-time)`
-    : `$${config.pricePerExtra.toFixed(2)} per extra image (after ${config.imagesIncluded} included)`;
+  const usageTerms =
+    normalizedKey === "ondemand"
+      ? `$${config.pricePerExtra.toFixed(2)} per try-on session (after 50 free one-time)`
+      : normalizedKey === "enterprise"
+        ? `Enterprise: unlimited try-on sessions included in the monthly fee ($0 per extra session).`
+        : `$${config.pricePerExtra.toFixed(2)} per extra try-on session (after ${config.imagesIncluded} included per month)`;
   const lineItems = [
     {
       plan: {

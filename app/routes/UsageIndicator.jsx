@@ -12,17 +12,29 @@ export function UsageIndicator({ usage }) {
     return null;
   }
 
-  const { plan, used, included, remaining, percentage, withinLimit, extraImages = 0, pricePerExtra = 0.18 } = usage;
+  const {
+    plan,
+    used,
+    included,
+    remaining,
+    percentage,
+    withinLimit,
+    extraImages = 0,
+    pricePerExtra = 0.18,
+    isEnterprise = false,
+  } = usage;
+
+  const isEnterprisePlan = Boolean(isEnterprise);
 
   let progressColor = 'success';
   let badgeTone = 'success';
-  if (percentage >= 90) {
+  if (!isEnterprisePlan && percentage >= 90) {
     progressColor = 'info';
     badgeTone = 'info';
-  } else if (percentage >= 75) {
+  } else if (!isEnterprisePlan && percentage >= 75) {
     progressColor = 'info';
     badgeTone = 'info';
-  } else if (percentage >= 50) {
+  } else if (!isEnterprisePlan && percentage >= 50) {
     progressColor = 'info';
     badgeTone = 'info';
   }
@@ -30,9 +42,12 @@ export function UsageIndicator({ usage }) {
   const planName = plan && typeof plan === 'string'
     ? plan.charAt(0).toUpperCase() + plan.slice(1)
     : '';
-  const isOnDemand = included === 0;
-  const billableCount = isOnDemand ? used : extraImages;
-  const estimatedCost = billableCount > 0 ? (billableCount * pricePerExtra).toFixed(2) : null;
+  const isOnDemand = included === 0 && !isEnterprisePlan;
+  const billableCount = isEnterprisePlan ? 0 : isOnDemand ? used : extraImages;
+  const estimatedCost =
+    !isEnterprisePlan && billableCount > 0 && pricePerExtra > 0
+      ? (billableCount * pricePerExtra).toFixed(2)
+      : null;
 
   return (
     <Card>
@@ -42,12 +57,16 @@ export function UsageIndicator({ usage }) {
             {t('billing.usageTitle', { plan: planName || '–' })}
           </Text>
           <Badge tone={badgeTone}>
-            {isOnDemand ? t('billing.usagePayPerUse') : t('billing.usagePercentUsed', { percent: percentage.toFixed(1) })}
+            {isEnterprisePlan
+              ? t('billing.usageUnlimitedBadge')
+              : isOnDemand
+                ? t('billing.usagePayPerUse')
+                : t('billing.usagePercentUsed', { percent: percentage.toFixed(1) })}
           </Badge>
         </InlineStack>
 
         <BlockStack gap="200">
-          {!isOnDemand && (
+          {!isOnDemand && !isEnterprisePlan && (
             <ProgressBar
               progress={percentage}
               tone={progressColor}
@@ -56,11 +75,20 @@ export function UsageIndicator({ usage }) {
           )}
           <InlineStack align="space-between">
             <Text variant="bodyMd">
-              {isOnDemand ? t('billing.usageImagesUsedOnDemand', { used }) : t('billing.usageImagesUsed', { used, included })}
+              {isEnterprisePlan
+                ? t('billing.usageEnterpriseSessions', { used })
+                : isOnDemand
+                  ? t('billing.usageImagesUsedOnDemand', { used })
+                  : t('billing.usageImagesUsed', { used, included })}
             </Text>
-            {!isOnDemand && (
+            {!isOnDemand && !isEnterprisePlan && remaining != null && (
               <Text variant="bodyMd" fontWeight="semibold">
                 {t('billing.usageRemaining', { remaining })}
+              </Text>
+            )}
+            {isEnterprisePlan && (
+              <Text variant="bodyMd" fontWeight="semibold">
+                {t('billing.usageRemainingUnlimited')}
               </Text>
             )}
           </InlineStack>
@@ -77,7 +105,7 @@ export function UsageIndicator({ usage }) {
           </InlineStack>
         )}
 
-        {extraImages > 0 && !isOnDemand && (
+        {extraImages > 0 && !isOnDemand && !isEnterprisePlan && (
           <BlockStack gap="200">
             <Card background="bg-surface-info-subdued">
               <BlockStack gap="200">
@@ -101,7 +129,7 @@ export function UsageIndicator({ usage }) {
           </BlockStack>
         )}
 
-        {!withinLimit && extraImages === 0 && (
+        {!withinLimit && extraImages === 0 && !isEnterprisePlan && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="info" fontWeight="semibold">
               {t('billing.usageOverLimit')}
@@ -112,7 +140,7 @@ export function UsageIndicator({ usage }) {
           </BlockStack>
         )}
 
-        {withinLimit && percentage >= 75 && (
+        {withinLimit && !isEnterprisePlan && percentage >= 75 && (
           <BlockStack gap="100">
             <Text variant="bodyMd" tone="warning" fontWeight="semibold">
               {t('billing.usageNearLimit')}

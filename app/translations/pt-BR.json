@@ -277,6 +277,15 @@
     "planProPrice": "$300/mês",
     "planProExtra": "$0,08/sessão de try-on",
     "planProDesc": "3.000 sessões de try-on incluídas. Ideal para lojas com maior volume.",
+    "planGrowthPrice": "$89/mês",
+    "planGrowthExtra": "$0,12/sessão de try-on adicional",
+    "planGrowthDesc": "700 sessões de try-on incluídas por mês. Depois, $0,12 por sessão adicional.",
+    "planEnterprisePrice": "$600/mês",
+    "planEnterpriseExtra": "Incluído (ilimitado)",
+    "planEnterpriseDesc": "Sessões de try-on ilimitadas. Uma taxa mensal fixa para alto volume.",
+    "usageUnlimitedBadge": "Ilimitado",
+    "usageEnterpriseSessions": "{used} sessões de try-on este mês (plano ilimitado)",
+    "usageRemainingUnlimited": "Restantes: ilimitado",
     "unlimited": "Ilimitado*",
     "currentPlanBadge": "Plano atual",
     "imagesIncludedLabel": "Sessões de try-on incluídas:",
@@ -378,6 +387,7 @@
   },
   "plans": {
     "ondemand": "On-demand",
+    "growth": "Growth",
     "pro": "Pro",
     "professional": "Professional",
     "enterprise": "Enterprise"

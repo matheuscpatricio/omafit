@@ -1,8 +1,12 @@
 /**
  * Sincroniza o plano de billing da Shopify com o Supabase.
- * Usado ao carregar o admin e no retorno do billing.
- * Planos: ondemand (50 imagens grátis, $0.18/img extra) | pro (3000 imagens, $0.08/img extra).
+ * Planos: ondemand | growth (700, $0,12) | pro | enterprise (ilimitado, $0 extra).
  */
+import {
+  PLAN_IMAGES,
+  PLAN_PRICE_EXTRA,
+  normalizeShopifyPlanKey,
+} from "./billing-plans.server.js";
 
 const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
   query GetActiveSubscriptions {
@@ -39,6 +43,8 @@ const GET_SHOP_CONTACT = `#graphql
 
 // Ordem importa: mais específicos primeiro
 const PLAN_MATCHERS = [
+  { pattern: "omafit enterprise", plan: "enterprise" },
+  { pattern: "omafit growth", plan: "growth" },
   { pattern: "omafit on-demand", plan: "ondemand" },
   { pattern: "omafit on demand", plan: "ondemand" },
   { pattern: "omafit free", plan: "ondemand" },
@@ -47,11 +53,11 @@ const PLAN_MATCHERS = [
   { pattern: "on demand", plan: "ondemand" },
   { pattern: "free", plan: "ondemand" },
   { pattern: "professional", plan: "pro" },
+  { pattern: "enterprise", plan: "enterprise" },
   { pattern: "pro", plan: "pro" },
-  // Compatibilidade com nomes antigos
+  { pattern: "growth", plan: "growth" },
   { pattern: "starter", plan: "ondemand" },
   { pattern: "basic", plan: "ondemand" },
-  { pattern: "growth", plan: "pro" },
 ];
 
 function resolvePlanFromSubscriptionName(subscriptionName) {
@@ -71,23 +77,29 @@ const PLAN_HANDLE_MAP = {
   basic: "ondemand",
   starter: "ondemand",
   pro: "pro",
-  growth: "pro",
+  growth: "growth",
   professional: "pro",
+  enterprise: "enterprise",
 };
 
 function resolvePlanFromSubscription({ subscriptionName, recurringAmount, planHandle }) {
   // 1) planHandle (Managed Pricing) é a fonte mais confiável
   if (planHandle) {
-    const direct = PLAN_HANDLE_MAP[planHandle];
+    const h = String(planHandle).toLowerCase().trim();
+    const direct = PLAN_HANDLE_MAP[h];
     if (direct) return direct;
-    if (planHandle.includes("free") || planHandle.includes("ondemand")) return "ondemand";
-    if (planHandle.includes("pro") || planHandle.includes("growth")) return "pro";
+    if (h.includes("enterprise")) return "enterprise";
+    if (h.includes("growth")) return "growth";
+    if (h.includes("free") || h.includes("ondemand")) return "ondemand";
+    if (h.includes("pro") || h.includes("professional")) return "pro";
   }
-  // 2) Valor recorrente ($0 = on-demand, $300 = pro)
+  // 2) Valor recorrente (USD / 30 dias)
   const parsedAmount = Number(recurringAmount);
   if (Number.isFinite(parsedAmount)) {
     if (Math.abs(parsedAmount) < 0.01) return "ondemand";
-    if (Math.abs(parsedAmount - 300) < 0.01) return "pro";
+    if (Math.abs(parsedAmount - 89) < 0.5) return "growth";
+    if (Math.abs(parsedAmount - 300) < 0.5) return "pro";
+    if (Math.abs(parsedAmount - 600) < 0.5) return "enterprise";
   }
   // 3) Fallback: nome da subscription
   return resolvePlanFromSubscriptionName(subscriptionName);
@@ -113,24 +125,6 @@ function extractPlanHandleFromSubscription(activeSubscription) {
   }
   return null;
 }
-
-const PLAN_IMAGES = {
-  ondemand: 50,
-  pro: 3000,
-  // Compatibilidade com nomes antigos
-  starter: 50,
-  basic: 50,
-  growth: 3000,
-};
-
-const PLAN_PRICE_EXTRA = {
-  ondemand: 0.18,
-  pro: 0.08,
-  // Compatibilidade com nomes antigos
-  starter: 0.18,
-  basic: 0.18,
-  growth: 0.08,
-};
 
 const SHOP_IDENTIFIER_COLUMNS = ["shop_domain", "shop", "domain"];
 
@@ -448,14 +442,9 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
     return null;
   }
 
-  const normalizedPlan =
-    plan === "basic" || plan === "starter"
-      ? "ondemand"
-      : plan === "growth"
-        ? "pro"
-        : plan || "ondemand";
-  const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? 0;
-  const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? 0.18;
+  const normalizedPlan = normalizeShopifyPlanKey(plan || "ondemand");
+  const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.ondemand;
+  const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.ondemand;
   const binding = await resolveShopUserBinding({
     admin,
     shop,
@@ -538,7 +527,7 @@ export async function syncBillingFromShopify(admin, shop) {
       planHandle,
     });
     // Normaliza nomes antigos para ondemand/pro
-    const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
+    const normalizedPlan = normalizeShopifyPlanKey(plan);
     const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES[plan] ?? 0;
     const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA[plan] ?? 0.18;
 

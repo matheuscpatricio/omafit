@@ -27,6 +27,7 @@ export default function BillingPlans({
       ? plans
       : [
           {
+            planKey: "ondemand",
             name: "On-demand",
             priceKey: "billing.planOndemandPrice",
             imagesIncluded: 50,
@@ -34,11 +35,28 @@ export default function BillingPlans({
             descriptionKey: "billing.planOndemandDesc",
           },
           {
+            planKey: "growth",
+            name: "Growth",
+            priceKey: "billing.planGrowthPrice",
+            imagesIncluded: 700,
+            pricePerExtraKey: "billing.planGrowthExtra",
+            descriptionKey: "billing.planGrowthDesc",
+          },
+          {
+            planKey: "pro",
             name: "Pro",
             priceKey: "billing.planProPrice",
             imagesIncluded: 3000,
             pricePerExtraKey: "billing.planProExtra",
             descriptionKey: "billing.planProDesc",
+          },
+          {
+            planKey: "enterprise",
+            name: "Enterprise",
+            priceKey: "billing.planEnterprisePrice",
+            imagesIncluded: "billing.unlimited",
+            pricePerExtraKey: "billing.planEnterpriseExtra",
+            descriptionKey: "billing.planEnterpriseDesc",
           },
         ];
 
@@ -57,15 +75,13 @@ export default function BillingPlans({
 
       <BlockStack gap="400">
         {effectivePlans.map((plan) => {
-          const planKey = plan.name.toLowerCase().includes("demand") ? "ondemand" : "pro";
+          const planKey = plan.planKey || (plan.name.toLowerCase().includes("demand") ? "ondemand" : "pro");
           const normalizedCurrent = (currentPlan || "").toLowerCase().trim().replace(/-/g, "");
           const isCurrent = Boolean(
             normalizedCurrent &&
               (normalizedCurrent === planKey ||
-                (planKey === "pro" && (normalizedCurrent === "professional" || normalizedCurrent === "pro")))
+                (planKey === "pro" && (normalizedCurrent === "professional" || normalizedCurrent === "pro"))),
           );
-          const isEnterprise = false;
-
           return (
             <Card key={plan.name}>
               <BlockStack gap="400">
@@ -93,7 +109,7 @@ export default function BillingPlans({
                     <strong>{t("billing.imagesIncludedLabel")}</strong>{" "}
                     {typeof plan.imagesIncluded === "number"
                       ? plan.imagesIncluded
-                      : t(plan.imagesIncluded)}
+                      : t(String(plan.imagesIncluded))}
                   </Text>
                   <Text as="p">
                     <strong>{t("billing.pricePerExtraLabel")}</strong>{" "}
@@ -101,15 +117,7 @@ export default function BillingPlans({
                   </Text>
                 </BlockStack>
 
-                {isEnterprise ? (
-                  <Button
-                    variant="primary"
-                    url="mailto:contato@omafit.co"
-                    external
-                  >
-                    {t("billing.contactUs")}
-                  </Button>
-                ) : isCurrent ? (
+                {isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>
                 ) : (
                   <Button

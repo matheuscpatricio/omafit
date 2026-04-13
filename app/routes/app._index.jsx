@@ -288,7 +288,7 @@ export default function DashboardPage() {
       free: 'plans.ondemand',
       basic: 'plans.ondemand',
       starter: 'plans.ondemand',
-      growth: 'plans.pro',
+      growth: 'plans.growth',
       pro: 'plans.pro',
       professional: 'plans.professional',
       enterprise: 'plans.enterprise',

@@ -1,0 +1,25 @@
+-- =============================================================================
+-- Omafit: planos Growth e Enterprise (referência para shopify_shops.plan)
+-- =============================================================================
+-- Não é obrigatório executar isto para o app funcionar: o backend já grava
+-- `plan`, `images_included` e `price_per_extra_image` ao sincronizar com a Shopify.
+--
+-- Valores esperados após sync (Managed Pricing + plan handles corretos):
+--   ondemand   → plan = 'ondemand',   images_included = 50,       price_per_extra_image = 0.18
+--   growth     → plan = 'growth',    images_included = 700,      price_per_extra_image = 0.12
+--   pro        → plan = 'pro',       images_included = 3000,     price_per_extra_image = 0.08
+--   enterprise → plan = 'enterprise', images_included = 2000000, price_per_extra_image = 0
+--
+-- Ajuste manual (ex.: correção pontual no SQL Editor), por loja:
+--   UPDATE shopify_shops
+--   SET plan = 'growth',
+--       images_included = 700,
+--       price_per_extra_image = 0.12,
+--       updated_at = NOW()
+--   WHERE shop_domain = 'sua-loja.myshopify.com';
+--
+-- Opcional: migrar lojas que tinham plano antigo "growth" mapeado para Pro no código legado:
+--   UPDATE shopify_shops SET plan = 'growth', images_included = 700, price_per_extra_image = 0.12
+--   WHERE plan = 'pro' AND images_included = 3000 AND billing_status = 'active'
+--     AND shop_domain IN (...);  -- só se souber que eram Growth na Shopify
+-- =============================================================================

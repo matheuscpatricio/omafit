@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { syncBillingFromShopify, writeBillingToSupabase } from "../billing-sync.server";
+import { normalizeShopifyPlanKey, PLAN_IMAGES, PLAN_PRICE_EXTRA } from "../billing-plans.server.js";
 
 const SHOP_IDENTIFIER_COLUMNS = ["shop_domain", "shop", "domain"];
 
@@ -151,22 +152,19 @@ export const loader = async ({ request }) => {
       }
     }
 
-    // Normaliza planos legados na resposta (basic/starter → ondemand, growth → pro) e images_included
-    // On-demand: 50 imagens grátis ONE-TIME (na criação da conta), free_images_used rastreia consumo
+    // Normaliza aliases legados e garante images_included / price coerentes com o catálogo de planos
     const normalizedShop = shopRow
       ? (() => {
-          const p = String(shopRow.plan || "").toLowerCase();
-          const normPlan = p === "basic" || p === "starter" ? "ondemand" : p === "growth" ? "pro" : shopRow.plan;
-          const normImages =
-            normPlan === "ondemand" ? 50 : normPlan === "pro" ? 3000 : shopRow.images_included;
-          const normPrice =
-            normPlan === "ondemand" ? 0.18 : normPlan === "pro" ? 0.08 : shopRow.price_per_extra_image;
+          const normPlan = normalizeShopifyPlanKey(shopRow.plan);
+          const normImages = PLAN_IMAGES[normPlan] ?? (Number(shopRow.images_included) || 0);
+          const normPrice = PLAN_PRICE_EXTRA[normPlan] ?? Number(shopRow.price_per_extra_image);
           const freeUsed = Number(shopRow.free_images_used) || 0;
           return {
             ...shopRow,
             plan: normPlan,
             images_included: normImages,
-            price_per_extra_image: normPrice ?? (normPlan === "pro" ? 0.08 : 0.18),
+            price_per_extra_image:
+              Number.isFinite(normPrice) && normPrice >= 0 ? normPrice : PLAN_PRICE_EXTRA.ondemand,
             free_images_used: normPlan === "ondemand" ? Math.min(50, freeUsed) : 0,
           };
         })()

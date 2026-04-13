@@ -13,6 +13,7 @@ import {
   PLAN_IMAGES,
   PLAN_PRICE_EXTRA,
 } from "../billing-sync.server";
+import { normalizeShopifyPlanKey } from "../billing-plans.server.js";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
 
@@ -42,12 +43,12 @@ async function tryForcePersistActiveBilling({
     Prefer: "return=representation",
   };
 
-  const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
+  const normalizedPlan = normalizeShopifyPlanKey(plan);
   const payload = {
     plan: normalizedPlan,
     billing_status: "active",
-    images_included: normalizedPlan === "pro" ? 3000 : 50,
-    price_per_extra_image: normalizedPlan === "pro" ? 0.08 : 0.18,
+    images_included: PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.ondemand,
+    price_per_extra_image: PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.ondemand,
     currency: "USD",
     updated_at: new Date().toISOString(),
   };
@@ -155,7 +156,7 @@ export async function loader({ request }) {
             recurringAmount,
             planHandle,
           });
-          const normalizedPlan = plan === "basic" || plan === "starter" ? "ondemand" : plan === "growth" ? "pro" : plan;
+          const normalizedPlan = normalizeShopifyPlanKey(plan);
           const saved = await writeBillingToSupabase(session.shop, {
             plan: normalizedPlan,
             billingStatus: "active",
@@ -285,12 +286,7 @@ export async function loader({ request }) {
                 recurringAmount,
                 planHandle,
               });
-              forcePlan =
-                resolved === "basic" || resolved === "starter"
-                  ? "ondemand"
-                  : resolved === "growth"
-                    ? "pro"
-                    : resolved || "ondemand";
+              forcePlan = normalizeShopifyPlanKey(resolved || "ondemand");
             }
           } catch (forceCheckErr) {
             console.warn("[api.billing.sync] force-check active subscription failed:", forceCheckErr);
@@ -304,13 +300,13 @@ export async function loader({ request }) {
               plan: forcePlan,
             });
             if (forced.ok) {
-              const np = forcePlan === "pro" ? "pro" : "ondemand";
+              const np = normalizeShopifyPlanKey(forcePlan);
               return Response.json({
                 ok: true,
                 shop: session.shop,
                 plan: np,
-                imagesIncluded: PLAN_IMAGES[np] ?? 50,
-                pricePerExtra: PLAN_PRICE_EXTRA[np] ?? 0.18,
+                imagesIncluded: PLAN_IMAGES[np] ?? PLAN_IMAGES.ondemand,
+                pricePerExtra: PLAN_PRICE_EXTRA[np] ?? PLAN_PRICE_EXTRA.ondemand,
                 forcePersistStrategy: forced.strategy,
               });
             }

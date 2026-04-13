@@ -190,6 +190,11 @@ export async function createUsageCharge(
  * @returns {Promise<{ created: boolean, usageRecordId?: string, error?: string }>}
  */
 export async function createUsageChargeIfNeeded(admin, imagesUsed, planLimit, pricePerExtra, currency = "USD", imagesCount = 1) {
+  const ppe = Number(pricePerExtra);
+  if (!Number.isFinite(ppe) || ppe <= 0) {
+    return { created: false, reason: "No per-extra charge (Enterprise or included-only)" };
+  }
+
   // Só cria usage charge se ultrapassou o limite
   if (imagesUsed <= planLimit) {
     return { created: false, reason: "Within plan limit" };

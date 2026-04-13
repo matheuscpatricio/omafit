@@ -58,27 +58,36 @@ export default function BillingPage() {
 
       const plan = String(shop?.plan || "").toLowerCase();
       const isOnDemand = plan === "ondemand" || plan === "basic" || plan === "starter" || plan === "free";
+      const isEnterprise = plan === "enterprise";
       const freeImagesUsed = Math.min(50, Number(shop?.free_images_used) || 0);
       const imagesUsedMonth = shop?.images_used_month || 0;
-      const imagesIncluded = shop?.images_included || 0;
+      const imagesIncluded = Number(shop?.images_included) || 0;
       const imagesUsed = isOnDemand ? freeImagesUsed + imagesUsedMonth : imagesUsedMonth;
-      const extraImages = Math.max(0, imagesUsed - imagesIncluded);
-      
+      const extraImages = isEnterprise ? 0 : Math.max(0, imagesUsed - imagesIncluded);
+      const withinLimit = isEnterprise || imagesUsed <= imagesIncluded;
+      const percentage =
+        isEnterprise || imagesIncluded <= 0
+          ? 0
+          : Math.min(100, (imagesUsed / imagesIncluded) * 100);
+
       setData({
         shop: shopDomain,
         currentPlan: isBillingActive ? (shop?.plan || null) : null,
         billingStatus: shop?.billing_status || null,
         usage: isBillingActive && shop ? {
           plan: shop?.plan || 'ondemand',
+          isEnterprise,
           used: imagesUsed,
           included: imagesIncluded,
-          remaining: isOnDemand ? Math.max(0, 50 - Math.min(50, imagesUsed)) : Math.max(0, imagesIncluded - imagesUsedMonth),
-          extraImages: extraImages,
-          percentage: imagesIncluded > 0
-            ? Math.min(100, (imagesUsed / imagesIncluded) * 100)
-            : 0,
-          withinLimit: imagesUsed <= imagesIncluded,
-          pricePerExtra: shop?.price_per_extra_image || 0.18
+          remaining: isEnterprise
+            ? null
+            : isOnDemand
+              ? Math.max(0, 50 - Math.min(50, imagesUsed))
+              : Math.max(0, imagesIncluded - imagesUsedMonth),
+          extraImages,
+          percentage,
+          withinLimit,
+          pricePerExtra: Number(shop?.price_per_extra_image) || 0.18
         } : null
       });
     } catch (error) {

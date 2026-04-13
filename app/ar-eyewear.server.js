@@ -11,6 +11,9 @@ import {
 
 const TABLE = "ar_eyewear_assets";
 
+/** Estados finais que libertam o “slot” de produto AR (permite novo envio do mesmo product_id). */
+const AR_EYEWEAR_TERMINAL_STATUSES = new Set(["failed", "rejected"]);
+
 /**
  * AR Eyewear exige service role: anon não cria buckets nem ignora RLS em storage/objects.
  * URL: preferir SUPABASE_URL no servidor (alinhado ao worker no Railway).

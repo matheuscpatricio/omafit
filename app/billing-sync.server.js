@@ -5,6 +5,7 @@
 import {
   PLAN_IMAGES,
   PLAN_PRICE_EXTRA,
+  getArProductsMaxForPlan,
   normalizeShopifyPlanKey,
 } from "./billing-plans.server.js";
 
@@ -272,6 +273,7 @@ async function inferValueForMissingColumn(columnName, shop, payload, context = {
   if (key.includes("price_per_extra")) return payload.price_per_extra_image ?? 0.18;
   if (key.includes("currency")) return payload.currency || "USD";
   if (key.includes("images_used") || key.includes("usage")) return 0;
+  if (key.includes("ar_products")) return payload.ar_products_max ?? null;
   if (key.includes("is_active")) return (payload.billing_status || "").toLowerCase() === "active";
   if (key.includes("created_at") || key.includes("updated_at")) return new Date().toISOString();
   return "";
@@ -445,6 +447,7 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
   const normalizedPlan = normalizeShopifyPlanKey(plan || "ondemand");
   const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.ondemand;
   const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.ondemand;
+  const arProductsMax = getArProductsMaxForPlan(normalizedPlan);
   const binding = await resolveShopUserBinding({
     admin,
     shop,
@@ -456,6 +459,7 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
     billing_status: billingStatus || "inactive",
     images_included: imagesIncluded,
     price_per_extra_image: pricePerExtra,
+    ar_products_max: arProductsMax,
     updated_at: new Date().toISOString(),
     ...(binding.ownerEmail ? { shop_owner_email: binding.ownerEmail } : {}),
     ...(binding.userId ? { user_id: binding.userId } : {}),
@@ -466,7 +470,7 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
   if (binding.userId) {
     await patchWidgetKeysUserId(shop, binding.userId, supabaseUrl, supabaseKey);
   }
-  return { plan: normalizedPlan, imagesIncluded, pricePerExtra };
+  return { plan: normalizedPlan, imagesIncluded, pricePerExtra, arProductsMax };
 }
 
 /**

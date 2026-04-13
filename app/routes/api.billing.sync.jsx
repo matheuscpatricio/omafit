@@ -13,7 +13,10 @@ import {
   PLAN_IMAGES,
   PLAN_PRICE_EXTRA,
 } from "../billing-sync.server";
-import { normalizeShopifyPlanKey } from "../billing-plans.server.js";
+import {
+  getArProductsMaxForPlan,
+  normalizeShopifyPlanKey,
+} from "../billing-plans.server.js";
 import { registerWebhooks } from "../shopify.server";
 import process from "node:process";
 
@@ -49,6 +52,7 @@ async function tryForcePersistActiveBilling({
     billing_status: "active",
     images_included: PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.ondemand,
     price_per_extra_image: PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.ondemand,
+    ar_products_max: getArProductsMaxForPlan(normalizedPlan),
     currency: "USD",
     updated_at: new Date().toISOString(),
   };
@@ -213,6 +217,7 @@ export async function loader({ request }) {
             billing_status: "inactive",
             images_included: 50,
             price_per_extra_image: 0.18,
+            ar_products_max: getArProductsMaxForPlan("ondemand"),
             images_used_month: 0,
             free_images_used: 0,
             currency: "USD",

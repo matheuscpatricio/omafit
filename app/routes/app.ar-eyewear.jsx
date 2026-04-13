@@ -420,29 +420,6 @@ export default function ArEyewearPage() {
                             {a.error_message}
                           </Text>
                         )}
-                        {a.generation_request_id && (
-                          <Text as="p" tone="subdued">
-                            FAL request: {a.generation_request_id}
-                          </Text>
-                        )}
-                        {a.generation_logs && (
-                          <div
-                            style={{
-                              maxHeight: "140px",
-                              overflow: "auto",
-                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                              fontSize: "12px",
-                              lineHeight: 1.35,
-                              background: "var(--p-color-bg-surface-secondary)",
-                              border: "1px solid var(--p-color-border)",
-                              borderRadius: "6px",
-                              padding: "8px",
-                              whiteSpace: "pre-wrap",
-                            }}
-                          >
-                            {String(a.generation_logs)}
-                          </div>
-                        )}
                         {a.glb_draft_url && (
                           <Text as="p">
                             <a href={a.glb_draft_url} target="_blank" rel="noreferrer">

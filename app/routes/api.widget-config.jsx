@@ -89,19 +89,72 @@ function supabaseHeaders() {
   };
 }
 
+function normalizeEmbedPosition(value) {
+  const s = String(value || "").trim().toLowerCase();
+  if (s === "above_buy_buttons") return "above_buy_buttons";
+  return "below_buy_buttons";
+}
+
+function normalizeCtaType(value) {
+  const s = String(value || "").trim().toLowerCase();
+  if (s === "button") return "button";
+  return "link";
+}
+
 async function fetchConfigByShop(shopDomain) {
-  const response = await fetch(
+  const selectFull =
+    "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,created_at,updated_at";
+  const selectLegacy =
+    "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at";
+  const selectMinimal =
+    "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at";
+
+  let response = await fetch(
     `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(
       shopDomain,
-    )}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at&order=updated_at.desc&limit=1`,
+    )}&select=${selectFull}&order=updated_at.desc&limit=1`,
     { headers: supabaseHeaders() },
   );
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    const missingEmbed =
+      response.status === 400 &&
+      errText &&
+      (errText.includes("embed_position") || errText.includes("cta_type"));
+    if (missingEmbed) {
+      response = await fetch(
+        `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(
+          shopDomain,
+        )}&select=${selectLegacy}&order=updated_at.desc&limit=1`,
+        { headers: supabaseHeaders() },
+      );
+    }
+    if (!response.ok) {
+      const err2 = await response.text().catch(() => "");
+      const missingExcluded =
+        response.status === 400 && err2 && err2.includes("excluded_collections");
+      if (missingExcluded) {
+        response = await fetch(
+          `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(
+            shopDomain,
+          )}&select=${selectMinimal}&order=updated_at.desc&limit=1`,
+          { headers: supabaseHeaders() },
+        );
+      }
+    }
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`widget_configurations read failed (${response.status}): ${text}`);
   }
   const rows = await response.json();
-  return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  if (!row) return null;
+  return {
+    ...row,
+    embed_position: normalizeEmbedPosition(row.embed_position),
+    cta_type: normalizeCtaType(row.cta_type),
+  };
 }
 
 async function upsertAdminLocaleByShop(shopDomain, adminLocale) {
@@ -197,6 +250,8 @@ export async function action({ request }) {
       widget_enabled: body?.widget_enabled !== false,
       excluded_collections: normalizeExcludedCollections(body?.excluded_collections),
       admin_locale: normalizeSupportedLocale(body?.admin_locale ? String(body.admin_locale).trim() : effectiveLocale),
+      embed_position: normalizeEmbedPosition(body?.embed_position),
+      cta_type: normalizeCtaType(body?.cta_type),
       updated_at: new Date().toISOString(),
     };
 
@@ -212,6 +267,22 @@ export async function action({ request }) {
       })(),
       (() => {
         const { excluded_collections, admin_locale, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { embed_position, cta_type, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { embed_position, cta_type, admin_locale, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { embed_position, cta_type, excluded_collections, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { embed_position, cta_type, excluded_collections, admin_locale, ...rest } = payloadBase;
         return rest;
       })(),
     ];

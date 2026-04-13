@@ -15,7 +15,8 @@ import {
   Divider,
   Spinner,
   Thumbnail,
-  Checkbox
+  Checkbox,
+  Select
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
@@ -72,7 +73,9 @@ export default function WidgetPage() {
     primary_color: '#810707',
     widget_enabled: true,
     excluded_collections: [],
-    admin_locale: locale || 'en'
+    admin_locale: locale || 'en',
+    embed_position: 'below_buy_buttons',
+    cta_type: 'link',
   });
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [collectionsError, setCollectionsError] = useState(null);
@@ -162,7 +165,12 @@ export default function WidgetPage() {
             primary_color: loadedConfig.primary_color || '#810707',
             widget_enabled: loadedConfig.widget_enabled !== false,
             excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections),
-            admin_locale: loadedConfig.admin_locale || locale || 'en'
+            admin_locale: loadedConfig.admin_locale || locale || 'en',
+            embed_position:
+              loadedConfig.embed_position === 'above_buy_buttons'
+                ? 'above_buy_buttons'
+                : 'below_buy_buttons',
+            cta_type: loadedConfig.cta_type === 'button' ? 'button' : 'link',
           });
         }
       } else {
@@ -351,7 +359,12 @@ export default function WidgetPage() {
         primary_color: configToSave.primary_color || '#810707',
         widget_enabled: configToSave.widget_enabled !== false,
         excluded_collections: normalizeExcludedCollections(configToSave.excluded_collections),
-        admin_locale: configToSave.admin_locale || locale || 'en'
+        admin_locale: configToSave.admin_locale || locale || 'en',
+        embed_position:
+          configToSave.embed_position === 'above_buy_buttons'
+            ? 'above_buy_buttons'
+            : 'below_buy_buttons',
+        cta_type: configToSave.cta_type === 'button' ? 'button' : 'link',
       };
       
       console.log('[Widget] Payload a ser enviado:', {
@@ -537,6 +550,28 @@ export default function WidgetPage() {
                 autoComplete="off"
               />
 
+              <Select
+                label={t("widget.embedPositionLabel")}
+                options={[
+                  { label: t("widget.embedPositionBelow"), value: "below_buy_buttons" },
+                  { label: t("widget.embedPositionAbove"), value: "above_buy_buttons" },
+                ]}
+                value={config.embed_position || "below_buy_buttons"}
+                onChange={(value) => handleChange("embed_position", value)}
+                helpText={t("widget.embedPositionHelp")}
+              />
+
+              <Select
+                label={t("widget.ctaTypeLabel")}
+                options={[
+                  { label: t("widget.ctaTypeLink"), value: "link" },
+                  { label: t("widget.ctaTypeButton"), value: "button" },
+                ]}
+                value={config.cta_type || "link"}
+                onChange={(value) => handleChange("cta_type", value)}
+                helpText={t("widget.ctaTypeHelp")}
+              />
+
               <Divider />
 
               <BlockStack gap="300">
@@ -708,7 +743,7 @@ export default function WidgetPage() {
                 {t("widget.installation")}
               </Text>
               <Text variant="bodyMd" tone="subdued">
-                {t("widget.installationHelp")}
+                {t("widget.installationHelpDynamic")}
               </Text>
               <Text variant="bodyMd" tone="subdued">
                 {t("widget.installationHelp2")}
@@ -727,7 +762,7 @@ export default function WidgetPage() {
                 {t("widget.importantInfo")}
               </Text>
               <BlockStack gap="200">
-                <Text variant="bodyMd">{t("widget.importantBullet1")}</Text>
+                <Text variant="bodyMd">{t("widget.importantBullet1Dynamic")}</Text>
                 <Text variant="bodyMd">{t("widget.importantBullet2")}</Text>
                 <Text variant="bodyMd">{t("widget.importantBullet3")}</Text>
                 <Text variant="bodyMd">{t("widget.importantBullet4")}</Text>

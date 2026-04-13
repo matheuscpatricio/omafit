@@ -6,6 +6,9 @@ import { authenticate } from "../shopify.server";
 import { Buffer } from "node:buffer";
 import {
   getShopArEyewearEnabled,
+  assertArProductSlotAvailable,
+  countDistinctArProductsExcludingTerminal,
+  fetchShopArProductsLimit,
   insertAssetRow,
   listAssets,
   getAssetById,
@@ -67,7 +70,15 @@ export async function loader({ request }) {
       );
     }
     const rows = await listAssets(session.shop, { limit: 100 });
-    return Response.json({ assets: rows });
+    const { max: arProductsMax, plan: billingPlan } = await fetchShopArProductsLimit(session.shop);
+    const arProductsUsed = await countDistinctArProductsExcludingTerminal(session.shop);
+    return Response.json({
+      assets: rows,
+      arProductsMax,
+      arProductsUsed,
+      billingPlan,
+      arProductsUnlimited: arProductsMax == null,
+    });
   } catch (e) {
     console.error("[api.ar-eyewear] loader", e);
     return Response.json({ error: e.message || "Unauthorized" }, { status: 401 });
@@ -116,6 +127,18 @@ export async function action({ request }) {
     if (!v1.ok) return Response.json({ error: `front: ${v1.error}` }, { status: 400 });
     if (!v2.ok) return Response.json({ error: `threeQuarter: ${v2.error}` }, { status: 400 });
     if (!v3.ok) return Response.json({ error: `profile: ${v3.error}` }, { status: 400 });
+
+    try {
+      await assertArProductSlotAvailable(session.shop, productId);
+    } catch (slotErr) {
+      if (slotErr?.code === "AR_PRODUCT_LIMIT_EXCEEDED") {
+        return Response.json(
+          { error: slotErr.message, code: slotErr.code },
+          { status: 403 },
+        );
+      }
+      throw slotErr;
+    }
 
     const row = await insertAssetRow({
       shop_domain: session.shop,

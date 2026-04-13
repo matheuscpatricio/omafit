@@ -79,7 +79,7 @@
       document.querySelectorAll('.omafit-widget').forEach(function (w) {
         if (w.closest('#omafit-ar-root')) return;
         if (w.querySelector('.omafit-ar-try-on-link')) return;
-        if (w.querySelector('.omafit-try-on-link')) w.remove();
+        if (w.querySelector('.omafit-try-on-link') || w.querySelector('.omafit-try-on-cta')) w.remove();
       });
     } catch (e) {
       if (OMAFIT_DEBUG) console.warn('removeClothingOmafitUi', e);
@@ -141,6 +141,13 @@
       el.setAttribute('data-omafit-admin-link-text', link);
       if (logo) el.setAttribute('data-omafit-admin-store-logo', logo);
       else el.removeAttribute('data-omafit-admin-store-logo');
+      var ep = String(cfg.embedPosition || cfg.embed_position || '').trim().toLowerCase();
+      el.setAttribute(
+        'data-omafit-embed-position',
+        ep === 'above_buy_buttons' ? 'above_buy_buttons' : 'below_buy_buttons'
+      );
+      var ct = String(cfg.ctaType || cfg.cta_type || '').trim().toLowerCase();
+      el.setAttribute('data-omafit-cta-type', ct === 'button' ? 'button' : 'link');
       if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
         window.dispatchEvent(
           new CustomEvent('omafit:widget-config', {
@@ -914,7 +921,9 @@
           },
           shopDomain: '',
           widgetEnabled: true,
-          isActive: true
+          isActive: true,
+          embedPosition: 'below_buy_buttons',
+          ctaType: 'link'
         };
       }
 
@@ -928,24 +937,45 @@
         'Authorization': `Bearer ${supabaseAnonKey}`,
         'Content-Type': 'application/json'
       };
+      var selectWidgetCfgFull =
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,created_at,updated_at';
+      var selectWidgetCfgLegacy =
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at';
+      var selectWidgetCfgNoExcluded =
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at';
+
       let configResponse = await fetch(
-        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at`,
+        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}`,
         { headers: configHeaders }
       );
       if (!configResponse.ok) {
-        const configErrorText = await configResponse.text().catch(function () { return ''; });
-        const missingExcludedColumn =
+        var errT = await configResponse.text().catch(function () { return ''; });
+        if (
           configResponse.status === 400 &&
-          configErrorText &&
-          configErrorText.indexOf('excluded_collections') !== -1;
-        if (missingExcludedColumn) {
-          console.warn('⚠️ Coluna excluded_collections não encontrada no banco. Repetindo busca sem essa coluna.');
+          errT &&
+          (errT.indexOf('embed_position') !== -1 || errT.indexOf('cta_type') !== -1)
+        ) {
+          console.warn('⚠️ Colunas embed_position/cta_type ausentes. Repetindo busca sem elas.');
           configResponse = await fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgLegacy}`,
             { headers: configHeaders }
           );
-        } else {
-          console.warn('⚠️ Não foi possível buscar configuração do Supabase. Status:', configResponse.status, configErrorText);
+          if (!configResponse.ok) {
+            errT = await configResponse.text().catch(function () { return ''; });
+          }
+        }
+        if (!configResponse.ok && configResponse.status === 400 && errT && errT.indexOf('excluded_collections') !== -1) {
+          console.warn('⚠️ Coluna excluded_collections não encontrada no banco. Repetindo busca sem essa coluna.');
+          configResponse = await fetch(
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgNoExcluded}`,
+            { headers: configHeaders }
+          );
+          if (!configResponse.ok) {
+            errT = await configResponse.text().catch(function () { return ''; });
+          }
+        }
+        if (!configResponse.ok) {
+          console.warn('⚠️ Não foi possível buscar configuração do Supabase. Status:', configResponse.status, errT);
         }
       }
 
@@ -1132,6 +1162,16 @@
       });
       
       // Mapear campos do banco de dados para o formato esperado pelo widget
+      var rawEmbed = config && (config.embed_position != null ? config.embed_position : config.embedPosition);
+      var rawCta = config && (config.cta_type != null ? config.cta_type : config.ctaType);
+      var normEmbed =
+        String(rawEmbed || '')
+          .trim()
+          .toLowerCase() === 'above_buy_buttons'
+          ? 'above_buy_buttons'
+          : 'below_buy_buttons';
+      var normCta = String(rawCta || '').trim().toLowerCase() === 'button' ? 'button' : 'link';
+
       const mappedConfig = {
         publicId: validPublicId,
         linkText: config?.link_text || 'Experimentar virtualmente',
@@ -1154,7 +1194,9 @@
         shopDomain: shopDomain,
         widgetEnabled: finalWidgetEnabled,
         isActive: isWidgetActive,
-        excludedCollections: excludedCollections
+        excludedCollections: excludedCollections,
+        embedPosition: normEmbed,
+        ctaType: normCta
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
       
@@ -1183,7 +1225,9 @@
         },
         shopDomain: '',
         widgetEnabled: true,
-        isActive: true
+        isActive: true,
+        embedPosition: 'below_buy_buttons',
+        ctaType: 'link'
       };
     }
   }
@@ -2814,14 +2858,7 @@
     link.addEventListener('mouseenter', function () {
       this.style.opacity = '0.7';
       this.style.textDecorationThickness = '2px';
-      // Preconnect ao abrir o modal (aquecimento de conexão antes do clique)
-      if (!document.querySelector('link[rel="preconnect"][href="' + OMAFIT_WIDGET_ORIGIN + '"]')) {
-        const preconnect = document.createElement('link');
-        preconnect.rel = 'preconnect';
-        preconnect.href = OMAFIT_WIDGET_ORIGIN;
-        preconnect.crossOrigin = 'anonymous';
-        document.head.appendChild(preconnect);
-      }
+      omafitTryOnPreconnect();
     });
     link.addEventListener('mouseleave', function () {
       this.style.opacity = '1';
@@ -2839,7 +2876,90 @@
     return link;
   }
 
-  // Criar link Omafit logo abaixo do botão "Adicionar ao carrinho"
+  function omafitTryOnPreconnect() {
+    if (!document.querySelector('link[rel="preconnect"][href="' + OMAFIT_WIDGET_ORIGIN + '"]')) {
+      const preconnect = document.createElement('link');
+      preconnect.rel = 'preconnect';
+      preconnect.href = OMAFIT_WIDGET_ORIGIN;
+      preconnect.crossOrigin = 'anonymous';
+      document.head.appendChild(preconnect);
+    }
+  }
+
+  /** Botão pill com logo + texto (alternativa ao link). */
+  function createOmafitButton() {
+    const primaryColor = OMAFIT_CONFIG?.colors?.primary || OMAFIT_CONFIG?.colors?.text || '#810707';
+    const label = OMAFIT_CONFIG?.linkText || 'Experimentar virtualmente';
+    const logoRaw = OMAFIT_CONFIG?.storeLogo != null ? String(OMAFIT_CONFIG.storeLogo).trim() : '';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'omafit-try-on-cta omafit-try-on-cta-button';
+    btn.setAttribute('aria-label', label);
+    btn.style.fontFamily = OMAFIT_CONFIG?.fontFamily || 'inherit';
+    btn.style.display = 'inline-flex';
+    btn.style.alignItems = 'center';
+    btn.style.justifyContent = 'center';
+    btn.style.gap = '10px';
+    btn.style.padding = '12px 22px';
+    btn.style.borderRadius = '9999px';
+    btn.style.border = '2px solid ' + primaryColor;
+    btn.style.background = '#ffffff';
+    btn.style.color = primaryColor;
+    btn.style.cursor = 'pointer';
+    btn.style.fontSize = '15px';
+    btn.style.fontWeight = '600';
+    btn.style.lineHeight = '1.25';
+    btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+    btn.style.transition = 'opacity 0.2s ease, transform 0.15s ease';
+    btn.style.maxWidth = '100%';
+
+    if (logoRaw && /^https?:\/\//i.test(logoRaw)) {
+      const img = document.createElement('img');
+      img.src = logoRaw;
+      img.alt = '';
+      img.width = 32;
+      img.height = 32;
+      img.style.width = '32px';
+      img.style.height = '32px';
+      img.style.objectFit = 'contain';
+      img.style.borderRadius = '6px';
+      img.style.flexShrink = '0';
+      btn.appendChild(img);
+    }
+
+    const span = document.createElement('span');
+    span.textContent = label;
+    span.style.textAlign = 'center';
+    btn.appendChild(span);
+
+    btn.addEventListener('mouseenter', function () {
+      btn.style.opacity = '0.9';
+      btn.style.transform = 'translateY(-1px)';
+      omafitTryOnPreconnect();
+    });
+    btn.addEventListener('mouseleave', function () {
+      btn.style.opacity = '1';
+      btn.style.transform = 'none';
+    });
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) return;
+      if (typeof window.openOmafitModal === 'function') {
+        window.openOmafitModal();
+      }
+    });
+
+    return btn;
+  }
+
+  function createOmafitCta() {
+    const mode = String(OMAFIT_CONFIG?.ctaType || OMAFIT_CONFIG?.cta_type || '').trim().toLowerCase();
+    if (mode === 'button') return createOmafitButton();
+    return createOmafitLink();
+  }
+
+  // Inserir CTA do widget (link ou botão) na página de produto
   function insertOmafitLinkUnderAddToCart() {
     if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
       removeClothingOmafitUi();
@@ -2853,16 +2973,24 @@
         linkText: 'Experimentar virtualmente',
         colors: { primary: '#810707', text: '#810707' },
         fontFamily: 'inherit',
-        shopDomain: ''
+        shopDomain: '',
+        embedPosition: 'below_buy_buttons',
+        ctaType: 'link'
       };
     }
     syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
 
-    // Verificar se já existe um link Omafit (evitar duplicatas)
-    if (document.querySelector('.omafit-try-on-link')) {
-      console.log('✅ Link Omafit já existe na página');
+    if (document.querySelector('.omafit-widget')) {
+      console.log('✅ Widget Omafit já existe na página');
       return;
     }
+
+    const embedPos =
+      String(OMAFIT_CONFIG.embedPosition || OMAFIT_CONFIG.embed_position || '')
+        .trim()
+        .toLowerCase() === 'above_buy_buttons'
+        ? 'above_buy_buttons'
+        : 'below_buy_buttons';
 
     // Tentar alguns seletores comuns de botão de carrinho
     const addToCartSelectors = [
@@ -2905,82 +3033,99 @@
       }
     }
 
-    // Criar container e link
     const container = document.createElement('div');
     container.className = 'omafit-widget';
     container.style.textAlign = 'center';
-    container.style.marginTop = '16px';
-    container.style.marginBottom = '24px';
+    if (embedPos === 'above_buy_buttons') {
+      container.style.marginTop = '0';
+      container.style.marginBottom = '16px';
+    } else {
+      container.style.marginTop = '16px';
+      container.style.marginBottom = '24px';
+    }
 
-    const link = createOmafitLink();
-    container.appendChild(link);
+    container.appendChild(createOmafitCta());
+
+    function insertContainerFallback() {
+      const root = document.getElementById('omafit-widget-root');
+      if (root) {
+        root.appendChild(container);
+        console.log('✅ Widget inserido no root element');
+      } else {
+        document.body.appendChild(container);
+        console.log('✅ Widget inserido no body (fallback)');
+      }
+    }
 
     if (addToCartButton) {
-      // Priorizar posicionamento abaixo do "Compre já", para ficar abaixo dos dois CTAs.
-      let anchorElement = null;
-
-      const closestForm = addToCartButton.closest('form');
-      const closestProductBlock =
-        addToCartButton.closest('.product-form') ||
-        addToCartButton.closest('.product') ||
-        addToCartButton.closest('[class*="product"]');
-
-      // Busca "Compre já" em raízes mais próximas primeiro (evita pegar botão de outra seção).
-      const searchRoots = [
-        closestForm?.parentElement || null,
-        closestForm || null,
-        closestProductBlock || null,
-        document
-      ].filter(Boolean);
-
-      for (const root of searchRoots) {
-        const foundBuyNow = findFirstVisible(buyNowSelectors, root);
-        if (foundBuyNow?.element) {
-          anchorElement = foundBuyNow.element;
-          console.log('✅ Botão/contêiner "Compre já" encontrado com seletor:', foundBuyNow.selector);
-          break;
-        }
-      }
-
-      // Se não encontrar "Compre já", mantém comportamento antigo (abaixo do adicionar ao carrinho).
-      if (!anchorElement) {
-        anchorElement = addToCartButton;
-      }
-
-      if (anchorElement.parentNode) {
-        anchorElement.parentNode.insertBefore(container, anchorElement.nextSibling);
-        console.log('✅ Widget inserido abaixo dos botões de compra');
-      } else {
-        // fallback: tenta inserir no root, se existir
-        const root = document.getElementById('omafit-widget-root');
-        if (root) {
-          root.appendChild(container);
-          console.log('✅ Widget inserido no root element');
+      if (embedPos === 'above_buy_buttons') {
+        if (addToCartButton.parentNode) {
+          addToCartButton.parentNode.insertBefore(container, addToCartButton);
+          console.log('✅ Widget inserido acima dos botões de compra');
         } else {
-          document.body.appendChild(container);
-          console.log('✅ Widget inserido no body (fallback)');
+          insertContainerFallback();
+        }
+      } else {
+        let anchorElement = null;
+
+        const closestForm = addToCartButton.closest('form');
+        const closestProductBlock =
+          addToCartButton.closest('.product-form') ||
+          addToCartButton.closest('.product') ||
+          addToCartButton.closest('[class*="product"]');
+
+        const searchRoots = [
+          closestForm?.parentElement || null,
+          closestForm || null,
+          closestProductBlock || null,
+          document
+        ].filter(Boolean);
+
+        for (const root of searchRoots) {
+          const foundBuyNow = findFirstVisible(buyNowSelectors, root);
+          if (foundBuyNow?.element) {
+            anchorElement = foundBuyNow.element;
+            console.log('✅ Botão/contêiner "Compre já" encontrado com seletor:', foundBuyNow.selector);
+            break;
+          }
+        }
+
+        if (!anchorElement) {
+          anchorElement = addToCartButton;
+        }
+
+        if (anchorElement.parentNode) {
+          anchorElement.parentNode.insertBefore(container, anchorElement.nextSibling);
+          console.log('✅ Widget inserido abaixo dos botões de compra');
+        } else {
+          insertContainerFallback();
         }
       }
     } else {
       console.warn('⚠️ Omafit: botão "Adicionar ao carrinho" não encontrado. Tentando inserir no formulário de produto...');
-      
-      // Tentar encontrar formulário de produto
+
       const productForm = document.querySelector('form[action*="/cart/add"], .product-form, form.product-form');
       if (productForm) {
-        productForm.appendChild(container);
+        if (embedPos === 'above_buy_buttons' && productForm.firstChild) {
+          productForm.insertBefore(container, productForm.firstChild);
+        } else {
+          productForm.appendChild(container);
+        }
         console.log('✅ Widget inserido no formulário de produto');
         return;
       }
-      
-      // Último fallback: inserir em qualquer elemento de produto
+
       const productSection = document.querySelector('.product, .product-single, [class*="product"]');
       if (productSection) {
-        productSection.appendChild(container);
+        if (embedPos === 'above_buy_buttons' && productSection.firstChild) {
+          productSection.insertBefore(container, productSection.firstChild);
+        } else {
+          productSection.appendChild(container);
+        }
         console.log('✅ Widget inserido na seção de produto');
         return;
       }
-      
-      // Inserir no body como último recurso
+
       document.body.appendChild(container);
       console.log('✅ Widget inserido no body (último recurso)');
     }
@@ -3018,7 +3163,8 @@
       '    box-shadow: 0 2px 8px rgba(0,0,0,0.2) !important;' +
       '  }' +
       '}' +
-      '.omafit-try-on-link:focus {' +
+      '.omafit-try-on-link:focus,' +
+      '.omafit-try-on-cta:focus {' +
       '  outline: 2px solid ' + (OMAFIT_CONFIG.colors?.primary || OMAFIT_CONFIG.colors?.text || '#810707') + ';' +
       '  outline-offset: 2px;' +
       '}';
@@ -3058,7 +3204,9 @@
           },
           shopDomain: '',
           widgetEnabled: true,
-          isActive: true
+          isActive: true,
+          embedPosition: 'below_buy_buttons',
+          ctaType: 'link'
         };
       }
 
@@ -3095,7 +3243,9 @@
             fontFamily: 'inherit',
             shopDomain: '',
             widgetEnabled: true,
-            isActive: true
+            isActive: true,
+            embedPosition: 'below_buy_buttons',
+            ctaType: 'link'
           };
         }
         // Verificar se está habilitado mesmo no fallback
@@ -3132,7 +3282,7 @@
   // Também tentar após um delay (para temas que carregam conteúdo dinamicamente)
   setTimeout(function() {
     if (isOmafitArEyewearPage()) return;
-    if (!document.querySelector('.omafit-try-on-link')) {
+    if (!document.querySelector('.omafit-widget')) {
       console.log('🔄 Tentando inicializar novamente (retry)...');
       initOmafit();
     }
@@ -3142,7 +3292,7 @@
   if (typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(function(mutations) {
       if (isOmafitArEyewearPage()) return;
-      if (!document.querySelector('.omafit-try-on-link')) {
+      if (!document.querySelector('.omafit-widget')) {
         const hasProductForm = document.querySelector('form[action*="/cart/add"], button[name="add"]');
         if (hasProductForm) {
           console.log('🔄 Novo conteúdo detectado, tentando inserir widget...');

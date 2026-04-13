@@ -84,6 +84,31 @@ export const PLAN_PRICE_EXTRA = {
 };
 
 /**
+ * Máximo de **produtos** (product_id distintos) com pipeline AR ativo por loja.
+ * `null` = ilimitado (Enterprise).
+ */
+export const PLAN_AR_PRODUCTS_MAX = {
+  ondemand: 5,
+  growth: 20,
+  pro: 100,
+  enterprise: null,
+  starter: 5,
+  basic: 5,
+};
+
+/**
+ * @param {string} planKey
+ * @returns {number|null} null = ilimitado
+ */
+export function getArProductsMaxForPlan(planKey) {
+  const k = normalizeShopifyPlanKey(planKey);
+  const v = PLAN_AR_PRODUCTS_MAX[k];
+  if (v === null) return null;
+  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+  return PLAN_AR_PRODUCTS_MAX.ondemand;
+}
+
+/**
  * Normaliza aliases legados. **Growth** deixa de ser alias de Pro.
  * @param {string} planKey
  * @returns {"ondemand"|"growth"|"pro"|"enterprise"}

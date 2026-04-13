@@ -6,6 +6,7 @@ import { authenticate } from "../shopify.server";
 import { Buffer } from "node:buffer";
 import {
   getShopArEyewearEnabled,
+  assertArProductSlotAvailable,
   insertAssetRow,
   getAssetById,
   patchAsset,
@@ -119,6 +120,18 @@ export async function action({ request }) {
     }
     if (!imageFrontUrl) {
       return Response.json({ error: "URL da imagem para geração 3D é obrigatória (imageFrontUrl)" }, { status: 400 });
+    }
+
+    try {
+      await assertArProductSlotAvailable(session.shop, productId);
+    } catch (slotErr) {
+      if (slotErr?.code === "AR_PRODUCT_LIMIT_EXCEEDED") {
+        return Response.json(
+          { error: slotErr.message, code: slotErr.code },
+          { status: 403 },
+        );
+      }
+      throw slotErr;
     }
 
     const row = await insertAssetRow({

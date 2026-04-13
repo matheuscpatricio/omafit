@@ -4,6 +4,10 @@
 
 import { fal } from "@fal-ai/client";
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
+import {
+  getArProductsMaxForPlan,
+  normalizeShopifyPlanKey,
+} from "./billing-plans.server.js";
 
 const TABLE = "ar_eyewear_assets";
 
@@ -518,6 +522,106 @@ export async function setShopArEyewearEnabled(shopDomain, enabled) {
   if (!res.ok) {
     const t = await res.text().catch(() => "");
     throw new Error(`shopify_shops patch failed: ${res.status} ${t.slice(0, 200)}`);
+  }
+}
+
+async function fetchShopRowForArLimit(shopDomain) {
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) {
+    return { plan: "ondemand", ar_products_max: undefined };
+  }
+  const base = `${url}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&limit=1`;
+  const h = headers(key);
+  let res = await fetch(`${base}&select=plan,ar_products_max`, { headers: h });
+  if (!res.ok) {
+    res = await fetch(`${base}&select=plan`, { headers: h });
+  }
+  if (!res.ok) return { plan: "ondemand", ar_products_max: undefined };
+  const rows = await res.json();
+  const row = rows?.[0];
+  return {
+    plan: normalizeShopifyPlanKey(row?.plan || "ondemand"),
+    ar_products_max: row?.ar_products_max,
+  };
+}
+
+/**
+ * Limite de produtos AR distintos para a loja (plano + coluna opcional em shopify_shops).
+ * @returns {{ max: number|null, plan: string }} max null = ilimitado
+ */
+export async function fetchShopArProductsLimit(shopDomain) {
+  const row = await fetchShopRowForArLimit(shopDomain);
+  const plan = row.plan;
+  const raw = row.ar_products_max;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) {
+      return { max: n, plan };
+    }
+  }
+  return { max: getArProductsMaxForPlan(plan), plan };
+}
+
+function isNonTerminalArStatus(status) {
+  return !AR_EYEWEAR_TERMINAL_STATUSES.has(String(status || "").toLowerCase());
+}
+
+/**
+ * Conta product_id distintos com pelo menos um asset em estado não terminal.
+ */
+export async function countDistinctArProductsExcludingTerminal(shopDomain) {
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) return 0;
+  const res = await fetch(
+    `${url}/rest/v1/${TABLE}?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=product_id,status&limit=5000`,
+    { headers: headers(key) },
+  );
+  if (!res.ok) return 0;
+  const rows = await res.json();
+  const set = new Set();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const pid = r?.product_id != null ? String(r.product_id).trim() : "";
+    if (!pid) continue;
+    if (!isNonTerminalArStatus(r?.status)) continue;
+    set.add(pid);
+  }
+  return set.size;
+}
+
+export async function shopHasNonTerminalAssetForProduct(shopDomain, productId) {
+  const pid = String(productId || "").trim();
+  if (!pid) return false;
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) return false;
+  const res = await fetch(
+    `${url}/rest/v1/${TABLE}?shop_domain=eq.${encodeURIComponent(shopDomain)}&product_id=eq.${encodeURIComponent(pid)}&select=id,status&limit=200`,
+    { headers: headers(key) },
+  );
+  if (!res.ok) return false;
+  const rows = await res.json();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (isNonTerminalArStatus(r?.status)) return true;
+  }
+  return false;
+}
+
+/**
+ * Garante que a loja pode abrir pipeline AR para este product_id (respeita limite por plano).
+ * @throws {Error} com code AR_PRODUCT_LIMIT_EXCEEDED quando bloqueado
+ */
+export async function assertArProductSlotAvailable(shopDomain, productId) {
+  const { max } = await fetchShopArProductsLimit(shopDomain);
+  if (max == null || !Number.isFinite(max)) return;
+  if (await shopHasNonTerminalAssetForProduct(shopDomain, productId)) return;
+  const used = await countDistinctArProductsExcludingTerminal(shopDomain);
+  if (used >= max) {
+    const err = new Error(
+      `Limite de produtos AR do plano atingido (${max} produtos). Atualize o plano ou conclua/remova envios em curso para libertar slots.`,
+    );
+    /** @type {Error & { code?: string }} */
+    const e = err;
+    e.code = "AR_PRODUCT_LIMIT_EXCEEDED";
+    throw err;
   }
 }
 

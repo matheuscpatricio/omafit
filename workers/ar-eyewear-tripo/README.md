@@ -7,7 +7,7 @@ Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
    - `AR_3D_PROVIDER=triposr` (padrão): roda [TripoSR](https://github.com/VAST-AI-Research/TripoSR).
    - `AR_3D_PROVIDER=fal`: chama API fal (`tripo3d/tripo/v2.5/image-to-3d`) e baixa GLB.
 3. Normaliza orientação com `postprocess.py`.
-4. Faz upload para o bucket **`ar-eyewear-glb`** (público recomendado para URL no metafield).
+4. Faz upload para o bucket **`ar-eyewear-glb`** (URL pública ou assinada; ver `SUPABASE_STORAGE_RETURN_SIGNED_URL` se o bucket for privado).
 5. Atualiza linha: `status=pending_review`, `glb_draft_url`.
 
 ## Variáveis de ambiente
@@ -37,6 +37,8 @@ Processa jobs `ar_eyewear_assets` com `status=queued` no Supabase:
 | `TRIPOSR_TIMEOUT_SECONDS` | não | Máximo de segundos para `run.py` (default **5400** ≈ 90 min). `0` = sem limite (não recomendado). |
 | `POSTPROCESS_TIMEOUT_SECONDS` | não | Limite para `postprocess.py` (default **900**). |
 | `AR_WORKER_STALE_PROCESSING_MINUTES` | não | Linhas em `processing` com `updated_at` mais antigo que isto passam a **failed** (default **120**). `0` = desliga. Deve ser **> TRIPOSR_TIMEOUT** se aumentares o timeout. |
+| `SUPABASE_STORAGE_RETURN_SIGNED_URL` | não | `1` / `true`: após upload, devolve **URL assinada** (`POST /object/sign/`) em vez de `/object/public/...` — necessário se `ar-eyewear-glb` for **privado**. |
+| `SUPABASE_SIGNED_URL_SECONDS` | não | Validade da URL assinada (default **604800** = 7 dias; máx. 604800). |
 
 ## Docker Compose (EC2 com try-on self-hosted)
 

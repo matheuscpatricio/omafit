@@ -337,8 +337,35 @@ def reclaim_stale_processing_rows() -> None:
         print(f"[worker] reclaim stale processing: {e}", file=sys.stderr)
 
 
+def create_signed_storage_url(bucket: str, object_path: str, expires_in: int) -> str:
+    """POST /object/sign/... com service role (bucket pode ser privado)."""
+    supabase_url = supabase_base()
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    enc = _encode_object_path(object_path)
+    sign_url = f"{supabase_url}/storage/v1/object/sign/{quote(bucket, safe='')}/{enc}"
+    r = requests.post(
+        sign_url,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        json={"expiresIn": int(expires_in)},
+        timeout=120,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Storage sign failed {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    signed = (data.get("signedURL") or data.get("signedUrl") or "").strip()
+    if not signed:
+        raise RuntimeError("Storage sign: resposta sem signedURL")
+    if signed.startswith("http"):
+        return signed
+    return f"{supabase_url}/storage/v1{signed}"
+
+
 def upload_storage(path: str, data: bytes, content_type: str) -> str:
-    """Upload para Storage; retorna URL pública (bucket deve ser public)."""
+    """Upload para Storage; URL pública ou assinada conforme SUPABASE_STORAGE_RETURN_SIGNED_URL."""
     supabase_url = supabase_base()
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     enc = "/".join(quote(s, safe="") for s in path.split("/") if s)
@@ -356,6 +383,15 @@ def upload_storage(path: str, data: bytes, content_type: str) -> str:
     )
     if not r.ok:
         raise RuntimeError(f"Storage upload failed {r.status_code}: {r.text[:500]}")
+    use_signed = str(os.environ.get("SUPABASE_STORAGE_RETURN_SIGNED_URL", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if use_signed:
+        sec = int(float(os.environ.get("SUPABASE_SIGNED_URL_SECONDS", "604800") or "604800"))
+        sec = max(60, min(sec, 604800))
+        return create_signed_storage_url(BUCKET_GLB, path, sec)
     public = f"{supabase_url}/storage/v1/object/public/{BUCKET_GLB}/{enc}"
     return public
 

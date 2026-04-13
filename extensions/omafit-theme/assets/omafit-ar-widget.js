@@ -1082,6 +1082,68 @@ async function runArSession({
     }
     glbWideAlign.add(glasses);
 
+    // --- Sign disambiguation (runtime) ---
+    // Extent sort + canonicalization leave Y/Z signs ambiguous (180° rotations
+    // yield identical extents). Heuristics for eyewear:
+    //   (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
+    //   (b) temple tips at outer |X| extend toward +Z (behind face)
+    const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
+    const signFixGrp = new GroupCtor();
+    signFixGrp.name = "omafit_sign_fix";
+    signFixGrp.rotation.order = "YXZ";
+    let _sfFlipY = false, _sfFlipZ = false;
+    if (sfOverride) {
+      const sfD = parseEulerDegComponents(sfOverride, 0, 0, 0);
+      signFixGrp.rotation.set(rad(sfD.x), rad(sfD.y), rad(sfD.z));
+    } else {
+      glbWideAlign.updateMatrixWorld(true);
+      const sfPos = [];
+      glasses.traverse((obj) => {
+        if (!obj.isMesh || !obj.geometry) return;
+        const pa = obj.geometry.getAttribute("position");
+        if (!pa) return;
+        obj.updateMatrixWorld(true);
+        const wm = obj.matrixWorld;
+        for (let i = 0; i < pa.count; i++) {
+          const vv = new THREE.Vector3(pa.getX(i), pa.getY(i), pa.getZ(i));
+          vv.applyMatrix4(wm);
+          sfPos.push(vv);
+        }
+      });
+      if (sfPos.length > 16) {
+        const sfB = new THREE.Box3();
+        for (const v of sfPos) sfB.expandByPoint(v);
+        const sfC = sfB.getCenter(new THREE.Vector3());
+        const sfS = sfB.getSize(new THREE.Vector3());
+        const shw = sfS.x / 2, shh = sfS.y / 2, shd = sfS.z / 2;
+        if (shh > 1e-6 && shw > 1e-6 && shd > 1e-6) {
+          const cb = sfPos.filter((v) => Math.abs(v.x - sfC.x) < shw * 0.35);
+          if (cb.length > 8) {
+            const tC = cb.filter((v) => v.y > sfC.y);
+            const bC = cb.filter((v) => v.y < sfC.y);
+            if (tC.length > 2 && bC.length > 2) {
+              const tZS = Math.max(...tC.map((v) => v.z)) - Math.min(...tC.map((v) => v.z));
+              const bZS = Math.max(...bC.map((v) => v.z)) - Math.min(...bC.map((v) => v.z));
+              if (tZS > bZS * 1.25) _sfFlipY = true;
+            }
+          }
+          const outer = sfPos.filter((v) => Math.abs(v.x - sfC.x) > shw * 0.6);
+          if (outer.length > 4) {
+            const zv = outer.map((v) => v.z - sfC.z).sort((a, b) => Math.abs(b) - Math.abs(a));
+            const topN = zv.slice(0, Math.max(4, Math.floor(zv.length * 0.15)));
+            const mez = topN.reduce((s, z) => s + z, 0) / topN.length;
+            if (mez < -shd * 0.12) _sfFlipZ = true;
+          }
+        }
+        if (_sfFlipY && _sfFlipZ) signFixGrp.rotation.x = Math.PI;
+        else if (_sfFlipY) signFixGrp.rotation.z = Math.PI;
+        else if (_sfFlipZ) signFixGrp.rotation.y = Math.PI;
+      }
+    }
+    glbWideAlign.remove(glasses);
+    signFixGrp.add(glasses);
+    glbWideAlign.add(signFixGrp);
+
     const autoOrient = new GroupCtor();
     autoOrient.add(glbWideAlign);
     autoOrient.updateMatrixWorld(true);
@@ -1273,6 +1335,9 @@ async function runArSession({
         },
         hasOmafitCanonicalNode,
         skipGlbWideAlign,
+        signFixFlipY: _sfFlipY,
+        signFixFlipZ: _sfFlipZ,
+        signFixOverride: sfOverride || null,
         xAxisAlreadyWidth,
         glbPreBboxSize: { x: wx, y: wy, z: wz },
         useFaceScale: useFs,

@@ -239,6 +239,68 @@ def _hard_canonical_orientation(scene):
     return True
 
 
+def _fix_sign_conventions(scene):
+    """
+    After extent-based rotation (X widest, Y thinnest, Z middle), resolve the
+    sign ambiguity of Y and Z axes using vertex distribution heuristics:
+      (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
+      (b) temple tips at outer |X| extend toward +Z (behind face)
+    Disable: AR_POSTPROCESS_SIGN_FIX=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_SIGN_FIX", "1")).strip() in ("0", "false", "no"):
+        return
+
+    import trimesh
+
+    combined = _scene_concat_meshes(scene)
+    if combined is None or len(combined.vertices) < 16:
+        return
+
+    verts = np.asarray(combined.vertices, dtype=float)
+    bb_min = verts.min(axis=0)
+    bb_max = verts.max(axis=0)
+    center = (bb_min + bb_max) * 0.5
+    half_ext = (bb_max - bb_min) * 0.5
+
+    if np.any(half_ext < 1e-9):
+        return
+
+    hw, hh, hd = float(half_ext[0]), float(half_ext[1]), float(half_ext[2])
+    cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
+
+    flip_y = False
+    flip_z = False
+
+    center_mask = np.abs(verts[:, 0] - cx) < hw * 0.35
+    cb = verts[center_mask]
+    if len(cb) > 8:
+        top_c = cb[cb[:, 1] > cy]
+        bot_c = cb[cb[:, 1] < cy]
+        if len(top_c) > 2 and len(bot_c) > 2:
+            top_zs = float(top_c[:, 2].max() - top_c[:, 2].min())
+            bot_zs = float(bot_c[:, 2].max() - bot_c[:, 2].min())
+            if top_zs > bot_zs * 1.25:
+                flip_y = True
+
+    outer_mask = np.abs(verts[:, 0] - cx) > hw * 0.6
+    outer = verts[outer_mask]
+    if len(outer) > 4:
+        z_vals = outer[:, 2] - cz
+        abs_z = np.abs(z_vals)
+        top_n = max(4, int(len(z_vals) * 0.15))
+        idx = np.argpartition(abs_z, -top_n)[-top_n:]
+        mez = float(z_vals[idx].mean())
+        if mez < -hd * 0.12:
+            flip_z = True
+
+    if flip_y and flip_z:
+        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
+    elif flip_y:
+        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 0.0, 1.0]))
+    elif flip_z:
+        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0]))
+
+
 def _lay_down_tallest_extent(scene):
     """
     TripoSR costuma devolver o óculos “em pé”: um eixo tem extent bem maior (altura).
@@ -342,6 +404,14 @@ def main():
         except Exception:
             pass
         _snap_to_best_right_angle(scene)
+    try:
+        b = scene.bounds
+        c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5
+        scene.apply_translation(-c)
+    except Exception:
+        pass
+
+    _fix_sign_conventions(scene)
     try:
         b = scene.bounds
         c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5

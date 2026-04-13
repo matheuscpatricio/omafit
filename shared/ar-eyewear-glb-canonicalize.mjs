@@ -177,10 +177,61 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
     }
   }
 
+  // Sign disambiguation: extent sort leaves Y/Z signs ambiguous (180° rotations
+  // yield identical extents). Heuristics for eyewear:
+  //   (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
+  //   (b) temple tips at outer |X| extend toward +Z (behind face)
+  let signFlipY = false;
+  let signFlipZ = false;
+  {
+    const rot = centered.map((p) => applyEulerXYZDegrees(p, best[0], best[1], best[2]));
+    let sMinX = Infinity, sMaxX = -Infinity;
+    let sMinY = Infinity, sMaxY = -Infinity;
+    let sMinZ = Infinity, sMaxZ = -Infinity;
+    for (const q of rot) {
+      if (q[0] < sMinX) sMinX = q[0]; if (q[0] > sMaxX) sMaxX = q[0];
+      if (q[1] < sMinY) sMinY = q[1]; if (q[1] > sMaxY) sMaxY = q[1];
+      if (q[2] < sMinZ) sMinZ = q[2]; if (q[2] > sMaxZ) sMaxZ = q[2];
+    }
+    const sHW = (sMaxX - sMinX) / 2;
+    const sHH = (sMaxY - sMinY) / 2;
+    const sHD = (sMaxZ - sMinZ) / 2;
+    if (sHH > 1e-9 && sHW > 1e-9 && sHD > 1e-9) {
+      const cb = rot.filter((p) => Math.abs(p[0]) < sHW * 0.35);
+      if (cb.length > 8) {
+        const tC = cb.filter((p) => p[1] > 0);
+        const bC = cb.filter((p) => p[1] < 0);
+        if (tC.length > 2 && bC.length > 2) {
+          const tZS = Math.max(...tC.map((p) => p[2])) - Math.min(...tC.map((p) => p[2]));
+          const bZS = Math.max(...bC.map((p) => p[2])) - Math.min(...bC.map((p) => p[2]));
+          if (tZS > bZS * 1.25) signFlipY = true;
+        }
+      }
+      const outer = rot.filter((p) => Math.abs(p[0]) > sHW * 0.6);
+      if (outer.length > 4) {
+        const zv = outer.map((p) => p[2]).sort((a, b) => Math.abs(b) - Math.abs(a));
+        const topN = zv.slice(0, Math.max(4, Math.floor(zv.length * 0.15)));
+        const mez = topN.reduce((s, z) => s + z, 0) / topN.length;
+        if (mez < -sHD * 0.12) signFlipZ = true;
+      }
+    }
+  }
+
   const [rxDeg, ryDeg, rzDeg] = best;
-  const c0 = applyEulerXYZDegrees([1, 0, 0], rxDeg, ryDeg, rzDeg);
-  const c1 = applyEulerXYZDegrees([0, 1, 0], rxDeg, ryDeg, rzDeg);
-  const c2 = applyEulerXYZDegrees([0, 0, 1], rxDeg, ryDeg, rzDeg);
+  let c0 = applyEulerXYZDegrees([1, 0, 0], rxDeg, ryDeg, rzDeg);
+  let c1 = applyEulerXYZDegrees([0, 1, 0], rxDeg, ryDeg, rzDeg);
+  let c2 = applyEulerXYZDegrees([0, 0, 1], rxDeg, ryDeg, rzDeg);
+
+  if (signFlipY && signFlipZ) {
+    c1 = c1.map((v) => -v);
+    c2 = c2.map((v) => -v);
+  } else if (signFlipY) {
+    c0 = c0.map((v) => -v);
+    c1 = c1.map((v) => -v);
+  } else if (signFlipZ) {
+    c0 = c0.map((v) => -v);
+    c2 = c2.map((v) => -v);
+  }
 
   const rtc = [
     c0[0] * c[0] + c1[0] * c[1] + c2[0] * c[2],

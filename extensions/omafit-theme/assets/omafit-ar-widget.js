@@ -1182,6 +1182,11 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
+    // Center at the nose bridge (top of frame) instead of bbox center so the
+    // anchor (landmark 168) meets the bridge, not the mid-frame.
+    const bAlignY = cfgAttr("arBridgeAlignY", "").trim();
+    const bridgeYFactor = bAlignY && Number.isFinite(Number(bAlignY)) ? Number(bAlignY) : 0.30;
+    center.y += bridgeYFactor * sz.y;
     autoOrient.position.sub(center);
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;

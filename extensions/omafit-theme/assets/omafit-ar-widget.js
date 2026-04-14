@@ -1175,20 +1175,6 @@ async function runArSession({
     autoOrient.position.sub(center);
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
-    // Bridge alignment: the bbox center is at the mid-frame, but the anchor
-    // (landmark 168) is at the nose bridge which sits near the top-front of the
-    // frame.  Shift model so the bridge meets the anchor instead of the bbox center.
-    const bAlignYZ = cfgAttr("arBridgeAlignYz", "").trim();
-    if (bAlignYZ) {
-      const bp = bAlignYZ.split(/[\s,;]+/).map(Number);
-      if (bp.length >= 2 && bp.every(Number.isFinite)) {
-        autoOrient.position.y -= bp[0] * sz.y * baseUnitScale;
-        autoOrient.position.z += bp[1] * sz.z * baseUnitScale;
-      }
-    } else {
-      autoOrient.position.y -= 0.35 * sz.y * baseUnitScale;
-      autoOrient.position.z += 0.20 * sz.z * baseUnitScale;
-    }
     autoOrient.scale.setScalar(baseUnitScale);
     autoOrient.userData._omafitMaxDim = maxDim;
     autoOrient.userData._omafitBaseUnitScale = baseUnitScale;

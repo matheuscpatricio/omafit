@@ -1172,7 +1172,15 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
-    autoOrient.position.sub(center);
+    // Center at the nose bridge (top of frame) instead of bbox center so the
+    // anchor (landmark 168) meets the bridge, not the mid-frame.  Only shift Y
+    // (vertical); Z offset would displace the pivot and cause lateral drift
+    // during IPD-snap rotation.
+    const bAlignY = cfgAttr("arBridgeAlignY", "").trim();
+    const bridgeYFactor = bAlignY && Number.isFinite(Number(bAlignY)) ? Number(bAlignY) : 0.35;
+    const bridge = center.clone();
+    bridge.y += bridgeYFactor * sz.y;
+    autoOrient.position.sub(bridge);
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
     autoOrient.scale.setScalar(baseUnitScale);

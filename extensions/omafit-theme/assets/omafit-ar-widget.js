@@ -1088,13 +1088,15 @@ async function runArSession({
     //   (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
     //   (b) temple tips at outer |X| extend toward +Z (behind face)
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
-    const signFixGrp = new GroupCtor();
-    signFixGrp.name = "omafit_sign_fix";
-    signFixGrp.rotation.order = "YXZ";
     let _sfFlipY = false, _sfFlipZ = false;
     if (sfOverride) {
       const sfD = parseEulerDegComponents(sfOverride, 0, 0, 0);
-      signFixGrp.rotation.set(rad(sfD.x), rad(sfD.y), rad(sfD.z));
+      const sfBakeMat = new THREE.Matrix4();
+      sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
+      glasses.traverse((obj) => {
+        if (!obj.isMesh || !obj.geometry) return;
+        obj.geometry.applyMatrix4(sfBakeMat);
+      });
     } else {
       glbWideAlign.updateMatrixWorld(true);
       const sfPos = [];
@@ -1147,14 +1149,22 @@ async function runArSession({
             if (mez < -shd * 0.12) _sfFlipZ = true;
           }
         }
-        if (_sfFlipY && _sfFlipZ) signFixGrp.rotation.x = Math.PI;
-        else if (_sfFlipY) signFixGrp.rotation.z = Math.PI;
-        else if (_sfFlipZ) signFixGrp.rotation.y = Math.PI;
+        // Bake sign fix directly into geometry instead of a scene graph
+        // rotation node — a rotation node between the anchor and the model
+        // inverts the dynamic pitch response from face tracking.
+        let sfBakeMat = null;
+        if (_sfFlipY && _sfFlipZ) sfBakeMat = new THREE.Matrix4().makeRotationX(Math.PI);
+        else if (_sfFlipY) sfBakeMat = new THREE.Matrix4().makeRotationZ(Math.PI);
+        else if (_sfFlipZ) sfBakeMat = new THREE.Matrix4().makeRotationY(Math.PI);
+        if (sfBakeMat) {
+          glasses.traverse((obj) => {
+            if (!obj.isMesh || !obj.geometry) return;
+            obj.geometry.applyMatrix4(sfBakeMat);
+          });
+        }
       }
     }
-    glbWideAlign.remove(glasses);
-    signFixGrp.add(glasses);
-    glbWideAlign.add(signFixGrp);
+    glbWideAlign.add(glasses);
 
     const autoOrient = new GroupCtor();
     autoOrient.add(glbWideAlign);
@@ -1172,15 +1182,7 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
-    // Center at the nose bridge (top of frame) instead of bbox center so the
-    // anchor (landmark 168) meets the bridge, not the mid-frame.  Only shift Y
-    // (vertical); Z offset would displace the pivot and cause lateral drift
-    // during IPD-snap rotation.
-    const bAlignY = cfgAttr("arBridgeAlignY", "").trim();
-    const bridgeYFactor = bAlignY && Number.isFinite(Number(bAlignY)) ? Number(bAlignY) : 0.35;
-    const bridge = center.clone();
-    bridge.y += bridgeYFactor * sz.y;
-    autoOrient.position.sub(bridge);
+    autoOrient.position.sub(center);
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
     autoOrient.scale.setScalar(baseUnitScale);
@@ -1242,9 +1244,6 @@ async function runArSession({
     let mirrorSign = disableIpdSnap ? (skipDefXFlip ? 1 : -1) : skipDefXFlip ? 1 : -1;
     if (sceneXM) mirrorSign *= -1;
     if (flipIpd) mirrorSign *= -1;
-    // 180° X (both Y+Z flip) preserves X, but mirrorX would add an unwanted
-    // X-flip; 180° Y/Z already include an X-flip that cancels mirrorX.
-    if (_sfFlipY && _sfFlipZ && !sfOverride) mirrorSign *= -1;
     const mirrorX = new GroupCtor();
     if (mirrorSign < 0) mirrorX.scale.x = -1;
     mirrorX.add(poseCorr);

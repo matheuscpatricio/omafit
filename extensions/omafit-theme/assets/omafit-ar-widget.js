@@ -1083,21 +1083,28 @@ async function runArSession({
     glbWideAlign.add(glasses);
 
     // --- Sign disambiguation (runtime) ---
-    // Only for non-canonical GLBs: the server-side canonicalization already
-    // includes sign fix in the omafit_ar_canonical node matrix.  Re-running
-    // heuristics on an already-fixed model can false-trigger and break orientation.
+    // Analysis uses WORLD-space vertex positions (after glbWideAlign + any
+    // parent transforms like omafit_ar_canonical).  The bake must convert
+    // the world-space rotation into each mesh's LOCAL geometry space:
+    //   localBake = inv(meshWorldMat) * worldBake * meshWorldMat
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
     let _sfFlipY = false, _sfFlipZ = false;
-    if (hasOmafitCanonicalNode && !sfOverride) {
-      // Canonical model: sign already fixed server-side — skip runtime heuristics.
-    } else if (sfOverride) {
+    function bakeWorldRotationIntoGeometries(worldMat) {
+      glasses.traverse((obj) => {
+        if (!obj.isMesh || !obj.geometry) return;
+        obj.updateMatrixWorld(true);
+        const wm = obj.matrixWorld;
+        const wmInv = wm.clone().invert();
+        const localBake = wmInv.clone().multiply(worldMat).multiply(wm);
+        obj.geometry.applyMatrix4(localBake);
+      });
+    }
+    if (sfOverride) {
       const sfD = parseEulerDegComponents(sfOverride, 0, 0, 0);
       const sfBakeMat = new THREE.Matrix4();
       sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
-      glasses.traverse((obj) => {
-        if (!obj.isMesh || !obj.geometry) return;
-        obj.geometry.applyMatrix4(sfBakeMat);
-      });
+      glbWideAlign.updateMatrixWorld(true);
+      bakeWorldRotationIntoGeometries(sfBakeMat);
     } else {
       glbWideAlign.updateMatrixWorld(true);
       const sfPos = [];
@@ -1120,7 +1127,6 @@ async function runArSession({
         const sfS = sfB.getSize(new THREE.Vector3());
         const shw = sfS.x / 2, shh = sfS.y / 2, shd = sfS.z / 2;
         if (shh > 1e-6 && shw > 1e-6 && shd > 1e-6) {
-          // Y-sign signal 1: Z-spread at center band (nose pads protrude more in Z than bridge)
           const cb = sfPos.filter((v) => Math.abs(v.x - sfC.x) < shw * 0.35);
           if (cb.length > 8) {
             const tC = cb.filter((v) => v.y > sfC.y);
@@ -1131,8 +1137,6 @@ async function runArSession({
               if (tZS > bZS * 1.08) _sfFlipY = true;
             }
           }
-          // Y-sign signal 2: X-spread at Y extremes — bridge (top) is narrower
-          // in X than bottom rim; if the top 8% of vertices by Y is wider → upside down
           if (!_sfFlipY && sfPos.length > 20) {
             const sortedY = sfPos.slice().sort((a, b) => a.y - b.y);
             const sn = Math.max(8, Math.floor(sortedY.length * 0.08));
@@ -1150,18 +1154,12 @@ async function runArSession({
             if (mez < -shd * 0.12) _sfFlipZ = true;
           }
         }
-        // Bake sign fix directly into geometry instead of a scene graph
-        // rotation node — a rotation node between the anchor and the model
-        // inverts the dynamic pitch response from face tracking.
         let sfBakeMat = null;
         if (_sfFlipY && _sfFlipZ) sfBakeMat = new THREE.Matrix4().makeRotationX(Math.PI);
         else if (_sfFlipY) sfBakeMat = new THREE.Matrix4().makeRotationZ(Math.PI);
         else if (_sfFlipZ) sfBakeMat = new THREE.Matrix4().makeRotationY(Math.PI);
         if (sfBakeMat) {
-          glasses.traverse((obj) => {
-            if (!obj.isMesh || !obj.geometry) return;
-            obj.geometry.applyMatrix4(sfBakeMat);
-          });
+          bakeWorldRotationIntoGeometries(sfBakeMat);
         }
       }
     }
@@ -1185,12 +1183,7 @@ async function runArSession({
     }
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
-    // Center at the nose bridge (top of frame) instead of bbox center so the
-    // anchor (landmark 168) meets the bridge, not the mid-frame.
     // position = -scale * pivot so that: position + scale * pivot = 0.
-    const bAlignY = cfgAttr("arBridgeAlignY", "").trim();
-    const bridgeYFactor = bAlignY && Number.isFinite(Number(bAlignY)) ? Number(bAlignY) : 0.30;
-    center.y += bridgeYFactor * sz.y;
     autoOrient.position.set(
       -center.x * baseUnitScale,
       -center.y * baseUnitScale,

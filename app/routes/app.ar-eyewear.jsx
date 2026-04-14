@@ -348,13 +348,21 @@ export default function ArEyewearPage() {
                     value={generationImageUrl}
                     onChange={setGenerationImageUrl}
                   />
-                  <TextField
-                    label={t("arEyewear.variantId")}
-                    value={variantId}
-                    onChange={setVariantId}
-                    autoComplete="off"
-                    helpText={t("arEyewear.variantIdHelp")}
-                  />
+                  {(selectedProduct.variants || []).length > 1 ? (
+                    <Select
+                      label={t("arEyewear.variantSelect")}
+                      options={[
+                        { label: t("arEyewear.variantSelectAll"), value: "" },
+                        ...(selectedProduct.variants || []).map((v) => ({
+                          label: `${v.title}${v.price ? ` — ${v.price}` : ""}`,
+                          value: String(v.id || ""),
+                        })),
+                      ]}
+                      value={variantId}
+                      onChange={setVariantId}
+                      helpText={t("arEyewear.variantSelectHelp")}
+                    />
+                  ) : null}
                   <TextField
                     label={t("arEyewear.frameWidth")}
                     value={frameWidthMm}

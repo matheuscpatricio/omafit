@@ -72,6 +72,28 @@
         var u = {{ omafit_ar_glb_url | json }};
         if (typeof u === 'string' && u.trim()) window.__OMAFIT_AR_GLB_URL__ = u.trim();
       } catch (e) {}
+      var _variants = [];
+      {% for v in product.variants %}
+        {% assign v_glb = v.metafields.omafit.ar_glb_url %}
+        {% assign v_glb_url = '' %}
+        {% if v_glb != blank and v_glb.value != blank %}
+          {% assign v_glb_url = v_glb.value | strip %}
+        {% endif %}
+        {% assign v_img = '' %}
+        {% if v.featured_image %}
+          {% assign v_img = v.featured_image | image_url: width: 200 %}
+        {% elsif v.image %}
+          {% assign v_img = v.image | image_url: width: 200 %}
+        {% endif %}
+        _variants.push({
+          id: {{ v.id | json }},
+          title: {{ v.title | json }},
+          price: {{ v.price | json }},
+          imageUrl: {{ v_img | json }},
+          glbUrl: {{ v_glb_url | json }}
+        });
+      {% endfor %}
+      window.__OMAFIT_AR_VARIANTS__ = _variants;
     })();
   </script>
 

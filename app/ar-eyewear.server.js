@@ -424,6 +424,30 @@ export async function ensureArGlbMetafieldDefinition(admin) {
         storefront: "PUBLIC_READ",
       },
     },
+    {
+      name: "Omafit AR — URL do modelo 3D (variante)",
+      namespace: "omafit",
+      key: "ar_glb_url",
+      description: "URL pública do GLB para o provador AR de óculos (Omafit) — nível variante.",
+      type: "url",
+      ownerType: "PRODUCTVARIANT",
+      access: {
+        admin: "MERCHANT_READ_WRITE",
+        storefront: "PUBLIC_READ",
+      },
+    },
+    {
+      name: "Omafit AR — URL do modelo 3D (variante)",
+      namespace: "omafit",
+      key: "ar_glb_url",
+      description: "URL pública do GLB para o provador AR de óculos (Omafit) — nível variante.",
+      type: "single_line_text_field",
+      ownerType: "PRODUCTVARIANT",
+      access: {
+        admin: "MERCHANT_READ_WRITE",
+        storefront: "PUBLIC_READ",
+      },
+    },
   ];
 
   for (const definition of attempts) {
@@ -489,6 +513,44 @@ export async function setProductArGlbMetafield(admin, productId, glbUrl) {
     lastErr = errs.map((e) => e.message).join("; ");
   }
   throw new Error(lastErr || "metafieldsSet failed");
+}
+
+export function toVariantGid(variantId) {
+  const raw = String(variantId || "").trim();
+  if (raw.startsWith("gid://")) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/ProductVariant/${raw}`;
+  return raw;
+}
+
+/**
+ * Publica URL do GLB numa variante Shopify (namespace omafit, key ar_glb_url).
+ */
+export async function setVariantArGlbMetafield(admin, variantId, glbUrl) {
+  const ownerId = toVariantGid(variantId);
+  const tryTypes = ["url", "single_line_text_field"];
+  let lastErr = "";
+  for (const type of tryTypes) {
+    const response = await admin.graphql(METAFIELD_SET, {
+      variables: {
+        metafields: [
+          {
+            ownerId,
+            namespace: "omafit",
+            key: "ar_glb_url",
+            type,
+            value: glbUrl,
+          },
+        ],
+      },
+    });
+    const json = await response.json();
+    const errs = json?.data?.metafieldsSet?.userErrors || [];
+    if (!errs.length) {
+      return json?.data?.metafieldsSet?.metafields?.[0] || null;
+    }
+    lastErr = errs.map((e) => e.message).join("; ");
+  }
+  throw new Error(lastErr || "metafieldsSet (variant) failed");
 }
 
 export async function getShopArEyewearEnabled(shopDomain) {

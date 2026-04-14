@@ -112,6 +112,10 @@ const COPY = {
     errGeneric: "AR indisponível neste dispositivo.",
     errHttps: "Abre a loja em HTTPS (ou localhost). Sem contexto seguro o browser não pede a câmera.",
     errMediaDevices: "Este browser não expõe a câmera aqui. Experimenta Chrome/Edge actualizado ou outro perfil.",
+    addToCart: "Adicionar ao carrinho",
+    addedToCart: "Adicionado!",
+    addToCartError: "Erro ao adicionar",
+    loadingModel: "Carregando modelo…",
   },
   en: {
     title: "AR eyewear try-on",
@@ -129,6 +133,10 @@ const COPY = {
     errGeneric: "AR unavailable on this device.",
     errHttps: "Open the store over HTTPS (or localhost). Without a secure context the browser won't prompt for the camera.",
     errMediaDevices: "This browser doesn't expose the camera here. Try an updated Chrome/Edge or another profile.",
+    addToCart: "Add to cart",
+    addedToCart: "Added!",
+    addToCartError: "Error adding",
+    loadingModel: "Loading model…",
   },
   es: {
     title: "Probador AR de gafas",
@@ -146,6 +154,10 @@ const COPY = {
     errGeneric: "AR no disponible en este dispositivo.",
     errHttps: "Abre la tienda en HTTPS (o localhost). Sin contexto seguro el navegador no pedirá la cámara.",
     errMediaDevices: "Este navegador no expone la cámara aquí. Prueba Chrome/Edge actualizado u otro perfil.",
+    addToCart: "Añadir al carrito",
+    addedToCart: "¡Añadido!",
+    addToCartError: "Error al añadir",
+    loadingModel: "Cargando modelo…",
   },
 };
 
@@ -742,6 +754,8 @@ async function runArSession({
   primaryColor,
   t,
   onClose,
+  variants,
+  productId,
 }) {
   colContent.innerHTML = "";
   const desktopCol = shell.querySelector(".omafit-ar-col-desktop");
@@ -804,6 +818,180 @@ async function runArSession({
   loading.appendChild(document.createTextNode(t.arLoading));
   arFit.appendChild(loading);
   arWrap.appendChild(arFit);
+
+  // --- Variant bar + Add to Cart ---
+  const arVariants = Array.isArray(variants) ? variants.filter((v) => v.glbUrl || glbUrl) : [];
+  let currentVariantId = arVariants.length > 0 ? arVariants[0].id : null;
+  let currentGlbUrl = arVariants.length > 0 ? (arVariants[0].glbUrl || glbUrl) : glbUrl;
+  let arBottomBar = null;
+
+  if (arVariants.length > 1) {
+    arBottomBar = el("div", {
+      style: {
+        position: "absolute",
+        bottom: "0",
+        left: "0",
+        right: "0",
+        background: "linear-gradient(transparent, rgba(0,0,0,0.7))",
+        padding: "12px 8px 8px",
+        zIndex: "5",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+      },
+    });
+
+    const thumbRow = el("div", {
+      style: {
+        display: "flex",
+        gap: "8px",
+        overflowX: "auto",
+        justifyContent: "center",
+        padding: "0 4px 4px",
+      },
+    });
+
+    arVariants.forEach((v) => {
+      const thumb = el("button", {
+        type: "button",
+        title: v.title || "",
+        style: {
+          width: "56px",
+          height: "56px",
+          borderRadius: "10px",
+          border: v.id === currentVariantId ? `3px solid ${primaryColor}` : "2px solid rgba(255,255,255,0.5)",
+          background: "#fff",
+          cursor: "pointer",
+          padding: "2px",
+          overflow: "hidden",
+          flexShrink: "0",
+          transition: "border-color 0.2s",
+        },
+      });
+      thumb.dataset.variantId = v.id;
+      if (v.imageUrl) {
+        thumb.appendChild(el("img", {
+          src: v.imageUrl,
+          alt: v.title || "",
+          style: { width: "100%", height: "100%", objectFit: "cover", borderRadius: "7px", display: "block" },
+        }));
+      } else {
+        thumb.appendChild(el("span", {
+          textContent: (v.title || "?").slice(0, 3),
+          style: { fontSize: "11px", color: "#333", display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%" },
+        }));
+      }
+      thumb.addEventListener("click", () => {
+        if (String(v.id) === String(currentVariantId)) return;
+        currentVariantId = v.id;
+        currentGlbUrl = v.glbUrl || glbUrl;
+        thumbRow.querySelectorAll("button").forEach((b) => {
+          b.style.border = String(b.dataset.variantId) === String(currentVariantId)
+            ? `3px solid ${primaryColor}`
+            : "2px solid rgba(255,255,255,0.5)";
+        });
+        if (typeof window.__omafitArSwitchGlb === "function") {
+          window.__omafitArSwitchGlb(currentGlbUrl, currentVariantId);
+        }
+      });
+      thumbRow.appendChild(thumb);
+    });
+
+    arBottomBar.appendChild(thumbRow);
+
+    const cartBtn = el("button", {
+      type: "button",
+      textContent: t.addToCart,
+      style: {
+        width: "100%",
+        padding: "12px 16px",
+        borderRadius: "8px",
+        border: "none",
+        background: primaryColor,
+        color: "#fff",
+        fontWeight: "600",
+        fontSize: "1rem",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        transition: "filter 0.2s",
+      },
+    });
+    cartBtn.addEventListener("mouseenter", () => { cartBtn.style.filter = "brightness(0.9)"; });
+    cartBtn.addEventListener("mouseleave", () => { cartBtn.style.filter = "none"; });
+    cartBtn.addEventListener("click", async () => {
+      if (!currentVariantId) return;
+      cartBtn.disabled = true;
+      cartBtn.textContent = "…";
+      try {
+        const res = await fetch("/cart/add.js", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: [{ id: Number(currentVariantId), quantity: 1 }] }),
+        });
+        if (!res.ok) throw new Error(res.statusText);
+        cartBtn.textContent = t.addedToCart || "Added!";
+        setTimeout(() => { cartBtn.textContent = t.addToCart; cartBtn.disabled = false; }, 2000);
+      } catch {
+        cartBtn.textContent = t.addToCartError || "Error";
+        setTimeout(() => { cartBtn.textContent = t.addToCart; cartBtn.disabled = false; }, 2000);
+      }
+    });
+    arBottomBar.appendChild(cartBtn);
+    arFit.appendChild(arBottomBar);
+  } else if (productId) {
+    const singleCartBar = el("div", {
+      style: {
+        position: "absolute",
+        bottom: "0",
+        left: "0",
+        right: "0",
+        background: "linear-gradient(transparent, rgba(0,0,0,0.7))",
+        padding: "12px 8px 8px",
+        zIndex: "5",
+      },
+    });
+    const singleCartBtn = el("button", {
+      type: "button",
+      textContent: t.addToCart,
+      style: {
+        width: "100%",
+        padding: "12px 16px",
+        borderRadius: "8px",
+        border: "none",
+        background: primaryColor,
+        color: "#fff",
+        fontWeight: "600",
+        fontSize: "1rem",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        transition: "filter 0.2s",
+      },
+    });
+    singleCartBtn.addEventListener("mouseenter", () => { singleCartBtn.style.filter = "brightness(0.9)"; });
+    singleCartBtn.addEventListener("mouseleave", () => { singleCartBtn.style.filter = "none"; });
+    singleCartBtn.addEventListener("click", async () => {
+      const vid = currentVariantId || (arVariants.length === 1 ? arVariants[0].id : null);
+      if (!vid) return;
+      singleCartBtn.disabled = true;
+      singleCartBtn.textContent = "…";
+      try {
+        const res = await fetch("/cart/add.js", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: [{ id: Number(vid), quantity: 1 }] }),
+        });
+        if (!res.ok) throw new Error(res.statusText);
+        singleCartBtn.textContent = t.addedToCart || "Added!";
+        setTimeout(() => { singleCartBtn.textContent = t.addToCart; singleCartBtn.disabled = false; }, 2000);
+      } catch {
+        singleCartBtn.textContent = t.addToCartError || "Error";
+        setTimeout(() => { singleCartBtn.textContent = t.addToCart; singleCartBtn.disabled = false; }, 2000);
+      }
+    });
+    singleCartBar.appendChild(singleCartBtn);
+    arFit.appendChild(singleCartBar);
+  }
+
   colContent.style.padding = "0";
   colContent.style.overflow = "auto";
   colContent.style.overflowX = "hidden";
@@ -1083,12 +1271,14 @@ async function runArSession({
     glbWideAlign.add(glasses);
 
     // --- Sign disambiguation (runtime) ---
-    // Analysis uses WORLD-space vertex positions (after glbWideAlign + any
-    // parent transforms like omafit_ar_canonical).  The bake must convert
-    // the world-space rotation into each mesh's LOCAL geometry space:
-    //   localBake = inv(meshWorldMat) * worldBake * meshWorldMat
+    // Detect sign issues from world-space vertex analysis, then bake the
+    // correction into geometry via world→local conversion so the static
+    // orientation is exact.  The bake effectively inserts a rotation inside the
+    // face-tracking hierarchy which inverts pitch; we compensate per-frame in
+    // the animation loop (sfPitchComp group with α = π − 2θ).
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
     let _sfFlipY = false, _sfFlipZ = false;
+    let _sfNeedsPitchComp = false;
     function bakeWorldRotationIntoGeometries(worldMat) {
       glasses.traverse((obj) => {
         if (!obj.isMesh || !obj.geometry) return;
@@ -1105,6 +1295,7 @@ async function runArSession({
       sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
       glbWideAlign.updateMatrixWorld(true);
       bakeWorldRotationIntoGeometries(sfBakeMat);
+      _sfNeedsPitchComp = true;
     } else {
       glbWideAlign.updateMatrixWorld(true);
       const sfPos = [];
@@ -1155,9 +1346,16 @@ async function runArSession({
           }
         }
         let sfBakeMat = null;
-        if (_sfFlipY && _sfFlipZ) sfBakeMat = new THREE.Matrix4().makeRotationX(Math.PI);
-        else if (_sfFlipY) sfBakeMat = new THREE.Matrix4().makeRotationZ(Math.PI);
-        else if (_sfFlipZ) sfBakeMat = new THREE.Matrix4().makeRotationY(Math.PI);
+        if (_sfFlipY && _sfFlipZ) {
+          sfBakeMat = new THREE.Matrix4().makeRotationX(Math.PI);
+          _sfNeedsPitchComp = true;
+        } else if (_sfFlipY) {
+          sfBakeMat = new THREE.Matrix4().makeRotationZ(Math.PI);
+          _sfNeedsPitchComp = true;
+        } else if (_sfFlipZ) {
+          sfBakeMat = new THREE.Matrix4().makeRotationY(Math.PI);
+          _sfNeedsPitchComp = true;
+        }
         if (sfBakeMat) {
           bakeWorldRotationIntoGeometries(sfBakeMat);
         }
@@ -1181,9 +1379,10 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
+    const bridgeYFactor = 0.15;
+    center.y += bridgeYFactor * sz.y;
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
-    // position = -scale * pivot so that: position + scale * pivot = 0.
     autoOrient.position.set(
       -center.x * baseUnitScale,
       -center.y * baseUnitScale,
@@ -1279,14 +1478,27 @@ async function runArSession({
     const LM_IPD_LEFT = 263;
 
     ipdSnap.add(wearAlign);
-    anchor.group.add(ipdSnap);
+
+    const sfPitchComp = new GroupCtor();
+    sfPitchComp.rotation.order = "YXZ";
+    sfPitchComp.add(ipdSnap);
+    anchor.group.add(sfPitchComp);
 
     const { renderer, scene, camera } = mindarThree;
     let didFaceScaleBlend = false;
     const useFs = /^1|true|on$/i.test(cfgAttr("arMindarUseFaceScale", "").toLowerCase());
+    const _sfCompQ = new THREE.Quaternion();
+    const _sfCompE = new THREE.Euler();
+    const _sfCompV = new THREE.Vector3();
     renderer.setAnimationLoop(() => {
       const estLoop =
         typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
+      if (_sfNeedsPitchComp) {
+        anchor.group.updateMatrixWorld(true);
+        anchor.group.matrixWorld.decompose(_sfCompV, _sfCompQ, _sfCompV);
+        _sfCompE.setFromQuaternion(_sfCompQ, "YXZ");
+        sfPitchComp.rotation.x = Math.PI - 2 * _sfCompE.x;
+      }
       /** Até haver `metricLandmarks`, `ipdSnap.quaternion` fica identidade — 1–2 frames podem parecer “desalinhados”. */
       if (!disableIpdSnap) {
         const ml = estLoop && estLoop.metricLandmarks;
@@ -1374,6 +1586,7 @@ async function runArSession({
         signFixFlipY: _sfFlipY,
         signFixFlipZ: _sfFlipZ,
         signFixOverride: sfOverride || null,
+        signFixPitchComp: _sfNeedsPitchComp,
         xAxisAlreadyWidth,
         glbPreBboxSize: { x: wx, y: wy, z: wz },
         useFaceScale: useFs,
@@ -1496,6 +1709,8 @@ async function main() {
   function openModal() {
     if (modal) return;
     document.body.style.overflow = "hidden";
+    const arVariants = Array.isArray(window.__OMAFIT_AR_VARIANTS__) ? window.__OMAFIT_AR_VARIANTS__ : [];
+    const arProductId = root.dataset.productId || root.getAttribute("data-product-id") || "";
     modal = buildInfoModal({
       primaryColor,
       logoUrl,
@@ -1514,6 +1729,8 @@ async function main() {
           primaryColor,
           t,
           onClose: closeModal,
+          variants: arVariants,
+          productId: arProductId,
         });
       },
     });

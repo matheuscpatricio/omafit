@@ -44,6 +44,17 @@ const PRODUCTS_QUERY = `#graphql
               }
             }
           }
+          variants(first: 100) {
+            nodes {
+              id
+              title
+              price
+              image {
+                url(transform: { maxWidth: 600 })
+                altText
+              }
+            }
+          }
         }
       }
     }
@@ -86,6 +97,17 @@ const PRODUCTS_QUERY_NO_CATEGORY = `#graphql
                   width
                   height
                 }
+              }
+            }
+          }
+          variants(first: 100) {
+            nodes {
+              id
+              title
+              price
+              image {
+                url(transform: { maxWidth: 600 })
+                altText
               }
             }
           }
@@ -164,6 +186,22 @@ function collectImages(node) {
   return out;
 }
 
+function collectVariants(node) {
+  const nodes = node?.variants?.nodes || [];
+  return nodes.map((v) => {
+    const gid = v?.id || "";
+    const m = gid.match(/ProductVariant\/(\d+)/);
+    return {
+      id: m ? m[1] : String(gid).replace(/\D/g, "") || null,
+      gid,
+      title: v?.title || "",
+      price: v?.price || "",
+      imageUrl: v?.image?.url || null,
+      imageAlt: v?.image?.altText || "",
+    };
+  });
+}
+
 /**
  * @param {object} admin - GraphQL client from authenticate.admin
  * @param {{ maxPages?: number, pageSize?: number }} opts
@@ -209,6 +247,7 @@ export async function fetchEyewearProductsForShop(admin, opts = {}) {
           categoryFullName: node.category?.fullName || node.category?.name || "",
           tags: Array.isArray(node.tags) ? node.tags : [],
           images: collectImages(node),
+          variants: collectVariants(node),
         });
       }
     }

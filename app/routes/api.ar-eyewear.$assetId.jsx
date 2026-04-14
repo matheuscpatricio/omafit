@@ -9,6 +9,7 @@ import {
   invokeArEyewearGenerate,
   ensureArGlbMetafieldDefinition,
   setProductArGlbMetafield,
+  setVariantArGlbMetafield,
   supersedeOtherPublishedAssets,
   getShopArEyewearEnabled,
   isArEyewearConfigured,
@@ -95,6 +96,13 @@ export async function action({ request, params }) {
       }
       await ensureArGlbMetafieldDefinition(admin);
       await setProductArGlbMetafield(admin, row.product_id, draftUrl);
+      if (row.variant_id) {
+        try {
+          await setVariantArGlbMetafield(admin, row.variant_id, draftUrl);
+        } catch (vErr) {
+          console.warn("[ar-eyewear] setVariantArGlbMetafield:", vErr?.message || vErr);
+        }
+      }
       await supersedeOtherPublishedAssets({
         shopDomain: session.shop,
         productId: row.product_id,

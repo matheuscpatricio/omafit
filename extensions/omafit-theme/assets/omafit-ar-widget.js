@@ -1083,13 +1083,14 @@ async function runArSession({
     glbWideAlign.add(glasses);
 
     // --- Sign disambiguation (runtime) ---
-    // Extent sort + canonicalization leave Y/Z signs ambiguous (180° rotations
-    // yield identical extents). Heuristics for eyewear:
-    //   (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
-    //   (b) temple tips at outer |X| extend toward +Z (behind face)
+    // Only for non-canonical GLBs: the server-side canonicalization already
+    // includes sign fix in the omafit_ar_canonical node matrix.  Re-running
+    // heuristics on an already-fixed model can false-trigger and break orientation.
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
     let _sfFlipY = false, _sfFlipZ = false;
-    if (sfOverride) {
+    if (hasOmafitCanonicalNode && !sfOverride) {
+      // Canonical model: sign already fixed server-side — skip runtime heuristics.
+    } else if (sfOverride) {
       const sfD = parseEulerDegComponents(sfOverride, 0, 0, 0);
       const sfBakeMat = new THREE.Matrix4();
       sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));

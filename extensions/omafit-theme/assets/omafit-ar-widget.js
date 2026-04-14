@@ -1182,17 +1182,23 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
+    /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
+    const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
     // Center at the nose bridge (top of frame) instead of bbox center so the
     // anchor (landmark 168) meets the bridge, not the mid-frame.
+    // position = -scale * pivot so that: position + scale * pivot = 0.
     const bAlignY = cfgAttr("arBridgeAlignY", "").trim();
     const bridgeYFactor = bAlignY && Number.isFinite(Number(bAlignY)) ? Number(bAlignY) : 0.30;
     center.y += bridgeYFactor * sz.y;
-    autoOrient.position.sub(center);
-    /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
-    const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
+    autoOrient.position.set(
+      -center.x * baseUnitScale,
+      -center.y * baseUnitScale,
+      -center.z * baseUnitScale,
+    );
     autoOrient.scale.setScalar(baseUnitScale);
     autoOrient.userData._omafitMaxDim = maxDim;
     autoOrient.userData._omafitBaseUnitScale = baseUnitScale;
+    autoOrient.userData._omafitPivot = center.clone();
 
     const poseCorr = new GroupCtor();
     poseCorr.rotation.order = "YXZ";
@@ -1322,7 +1328,16 @@ async function runArSession({
           if (Number.isFinite(md) && md > 0 && Number.isFinite(base)) {
             /** `faceScale` ≈ largura facial métrica; alinhar largura do GLB (~1 após bbox) ao rosto. */
             const k = 1.15;
-            autoOrient.scale.setScalar((k * fs) / md);
+            const newScale = (k * fs) / md;
+            autoOrient.scale.setScalar(newScale);
+            const pivot = autoOrient.userData._omafitPivot;
+            if (pivot) {
+              autoOrient.position.set(
+                -pivot.x * newScale,
+                -pivot.y * newScale,
+                -pivot.z * newScale,
+              );
+            }
             didFaceScaleBlend = true;
           }
         }

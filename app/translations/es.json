@@ -179,7 +179,9 @@
     "collectionElasticityStructured": "Estructurado (sastrería, denim rígido, sin elastano)",
     "collectionElasticityLightFlex": "Ligera flexibilidad (hasta 3% elastano)",
     "collectionElasticityFlexible": "Flexible (tejidos de punto, telas con stretch)",
-    "collectionElasticityHighElasticity": "Alta elasticidad (canalé, knit, prendas muy ajustables)"
+    "collectionElasticityHighElasticity": "Alta elasticidad (canalé, knit, prendas muy ajustables)",
+    "videoTitle": "Video explicativo",
+    "videoSubtitle": "Mira este video para entender de forma simple y comercial cómo aplicar las guías de tallas en tu catálogo."
   },
   "analytics": {
     "title": "Analiticas",

@@ -740,6 +740,34 @@ export default function SizeChartPage() {
             </BlockStack>
           </Card>
         </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">{t('sizeChart.videoTitle')}</Text>
+              <Text variant="bodyMd" tone="subdued">{t('sizeChart.videoSubtitle')}</Text>
+              <div
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  maxWidth: '960px',
+                  aspectRatio: '16 / 9',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  background: '#000'
+                }}
+              >
+                <iframe
+                  title="Omafit - tabela de medidas"
+                  src="https://www.youtube.com/embed/d_abGgXqEx4"
+                  style={{ width: '100%', height: '100%', border: 0 }}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
       </Layout>
     </Page>
   );

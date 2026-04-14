@@ -179,7 +179,9 @@
     "collectionElasticityStructured": "Estruturado (alfaiataria, jeans rígido, sem elastano)",
     "collectionElasticityLightFlex": "Leve flexibilidade (até 3% elastano)",
     "collectionElasticityFlexible": "Flexível (malha, tecidos com stretch)",
-    "collectionElasticityHighElasticity": "Alta elasticidade (ribana, knit, peças muito ajustáveis)"
+    "collectionElasticityHighElasticity": "Alta elasticidade (ribana, knit, peças muito ajustáveis)",
+    "videoTitle": "Vídeo explicativo",
+    "videoSubtitle": "Assista ao vídeo para entender como aplicar as tabelas de medidas de forma simples e comercial no seu catálogo."
   },
   "analytics": {
     "title": "Dados",
@@ -331,7 +333,7 @@
   },
   "arEyewear": {
     "title": "Acessórios AR",
-    "subtitle": "Crie e publique modelos 3D dos seus acessórios (ex.: óculos) para uma prova virtual mais realista.",
+    "subtitle": "Transforme os seus acessórios em uma experiência de compra mais envolvente: apresente seus produtos com visual mais real, aumente a confiança do cliente antes da compra e destaque a sua marca com uma prova virtual que ajuda a vender mais.",
     "uploadTitle": "Novo envio",
     "uploadHelp": "Uma foto do produto (fundo branco é ideal). ID do produto = número na URL do admin Shopify (…/products/123456789). Campos threeQuarter/profile no upload manual são opcionais.",
     "productId": "ID do produto Shopify",

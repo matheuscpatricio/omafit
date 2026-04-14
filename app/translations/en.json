@@ -179,7 +179,9 @@
     "collectionElasticityStructured": "Structured (tailoring, rigid denim, no elastane)",
     "collectionElasticityLightFlex": "Light flexibility (up to 3% elastane)",
     "collectionElasticityFlexible": "Flexible (knitwear, stretchy fabrics)",
-    "collectionElasticityHighElasticity": "High elasticity (rib knit, very stretchable pieces)"
+    "collectionElasticityHighElasticity": "High elasticity (rib knit, very stretchable pieces)",
+    "videoTitle": "Explainer video",
+    "videoSubtitle": "Watch this video for a simple, business-focused walkthrough of applying size charts to your catalog."
   },
   "analytics": {
     "title": "Analytics",

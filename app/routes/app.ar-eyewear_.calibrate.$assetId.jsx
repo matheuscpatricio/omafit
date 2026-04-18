@@ -456,9 +456,15 @@ export default function ArEyewearCalibratePage() {
  * Hierarquia (idêntica ao widget):
  *   scene                                           (widget: anchor.group)
  *     → wearPosition(group, pos=wearX/Y/Z)
- *       → calibRot(group, Euler(rx, ry, rz, "YXZ"))
- *         → centerOffset(group, pos.y=-bridgeY*size.y)
+ *       → centerOffset(group, pos.y=-bridgeY*size.y)          ← ANTES do calibRot
+ *         → calibRot(group, Euler(rx, ry, rz, "YXZ"))
  *           → glb (escalado para ~face-width e multiplicado por cal.scale)
+ *
+ * Ordem crítica: `centerOffset` tem de ficar FORA de `calibRot`. Caso contrário,
+ * a translação vertical (0, -bridgeY, 0) seria rotacionada pela calibração
+ * (ex.: rotação -90° em Z converte deslocamento "para baixo" em "para o lado";
+ * rotação 180° em Y inverte de "baixo" para "cima"), dando lugar aos sintomas
+ * de "GLB acima dos olhos" e "movimentação invertida" que foram reportados.
  *
  * Não há `mirrorX` em nenhum dos dois lados — análise do código-fonte da MindAR
  * (Estimator.js / face-data.js) confirma que, para cara a olhar para a câmara com
@@ -543,14 +549,14 @@ function PreviewModel({ src, cal }) {
         wearPosition.name = "wearPosition";
         scene.add(wearPosition);
 
+        const centerOffset = new THREE.Group();
+        centerOffset.name = "centerOffset";
+        wearPosition.add(centerOffset);
+
         const calibRot = new THREE.Group();
         calibRot.name = "calibRot";
         calibRot.rotation.order = "YXZ";
-        wearPosition.add(calibRot);
-
-        const centerOffset = new THREE.Group();
-        centerOffset.name = "centerOffset";
-        calibRot.add(centerOffset);
+        centerOffset.add(calibRot);
 
         s.renderer = renderer;
         s.scene = scene;
@@ -559,7 +565,34 @@ function PreviewModel({ src, cal }) {
         s.calibRot = calibRot;
         s.centerOffset = centerOffset;
 
+        const renderOnce = () => {
+          const st = stateRef.current;
+          if (st.disposed || !st.renderer) return;
+          st.renderer.render(st.scene, st.camera);
+        };
+        s.renderOnce = renderOnce;
+
+        renderer.setAnimationLoop(() => {
+          const st = stateRef.current;
+          if (st.disposed || !st.renderer) return;
+          st.renderer.render(st.scene, st.camera);
+        });
+
+        const ro = new ResizeObserver(() => {
+          const st = stateRef.current;
+          if (!st.renderer || !st.camera) return;
+          const w = host.clientWidth || 400;
+          const h = host.clientHeight || 500;
+          st.camera.aspect = w / h;
+          st.camera.updateProjectionMatrix();
+          st.renderer.setSize(w, h, false);
+        });
+        ro.observe(host);
+        s.ro = ro;
+
         const loader = new GLTFLoader();
+        loader.setCrossOrigin("anonymous");
+        console.log("[calibrate] loading GLB from:", src);
         loader.load(
           src,
           (gltf) => {
@@ -588,46 +621,31 @@ function PreviewModel({ src, cal }) {
               s.model = root;
               s.size = size.clone().multiplyScalar(baseScale);
               s.baseScale = baseScale;
-              centerOffset.add(root);
+              calibRot.add(root);
               applyCalibrationToState(stateRef.current, calRef.current || cal);
               setPhase("ready");
-              renderOnce();
+              console.log("[calibrate] GLB loaded ok", { maxDim, baseScale, size: size.toArray() });
             } catch (e) {
               console.error("[calibrate] gltf setup error", e);
               setErrorMsg(`Erro ao processar o modelo: ${e?.message || e}`);
               setPhase("error");
             }
           },
-          undefined,
+          (ev) => {
+            if (ev && ev.lengthComputable && ev.total > 0) {
+              const pct = Math.round((ev.loaded / ev.total) * 100);
+              console.log(`[calibrate] GLB loading… ${pct}%`);
+            }
+          },
           (err) => {
             console.warn("[calibrate] GLTFLoader error", err);
             if (!cancelled) {
               const msg = err?.message || err?.target?.status || String(err) || "falha desconhecida";
-              setErrorMsg(`Não foi possível baixar o arquivo 3D (${msg}). URL: ${src}`);
+              setErrorMsg(`Não foi possível baixar o arquivo 3D (${msg}).`);
               setPhase("error");
             }
           },
         );
-
-        const renderOnce = () => {
-          const st = stateRef.current;
-          if (st.disposed || !st.renderer) return;
-          st.renderer.render(st.scene, st.camera);
-        };
-        stateRef.current.renderOnce = renderOnce;
-
-        const ro = new ResizeObserver(() => {
-          const st = stateRef.current;
-          if (!st.renderer || !st.camera) return;
-          const w = host.clientWidth || 400;
-          const h = host.clientHeight || 500;
-          st.camera.aspect = w / h;
-          st.camera.updateProjectionMatrix();
-          st.renderer.setSize(w, h, false);
-          renderOnce();
-        });
-        ro.observe(host);
-        s.ro = ro;
       })
       .catch((e) => {
         if (cancelled) return;
@@ -644,6 +662,7 @@ function PreviewModel({ src, cal }) {
       try { s.ro?.disconnect(); } catch { /* no-op */ }
       try {
         if (s.renderer) {
+          try { s.renderer.setAnimationLoop(null); } catch { /* no-op */ }
           s.renderer.dispose();
           if (s.renderer.domElement?.parentElement === host) {
             host.removeChild(s.renderer.domElement);
@@ -664,7 +683,6 @@ function PreviewModel({ src, cal }) {
     const s = stateRef.current;
     if (!s.renderer || !s.model) return;
     applyCalibrationToState(s, cal);
-    s.renderOnce?.();
   }, [cal]);
 
   return (

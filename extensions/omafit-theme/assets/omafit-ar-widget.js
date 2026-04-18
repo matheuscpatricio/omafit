@@ -12,10 +12,17 @@
  *
  * 2) Pipeline simples ("filtro do Instagram") — idêntica ao preview do admin:
  *      anchor.group (MindAR landmark 168)
- *        → wearPosition (offset XYZ em "unidades de face" via data-ar-mindar-wear-position)
- *          → calibRot (Euler YXZ do data-ar-canonical-fix-yxz, defaults 0,-180,-90)
- *            → centerOffset (deslocamento Y = -bridgeY * sz.y * baseUnitScale)
+ *        → wearPosition (offset XYZ em unidades de face, via data-ar-mindar-wear-position)
+ *          → centerOffset (deslocamento Y = -bridgeY * sz.y * baseUnitScale)
+ *            → calibRot (Euler YXZ do data-ar-canonical-fix-yxz, defaults 0,-180,-90)
  *              → glasses (GLB centrado e escalado para ~1 unidade de face).
+ *
+ *    IMPORTANTE — ordem das transformações:
+ *      `centerOffset` tem de ficar **por FORA** de `calibRot`. Se ficar por dentro,
+ *      a sua translação (0, -bridgeY, 0) é rotacionada junto com o GLB e deixa de ser
+ *      um deslocamento vertical (vira lateral ou invertido, dependendo da calibração).
+ *      Com esta ordem, bridgeY / wearY são SEMPRE verticais no frame do rosto,
+ *      independentemente de qual rotação o lojista escolheu para o GLB.
  *
  *    Sem heurísticas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`, `poseInvert`).
  *    A calibração do lojista é a única fonte de verdade para a orientação.
@@ -1346,25 +1353,36 @@ async function runArSession({
     glasses.scale.setScalar(baseUnitScale);
 
     /** 4) Hierarquia idêntica ao preview do admin (sem `mirrorX`):
-     *      anchor.group → wearPosition → calibRot → centerOffset → glasses
+     *      anchor.group → wearPosition → centerOffset → calibRot → glasses
      *
-     *    Não há reflexão a compensar: para uma cara olhando para a câmara,
-     *    `faceMatrix` ≈ Identity (as negações Y/Z em `m` cancelam a convenção
-     *    OpenCV do solvePnP). Aplicar `mirrorX(sx=-1)` aqui produz exactamente
-     *    o "GLB virado pra esquerda" que o lojista via.
+     *    `centerOffset` ANTES de `calibRot` (fora dele) — assim a translação
+     *    "altura" (bridgeY) acontece no frame do anchor (alinhado com o mundo
+     *    para cara olhando a câmara), não no frame rotacionado do GLB. Sem isto,
+     *    o offset vertical (0, -b, 0) seria rotacionado pelo calibRot (ex.: com
+     *    calibração -90° em Z, vira deslocamento lateral; com +90°, inverte
+     *    para cima) — exactamente os sintomas de "acima dos olhos" e
+     *    "movimentação invertida" reportados no modo antigo.
+     *
+     *    `calibRot` internamente só roda o GLB no lugar, à volta do seu centro,
+     *    sem mover a posição do bridge.
+     *
+     *    Não há reflexão a compensar: `faceMatrix` ≈ Identity para cara
+     *    olhando a câmara (as negações Y/Z em `m` cancelam a convenção OpenCV
+     *    do solvePnP). Aplicar `mirrorX(sx=-1)` aqui produz exactamente o
+     *    "GLB virado pra esquerda" que o lojista via antes.
      */
-    const centerOffset = new GroupCtor();
-    centerOffset.position.y = -bridgeY * sz.y * baseUnitScale;
-    centerOffset.add(glasses);
-
     const calibRot = new GroupCtor();
     calibRot.rotation.order = "YXZ";
     calibRot.rotation.set(rad(calRotDeg.x), rad(calRotDeg.y), rad(calRotDeg.z));
-    calibRot.add(centerOffset);
+    calibRot.add(glasses);
+
+    const centerOffset = new GroupCtor();
+    centerOffset.position.y = -bridgeY * sz.y * baseUnitScale;
+    centerOffset.add(calibRot);
 
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
-    wearPosition.add(calibRot);
+    wearPosition.add(centerOffset);
 
     anchor.group.add(wearPosition);
 

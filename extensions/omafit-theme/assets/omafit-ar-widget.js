@@ -1271,14 +1271,21 @@ async function runArSession({
     glbWideAlign.add(glasses);
 
     // --- Sign disambiguation (runtime) ---
-    // Detect sign issues from world-space vertex analysis, then bake the
-    // correction into geometry via world→local conversion (localBake =
-    // wm⁻¹·worldBake·wm). Mathematically this is equivalent to inserting
-    // `worldBake` as a static node just below the point where `wm` was
-    // captured, so the corrected model follows the face anchor as a rigid
-    // body — pitch behaves naturally without any per-frame compensation.
+    // Bakes the correction into geometry via world→local conversion
+    // (localBake = wm⁻¹·worldBake·wm). Mathematically equivalent to
+    // inserting `worldBake` as a static node just below the point where
+    // `wm` was captured, so the corrected model follows the face anchor
+    // as a rigid body (no per-frame compensation needed).
+    //
+    // IMPORTANT: Se o GLB já tem o node `omafit_ar_canonical` (server
+    // canonicalizou com a mesma heurística), re-aplicar a heurística em
+    // cima do resultado causava double-flip — um dos motivos de os óculos
+    // aparecerem "de cabeça pra baixo". Confiamos no server nesse caso e
+    // só aplicamos rotação se houver override explícito via
+    // `data-ar-canonical-fix-yxz`.
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
     let _sfFlipY = false, _sfFlipZ = false;
+    let _sfHeuristicSkipped = false;
     function bakeWorldRotationIntoGeometries(worldMat) {
       glasses.traverse((obj) => {
         if (!obj.isMesh || !obj.geometry) return;
@@ -1295,6 +1302,8 @@ async function runArSession({
       sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
       glbWideAlign.updateMatrixWorld(true);
       bakeWorldRotationIntoGeometries(sfBakeMat);
+    } else if (hasOmafitCanonicalNode) {
+      _sfHeuristicSkipped = true;
     } else {
       glbWideAlign.updateMatrixWorld(true);
       const sfPos = [];
@@ -1375,8 +1384,15 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
-    const bridgeYFactor = 0.15;
-    center.y += bridgeYFactor * sz.y;
+    /**
+     * Offset do bridge em unidades de altura do modelo (positivo desloca o
+     * ponto de referência para cima do centroide → modelo renderiza abaixo
+     * da âncora). `0` = centroide no landmark 168. Ajustável via
+     * `data-ar-bridge-y-factor` para calibração por tema.
+     */
+    const bridgeYFactorRaw = Number.parseFloat(cfgAttr("arBridgeYFactor", ""));
+    const bridgeYFactor = Number.isFinite(bridgeYFactorRaw) ? bridgeYFactorRaw : 0;
+    if (bridgeYFactor !== 0) center.y += bridgeYFactor * sz.y;
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
     autoOrient.position.set(
@@ -1578,6 +1594,8 @@ async function runArSession({
         signFixFlipY: _sfFlipY,
         signFixFlipZ: _sfFlipZ,
         signFixOverride: sfOverride || null,
+        signFixHeuristicSkipped: _sfHeuristicSkipped,
+        bridgeYFactor,
         xAxisAlreadyWidth,
         glbPreBboxSize: { x: wx, y: wy, z: wz },
         useFaceScale: useFs,

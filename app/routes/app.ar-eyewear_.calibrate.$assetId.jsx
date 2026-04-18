@@ -96,7 +96,7 @@ export async function loader({ request, params }) {
   const parsed = tryResignIfPrivate(glbCandidate);
   if (parsed && typeof parsed === "object" && parsed.bucket && parsed.path) {
     try {
-      glbPreviewUrl = await storageCreateSignedUrl(parsed.bucket, parsed.path, 3600);
+      glbPreviewUrl = await storageCreateSignedUrl(parsed.bucket, parsed.path, 60 * 60 * 24);
     } catch (e) {
       console.warn("[calibrate] sign glb failed:", e?.message || e);
     }
@@ -450,22 +450,27 @@ export default function ArEyewearCalibratePage() {
 /**
  * Preview 3D com Three.js puro — usa EXATAMENTE a mesma cadeia de transformações
  * que o widget da loja (mesma versão de three, mesma ordem Euler YXZ, mesmo eixo
- * de rotação por componente). Assim o que o lojista vê aqui é o que o cliente
+ * de rotação por componente). Assim, o que o lojista vê aqui é o que o cliente
  * vai ver no AR.
  *
- * Hierarquia:
- *   scene
+ * Hierarquia (idêntica ao widget):
+ *   scene                                           (widget: anchor.group)
  *     → wearPosition(group, pos=wearX/Y/Z)
  *       → calibRot(group, Euler(rx, ry, rz, "YXZ"))
  *         → centerOffset(group, pos.y=-bridgeY*size.y)
- *           → glb (escalado para ~1 unidade e multiplicado por cal.scale)
+ *           → glb (escalado para ~face-width e multiplicado por cal.scale)
  *
- * O widget aplica internamente um `mirrorX(scale.x=-1)` logo abaixo da âncora
- * facial para cancelar a reflexão implícita da MindAR (a lib inverte o frame
- * antes da detecção). Com M²=I, o efeito combinado é identidade — o widget
- * renderiza o GLB com a mesma orientação que este preview (sem espelho).
- * Por isso aqui NÃO aplicamos espelho: se aplicássemos, teríamos duplicação
- * no admin contra a própria âncora já canónica do widget.
+ * Não há `mirrorX` em nenhum dos dois lados — análise do código-fonte da MindAR
+ * (Estimator.js / face-data.js) confirma que, para cara a olhar para a câmara com
+ * `flipFace=true`, `faceMatrix` colapsa para identidade de rotação, logo a âncora
+ * já entrega o frame certo. Adicionar um espelho introduziria o "óculos virado
+ * pra esquerda" que o lojista via.
+ *
+ * Escala do preview: `baseScale = 0.16 / maxDim` foi escolhido para que os óculos
+ * ocupem ~face-width no viewport (a silhueta da face desenhada atrás tem ~240 px
+ * de largura num viewport de 400 px — que, com câmara a z=0.45 e FOV 35°, resulta
+ * em ~0.168 unidades de mundo visíveis, ou seja, largura da face). Isto casa com
+ * a largura efectiva do widget (faceScale ≈ 14cm × baseUnitScale 1/maxDim = face-width).
  */
 function PreviewModel({ src, cal }) {
   const hostRef = useRef(null);

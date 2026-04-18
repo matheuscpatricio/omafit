@@ -6,18 +6,40 @@
  */
 /**
  * Regras de renderização (AR face + try-on) que este ficheiro segue:
+ *
  * 1) Um só runtime Three — o mesmo URL de módulo que GLTFLoader e MindAR puxam no esm.sh
  *    (`…/es2022/three.mjs` + `deps=three@VERSÃO`), sem `bundle` no MindAR.
- * 2) Pipeline simples ("filtro Instagram") — idêntica ao preview do admin:
- *      anchor.group(MindAR landmark 168)
- *        → wearPosition (offset XYZ em metros do data-ar-mindar-wear-position)
- *          → calibRot (Euler YXZ do data-ar-canonical-fix-yxz)
+ *
+ * 2) Pipeline simples ("filtro do Instagram") — idêntica ao preview do admin:
+ *      anchor.group (MindAR landmark 168)
+ *        → wearPosition (offset XYZ em "unidades de face" via data-ar-mindar-wear-position)
+ *          → calibRot (Euler YXZ do data-ar-canonical-fix-yxz, defaults 0,-180,-90)
  *            → centerOffset (deslocamento Y = -bridgeY * sz.y * baseUnitScale)
- *              → glasses (GLB centrado e escalado para ~85mm de largura).
- *    Sem heurísticas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`, `poseInvert`):
- *    a calibração do lojista é a única fonte de verdade para a orientação.
+ *              → glasses (GLB centrado e escalado para ~1 unidade de face).
+ *
+ *    Sem heurísticas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`, `poseInvert`).
+ *    A calibração do lojista é a única fonte de verdade para a orientação.
+ *
+ *    Nota sobre MindAR / MediaPipe:
+ *      - Quando `flipFace=true` (default selfie), a MindAR inverte o frame ANTES da detecção
+ *        (ver `controller.js: processVideo → scale(-1, 1)`). Em seguida o solvePnP é feito
+ *        sobre imagem e modelo canónico com mesma convenção de eixos, e a `faceMatrix` final
+ *        é construída negando as linhas Y e Z do `rvec` (converte OpenCV Y-down → Three Y-up
+ *        e OpenCV +Z forward → Three -Z). Para uma cara olhando direito para a câmara,
+ *        estes efeitos cancelam-se e `anchor.group.matrix` ≈ `Identity × Translation`.
+ *        Por isso não precisamos de nenhum `mirrorX` aqui — aplicá-lo gera o "óculos virado
+ *        pra esquerda" (reflexão horizontal extra).
+ *
  * 3) Espelho selfie só via opções MindAR (`disableFaceMirror` / data attribute), sem CSS scaleX no vídeo.
- * 4) Escala: bbox + unidade base (0.085m / maxDim) × `data-ar-mindar-model-scale`.
+ *
+ * 4) Escala — CRÍTICO:
+ *    `anchor.group.matrix` multiplica os filhos por `faceScale` (ver `controller.js:
+ *    getLandmarkMatrix: fm * s`). `faceScale` vem do canonical face do MediaPipe e é
+ *    ~14 "unidades canónicas" (largura da cara).
+ *    Portanto, para obter óculos ~1× a largura da cara, o GLB precisa estar em ~1 unidade
+ *    de largura no espaço local da âncora. Logo: `baseUnitScale = 1/maxDim × modelScaleMul`.
+ *    (O `0.085` antigo produzia óculos com ~1cm num rosto de 14 — invisível.)
+ *
  * 5) GLB tem qualquer orientação — o lojista calibra na ferramenta visual do admin.
  */
 const ESM_THREE_VER = "0.150.1";
@@ -1318,26 +1340,19 @@ async function runArSession({
     const bridgeYRaw = Number.parseFloat(cfgAttr("arBridgeYFactor", ""));
     const bridgeY = Number.isFinite(bridgeYRaw) ? bridgeYRaw : 0.15;
 
-    /** 3) Escala base (~85mm de largura) × multiplicador de escala da calibração. */
-    const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
+    /** 3) Escala base — óculos com ~1× a largura da cara (depois da multiplicação do
+     *    `anchor.group.matrix` por `faceScale` ≈ 14). Ver header no topo. */
+    const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
 
-    /** 4) Hierarquia idêntica ao preview do admin:
-     *      anchor.group → mirrorX(sx=-1) → wearPosition → calibRot → centerOffset → glasses
+    /** 4) Hierarquia idêntica ao preview do admin (sem `mirrorX`):
+     *      anchor.group → wearPosition → calibRot → centerOffset → glasses
      *
-     *    `mirrorX` (scale.x = -1) compensa a reflexão que a MindAR introduz na
-     *    matriz do âncora quando `flipFace=true` (padrão do modo selfie). A
-     *    MindAR inverte o frame antes de rodar a detecção facial (ver
-     *    `controller.js: processVideo → scale(-1, 1)` no código-fonte), o que
-     *    faz o Procrustes fit produzir uma `faceMatrix` com determinante -1.
-     *    Se a gente não compensar, o GLB aparece rodado/espelhado no AR
-     *    mesmo quando o preview do admin mostra-o correcto. O preview do
-     *    admin usa exactamente o mesmo grupo, para garantir paridade visual.
+     *    Não há reflexão a compensar: para uma cara olhando para a câmara,
+     *    `faceMatrix` ≈ Identity (as negações Y/Z em `m` cancelam a convenção
+     *    OpenCV do solvePnP). Aplicar `mirrorX(sx=-1)` aqui produz exactamente
+     *    o "GLB virado pra esquerda" que o lojista via.
      */
-    const mirrorX = new GroupCtor();
-    mirrorX.name = "omafit_mirrorX";
-    mirrorX.scale.x = -1;
-
     const centerOffset = new GroupCtor();
     centerOffset.position.y = -bridgeY * sz.y * baseUnitScale;
     centerOffset.add(glasses);
@@ -1351,8 +1366,7 @@ async function runArSession({
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
     wearPosition.add(calibRot);
 
-    mirrorX.add(wearPosition);
-    anchor.group.add(mirrorX);
+    anchor.group.add(wearPosition);
 
     /** 5) Loop de render — sem correções por frame. */
     const { renderer, scene, camera } = mindarThree;

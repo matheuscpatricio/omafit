@@ -1282,7 +1282,19 @@ async function runArSession({
       if (obj && obj.name === "omafit_ar_canonical") hasOmafitCanonicalNode = true;
     });
     const skipGlbWideAlignAttr = /^1|true|on$/i.test(cfgAttr("arMindarSkipGlbWideAlign", "").toLowerCase());
-    const skipGlbWideAlign = hasOmafitCanonicalNode || skipGlbWideAlignAttr;
+    /**
+     * Quando o lojista calibrou (metafield omafit.ar_calibration presente, ou
+     * `data-ar-canonical-fix-yxz` não-vazio) os ângulos guardados são a única
+     * fonte de verdade. Pulamos a heurística `glbWideAlign` que rodava o GLB
+     * ±90° baseado nas dimensões — senão a rotação é aplicada DUAS vezes
+     * (heurística + calibração) e o modelo fica torto no AR mesmo quando o
+     * preview do admin mostrava-o correto.
+     */
+    const merchantOrientationOverride = cfgAttr("arCanonicalFixYxz", "").trim();
+    const skipGlbWideAlign =
+      hasOmafitCanonicalNode ||
+      skipGlbWideAlignAttr ||
+      Boolean(merchantOrientationOverride);
 
     /** Um frame: materiais/morphs/skin a estabilizar antes do `Box3` (bbox mais fiável no 1.º render). */
     await new Promise((resolve) => requestAnimationFrame(resolve));

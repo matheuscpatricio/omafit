@@ -1277,15 +1277,14 @@ async function runArSession({
     // `wm` was captured, so the corrected model follows the face anchor
     // as a rigid body (no per-frame compensation needed).
     //
-    // IMPORTANT: Se o GLB já tem o node `omafit_ar_canonical` (server
-    // canonicalizou com a mesma heurística), re-aplicar a heurística em
-    // cima do resultado causava double-flip — um dos motivos de os óculos
-    // aparecerem "de cabeça pra baixo". Confiamos no server nesse caso e
-    // só aplicamos rotação se houver override explícito via
-    // `data-ar-canonical-fix-yxz`.
+    // A heurística roda mesmo com o node `omafit_ar_canonical` — o server
+    // só escolhe uma rotação em passos de 90° e a heurística do widget
+    // costuma completar sign-flips específicos do modelo que o server não
+    // resolveu. Pular a heurística deixa o GLB 90° rodado para muitos
+    // modelos.  Se for preciso forçar outra orientação, use o override
+    // explícito via `data-ar-canonical-fix-yxz`.
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
     let _sfFlipY = false, _sfFlipZ = false;
-    let _sfHeuristicSkipped = false;
     function bakeWorldRotationIntoGeometries(worldMat) {
       glasses.traverse((obj) => {
         if (!obj.isMesh || !obj.geometry) return;
@@ -1302,8 +1301,6 @@ async function runArSession({
       sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
       glbWideAlign.updateMatrixWorld(true);
       bakeWorldRotationIntoGeometries(sfBakeMat);
-    } else if (hasOmafitCanonicalNode) {
-      _sfHeuristicSkipped = true;
     } else {
       glbWideAlign.updateMatrixWorld(true);
       const sfPos = [];
@@ -1387,11 +1384,12 @@ async function runArSession({
     /**
      * Offset do bridge em unidades de altura do modelo (positivo desloca o
      * ponto de referência para cima do centroide → modelo renderiza abaixo
-     * da âncora). `0` = centroide no landmark 168. Ajustável via
-     * `data-ar-bridge-y-factor` para calibração por tema.
+     * da âncora). Default `0.15` empiricamente coloca o bridge do GLB na
+     * altura do landmark 168 (glabela). Ajustável via
+     * `data-ar-bridge-y-factor` para calibração fina por tema/produto.
      */
     const bridgeYFactorRaw = Number.parseFloat(cfgAttr("arBridgeYFactor", ""));
-    const bridgeYFactor = Number.isFinite(bridgeYFactorRaw) ? bridgeYFactorRaw : 0;
+    const bridgeYFactor = Number.isFinite(bridgeYFactorRaw) ? bridgeYFactorRaw : 0.15;
     if (bridgeYFactor !== 0) center.y += bridgeYFactor * sz.y;
     /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
     const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
@@ -1594,7 +1592,6 @@ async function runArSession({
         signFixFlipY: _sfFlipY,
         signFixFlipZ: _sfFlipZ,
         signFixOverride: sfOverride || null,
-        signFixHeuristicSkipped: _sfHeuristicSkipped,
         bridgeYFactor,
         xAxisAlreadyWidth,
         glbPreBboxSize: { x: wx, y: wy, z: wz },

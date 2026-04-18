@@ -553,6 +553,184 @@ export async function setVariantArGlbMetafield(admin, variantId, glbUrl) {
   throw new Error(lastErr || "metafieldsSet (variant) failed");
 }
 
+/**
+ * Metafield de calibração do modelo 3D no widget AR.
+ * namespace: omafit / key: ar_calibration / type: json / PRODUCT + PRODUCTVARIANT.
+ * Valores (todos opcionais, clamped pelos sliders do admin):
+ *   rx, ry, rz   → graus (orientação do óculos: inclinação/direção/torção)
+ *   bridgeY      → fator 0..1 (altura no rosto; default 0.15)
+ *   wearX,Y,Z    → metros (offsets finos; default 0)
+ *   scale        → multiplicador (default 1)
+ */
+const AR_CALIBRATION_METAFIELD = {
+  namespace: "omafit",
+  key: "ar_calibration",
+  type: "json",
+};
+
+export function sanitizeArCalibrationInput(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const num = (v, def) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : def;
+  };
+  const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+  return {
+    rx: clamp(num(src.rx, 0), -180, 180),
+    ry: clamp(num(src.ry, 0), -180, 180),
+    rz: clamp(num(src.rz, 0), -180, 180),
+    bridgeY: clamp(num(src.bridgeY, 0.15), -0.5, 0.5),
+    wearX: clamp(num(src.wearX, 0), -0.1, 0.1),
+    wearY: clamp(num(src.wearY, 0), -0.1, 0.1),
+    wearZ: clamp(num(src.wearZ, 0), -0.1, 0.1),
+    scale: clamp(num(src.scale, 1), 0.3, 3),
+  };
+}
+
+const DEFAULT_AR_CALIBRATION = sanitizeArCalibrationInput({});
+
+export function defaultArCalibration() {
+  return { ...DEFAULT_AR_CALIBRATION };
+}
+
+export async function ensureArCalibrationMetafieldDefinition(admin) {
+  const attempts = [
+    {
+      name: "Omafit AR — Calibração do modelo 3D",
+      namespace: AR_CALIBRATION_METAFIELD.namespace,
+      key: AR_CALIBRATION_METAFIELD.key,
+      description:
+        "Ajuste fino (rotação, altura, profundidade, tamanho) do modelo 3D exibido no provador AR Omafit.",
+      type: AR_CALIBRATION_METAFIELD.type,
+      ownerType: "PRODUCT",
+      access: { admin: "MERCHANT_READ_WRITE", storefront: "PUBLIC_READ" },
+    },
+    {
+      name: "Omafit AR — Calibração do modelo 3D (variante)",
+      namespace: AR_CALIBRATION_METAFIELD.namespace,
+      key: AR_CALIBRATION_METAFIELD.key,
+      description:
+        "Ajuste fino do modelo 3D por variante (sobrepõe a calibração do produto).",
+      type: AR_CALIBRATION_METAFIELD.type,
+      ownerType: "PRODUCTVARIANT",
+      access: { admin: "MERCHANT_READ_WRITE", storefront: "PUBLIC_READ" },
+    },
+  ];
+  for (const definition of attempts) {
+    const response = await admin.graphql(METAFIELD_DEF_CREATE, {
+      variables: { definition },
+    });
+    const json = await response.json();
+    if (Array.isArray(json?.errors) && json.errors.length) {
+      console.warn(
+        "[ar-eyewear] ensureArCalibrationMetafieldDefinition GraphQL:",
+        json.errors.map((e) => e?.message).join("; "),
+      );
+      continue;
+    }
+    const userErrors = json?.data?.metafieldDefinitionCreate?.userErrors || [];
+    const isDup = userErrors.some(
+      (e) =>
+        /duplicate|already exists|taken|already been taken/i.test(
+          String(e?.message || ""),
+        ) || String(e?.code || "") === "TAKEN",
+    );
+    if (isDup) continue;
+    if (userErrors.length) {
+      console.warn(
+        "[ar-eyewear] ensureArCalibrationMetafieldDefinition userErrors:",
+        userErrors.map((e) => e?.message).join("; "),
+      );
+    }
+  }
+  return { ok: true };
+}
+
+async function setArCalibrationOnOwner(admin, ownerId, jsonValue) {
+  const value = JSON.stringify(sanitizeArCalibrationInput(jsonValue));
+  const response = await admin.graphql(METAFIELD_SET, {
+    variables: {
+      metafields: [
+        {
+          ownerId,
+          namespace: AR_CALIBRATION_METAFIELD.namespace,
+          key: AR_CALIBRATION_METAFIELD.key,
+          type: AR_CALIBRATION_METAFIELD.type,
+          value,
+        },
+      ],
+    },
+  });
+  const json = await response.json();
+  const errs = json?.data?.metafieldsSet?.userErrors || [];
+  if (errs.length) {
+    throw new Error(
+      errs.map((e) => e.message).join("; ") || "metafieldsSet (calibration) failed",
+    );
+  }
+  return json?.data?.metafieldsSet?.metafields?.[0] || null;
+}
+
+export async function setProductArCalibrationMetafield(admin, productId, jsonValue) {
+  return setArCalibrationOnOwner(admin, toProductGid(productId), jsonValue);
+}
+
+export async function setVariantArCalibrationMetafield(admin, variantId, jsonValue) {
+  return setArCalibrationOnOwner(admin, toVariantGid(variantId), jsonValue);
+}
+
+const GET_PRODUCT_AR_CALIBRATION = `#graphql
+  query GetProductArCalibration($id: ID!) {
+    product(id: $id) {
+      id
+      title
+      featuredImage { url }
+      calibration: metafield(namespace: "omafit", key: "ar_calibration") { value }
+      glb: metafield(namespace: "omafit", key: "ar_glb_url") { value }
+      variants(first: 100) {
+        nodes {
+          id
+          title
+          image { url }
+          calibration: metafield(namespace: "omafit", key: "ar_calibration") { value }
+          glb: metafield(namespace: "omafit", key: "ar_glb_url") { value }
+        }
+      }
+    }
+  }
+`;
+
+export async function fetchProductArCalibrationContext(admin, productId) {
+  const response = await admin.graphql(GET_PRODUCT_AR_CALIBRATION, {
+    variables: { id: toProductGid(productId) },
+  });
+  const json = await response.json();
+  const product = json?.data?.product;
+  if (!product) return null;
+  const parseCal = (v) => {
+    if (!v) return null;
+    try {
+      return sanitizeArCalibrationInput(JSON.parse(String(v)));
+    } catch {
+      return null;
+    }
+  };
+  return {
+    id: product.id,
+    title: product.title || "",
+    featuredImageUrl: product.featuredImage?.url || "",
+    productGlbUrl: product.glb?.value || "",
+    productCalibration: parseCal(product.calibration?.value),
+    variants: (product.variants?.nodes || []).map((v) => ({
+      id: v.id,
+      title: v.title || "",
+      imageUrl: v.image?.url || "",
+      glbUrl: v.glb?.value || "",
+      calibration: parseCal(v.calibration?.value),
+    })),
+  };
+}
+
 export async function getShopArEyewearEnabled(shopDomain) {
   if (process.env.OMAFIT_AR_EYEWEAR_OPEN_BETA === "1") return true;
   const { url, key } = getSupabaseConfig();

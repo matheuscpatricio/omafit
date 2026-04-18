@@ -398,7 +398,68 @@
     },
     "productTypeLabel": "Type",
     "categoryLabel": "Category",
-    "queueWorkerBanner": "Some submissions are being processed. Refresh shortly to follow progress and publish the new 3D models."
+    "queueWorkerBanner": "Some submissions are being processed. Refresh shortly to follow progress and publish the new 3D models.",
+    "calibrate": {
+      "openButton": "Calibrate position",
+      "title": "Calibrate the 3D model on the face",
+      "subtitle": "Place the glasses (or accessory) correctly on the customer's face. Drag the controls and watch the preview on the left.",
+      "back": "Back to AR Accessories",
+      "howToTitle": "How to use this page",
+      "howToIntro": "The controls on the right move the 3D model. Adjust until it looks like a real pair of glasses resting on the reference face in the preview.",
+      "howToStep1": "Start with \"Tilt up/down\" and \"Turn left/right\" until the model faces forward, with the lenses aligned to the reference eyes.",
+      "howToStep2": "Use \"Height on face\" to raise or lower the glasses. The temples should sit slightly above the ears on the reference face.",
+      "howToStep3": "For fine tuning, use \"Move closer/further\" and the nudge sliders.",
+      "howToStep4": "Click \"Save calibration\" when you're happy. Shoppers will see this position in the AR try-on.",
+      "previewHint": "Adjust until the glasses align with the eyes of the reference face.",
+      "targetLabel": "Where to save this adjustment",
+      "targetHelp": "Pick \"Whole product\" if every variant uses the same 3D model. Pick \"Only this variant\" if each color/style needs its own tweak.",
+      "targetProduct": "Whole product (applies to all variants)",
+      "targetVariant": "Only this variant",
+      "variantLabel": "Variant",
+      "save": "Save calibration",
+      "reset": "Reset to defaults",
+      "cancel": "Cancel",
+      "saveSuccess": "Calibration saved. Open the product on your store and check the AR try-on.",
+      "saveError": "Couldn't save",
+      "tipsTitle": "Quick tips",
+      "tip1": "If the model appears sideways, use \"Turn left/right\" until it faces the camera.",
+      "tip2": "If it appears upside-down, fix it with \"Tilt up/down\" or \"Roll sideways\".",
+      "tip3": "If the accessory looks too big or too small on the face, tweak \"Size\" instead of height.",
+      "sliders": {
+        "tilt": {
+          "label": "Tilt up / down",
+          "help": "Use this if the model is leaning forwards or backwards."
+        },
+        "yaw": {
+          "label": "Turn left / right",
+          "help": "Use this if the model is showing its side instead of facing forward."
+        },
+        "roll": {
+          "label": "Roll sideways",
+          "help": "Straighten the model if it appears tilted to one side."
+        },
+        "height": {
+          "label": "Height on face",
+          "help": "Raise or lower the glasses to align with the eyes."
+        },
+        "depth": {
+          "label": "Move closer / further from the face",
+          "help": "Bring the model closer or push it slightly away from the face."
+        },
+        "nudgeY": {
+          "label": "Nudge up / down",
+          "help": "Millimeter fine tuning when \"Height on face\" isn't enough."
+        },
+        "nudgeX": {
+          "label": "Nudge sideways",
+          "help": "Center the model if it looks shifted to the left or right."
+        },
+        "scale": {
+          "label": "Size",
+          "help": "Makes the whole model bigger or smaller. Use sparingly: too big covers the face."
+        }
+      }
+    }
   },
   "plans": {
     "ondemand": "On-demand",

@@ -398,7 +398,68 @@
     },
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoria",
-    "queueWorkerBanner": "Existem envios em processamento. Atualize em instantes para acompanhar o andamento e publicar os novos modelos 3D."
+    "queueWorkerBanner": "Existem envios em processamento. Atualize em instantes para acompanhar o andamento e publicar os novos modelos 3D.",
+    "calibrate": {
+      "openButton": "Calibrar posição",
+      "title": "Calibrar o modelo 3D no rosto",
+      "subtitle": "Deixe os óculos (ou o acessório) na posição certa em relação ao rosto do cliente. Arraste os controles e acompanhe na pré-visualização ao lado.",
+      "back": "Voltar para Acessórios AR",
+      "howToTitle": "Como usar esta página",
+      "howToIntro": "Os controles ao lado movem o modelo 3D. Ajuste até ele ficar parecido com os óculos colocados no rosto desenhado na pré-visualização.",
+      "howToStep1": "Comece por \"Girar para cima/baixo\" e \"Girar para esquerda/direita\" até o modelo aparecer de frente, com as lentes alinhadas aos olhos do rosto de referência.",
+      "howToStep2": "Use \"Altura\" para subir ou descer os óculos. O ideal é as hastes ficarem um pouco acima das orelhas do rosto.",
+      "howToStep3": "Se precisar de um ajuste fino, use \"Aproximar do rosto\" e os controles de empurrar um pouquinho para um lado.",
+      "howToStep4": "Clique em \"Salvar calibração\" quando estiver satisfeito. Os clientes passarão a ver essa posição no provador AR.",
+      "previewHint": "Ajuste até os óculos ficarem alinhados com os olhos do rosto de referência.",
+      "targetLabel": "Onde salvar este ajuste",
+      "targetHelp": "Escolha \"Produto inteiro\" se todas as variantes usam o mesmo modelo 3D. Escolha \"Apenas esta variante\" se cada cor/estilo precisar de um ajuste próprio.",
+      "targetProduct": "Produto inteiro (vale para todas as variantes)",
+      "targetVariant": "Apenas esta variante",
+      "variantLabel": "Variante",
+      "save": "Salvar calibração",
+      "reset": "Restaurar valores padrão",
+      "cancel": "Cancelar",
+      "saveSuccess": "Calibração salva. Abra o produto na loja e confirme no provador AR.",
+      "saveError": "Não foi possível salvar",
+      "tipsTitle": "Dicas rápidas",
+      "tip1": "Se o modelo aparecer virado para um lado, use \"Girar para esquerda/direita\" até ele ficar de frente.",
+      "tip2": "Se ele aparecer de cabeça para baixo, use \"Girar para cima/baixo\" ou \"Inclinar lateralmente\" para corrigir.",
+      "tip3": "Para um acessório grande ou pequeno demais no rosto do cliente, ajuste o \"Tamanho\" em vez de mexer na altura.",
+      "sliders": {
+        "tilt": {
+          "label": "Girar para cima / para baixo",
+          "help": "Use se o modelo aparecer tombado para frente ou para trás."
+        },
+        "yaw": {
+          "label": "Girar para esquerda / para direita",
+          "help": "Use se o modelo estiver virado de lado em vez de aparecer de frente."
+        },
+        "roll": {
+          "label": "Inclinar lateralmente",
+          "help": "Endireita o modelo quando ele fica torto para um dos lados."
+        },
+        "height": {
+          "label": "Altura no rosto",
+          "help": "Sobe ou desce os óculos para alinhar com a linha dos olhos."
+        },
+        "depth": {
+          "label": "Aproximar / afastar do rosto",
+          "help": "Traz o modelo para mais perto ou o afasta um pouco do rosto."
+        },
+        "nudgeY": {
+          "label": "Empurrar para cima / para baixo",
+          "help": "Ajuste fino em milímetros, caso \"Altura no rosto\" não seja suficiente."
+        },
+        "nudgeX": {
+          "label": "Empurrar para o lado",
+          "help": "Centraliza o modelo se ele ficar deslocado para a esquerda ou direita."
+        },
+        "scale": {
+          "label": "Tamanho",
+          "help": "Aumenta ou diminui o modelo inteiro. Use com cuidado: muito grande cobre o rosto."
+        }
+      }
+    }
   },
   "plans": {
     "ondemand": "On-demand",

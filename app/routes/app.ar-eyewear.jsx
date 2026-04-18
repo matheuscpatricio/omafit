@@ -465,6 +465,17 @@ export default function ArEyewearPage() {
                               {t("arEyewear.requeue")}
                             </Button>
                           )}
+                          {(a.status === "published" || a.status === "pending_review") && (
+                            <Button
+                              onClick={() =>
+                                navigate(
+                                  `/app/ar-eyewear/calibrate/${a.id}${appSearch ? `?${appSearch}` : ""}`,
+                                )
+                              }
+                            >
+                              {t("arEyewear.calibrate.openButton")}
+                            </Button>
+                          )}
                         </InlineStack>
                       </BlockStack>
                     </Card>

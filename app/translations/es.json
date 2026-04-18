@@ -398,7 +398,68 @@
     },
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoría",
-    "queueWorkerBanner": "Hay envíos en procesamiento. Actualiza en unos instantes para seguir el progreso y publicar los nuevos modelos 3D."
+    "queueWorkerBanner": "Hay envíos en procesamiento. Actualiza en unos instantes para seguir el progreso y publicar los nuevos modelos 3D.",
+    "calibrate": {
+      "openButton": "Calibrar posición",
+      "title": "Calibrar el modelo 3D sobre el rostro",
+      "subtitle": "Coloca las gafas (o el accesorio) en la posición correcta sobre el rostro del cliente. Arrastra los controles y observa la vista previa al lado.",
+      "back": "Volver a Accesorios AR",
+      "howToTitle": "Cómo usar esta página",
+      "howToIntro": "Los controles a un lado mueven el modelo 3D. Ajústalo hasta que se vea como unas gafas reales sobre el rostro de referencia de la vista previa.",
+      "howToStep1": "Empieza con \"Girar arriba/abajo\" y \"Girar izquierda/derecha\" hasta que el modelo se muestre de frente, con los cristales alineados a los ojos de referencia.",
+      "howToStep2": "Usa \"Altura en el rostro\" para subir o bajar las gafas. Las patillas deberían quedar apenas por encima de las orejas de referencia.",
+      "howToStep3": "Para un ajuste fino, utiliza \"Acercar/alejar del rostro\" y los empujones laterales.",
+      "howToStep4": "Pulsa \"Guardar calibración\" cuando te guste el resultado. Los clientes verán esta posición en la prueba AR.",
+      "previewHint": "Ajusta hasta alinear las gafas con los ojos del rostro de referencia.",
+      "targetLabel": "Dónde guardar este ajuste",
+      "targetHelp": "Elige \"Producto completo\" si todas las variantes usan el mismo modelo 3D. Elige \"Solo esta variante\" si cada color/estilo necesita un ajuste distinto.",
+      "targetProduct": "Producto completo (vale para todas las variantes)",
+      "targetVariant": "Solo esta variante",
+      "variantLabel": "Variante",
+      "save": "Guardar calibración",
+      "reset": "Restablecer valores",
+      "cancel": "Cancelar",
+      "saveSuccess": "Calibración guardada. Abre el producto en tu tienda y revisa la prueba AR.",
+      "saveError": "No se pudo guardar",
+      "tipsTitle": "Consejos rápidos",
+      "tip1": "Si el modelo aparece de lado, usa \"Girar izquierda/derecha\" hasta ponerlo de frente.",
+      "tip2": "Si aparece boca abajo, corrígelo con \"Girar arriba/abajo\" o \"Inclinar lateralmente\".",
+      "tip3": "Si el accesorio se ve demasiado grande o pequeño, ajusta \"Tamaño\" antes que la altura.",
+      "sliders": {
+        "tilt": {
+          "label": "Girar arriba / abajo",
+          "help": "Úsalo si el modelo se inclina hacia adelante o hacia atrás."
+        },
+        "yaw": {
+          "label": "Girar izquierda / derecha",
+          "help": "Úsalo si el modelo aparece de perfil en lugar de frente."
+        },
+        "roll": {
+          "label": "Inclinar lateralmente",
+          "help": "Endereza el modelo si queda inclinado hacia un lado."
+        },
+        "height": {
+          "label": "Altura en el rostro",
+          "help": "Sube o baja las gafas para alinearlas con los ojos."
+        },
+        "depth": {
+          "label": "Acercar / alejar del rostro",
+          "help": "Acerca o aleja el modelo del rostro."
+        },
+        "nudgeY": {
+          "label": "Empujar arriba / abajo",
+          "help": "Ajuste fino en milímetros cuando \"Altura en el rostro\" no basta."
+        },
+        "nudgeX": {
+          "label": "Empujar al lado",
+          "help": "Centra el modelo si queda desplazado a la izquierda o derecha."
+        },
+        "scale": {
+          "label": "Tamaño",
+          "help": "Hace todo el modelo más grande o más pequeño. Úsalo con cuidado: muy grande tapa el rostro."
+        }
+      }
+    }
   },
   "plans": {
     "ondemand": "On-demand",

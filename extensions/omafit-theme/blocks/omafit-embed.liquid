@@ -66,11 +66,31 @@
   {% if omafit_mf_glb != blank and omafit_mf_glb.value != blank %}
     {% assign omafit_ar_glb_url = omafit_mf_glb.value | strip %}
   {% endif %}
+  {% comment %}
+    Calibração do produto (metafield JSON omafit.ar_calibration). Campos:
+      rx, ry, rz (graus) ; bridgeY (0..1) ; wearX, wearY, wearZ (m) ; scale.
+    Lido do Liquid como JSON (tipo = json no Shopify → hash acessível por chave).
+  {% endcomment %}
+  {% assign omafit_mf_cal = product.metafields.omafit.ar_calibration %}
+  {% assign omafit_cal_json = '' %}
+  {% if omafit_mf_cal != blank and omafit_mf_cal.value != blank %}
+    {% assign omafit_cal_json = omafit_mf_cal | json %}
+  {% endif %}
   <script>
     (function () {
       try {
         var u = {{ omafit_ar_glb_url | json }};
         if (typeof u === 'string' && u.trim()) window.__OMAFIT_AR_GLB_URL__ = u.trim();
+      } catch (e) {}
+      try {
+        var rawCal = {{ omafit_cal_json | default: 'null' }};
+        var cal = null;
+        if (rawCal && typeof rawCal === 'object' && rawCal.value) {
+          try { cal = typeof rawCal.value === 'string' ? JSON.parse(rawCal.value) : rawCal.value; } catch (e) { cal = null; }
+        } else if (rawCal && typeof rawCal === 'object') {
+          cal = rawCal;
+        }
+        if (cal && typeof cal === 'object') window.__OMAFIT_AR_CALIBRATION__ = cal;
       } catch (e) {}
       var _variants = [];
       {% for v in product.variants %}
@@ -79,19 +99,34 @@
         {% if v_glb != blank and v_glb.value != blank %}
           {% assign v_glb_url = v_glb.value | strip %}
         {% endif %}
+        {% assign v_cal = v.metafields.omafit.ar_calibration %}
+        {% assign v_cal_json = 'null' %}
+        {% if v_cal != blank and v_cal.value != blank %}
+          {% assign v_cal_json = v_cal | json %}
+        {% endif %}
         {% assign v_img = '' %}
         {% if v.featured_image %}
           {% assign v_img = v.featured_image | image_url: width: 200 %}
         {% elsif v.image %}
           {% assign v_img = v.image | image_url: width: 200 %}
         {% endif %}
-        _variants.push({
-          id: {{ v.id | json }},
-          title: {{ v.title | json }},
-          price: {{ v.price | json }},
-          imageUrl: {{ v_img | json }},
-          glbUrl: {{ v_glb_url | json }}
-        });
+        (function () {
+          var rawVc = {{ v_cal_json }};
+          var vc = null;
+          if (rawVc && typeof rawVc === 'object' && rawVc.value) {
+            try { vc = typeof rawVc.value === 'string' ? JSON.parse(rawVc.value) : rawVc.value; } catch (e) { vc = null; }
+          } else if (rawVc && typeof rawVc === 'object') {
+            vc = rawVc;
+          }
+          _variants.push({
+            id: {{ v.id | json }},
+            title: {{ v.title | json }},
+            price: {{ v.price | json }},
+            imageUrl: {{ v_img | json }},
+            glbUrl: {{ v_glb_url | json }},
+            calibration: vc
+          });
+        })();
       {% endfor %}
       window.__OMAFIT_AR_VARIANTS__ = _variants;
     })();
@@ -129,8 +164,49 @@
       <style id="omafit-ar-theme-font-face">{{ settings.type_heading_font | font_face: font_display: 'swap' }}</style>
     {% endif %}
     {% comment %}
-      MindAR / Euler / pose: valores fixos Omafit (não expostos ao lojista). Ajustar aqui e redeploy do tema.
+      MindAR / Euler / pose: valores fixos Omafit (não expostos ao lojista).
+      Calibração visual (rotação/altura/tamanho) vem do metafield omafit.ar_calibration
+      definido pela página "Calibrar posição" no admin.
     {% endcomment %}
+    {% liquid
+      assign cal = product.metafields.omafit.ar_calibration.value
+      assign cal_rx = 0
+      assign cal_ry = 0
+      assign cal_rz = 0
+      assign cal_bridge_y = 0.15
+      assign cal_wear_x = 0
+      assign cal_wear_y = 0
+      assign cal_wear_z = 0
+      assign cal_scale = 1
+      if cal
+        if cal.rx != blank
+          assign cal_rx = cal.rx
+        endif
+        if cal.ry != blank
+          assign cal_ry = cal.ry
+        endif
+        if cal.rz != blank
+          assign cal_rz = cal.rz
+        endif
+        if cal.bridgeY != blank
+          assign cal_bridge_y = cal.bridgeY
+        endif
+        if cal.wearX != blank
+          assign cal_wear_x = cal.wearX
+        endif
+        if cal.wearY != blank
+          assign cal_wear_y = cal.wearY
+        endif
+        if cal.wearZ != blank
+          assign cal_wear_z = cal.wearZ
+        endif
+        if cal.scale != blank
+          assign cal_scale = cal.scale
+        endif
+      endif
+      assign cal_fix_yxz = cal_rx | append: ', ' | append: cal_ry | append: ', ' | append: cal_rz
+      assign cal_wear_position = cal_wear_x | append: ' ' | append: cal_wear_y | append: ' ' | append: cal_wear_z
+    %}
     <div
       id="omafit-ar-root"
       class="omafit-ar-root"
@@ -157,8 +233,9 @@
       data-ar-use-mp-matrix=""
       data-ar-mindar-anchor="168"
       data-ar-mindar-disable-mirror=""
-      data-ar-mindar-model-scale=""
+      data-ar-mindar-model-scale="{{ cal_scale }}"
       data-ar-mindar-wear-yxz=""
+      data-ar-mindar-wear-position="{{ cal_wear_position }}"
       data-ar-mindar-no-wear-default=""
       data-ar-mindar-skip-glb-wide-align=""
       data-ar-ipd-swap-ends=""
@@ -167,8 +244,8 @@
       data-ar-mindar-use-face-scale=""
       data-ar-mindar-filter-min-cf=""
       data-ar-mindar-filter-beta=""
-      data-ar-bridge-y-factor=""
-      data-ar-canonical-fix-yxz=""
+      data-ar-bridge-y-factor="{{ cal_bridge_y }}"
+      data-ar-canonical-fix-yxz="{{ cal_fix_yxz }}"
     ></div>
     <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
   {% endif %}

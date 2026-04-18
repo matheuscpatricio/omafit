@@ -447,8 +447,8 @@
           "help": "Bring the model closer or push it slightly away from the face."
         },
         "nudgeY": {
-          "label": "Nudge up / down",
-          "help": "Millimeter fine tuning when \"Height on face\" isn't enough."
+          "label": "Height on face",
+          "help": "Moves the glasses up or down (in cm) to align with the eyeline."
         },
         "nudgeX": {
           "label": "Nudge sideways",

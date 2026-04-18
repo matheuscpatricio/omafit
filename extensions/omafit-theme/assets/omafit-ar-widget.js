@@ -12,17 +12,22 @@
  *
  * 2) Pipeline simples ("filtro do Instagram") — idêntica ao preview do admin:
  *      anchor.group (MindAR landmark 168)
- *        → wearPosition (offset XYZ em unidades de face, via data-ar-mindar-wear-position)
- *          → centerOffset (deslocamento Y = -bridgeY * sz.y * baseUnitScale)
- *            → calibRot (Euler YXZ do data-ar-canonical-fix-yxz, defaults 0,-180,-90)
- *              → glasses (GLB centrado e escalado para ~1 unidade de face).
+ *        → wearPosition (offset XYZ em unidades de face: wearX/Y/Z)
+ *          → calibRot (Euler YXZ do data-ar-canonical-fix-yxz, defaults 0,0,0)
+ *            → glasses (GLB centrado (bbox→origem) e escalado para ~1 unidade de face).
  *
- *    IMPORTANTE — ordem das transformações:
- *      `centerOffset` tem de ficar **por FORA** de `calibRot`. Se ficar por dentro,
- *      a sua translação (0, -bridgeY, 0) é rotacionada junto com o GLB e deixa de ser
- *      um deslocamento vertical (vira lateral ou invertido, dependendo da calibração).
- *      Com esta ordem, bridgeY / wearY são SEMPRE verticais no frame do rosto,
- *      independentemente de qual rotação o lojista escolheu para o GLB.
+ *    Motivo desta simplificação (Abr/2026):
+ *      A versão anterior tinha um `centerOffset` com `y = -bridgeY * sz.y * baseUnitScale`.
+ *      Como o offset era calculado em unidades do GLB (sz.y) e estava FORA da calibRot,
+ *      o comportamento dependia da geometria do GLB (altura da bbox) e criava um
+ *      "braço de alavanca" vertical que provocava efeitos visuais contra-intuitivos
+ *      quando a cabeça rotacionava (óculos pareciam "descer" quando a cabeça subia).
+ *
+ *      Agora TODO o deslocamento vertical é feito por `wearY` (em unidades de âncora,
+ *      i.e. multiplicadas por ~14cm em mundo). `bridgeY` continua no schema por
+ *      retro-compatibilidade mas é IGNORADO pelo pipeline. O lojista usa `wearY`
+ *      (range alargado ±0.15 → ±2.1cm) para descer os óculos do landmark 168
+ *      (ponte do nariz, tipicamente acima dos olhos) até à linha dos olhos.
  *
  *    Sem heurísticas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`, `poseInvert`).
  *    A calibração do lojista é a única fonte de verdade para a orientação.
@@ -1305,14 +1310,14 @@ async function runArSession({
     });
 
     /**
-     * Pipeline simples ("filtro do Instagram"): identica ao preview do admin.
-     * Hierarquia única: anchor.group → wearPosition → calibRot → centerOffset → GLB.
-     *   - calibRot:    rotação YXZ vinda da calibração (defaults 0, -180, -90)
-     *   - centerOffset: desce o GLB pelo bridgeY (default 0.15 da altura)
-     *   - wearPosition: ajustes finos em metros (wearX/Y/Z)
-     *   - escala: 0.085m de largura base * scale do lojista
-     * Sem heurísticas (glbWideAlign / bake / ipdSnap / mirrorX / poseInvert).
-     * O lojista calibra na ferramenta visual e o resultado bate exato no AR.
+     * Pipeline simples ("filtro do Instagram"): idêntica ao preview do admin.
+     * Hierarquia mínima: anchor.group → wearPosition → calibRot → GLB.
+     *   - calibRot:     rotação YXZ da calibração (defaults 0,0,0)
+     *   - wearPosition: offset em unidades de âncora (≈14cm/unit) via wearX/Y/Z
+     *   - escala:       ~1× largura da cara × modelScaleMul
+     * Sem heurísticas (glbWideAlign / bake / ipdSnap / mirrorX / poseInvert /
+     * centerOffset / bridgeY). O lojista calibra na ferramenta visual e o
+     * resultado bate exato no AR.
      */
     let hasOmafitCanonicalNode = false;
     glasses.traverse((obj) => {
@@ -1323,7 +1328,9 @@ async function runArSession({
     await new Promise((resolve) => requestAnimationFrame(resolve));
     glasses.updateMatrixWorld(true);
 
-    /** 1) Bbox + centro do GLB cru (sem rotações). */
+    /** 1) Bbox + centro do GLB cru (sem rotações). Centramos a bbox na origem
+     *    para que `calibRot` rode o GLB em torno do seu centro geométrico, não
+     *    do origin arbitrário do autor do GLB. */
     const box = new THREE.Box3().setFromObject(glasses);
     if (typeof box.isEmpty === "function" && box.isEmpty()) {
       throw new Error(
@@ -1338,51 +1345,37 @@ async function runArSession({
     }
     glasses.position.sub(center);
 
-    /** 2) Calibração do lojista (defaults batem com a ferramenta visual no admin). */
+    /** 2) Calibração do lojista (fallback para produtos sem metafield). */
     const calRotDeg = parseEulerDegComponents(
       cfgAttr("arCanonicalFixYxz", "0, -180, -90"),
       0, -180, -90,
     );
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
-    const bridgeYRaw = Number.parseFloat(cfgAttr("arBridgeYFactor", ""));
-    const bridgeY = Number.isFinite(bridgeYRaw) ? bridgeYRaw : 0.15;
 
     /** 3) Escala base — óculos com ~1× a largura da cara (depois da multiplicação do
      *    `anchor.group.matrix` por `faceScale` ≈ 14). Ver header no topo. */
     const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
 
-    /** 4) Hierarquia idêntica ao preview do admin (sem `mirrorX`):
-     *      anchor.group → wearPosition → centerOffset → calibRot → glasses
+    /** 4) Hierarquia mínima (idêntica ao preview do admin):
+     *       anchor.group → wearPosition → calibRot → glasses
      *
-     *    `centerOffset` ANTES de `calibRot` (fora dele) — assim a translação
-     *    "altura" (bridgeY) acontece no frame do anchor (alinhado com o mundo
-     *    para cara olhando a câmara), não no frame rotacionado do GLB. Sem isto,
-     *    o offset vertical (0, -b, 0) seria rotacionado pelo calibRot (ex.: com
-     *    calibração -90° em Z, vira deslocamento lateral; com +90°, inverte
-     *    para cima) — exactamente os sintomas de "acima dos olhos" e
-     *    "movimentação invertida" reportados no modo antigo.
+     *     - `calibRot` roda o GLB em torno do seu centro (bbox centrada).
+     *     - `wearPosition` translada em unidades de âncora (≈ 14cm/unit em mundo).
      *
-     *    `calibRot` internamente só roda o GLB no lugar, à volta do seu centro,
-     *    sem mover a posição do bridge.
-     *
-     *    Não há reflexão a compensar: `faceMatrix` ≈ Identity para cara
-     *    olhando a câmara (as negações Y/Z em `m` cancelam a convenção OpenCV
-     *    do solvePnP). Aplicar `mirrorX(sx=-1)` aqui produz exactamente o
-     *    "GLB virado pra esquerda" que o lojista via antes.
+     *     SEM `centerOffset`/`bridgeY`: o comportamento anterior dependia da
+     *     altura (sz.y) do GLB, e como estava por FORA de `calibRot` mas em
+     *     unidades do GLB, o efeito variava conforme a geometria. Agora tudo
+     *     se reduz a wearX/Y/Z em unidades de âncora (previsíveis).
      */
     const calibRot = new GroupCtor();
     calibRot.rotation.order = "YXZ";
     calibRot.rotation.set(rad(calRotDeg.x), rad(calRotDeg.y), rad(calRotDeg.z));
     calibRot.add(glasses);
 
-    const centerOffset = new GroupCtor();
-    centerOffset.position.y = -bridgeY * sz.y * baseUnitScale;
-    centerOffset.add(calibRot);
-
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
-    wearPosition.add(centerOffset);
+    wearPosition.add(calibRot);
 
     anchor.group.add(wearPosition);
 
@@ -1406,7 +1399,6 @@ async function runArSession({
         mindarDisableMirrorExplicit: mindarDmExplicit,
         calibrationDeg: calRotDeg,
         wearPositionM: wearPosM,
-        bridgeY,
         modelScaleMul,
         baseUnitScale,
         glbMaxDim: maxDim,

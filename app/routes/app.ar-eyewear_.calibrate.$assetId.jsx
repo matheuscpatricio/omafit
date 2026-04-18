@@ -453,18 +453,17 @@ export default function ArEyewearCalibratePage() {
  * de rotação por componente). Assim, o que o lojista vê aqui é o que o cliente
  * vai ver no AR.
  *
- * Hierarquia (idêntica ao widget):
+ * Hierarquia mínima (idêntica ao widget):
  *   scene                                           (widget: anchor.group)
  *     → wearPosition(group, pos=wearX/Y/Z)
- *       → centerOffset(group, pos.y=-bridgeY*size.y)          ← ANTES do calibRot
- *         → calibRot(group, Euler(rx, ry, rz, "YXZ"))
- *           → glb (escalado para ~face-width e multiplicado por cal.scale)
+ *       → calibRot(group, Euler(rx, ry, rz, "YXZ"))
+ *         → glb (bbox centrada na origem e escalado para ~face-width * cal.scale)
  *
- * Ordem crítica: `centerOffset` tem de ficar FORA de `calibRot`. Caso contrário,
- * a translação vertical (0, -bridgeY, 0) seria rotacionada pela calibração
- * (ex.: rotação -90° em Z converte deslocamento "para baixo" em "para o lado";
- * rotação 180° em Y inverte de "baixo" para "cima"), dando lugar aos sintomas
- * de "GLB acima dos olhos" e "movimentação invertida" que foram reportados.
+ * SEM `centerOffset`/`bridgeY`: todo o deslocamento vertical é controlado por
+ * `wearY` em unidades de âncora. A versão anterior tinha `centerOffset` com
+ * `pos.y=-bridgeY*size.y`, o que dependia da altura do GLB e criava um braço
+ * de alavanca vertical que dava efeitos visuais contra-intuitivos no AR
+ * (óculos "acima dos olhos" e "movimentação invertida" quando a cabeça rotava).
  *
  * Não há `mirrorX` em nenhum dos dois lados — análise do código-fonte da MindAR
  * (Estimator.js / face-data.js) confirma que, para cara a olhar para a câmara com
@@ -472,11 +471,14 @@ export default function ArEyewearCalibratePage() {
  * já entrega o frame certo. Adicionar um espelho introduziria o "óculos virado
  * pra esquerda" que o lojista via.
  *
- * Escala do preview: `baseScale = 0.16 / maxDim` foi escolhido para que os óculos
- * ocupem ~face-width no viewport (a silhueta da face desenhada atrás tem ~240 px
- * de largura num viewport de 400 px — que, com câmara a z=0.45 e FOV 35°, resulta
- * em ~0.168 unidades de mundo visíveis, ou seja, largura da face). Isto casa com
- * a largura efectiva do widget (faceScale ≈ 14cm × baseUnitScale 1/maxDim = face-width).
+ * Diagnósticos (dev-only, visíveis no preview):
+ *   - AxesHelper (X vermelho, Y verde, Z azul)
+ *   - Bbox wireframe (azul ciano) a envolver o GLB
+ *   - URL completa do GLB loggada em caso de erro
+ *
+ * Escala do preview: `baseScale = 0.16 / maxDim` faz os óculos ocuparem
+ * ~face-width no viewport (silhueta de ~240 px num viewport de 400 px, câmara
+ * a z=0.45 com FOV 35° → ~0.168 unidades visíveis em mundo = face-width).
  */
 function PreviewModel({ src, cal }) {
   const hostRef = useRef(null);
@@ -486,9 +488,9 @@ function PreviewModel({ src, cal }) {
     scene: null,
     camera: null,
     calibRot: null,
-    centerOffset: null,
     wearPosition: null,
     model: null,
+    bboxHelper: null,
     size: null,
     baseScale: 1,
     raf: 0,
@@ -549,21 +551,24 @@ function PreviewModel({ src, cal }) {
         wearPosition.name = "wearPosition";
         scene.add(wearPosition);
 
-        const centerOffset = new THREE.Group();
-        centerOffset.name = "centerOffset";
-        wearPosition.add(centerOffset);
-
         const calibRot = new THREE.Group();
         calibRot.name = "calibRot";
         calibRot.rotation.order = "YXZ";
-        centerOffset.add(calibRot);
+        wearPosition.add(calibRot);
+
+        // Diagnóstico: eixos (X vermelho, Y verde, Z azul) no origin da cena.
+        // Ajuda o lojista a perceber que o preview está a renderizar, mesmo
+        // antes do GLB carregar, e também evidencia se o GLB está a ir para
+        // dentro do volume visível depois de carregar.
+        const axes = new THREE.AxesHelper(0.08);
+        axes.name = "omafit-axes";
+        scene.add(axes);
 
         s.renderer = renderer;
         s.scene = scene;
         s.camera = camera;
         s.wearPosition = wearPosition;
         s.calibRot = calibRot;
-        s.centerOffset = centerOffset;
 
         const renderOnce = () => {
           const st = stateRef.current;
@@ -600,12 +605,14 @@ function PreviewModel({ src, cal }) {
             try {
               const root = gltf.scene || gltf.scenes?.[0];
               if (!root) {
+                console.warn("[calibrate] GLB without scene", { src });
                 setErrorMsg("O arquivo 3D não contém cena visível.");
                 setPhase("error");
                 return;
               }
               const box = new THREE.Box3().setFromObject(root);
               if (typeof box.isEmpty === "function" && box.isEmpty()) {
+                console.warn("[calibrate] GLB bbox empty", { src });
                 setErrorMsg("O arquivo 3D não contém geometria renderizável.");
                 setPhase("error");
                 return;
@@ -622,11 +629,30 @@ function PreviewModel({ src, cal }) {
               s.size = size.clone().multiplyScalar(baseScale);
               s.baseScale = baseScale;
               calibRot.add(root);
+
+              // Diagnóstico: bbox wireframe azul ciano à volta do GLB. Está
+              // dentro de calibRot, portanto roda com o modelo — confirma
+              // visualmente que o centro e a escala estão correctos.
+              try {
+                const bboxHelper = new THREE.Box3Helper(
+                  new THREE.Box3(
+                    new THREE.Vector3(-size.x / 2, -size.y / 2, -size.z / 2),
+                    new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2),
+                  ),
+                  0x00e0ff,
+                );
+                bboxHelper.name = "omafit-bbox";
+                calibRot.add(bboxHelper);
+                s.bboxHelper = bboxHelper;
+              } catch (_e) { /* diagnóstico opcional */ }
+
               applyCalibrationToState(stateRef.current, calRef.current || cal);
               setPhase("ready");
-              console.log("[calibrate] GLB loaded ok", { maxDim, baseScale, size: size.toArray() });
+              console.log("[calibrate] GLB loaded ok", {
+                src, maxDim, baseScale, size: size.toArray(),
+              });
             } catch (e) {
-              console.error("[calibrate] gltf setup error", e);
+              console.error("[calibrate] gltf setup error", e, { src });
               setErrorMsg(`Erro ao processar o modelo: ${e?.message || e}`);
               setPhase("error");
             }
@@ -638,10 +664,18 @@ function PreviewModel({ src, cal }) {
             }
           },
           (err) => {
-            console.warn("[calibrate] GLTFLoader error", err);
+            console.warn("[calibrate] GLTFLoader error", err, { src });
             if (!cancelled) {
-              const msg = err?.message || err?.target?.status || String(err) || "falha desconhecida";
-              setErrorMsg(`Não foi possível baixar o arquivo 3D (${msg}).`);
+              const status = err?.target?.status;
+              const statusTxt = err?.target?.statusText;
+              const msg =
+                err?.message ||
+                (status ? `HTTP ${status} ${statusTxt || ""}`.trim() : null) ||
+                String(err) ||
+                "falha desconhecida";
+              setErrorMsg(
+                `Não foi possível baixar o arquivo 3D (${msg}). URL: ${src}`,
+              );
               setPhase("error");
             }
           },
@@ -671,8 +705,9 @@ function PreviewModel({ src, cal }) {
       } catch { /* no-op */ }
       stateRef.current = {
         THREE: null, renderer: null, scene: null, camera: null,
-        calibRot: null, centerOffset: null, wearPosition: null,
-        model: null, size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
+        calibRot: null, wearPosition: null,
+        model: null, bboxHelper: null, size: null, baseScale: 1,
+        raf: 0, ro: null, disposed: true,
       };
     };
     
@@ -717,17 +752,22 @@ const centeredMsgStyle = {
 };
 
 function applyCalibrationToState(s, cal) {
-  if (!s || !s.THREE || !s.calibRot || !s.model || !s.size) return;
+  if (!s || !s.THREE || !s.calibRot || !s.model) return;
   const toRad = (d) => (Number(d) || 0) * Math.PI / 180;
   s.calibRot.rotation.set(toRad(cal.rx), toRad(cal.ry), toRad(cal.rz), "YXZ");
-  s.centerOffset.position.set(0, -(Number(cal.bridgeY) || 0) * s.size.y, 0);
   s.wearPosition.position.set(
     Number(cal.wearX) || 0,
     Number(cal.wearY) || 0,
     Number(cal.wearZ) || 0,
   );
   const sc = Number(cal.scale);
-  s.model.scale.setScalar(s.baseScale * (Number.isFinite(sc) && sc > 0 ? sc : 1));
+  const effScale = s.baseScale * (Number.isFinite(sc) && sc > 0 ? sc : 1);
+  s.model.scale.setScalar(effScale);
+  // bbox wireframe precisa ser re-escalado para acompanhar o model.
+  if (s.bboxHelper && s.size && s.THREE) {
+    const ratio = effScale / s.baseScale;
+    s.bboxHelper.scale.setScalar(ratio);
+  }
 }
 
 function CalibrationSliders({ cal, setField, t }) {
@@ -767,16 +807,22 @@ function CalibrationSliders({ cal, setField, t }) {
         suffix={`${cal.rz}°`}
       />
 
+      {/*
+        Altura/Y: agora é o único controlo vertical (bridgeY removido do pipeline).
+        Range ±0.15 em unidades de âncora ≈ ±2.1 cm em mundo (1 unit ≈ 14 cm).
+        Isso dá margem para descer os óculos da ponte do nariz (landmark 168)
+        até à linha dos olhos sem precisar de outros controlos.
+      */}
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.height.label")}
-        helpText={t("arEyewear.calibrate.sliders.height.help")}
-        min={-0.5}
-        max={0.5}
-        step={0.01}
-        value={cal.bridgeY}
-        onChange={setField("bridgeY")}
-        suffix={formatPct(cal.bridgeY)}
+        label={t("arEyewear.calibrate.sliders.nudgeY.label")}
+        helpText={t("arEyewear.calibrate.sliders.nudgeY.help")}
+        min={-0.15}
+        max={0.15}
+        step={0.005}
+        value={cal.wearY}
+        onChange={setField("wearY")}
+        suffix={formatCm(cal.wearY)}
       />
       <RangeSlider
         output
@@ -787,18 +833,7 @@ function CalibrationSliders({ cal, setField, t }) {
         step={0.001}
         value={cal.wearZ}
         onChange={setField("wearZ")}
-        suffix={formatMm(cal.wearZ)}
-      />
-      <RangeSlider
-        output
-        label={t("arEyewear.calibrate.sliders.nudgeY.label")}
-        helpText={t("arEyewear.calibrate.sliders.nudgeY.help")}
-        min={-0.05}
-        max={0.05}
-        step={0.001}
-        value={cal.wearY}
-        onChange={setField("wearY")}
-        suffix={formatMm(cal.wearY)}
+        suffix={formatCm(cal.wearZ)}
       />
       <RangeSlider
         output
@@ -809,7 +844,7 @@ function CalibrationSliders({ cal, setField, t }) {
         step={0.001}
         value={cal.wearX}
         onChange={setField("wearX")}
-        suffix={formatMm(cal.wearX)}
+        suffix={formatCm(cal.wearX)}
       />
       <RangeSlider
         output
@@ -826,14 +861,15 @@ function CalibrationSliders({ cal, setField, t }) {
   );
 }
 
-function formatPct(n) {
-  const p = Math.round(n * 100);
-  return `${p > 0 ? "+" : ""}${p}%`;
-}
-
-function formatMm(n) {
-  const mm = Math.round(n * 1000);
-  return `${mm > 0 ? "+" : ""}${mm} mm`;
+/**
+ * Formata offsets expressos em unidades de âncora da MindAR (≈14 cm/unit em mundo).
+ * Mostrar em cm é mais intuitivo para o lojista do que mm ou fracções.
+ */
+function formatCm(n) {
+  const cm = n * 14;
+  const rounded = Math.round(cm * 10) / 10;
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded.toFixed(1)} cm`;
 }
 
 function FaceSilhouette() {

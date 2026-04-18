@@ -447,8 +447,8 @@
           "help": "Acerca o aleja el modelo del rostro."
         },
         "nudgeY": {
-          "label": "Empujar arriba / abajo",
-          "help": "Ajuste fino en milímetros cuando \"Altura en el rostro\" no basta."
+          "label": "Altura en el rostro",
+          "help": "Sube o baja las gafas (en cm) para alinearlas con los ojos."
         },
         "nudgeX": {
           "label": "Empujar al lado",

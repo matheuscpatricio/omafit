@@ -447,8 +447,8 @@
           "help": "Traz o modelo para mais perto ou o afasta um pouco do rosto."
         },
         "nudgeY": {
-          "label": "Empurrar para cima / para baixo",
-          "help": "Ajuste fino em milímetros, caso \"Altura no rosto\" não seja suficiente."
+          "label": "Altura no rosto",
+          "help": "Sobe ou desce os óculos (em cm) para alinhar com a linha dos olhos."
         },
         "nudgeX": {
           "label": "Empurrar para o lado",

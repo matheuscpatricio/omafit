@@ -1328,9 +1328,31 @@ async function runArSession({
     await new Promise((resolve) => requestAnimationFrame(resolve));
     glasses.updateMatrixWorld(true);
 
-    /** 1) Bbox + centro do GLB cru (sem rotações). Centramos a bbox na origem
-     *    para que `calibRot` rode o GLB em torno do seu centro geométrico, não
-     *    do origin arbitrário do autor do GLB. */
+    /** 1) Normalizar a orientação intrínseca do scene root do GLB.
+     *
+     *    Porquê: GLBs exportados de Blender/Maya (ou convertidos via FBX/OBJ)
+     *    costumam ter rotação no scene root para compensar convenções de
+     *    "up axis" (Blender: +Z up; glTF: +Y up → rotação -90° em X no root).
+     *    Se essa rotação fica, a Euler YXZ do `calibRot` não roda em torno
+     *    dos eixos do mundo/âncora: roda em torno dos eixos ROdados do GLB,
+     *    o que faz com que sliders distintos (yaw vs roll) produzam
+     *    visualmente o mesmo movimento (dois eixos do Euler colapsam para
+     *    o mesmo eixo visual, dependendo da intrinsic).
+     *
+     *    A solução é zerar rotation/quaternion do root **antes** de
+     *    computar a bbox — assim +X_glb = direita do mundo, +Y_glb = cima
+     *    do mundo, +Z_glb = fora do ecrã (face-frame da MindAR). Os filhos
+     *    do root mantêm as suas rotações próprias (partes do modelo que
+     *    devem mesmo estar rodadas, ex.: hastes dos óculos). */
+    const originalQuat = glasses.quaternion.clone();
+    glasses.rotation.set(0, 0, 0);
+    glasses.quaternion.identity();
+    glasses.scale.setScalar(1);
+    glasses.updateMatrix();
+    glasses.updateMatrixWorld(true);
+
+    /** 2) Bbox + centro depois de normalizar. Centramos a bbox na origem
+     *    para que `calibRot` rode o GLB em torno do seu centro geométrico. */
     const box = new THREE.Box3().setFromObject(glasses);
     if (typeof box.isEmpty === "function" && box.isEmpty()) {
       throw new Error(
@@ -1356,7 +1378,7 @@ async function runArSession({
     );
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
-    /** 3) Escala base — óculos com ~1× a largura da cara (depois da multiplicação do
+    /** 4) Escala base — óculos com ~1× a largura da cara (depois da multiplicação do
      *    `anchor.group.matrix` por `faceScale` ≈ 14). Ver header no topo. */
     const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
@@ -1445,6 +1467,15 @@ async function runArSession({
         baseUnitScale,
         glbMaxDim: maxDim,
         hasOmafitCanonicalNode,
+        glbRootQuatOriginal: {
+          x: originalQuat.x, y: originalQuat.y,
+          z: originalQuat.z, w: originalQuat.w,
+        },
+        glbRootWasRotated:
+          Math.abs(originalQuat.x) > 1e-4 ||
+          Math.abs(originalQuat.y) > 1e-4 ||
+          Math.abs(originalQuat.z) > 1e-4 ||
+          Math.abs(originalQuat.w - 1) > 1e-4,
         calSource: arCfg?.dataset?.arOmafitCalSource || "unknown",
       },
     });

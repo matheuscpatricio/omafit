@@ -575,24 +575,35 @@ function PreviewModel({ src, cal }) {
         axes.name = "omafit-axes";
         scene.add(axes);
 
-        // Placeholder: cubo wireframe ciano no calibRot com proporções de
-        // armação real (~14×4×4 cm). Fica SEMPRE visível enquanto o GLB não
-        // carrega, e mesmo depois de carregar (semi-transparente) para o
-        // lojista conferir se o GLB está alinhado com a bbox esperada.
-        const placeholderGeom = new THREE.BoxGeometry(
+        // Placeholder: cubo wireframe ciano com AxesHelper interno no calibRot.
+        // Proporções de armação real (~14×4×4 cm), o AxesHelper indica
+        // claramente +X (vermelho, direita), +Y (verde, cima) e +Z (azul,
+        // para fora do ecrã = lentes apontando para o user). Assim o lojista
+        // vê imediatamente como cada slider afecta os eixos do modelo e
+        // consegue distinguir yaw (Y) de roll (Z) mesmo num GLB simétrico.
+        const placeholder = new THREE.Group();
+        placeholder.name = "omafit-placeholder";
+
+        const phGeom = new THREE.BoxGeometry(
           PLACEHOLDER_SIZE.x, PLACEHOLDER_SIZE.y, PLACEHOLDER_SIZE.z,
         );
-        const placeholderEdges = new THREE.EdgesGeometry(placeholderGeom);
-        const placeholder = new THREE.LineSegments(
-          placeholderEdges,
+        const phEdges = new THREE.EdgesGeometry(phGeom);
+        const phBox = new THREE.LineSegments(
+          phEdges,
           new THREE.LineBasicMaterial({
             color: 0x00e0ff,
             transparent: true,
             opacity: 0.8,
           }),
         );
-        placeholder.name = "omafit-placeholder";
+        placeholder.add(phBox);
+
+        const phAxes = new THREE.AxesHelper(PLACEHOLDER_SIZE.x * 0.6);
+        placeholder.add(phAxes);
+
         calibRot.add(placeholder);
+        // Guardar referência ao material para alterar opacity quando o GLB carregar.
+        placeholder.userData.boxMaterial = phBox.material;
 
         s.renderer = renderer;
         s.scene = scene;
@@ -639,6 +650,24 @@ function PreviewModel({ src, cal }) {
                 setPhase("error");
                 return;
               }
+
+              // Normalizar rotação intrínseca do scene root (Blender/Maya
+              // convertidos para glTF costumam ter uma rotação no root).
+              // Sem isto, a Euler YXZ do calibRot colapsa eixos visuais e
+              // sliders distintos (yaw/roll) parecem fazer a mesma coisa.
+              // Ver comentário paralelo em omafit-ar-widget.js.
+              const originalQuat = root.quaternion.clone();
+              const rootWasRotated =
+                Math.abs(originalQuat.x) > 1e-4 ||
+                Math.abs(originalQuat.y) > 1e-4 ||
+                Math.abs(originalQuat.z) > 1e-4 ||
+                Math.abs(originalQuat.w - 1) > 1e-4;
+              root.rotation.set(0, 0, 0);
+              root.quaternion.identity();
+              root.scale.setScalar(1);
+              root.updateMatrix();
+              root.updateMatrixWorld(true);
+
               const box = new THREE.Box3().setFromObject(root);
               if (typeof box.isEmpty === "function" && box.isEmpty()) {
                 console.warn("[omafit-calibrate] GLB sem geometria:", src);
@@ -660,15 +689,21 @@ function PreviewModel({ src, cal }) {
               calibRot.add(root);
 
               // Placeholder fica mais discreto quando GLB carrega (20% opacity).
-              if (s.placeholder?.material) {
-                s.placeholder.material.opacity = 0.2;
-              }
+              // Mantemos os AxesHelper visíveis (não mexemos) para o lojista
+              // continuar a ver +X/+Y/+Z enquanto calibra.
+              const phMat = s.placeholder?.userData?.boxMaterial;
+              if (phMat) phMat.opacity = 0.2;
 
               applyCalibrationToState(stateRef.current, calRef.current || cal);
               setPhase("ready");
               console.log("[omafit-calibrate] GLB carregado:", {
                 src, maxDim, baseScale, sizeRaw: size.toArray(),
                 childMeshCount: countVisibleMeshes(root),
+                rootWasRotated,
+                rootQuatOriginal: {
+                  x: originalQuat.x, y: originalQuat.y,
+                  z: originalQuat.z, w: originalQuat.w,
+                },
               });
             } catch (e) {
               console.error("[omafit-calibrate] erro no setup do GLB:", e, src);

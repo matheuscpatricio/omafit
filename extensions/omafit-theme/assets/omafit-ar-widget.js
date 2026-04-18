@@ -8,11 +8,17 @@
  * Regras de renderização (AR face + try-on) que este ficheiro segue:
  * 1) Um só runtime Three — o mesmo URL de módulo que GLTFLoader e MindAR puxam no esm.sh
  *    (`…/es2022/three.mjs` + `deps=three@VERSÃO`), sem `bundle` no MindAR.
- * 2) Hierarquia: modelo sob `anchor.group`, com grupos `GroupCtor` do MindAR e nós opcionais
- *    wearAlign → poseCorr → glbBind → autoOrient → cena GLB.
+ * 2) Pipeline simples ("filtro Instagram") — idêntica ao preview do admin:
+ *      anchor.group(MindAR landmark 168)
+ *        → wearPosition (offset XYZ em metros do data-ar-mindar-wear-position)
+ *          → calibRot (Euler YXZ do data-ar-canonical-fix-yxz)
+ *            → centerOffset (deslocamento Y = -bridgeY * sz.y * baseUnitScale)
+ *              → glasses (GLB centrado e escalado para ~85mm de largura).
+ *    Sem heurísticas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`, `poseInvert`):
+ *    a calibração do lojista é a única fonte de verdade para a orientação.
  * 3) Espelho selfie só via opções MindAR (`disableFaceMirror` / data attribute), sem CSS scaleX no vídeo.
- * 4) Escala: bbox + unidade base + opcional `faceScale` e multiplicador de tema.
- * 5) GLB canónico no pipeline (worker/API) — aqui só carregamos e afinamos materiais/luzes.
+ * 4) Escala: bbox + unidade base (0.085m / maxDim) × `data-ar-mindar-model-scale`.
+ * 5) GLB tem qualquer orientação — o lojista calibra na ferramenta visual do admin.
  */
 const ESM_THREE_VER = "0.150.1";
 const ESM_SH = "https://esm.sh";
@@ -1202,14 +1208,10 @@ async function runArSession({
     await mindarThree.start();
 
     /**
-     * O MindAR já coloca o grupo no referencial do landmark (ex. 168); não usar os Euler por defeito
-     * do antigo modo VTG/MediaPipe — duplicavam correção com GLBs já canonicalizados e “entortavam” no AR.
-     * `data-ar-glb-yxz` / `data-ar-model-yxz`: só quando precisares de ajuste fino por export.
+     * Pipeline simples: rotação vem inteiramente do `data-ar-canonical-fix-yxz`
+     * (calibração do lojista). Os antigos `arGlbYxz` / `arModelYxz` /
+     * `arPoseCorrYxz` foram removidos — toda rotação concentra-se em `calibRot`.
      */
-    const rawGlb = cfgAttr("arGlbYxz", "");
-    const rawModel = cfgAttr("arModelYxz", "");
-    const glbDeg = parseEulerDegComponents(rawGlb || rawModel, 0, 0, 0);
-    const poseCorrDeg = parseEulerDegComponents(cfgAttr("arPoseCorrYxz", ""), 0, 0, 0);
     const scaleMulRaw = cfgAttr("arMindarModelScale", "");
     const nScale = Number(scaleMulRaw);
     const modelScaleMul = Number.isFinite(nScale) && nScale > 0 ? nScale : 1;
@@ -1274,163 +1276,29 @@ async function runArSession({
     });
 
     /**
-     * GLBs gerados pela app Omafit já passam por `canonicalizeArEyewearGlbBuffer` (nó `omafit_ar_canonical`).
-     * Aplicar `glbWideAlign` em cima disso duplica a rotação e deixa o modelo “de lado” / invertido no widget.
+     * Pipeline simples ("filtro do Instagram"): identica ao preview do admin.
+     * Hierarquia única: anchor.group → wearPosition → calibRot → centerOffset → GLB.
+     *   - calibRot:    rotação YXZ vinda da calibração (defaults 0, -180, -90)
+     *   - centerOffset: desce o GLB pelo bridgeY (default 0.15 da altura)
+     *   - wearPosition: ajustes finos em metros (wearX/Y/Z)
+     *   - escala: 0.085m de largura base * scale do lojista
+     * Sem heurísticas (glbWideAlign / bake / ipdSnap / mirrorX / poseInvert).
+     * O lojista calibra na ferramenta visual e o resultado bate exato no AR.
      */
     let hasOmafitCanonicalNode = false;
     glasses.traverse((obj) => {
       if (obj && obj.name === "omafit_ar_canonical") hasOmafitCanonicalNode = true;
     });
-    const skipGlbWideAlignAttr = /^1|true|on$/i.test(cfgAttr("arMindarSkipGlbWideAlign", "").toLowerCase());
-    /**
-     * Quando o lojista calibrou (metafield omafit.ar_calibration presente, ou
-     * `data-ar-canonical-fix-yxz` não-vazio) os ângulos guardados são a única
-     * fonte de verdade. Pulamos a heurística `glbWideAlign` que rodava o GLB
-     * ±90° baseado nas dimensões — senão a rotação é aplicada DUAS vezes
-     * (heurística + calibração) e o modelo fica torto no AR mesmo quando o
-     * preview do admin mostrava-o correto.
-     */
-    const merchantOrientationOverride = cfgAttr("arCanonicalFixYxz", "").trim();
-    const skipGlbWideAlign =
-      hasOmafitCanonicalNode ||
-      skipGlbWideAlignAttr ||
-      Boolean(merchantOrientationOverride);
 
-    /** Um frame: materiais/morphs/skin a estabilizar antes do `Box3` (bbox mais fiável no 1.º render). */
+    /** Frame de assentamento (materiais/morphs/skin) antes do bbox. */
     await new Promise((resolve) => requestAnimationFrame(resolve));
     glasses.updateMatrixWorld(true);
 
-    /**
-     * MindAR espera largura da armação ~eixo X da âncora. Só para GLB **sem** canónico Omafit / sem largura em X.
-     */
-    const glbWideAlign = new GroupCtor();
-    glbWideAlign.rotation.order = "YXZ";
-    glasses.updateMatrixWorld(true);
-    const boxPre = new THREE.Box3().setFromObject(glasses);
-    const szPre = boxPre.getSize(new THREE.Vector3());
-    const wx = szPre.x;
-    const wy = szPre.y;
-    const wz = szPre.z;
-    /**
-     * Margem alta: GLBs canónicos (largura ≈ X) não devem apanhar rotação extra — evita “virado”/lado.
-     * Sentidos −90° (em vez de +90°) alinham Tripo/Omafit típicos ao eixo X esperado pelo MindAR na âncora 168.
-     */
-    const tol = 1.38;
-    const xAxisAlreadyWidth = wx >= wy && wx >= wz;
-    if (!skipGlbWideAlign && !xAxisAlreadyWidth) {
-      /** Z maior → largura na profundidade: −90° Y mapeia +Z local → +X (referencial rosto). */
-      if (wz > wx * tol && wz >= wy) {
-        glbWideAlign.rotation.y = -Math.PI / 2;
-      } else if (wy > wx * tol && wy >= wz) {
-        /** Y maior (armação “em pé”): −90° Z alinha largura ao eixo X sem inclinar para a “esquerda”. */
-        glbWideAlign.rotation.z = -Math.PI / 2;
-      }
-    }
-    glbWideAlign.add(glasses);
-
-    // --- Sign disambiguation (runtime) ---
-    // Bakes the correction into geometry via world→local conversion
-    // (localBake = wm⁻¹·worldBake·wm). Mathematically equivalent to
-    // inserting `worldBake` as a static node just below the point where
-    // `wm` was captured, so the corrected model follows the face anchor
-    // as a rigid body (no per-frame compensation needed).
-    //
-    // A heurística roda mesmo com o node `omafit_ar_canonical` — o server
-    // só escolhe uma rotação em passos de 90° e a heurística do widget
-    // costuma completar sign-flips específicos do modelo que o server não
-    // resolveu. Pular a heurística deixa o GLB 90° rodado para muitos
-    // modelos.  Se for preciso forçar outra orientação, use o override
-    // explícito via `data-ar-canonical-fix-yxz`.
-    const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
-    let _sfFlipY = false, _sfFlipZ = false;
-    function bakeWorldRotationIntoGeometries(worldMat) {
-      glasses.traverse((obj) => {
-        if (!obj.isMesh || !obj.geometry) return;
-        obj.updateMatrixWorld(true);
-        const wm = obj.matrixWorld;
-        const wmInv = wm.clone().invert();
-        const localBake = wmInv.clone().multiply(worldMat).multiply(wm);
-        obj.geometry.applyMatrix4(localBake);
-      });
-    }
-    if (sfOverride) {
-      const sfD = parseEulerDegComponents(sfOverride, 0, 0, 0);
-      const sfBakeMat = new THREE.Matrix4();
-      sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
-      glbWideAlign.updateMatrixWorld(true);
-      bakeWorldRotationIntoGeometries(sfBakeMat);
-    } else {
-      glbWideAlign.updateMatrixWorld(true);
-      const sfPos = [];
-      glasses.traverse((obj) => {
-        if (!obj.isMesh || !obj.geometry) return;
-        const pa = obj.geometry.getAttribute("position");
-        if (!pa) return;
-        obj.updateMatrixWorld(true);
-        const wm = obj.matrixWorld;
-        for (let i = 0; i < pa.count; i++) {
-          const vv = new THREE.Vector3(pa.getX(i), pa.getY(i), pa.getZ(i));
-          vv.applyMatrix4(wm);
-          sfPos.push(vv);
-        }
-      });
-      if (sfPos.length > 16) {
-        const sfB = new THREE.Box3();
-        for (const v of sfPos) sfB.expandByPoint(v);
-        const sfC = sfB.getCenter(new THREE.Vector3());
-        const sfS = sfB.getSize(new THREE.Vector3());
-        const shw = sfS.x / 2, shh = sfS.y / 2, shd = sfS.z / 2;
-        if (shh > 1e-6 && shw > 1e-6 && shd > 1e-6) {
-          const cb = sfPos.filter((v) => Math.abs(v.x - sfC.x) < shw * 0.35);
-          if (cb.length > 8) {
-            const tC = cb.filter((v) => v.y > sfC.y);
-            const bC = cb.filter((v) => v.y < sfC.y);
-            if (tC.length > 2 && bC.length > 2) {
-              const tZS = Math.max(...tC.map((v) => v.z)) - Math.min(...tC.map((v) => v.z));
-              const bZS = Math.max(...bC.map((v) => v.z)) - Math.min(...bC.map((v) => v.z));
-              if (tZS > bZS * 1.08) _sfFlipY = true;
-            }
-          }
-          if (!_sfFlipY && sfPos.length > 20) {
-            const sortedY = sfPos.slice().sort((a, b) => a.y - b.y);
-            const sn = Math.max(8, Math.floor(sortedY.length * 0.08));
-            const bSlice = sortedY.slice(0, sn);
-            const tSlice = sortedY.slice(sortedY.length - sn);
-            const tXSp = Math.max(...tSlice.map((v) => v.x)) - Math.min(...tSlice.map((v) => v.x));
-            const bXSp = Math.max(...bSlice.map((v) => v.x)) - Math.min(...bSlice.map((v) => v.x));
-            if (tXSp > bXSp * 1.08) _sfFlipY = true;
-          }
-          const outer = sfPos.filter((v) => Math.abs(v.x - sfC.x) > shw * 0.6);
-          if (outer.length > 4) {
-            const zv = outer.map((v) => v.z - sfC.z).sort((a, b) => Math.abs(b) - Math.abs(a));
-            const topN = zv.slice(0, Math.max(4, Math.floor(zv.length * 0.15)));
-            const mez = topN.reduce((s, z) => s + z, 0) / topN.length;
-            if (mez < -shd * 0.12) _sfFlipZ = true;
-          }
-        }
-        let sfBakeMat = null;
-        if (_sfFlipY && _sfFlipZ) {
-          sfBakeMat = new THREE.Matrix4().makeRotationX(Math.PI);
-        } else if (_sfFlipY) {
-          sfBakeMat = new THREE.Matrix4().makeRotationZ(Math.PI);
-        } else if (_sfFlipZ) {
-          sfBakeMat = new THREE.Matrix4().makeRotationY(Math.PI);
-        }
-        if (sfBakeMat) {
-          bakeWorldRotationIntoGeometries(sfBakeMat);
-        }
-      }
-    }
-    glbWideAlign.add(glasses);
-
-    const autoOrient = new GroupCtor();
-    autoOrient.add(glbWideAlign);
-    autoOrient.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(autoOrient);
-    /** GLB válido mas sem meshes/POSITION → bbox vazia; evita escala infinita e erro opaco no render. */
+    /** 1) Bbox + centro do GLB cru (sem rotações). */
+    const box = new THREE.Box3().setFromObject(glasses);
     if (typeof box.isEmpty === "function" && box.isEmpty()) {
       throw new Error(
-        "omafit-ar: GLB sem geometria visível (cena vazia ou só nós sem vértices). Confirma o export e o URL público.",
+        "omafit-ar: GLB sem geometria visível (cena vazia ou só nós sem vértices).",
       );
     }
     const center = box.getCenter(new THREE.Vector3());
@@ -1439,179 +1307,42 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
-    /**
-     * Offset do bridge em unidades de altura do modelo (positivo desloca o
-     * ponto de referência para cima do centroide → modelo renderiza abaixo
-     * da âncora). Default `0.15` empiricamente coloca o bridge do GLB na
-     * altura do landmark 168 (glabela). Ajustável via
-     * `data-ar-bridge-y-factor` para calibração fina por tema/produto.
-     */
-    const bridgeYFactorRaw = Number.parseFloat(cfgAttr("arBridgeYFactor", ""));
-    const bridgeYFactor = Number.isFinite(bridgeYFactorRaw) ? bridgeYFactorRaw : 0.15;
-    if (bridgeYFactor !== 0) center.y += bridgeYFactor * sz.y;
-    /** Escala ~largura facial; `faceScale` do MindAR (metric) afinará no 1.º frame com face. */
-    const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
-    autoOrient.position.set(
-      -center.x * baseUnitScale,
-      -center.y * baseUnitScale,
-      -center.z * baseUnitScale,
-    );
-    autoOrient.scale.setScalar(baseUnitScale);
-    autoOrient.userData._omafitMaxDim = maxDim;
-    autoOrient.userData._omafitBaseUnitScale = baseUnitScale;
-    autoOrient.userData._omafitPivot = center.clone();
+    glasses.position.sub(center);
 
-    const poseCorr = new GroupCtor();
-    poseCorr.rotation.order = "YXZ";
-    poseCorr.rotation.set(rad(poseCorrDeg.x), rad(poseCorrDeg.y), rad(poseCorrDeg.z));
-    const glbBind = new GroupCtor();
-    glbBind.rotation.order = "YXZ";
-    glbBind.rotation.set(rad(glbDeg.x), rad(glbDeg.y), rad(glbDeg.z));
-    const wearPosRaw = cfgAttr("arMindarWearPosition", "");
-    const wearPosM = parseXyzMeters(wearPosRaw, 0, 0, 0);
+    /** 2) Calibração do lojista (defaults batem com a ferramenta visual no admin). */
+    const calRotDeg = parseEulerDegComponents(
+      cfgAttr("arCanonicalFixYxz", "0, -180, -90"),
+      0, -180, -90,
+    );
+    const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
+    const bridgeYRaw = Number.parseFloat(cfgAttr("arBridgeYFactor", ""));
+    const bridgeY = Number.isFinite(bridgeYRaw) ? bridgeYRaw : 0.15;
+
+    /** 3) Escala base (~85mm de largura) × multiplicador de escala da calibração. */
+    const baseUnitScale = (0.085 / maxDim) * modelScaleMul;
+    glasses.scale.setScalar(baseUnitScale);
+
+    /** 4) Hierarquia idêntica ao preview do admin:
+     *      anchor.group → wearPosition → calibRot → centerOffset → glasses
+     */
+    const centerOffset = new GroupCtor();
+    centerOffset.position.y = -bridgeY * sz.y * baseUnitScale;
+    centerOffset.add(glasses);
+
+    const calibRot = new GroupCtor();
+    calibRot.rotation.order = "YXZ";
+    calibRot.rotation.set(rad(calRotDeg.x), rad(calRotDeg.y), rad(calRotDeg.z));
+    calibRot.add(centerOffset);
+
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
-    wearPosition.add(autoOrient);
-    glbBind.add(wearPosition);
-    poseCorr.add(glbBind);
+    wearPosition.add(calibRot);
 
-    /** Euler wear manual (vazio = identidade); eixo largura + espelho X tratam-se em `glbWideAlign` / `mirrorX`. */
-    /** Euler wear: #omafit-widget-root tem prioridade; depois #omafit-ar-root. */
-    const wearRaw = cfgAttr("arMindarWearYxz", "");
-    const wearDeg = parseEulerDegComponents(wearRaw, 0, 0, 0);
-    const disableIpdSnap = /^1|true|on$/i.test(cfgAttr("arMindarDisableIpdSnap", "").toLowerCase());
-    const wearAlign = new GroupCtor();
-    wearAlign.rotation.order = "YXZ";
-    /** Com IPD snap o Euler wear entra no quaternion de `ipdSnap` (evita duplicar rotação). */
-    if (disableIpdSnap) {
-      wearAlign.rotation.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z));
-    } else {
-      wearAlign.rotation.set(0, 0, 0);
-    }
+    anchor.group.add(wearPosition);
 
-    /** Motor VTG: invertia a pose; no MindAR ≈ girar 180° em Y no modelo relativamente à âncora. */
-    const invertQ = /^1|true|on$/i.test(cfgAttr("arInvertPoseQuat", "").toLowerCase());
-    const poseInvert = new GroupCtor();
-    if (invertQ) {
-      poseInvert.rotation.order = "YXZ";
-      poseInvert.rotation.set(0, Math.PI, 0);
-    }
-
-    /**
-     * Espelho X: com alinhamento IPD activo o defeito é +1 (o snap corrige o eixo); sem IPD mantém −1 se não `skip-default-x-flip`.
-     * `data-ar-scene-x-mirror` / `data-ar-flip-ipd-axis` invertem o sinal (ambos 1 → +1).
-     */
-    const skipDefXFlip = /^1|true|on$/i.test(cfgAttr("arMindarSkipDefaultXFlip", "").toLowerCase());
-    const sceneXM = /^1|true|on$/i.test(cfgAttr("arSceneXMirror", "").toLowerCase());
-    const flipIpd = /^1|true|on$/i.test(cfgAttr("arFlipIpdAxis", "").toLowerCase());
-    /**
-     * Troca 33↔263: o vector interpupilar fica oposto; corrige óculos “invertidos” quando
-     * `disableFaceMirror` + `skip-default-x-flip` não coincidem com o referencial do MindAR.
-     */
-    const ipdSwapEnds = /^1|true|on$/i.test(cfgAttr("arIpdSwapEnds", "").toLowerCase());
-    /**
-     * Com IPD snap o alinhamento quaternion já orienta +X à linha interpupilar; o defeito antigo (+1)
-     * deixava alguns GLB canónicos espelhados / “de lado”. −1 alinha ao mesmo referencial que sem IPD.
-     */
-    let mirrorSign = disableIpdSnap ? (skipDefXFlip ? 1 : -1) : skipDefXFlip ? 1 : -1;
-    if (sceneXM) mirrorSign *= -1;
-    if (flipIpd) mirrorSign *= -1;
-    const mirrorX = new GroupCtor();
-    if (mirrorSign < 0) mirrorX.scale.x = -1;
-    mirrorX.add(poseCorr);
-    poseInvert.add(mirrorX);
-    wearAlign.add(poseInvert);
-
-    /** Alinha +X do modelo ao vetor interpupilar (MediaPipe 468: 33 → 263) no espaço local da âncora. */
-    const ipdSnap = new GroupCtor();
-    ipdSnap.name = "omafit_ipd_snap";
-    const _vX = new THREE.Vector3(1, 0, 0);
-    const _u = new THREE.Vector3();
-    const _invAnchorWorld = new THREE.Matrix4();
-    const _qSnap = new THREE.Quaternion();
-    const _qWear = new THREE.Quaternion();
-    const _eulerWear = new THREE.Euler(0, 0, 0, "YXZ");
-    /** Mesma transl. que `getLandmarkMatrix` do MindAR (coluna de transl., sem escala em t). */
-    function landmarkWorldPos(fm, idx, ml) {
-      if (!fm || !ml || idx < 0 || idx >= ml.length) return null;
-      const t = ml[idx];
-      if (!t || t.length < 3) return null;
-      return new THREE.Vector3(
-        fm[0] * t[0] + fm[1] * t[1] + fm[2] * t[2] + fm[3],
-        fm[4] * t[0] + fm[5] * t[1] + fm[6] * t[2] + fm[7],
-        fm[8] * t[0] + fm[9] * t[1] + fm[10] * t[2] + fm[11],
-      );
-    }
-    const LM_IPD_RIGHT = 33;
-    const LM_IPD_LEFT = 263;
-
-    ipdSnap.add(wearAlign);
-
-    /**
-     * `ipdSnap` liga-se directamente à âncora: o sign fix em runtime é
-     * feito por bake na geometria, que é matematicamente equivalente a um
-     * offset estático inserido abaixo de `autoOrient`, e portanto segue a
-     * pose da face como corpo rígido — nenhuma compensação por frame é
-     * necessária (uma compensação `Rx(π − 2θ)` previamente usada invertia
-     * a pitch: Rx(θ)·Rx(π−2θ)·Rx(π)·v = Rx(−θ)·v).
-     */
-    anchor.group.add(ipdSnap);
-
+    /** 5) Loop de render — sem correções por frame. */
     const { renderer, scene, camera } = mindarThree;
-    let didFaceScaleBlend = false;
-    const useFs = /^1|true|on$/i.test(cfgAttr("arMindarUseFaceScale", "").toLowerCase());
     renderer.setAnimationLoop(() => {
-      const estLoop =
-        typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
-      /** Até haver `metricLandmarks`, `ipdSnap.quaternion` fica identidade — 1–2 frames podem parecer “desalinhados”. */
-      if (!disableIpdSnap) {
-        const ml = estLoop && estLoop.metricLandmarks;
-        const fm = estLoop && estLoop.faceMatrix;
-        if (ml && fm && Array.isArray(ml) && ml.length > LM_IPD_LEFT) {
-          const idxA = ipdSwapEnds ? LM_IPD_LEFT : LM_IPD_RIGHT;
-          const idxB = ipdSwapEnds ? LM_IPD_RIGHT : LM_IPD_LEFT;
-          const pA = landmarkWorldPos(fm, idxA, ml);
-          const pB = landmarkWorldPos(fm, idxB, ml);
-          if (pA && pB && pA.distanceToSquared(pB) > 1e-12) {
-            const vW = pB.clone().sub(pA).normalize();
-            anchor.group.updateMatrixWorld(true);
-            _invAnchorWorld.copy(anchor.group.matrixWorld).invert();
-            const dA = vW.clone().transformDirection(_invAnchorWorld).normalize();
-            if (dA.lengthSq() > 0.04) {
-              _eulerWear.set(rad(wearDeg.x), rad(wearDeg.y), rad(wearDeg.z), "YXZ");
-              _qWear.setFromEuler(_eulerWear);
-              _u.copy(_vX).applyQuaternion(_qWear);
-              _qSnap.setFromUnitVectors(_u, dA);
-              if (Math.abs(_u.dot(dA) + 1) < 1e-4) {
-                _qSnap.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-              }
-              ipdSnap.quaternion.copy(_qSnap).multiply(_qWear);
-            }
-          }
-        }
-      }
-      if (useFs && !didFaceScaleBlend) {
-        const fs = estLoop && Number(estLoop.faceScale);
-        if (Number.isFinite(fs) && fs > 1e-6) {
-          const md = autoOrient.userData._omafitMaxDim;
-          const base = autoOrient.userData._omafitBaseUnitScale;
-          if (Number.isFinite(md) && md > 0 && Number.isFinite(base)) {
-            /** `faceScale` ≈ largura facial métrica; alinhar largura do GLB (~1 após bbox) ao rosto. */
-            const k = 1.15;
-            const newScale = (k * fs) / md;
-            autoOrient.scale.setScalar(newScale);
-            const pivot = autoOrient.userData._omafitPivot;
-            if (pivot) {
-              autoOrient.position.set(
-                -pivot.x * newScale,
-                -pivot.y * newScale,
-                -pivot.z * newScale,
-              );
-            }
-            didFaceScaleBlend = true;
-          }
-        }
-      }
       renderer.render(scene, camera);
     });
 
@@ -1619,44 +1350,22 @@ async function runArSession({
 
     __omafitArDbgLog({
       location: "omafit-ar-widget.js:runArSession",
-      message: "mindar face started",
-      hypothesisId: "H5-mindar",
+      message: "mindar face started (simple pipeline)",
+      hypothesisId: "H6-simple-pipeline",
       data: {
+        pipeline: "simple-instagram-filter",
         anchorIndex,
         disableFaceMirror,
         mirrorSelfieLegacy: legacyMsRaw || null,
         mindarDisableMirrorExplicit: mindarDmExplicit,
-        glbBindYxz: glbDeg,
-        mindarWearPositionM: wearPosM,
-        mindarWearPositionFrom: embedCfg?.dataset?.arMindarWearPosition != null &&
-          String(embedCfg.dataset.arMindarWearPosition).trim() !== ""
-          ? "omafit-widget-root"
-          : (arCfg?.dataset?.arMindarWearPosition != null &&
-                String(arCfg.dataset.arMindarWearPosition).trim() !== ""
-              ? "omafit-ar-root"
-              : "none"),
-        ipdSwapEnds,
-        mindarWearYxz: wearDeg,
-        mindarWearRawEmpty: wearRaw.length === 0,
-        mindarDisableIpdSnap: disableIpdSnap,
-        mindarSkipDefaultXFlip: skipDefXFlip,
-        glbWideAlignRad: {
-          x: glbWideAlign.rotation.x,
-          y: glbWideAlign.rotation.y,
-          z: glbWideAlign.rotation.z,
-        },
+        calibrationDeg: calRotDeg,
+        wearPositionM: wearPosM,
+        bridgeY,
+        modelScaleMul,
+        baseUnitScale,
+        glbMaxDim: maxDim,
         hasOmafitCanonicalNode,
-        skipGlbWideAlign,
-        signFixFlipY: _sfFlipY,
-        signFixFlipZ: _sfFlipZ,
-        signFixOverride: sfOverride || null,
-        bridgeYFactor,
-        xAxisAlreadyWidth,
-        glbPreBboxSize: { x: wx, y: wy, z: wz },
-        useFaceScale: useFs,
-        sceneXMirror: sceneXM,
-        flipIpdAxis: flipIpd,
-        invertPoseQuat: invertQ,
+        calSource: arCfg?.dataset?.arOmafitCalSource || "unknown",
       },
     });
   } catch (e) {

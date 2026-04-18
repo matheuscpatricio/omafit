@@ -1061,6 +1061,52 @@ async function runArSession({
       if (ak !== undefined && String(ak).trim() !== "") return String(ak).trim();
       return String(fallback ?? "").trim();
     }
+
+    /**
+     * Calibração salva pelo lojista no admin (metafield `omafit.ar_calibration`).
+     * O Liquid tenta emitir os valores nos data-attrs específicos, mas nem sempre
+     * consegue (algumas versões do Shopify Liquid não expõem hash parseado para
+     * metafields tipo json). Então também emitimos o JSON bruto em
+     * `data-ar-omafit-calibration` — aqui fazemos o parse e, se o Liquid não
+     * populou os campos, populamos a partir do JSON. Variant override via
+     * `window.__omafitArSwitchGlb` chama `applyOmafitCalibration(calObj)`.
+     */
+    function parseOmafitCalibrationRaw(raw) {
+      if (!raw) return null;
+      let v = raw;
+      try { v = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return null; }
+      if (v && typeof v === "object" && v.value !== undefined) {
+        try { v = typeof v.value === "string" ? JSON.parse(v.value) : v.value; } catch { /* noop */ }
+      }
+      if (v && typeof v === "object" && !Array.isArray(v)) return v;
+      return null;
+    }
+    function applyOmafitCalibration(cal, el) {
+      const target = el || arCfg;
+      if (!target || !cal || typeof cal !== "object") return false;
+      const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : null);
+      const rx = num(cal.rx), ry = num(cal.ry), rz = num(cal.rz);
+      const bridgeY = num(cal.bridgeY);
+      const wearX = num(cal.wearX), wearY = num(cal.wearY), wearZ = num(cal.wearZ);
+      const scale = num(cal.scale);
+      if (rx !== null && ry !== null && rz !== null) {
+        target.dataset.arCanonicalFixYxz = `${rx}, ${ry}, ${rz}`;
+      }
+      if (wearX !== null && wearY !== null && wearZ !== null) {
+        target.dataset.arMindarWearPosition = `${wearX} ${wearY} ${wearZ}`;
+      }
+      if (bridgeY !== null) target.dataset.arBridgeYFactor = String(bridgeY);
+      if (scale !== null && scale > 0) target.dataset.arMindarModelScale = String(scale);
+      target.dataset.arOmafitCalSource = "metafield:applied";
+      return true;
+    }
+    try {
+      const rawCal = arCfg?.dataset?.arOmafitCalibration || "";
+      const parsed = parseOmafitCalibrationRaw(rawCal);
+      if (parsed) applyOmafitCalibration(parsed, arCfg);
+    } catch (e) {
+      console.warn("[omafit-ar] applyOmafitCalibration failed", e?.message || e);
+    }
     const rad = (d) => (d * Math.PI) / 180;
     /**
      * Três números em graus: **ângulo em X, ângulo em Y, ângulo em Z** (não “ordem YXZ” dos números).

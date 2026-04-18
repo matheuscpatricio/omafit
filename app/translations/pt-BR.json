@@ -419,7 +419,7 @@
       "save": "Salvar calibração",
       "reset": "Restaurar valores padrão",
       "cancel": "Cancelar",
-      "saveSuccess": "Calibração salva. Abra o produto na loja e confirme no provador AR.",
+      "saveSuccess": "Calibração salva. Abra o produto na loja e confirme no provador AR. Dica: se abriu a página do produto há pouco, atualize-a com Ctrl+F5 — o tema guarda a versão antiga por alguns segundos.",
       "saveError": "Não foi possível salvar",
       "tipsTitle": "Dicas rápidas",
       "tip1": "Se o modelo aparecer virado para um lado, use \"Girar para esquerda/direita\" até ele ficar de frente.",

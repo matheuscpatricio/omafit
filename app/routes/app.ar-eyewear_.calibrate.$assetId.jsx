@@ -171,42 +171,31 @@ export async function action({ request, params }) {
   }
 }
 
-const MODEL_VIEWER_SRC =
-  "https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js";
+/**
+ * Three.js via esm.sh — mesma versão e mesmo caminho de módulo que o widget
+ * (omafit-ar-widget.js usa 0.150.1 via esm.sh). Usar outra versão traria dois
+ * "three" diferentes no navegador, o que quebra instanceof checks no GLTFLoader.
+ */
+const ESM_THREE_VER = "0.150.1";
+const ESM_SH = "https://esm.sh";
+const ESM_THREE_URL = `${ESM_SH}/three@${ESM_THREE_VER}/es2022/three.mjs`;
+const ESM_GLTF_URL = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/GLTFLoader.js`;
 
-function useModelViewerLoaded() {
-  const [loaded, setLoaded] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      typeof window.customElements !== "undefined" &&
-      Boolean(window.customElements.get?.("model-viewer")),
-  );
-  useEffect(() => {
-    if (loaded || typeof window === "undefined") return undefined;
-    if (window.customElements?.get?.("model-viewer")) {
-      setLoaded(true);
-      return undefined;
-    }
-    let script = document.querySelector(`script[data-omafit-model-viewer="1"]`);
-    if (!script) {
-      script = document.createElement("script");
-      script.type = "module";
-      script.src = MODEL_VIEWER_SRC;
-      script.crossOrigin = "anonymous";
-      script.dataset.omafitModelViewer = "1";
-      document.head.appendChild(script);
-    }
-    const check = () => {
-      if (window.customElements?.get?.("model-viewer")) setLoaded(true);
-    };
-    script.addEventListener("load", check);
-    const id = window.setInterval(check, 150);
-    return () => {
-      script?.removeEventListener("load", check);
-      window.clearInterval(id);
-    };
-  }, [loaded]);
-  return loaded;
+function loadThreeModules() {
+  if (typeof window === "undefined") return Promise.reject(new Error("SSR"));
+  if (!window.__omafitAdminThreeBundle) {
+    window.__omafitAdminThreeBundle = Promise.all([
+      import(/* @vite-ignore */ ESM_THREE_URL),
+      import(/* @vite-ignore */ ESM_GLTF_URL),
+    ]).then(([threeMod, gltfMod]) => ({
+      THREE: threeMod,
+      GLTFLoader: gltfMod.GLTFLoader,
+    })).catch((e) => {
+      window.__omafitAdminThreeBundle = null;
+      throw e;
+    });
+  }
+  return window.__omafitAdminThreeBundle;
 }
 
 export default function ArEyewearCalibratePage() {
@@ -218,7 +207,6 @@ export default function ArEyewearCalibratePage() {
   getShopDomain(searchParams);
   const appSearch = searchParams.toString();
   const backHref = `/app/ar-eyewear${appSearch ? `?${appSearch}` : ""}`;
-  const mvLoaded = useModelViewerLoaded();
 
   const [target, setTarget] = useState(
     data.asset.variant_id && data.variants.find((v) => v.id === `gid://shopify/ProductVariant/${data.asset.variant_id}` || String(v.id).endsWith(`/${data.asset.variant_id}`))
@@ -280,10 +268,6 @@ export default function ArEyewearCalibratePage() {
     );
   };
 
-  const orientationAttr = `${cal.rx}deg ${cal.ry}deg ${cal.rz}deg`;
-  const cameraOrbit = "0deg 90deg 0.35m";
-  const cameraTarget = `${cal.wearX}m ${cal.wearY + cal.bridgeY * 0.05}m ${cal.wearZ}m`;
-
   const hasChanges = useMemo(() => {
     const a = cal;
     const b = initialCalibration;
@@ -337,14 +321,7 @@ export default function ArEyewearCalibratePage() {
                   }}
                 >
                   <FaceSilhouette />
-                  <PreviewModel
-                    ready={mvLoaded}
-                    src={data.glbPreviewUrl}
-                    orientationAttr={orientationAttr}
-                    scale={`${cal.scale} ${cal.scale} ${cal.scale}`}
-                    cameraOrbit={cameraOrbit}
-                    cameraTarget={cameraTarget}
-                  />
+                  <PreviewModel src={data.glbPreviewUrl} cal={cal} />
                   <div
                     style={{
                       position: "absolute",
@@ -470,64 +447,230 @@ export default function ArEyewearCalibratePage() {
   );
 }
 
-function PreviewModel({ ready, src, orientationAttr, scale, cameraOrbit, cameraTarget }) {
-  if (!src) {
-    return (
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#fff",
-        }}
-      >
-        <Text as="p">—</Text>
-      </div>
-    );
-  }
-  if (!ready) {
-    return (
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "rgba(255,255,255,0.8)",
-          fontSize: "13px",
-        }}
-      >
-        Carregando visualizador 3D…
-      </div>
-    );
-  }
+/**
+ * Preview 3D com Three.js puro — usa EXATAMENTE a mesma cadeia de transformações
+ * que o widget da loja (mesma versão de three, mesma ordem Euler YXZ, mesmo eixo
+ * de rotação por componente). Assim o que o lojista vê aqui é o que o cliente
+ * vai ver no AR.
+ *
+ * Hierarquia: scene → wearPosition(group, pos=wearX/Y/Z) →
+ *   calibRot(group, Euler(rx, ry, rz, "YXZ")) →
+ *     centerOffset(group, pos.y=-bridgeY*size.y) →
+ *       glb (escalado para ~1 unidade e multiplicado por cal.scale)
+ */
+function PreviewModel({ src, cal }) {
+  const hostRef = useRef(null);
+  const stateRef = useRef({
+    THREE: null,
+    renderer: null,
+    scene: null,
+    camera: null,
+    calibRot: null,
+    centerOffset: null,
+    wearPosition: null,
+    model: null,
+    size: null,
+    baseScale: 1,
+    raf: 0,
+    ro: null,
+    disposed: false,
+  });
+  const calRef = useRef(cal);
+  const [phase, setPhase] = useState(src ? "loading" : "empty");
+
+  useEffect(() => {
+    if (!src || typeof window === "undefined") {
+      setPhase(src ? "loading" : "empty");
+      return undefined;
+    }
+    const host = hostRef.current;
+    if (!host) return undefined;
+    stateRef.current.disposed = false;
+    setPhase("loading");
+
+    let cancelled = false;
+
+    loadThreeModules()
+      .then(({ THREE, GLTFLoader }) => {
+        if (cancelled) return;
+        const s = stateRef.current;
+        s.THREE = THREE;
+
+        const width = host.clientWidth || 400;
+        const height = host.clientHeight || 500;
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(35, width / height, 0.01, 10);
+        camera.position.set(0, 0, 0.45);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(width, height, false);
+        renderer.outputEncoding = THREE.sRGBEncoding || renderer.outputEncoding;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.1;
+        renderer.domElement.style.position = "absolute";
+        renderer.domElement.style.inset = "0";
+        renderer.domElement.style.width = "100%";
+        renderer.domElement.style.height = "100%";
+        host.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+        const key = new THREE.DirectionalLight(0xffffff, 0.9);
+        key.position.set(0.5, 0.8, 1.2);
+        scene.add(key);
+        const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+        fill.position.set(-0.8, -0.2, 0.6);
+        scene.add(fill);
+
+        const wearPosition = new THREE.Group();
+        wearPosition.name = "wearPosition";
+        scene.add(wearPosition);
+
+        const calibRot = new THREE.Group();
+        calibRot.name = "calibRot";
+        calibRot.rotation.order = "YXZ";
+        wearPosition.add(calibRot);
+
+        const centerOffset = new THREE.Group();
+        centerOffset.name = "centerOffset";
+        calibRot.add(centerOffset);
+
+        s.renderer = renderer;
+        s.scene = scene;
+        s.camera = camera;
+        s.wearPosition = wearPosition;
+        s.calibRot = calibRot;
+        s.centerOffset = centerOffset;
+
+        const loader = new GLTFLoader();
+        loader.load(
+          src,
+          (gltf) => {
+            if (cancelled || stateRef.current.disposed) return;
+            const root = gltf.scene || gltf.scenes?.[0];
+            if (!root) {
+              setPhase("error");
+              return;
+            }
+            const box = new THREE.Box3().setFromObject(root);
+            const size = new THREE.Vector3();
+            const center = new THREE.Vector3();
+            box.getSize(size);
+            box.getCenter(center);
+            root.position.sub(center);
+            const maxDim = Math.max(size.x, size.y, size.z, 1e-4);
+            const baseScale = 0.16 / maxDim;
+            root.scale.setScalar(baseScale);
+            s.model = root;
+            s.size = size.clone().multiplyScalar(baseScale);
+            s.baseScale = baseScale;
+            centerOffset.add(root);
+            applyCalibrationToState(stateRef.current, calRef.current || cal);
+            setPhase("ready");
+            renderOnce();
+          },
+          undefined,
+          (err) => {
+            console.warn("[calibrate] GLTFLoader error", err);
+            if (!cancelled) setPhase("error");
+          },
+        );
+
+        const renderOnce = () => {
+          const st = stateRef.current;
+          if (st.disposed || !st.renderer) return;
+          st.renderer.render(st.scene, st.camera);
+        };
+        stateRef.current.renderOnce = renderOnce;
+
+        const ro = new ResizeObserver(() => {
+          const st = stateRef.current;
+          if (!st.renderer || !st.camera) return;
+          const w = host.clientWidth || 400;
+          const h = host.clientHeight || 500;
+          st.camera.aspect = w / h;
+          st.camera.updateProjectionMatrix();
+          st.renderer.setSize(w, h, false);
+          renderOnce();
+        });
+        ro.observe(host);
+        s.ro = ro;
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.warn("[calibrate] loadThreeModules error", e);
+        setPhase("error");
+      });
+
+    return () => {
+      cancelled = true;
+      const s = stateRef.current;
+      s.disposed = true;
+      if (s.raf) cancelAnimationFrame(s.raf);
+      try { s.ro?.disconnect(); } catch { /* no-op */ }
+      try {
+        if (s.renderer) {
+          s.renderer.dispose();
+          if (s.renderer.domElement?.parentElement === host) {
+            host.removeChild(s.renderer.domElement);
+          }
+        }
+      } catch { /* no-op */ }
+      stateRef.current = {
+        THREE: null, renderer: null, scene: null, camera: null,
+        calibRot: null, centerOffset: null, wearPosition: null,
+        model: null, size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
+      };
+    };
+    
+  }, [src]);
+
+  useEffect(() => {
+    calRef.current = cal;
+    const s = stateRef.current;
+    if (!s.renderer || !s.model) return;
+    applyCalibrationToState(s, cal);
+    s.renderOnce?.();
+  }, [cal]);
+
   return (
-    <model-viewer
-      src={src}
-      alt="Modelo 3D do acessório"
-      orientation={orientationAttr}
-      scale={scale}
-      camera-orbit={cameraOrbit}
-      camera-target={cameraTarget}
-      disable-zoom=""
-      disable-pan=""
-      disable-tap=""
-      interaction-prompt="none"
-      shadow-intensity="0"
-      exposure="1.1"
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        background: "transparent",
-        "--poster-color": "transparent",
-      }}
-    />
+    <div ref={hostRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+      {phase === "empty" ? (
+        <div style={centeredMsgStyle}>—</div>
+      ) : phase === "loading" ? (
+        <div style={centeredMsgStyle}>Carregando visualizador 3D…</div>
+      ) : phase === "error" ? (
+        <div style={centeredMsgStyle}>Não foi possível carregar o modelo</div>
+      ) : null}
+    </div>
   );
+}
+
+const centeredMsgStyle = {
+  position: "absolute",
+  inset: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "rgba(255,255,255,0.8)",
+  fontSize: "13px",
+  pointerEvents: "none",
+};
+
+function applyCalibrationToState(s, cal) {
+  if (!s || !s.THREE || !s.calibRot || !s.model || !s.size) return;
+  const toRad = (d) => (Number(d) || 0) * Math.PI / 180;
+  s.calibRot.rotation.set(toRad(cal.rx), toRad(cal.ry), toRad(cal.rz), "YXZ");
+  s.centerOffset.position.set(0, -(Number(cal.bridgeY) || 0) * s.size.y, 0);
+  s.wearPosition.position.set(
+    Number(cal.wearX) || 0,
+    Number(cal.wearY) || 0,
+    Number(cal.wearZ) || 0,
+  );
+  const sc = Number(cal.scale);
+  s.model.scale.setScalar(s.baseScale * (Number.isFinite(sc) && sc > 0 ? sc : 1));
 }
 
 function CalibrationSliders({ cal, setField, t }) {

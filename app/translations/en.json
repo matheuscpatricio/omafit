@@ -419,7 +419,7 @@
       "save": "Save calibration",
       "reset": "Reset to defaults",
       "cancel": "Cancel",
-      "saveSuccess": "Calibration saved. Open the product on your store and check the AR try-on.",
+      "saveSuccess": "Calibration saved. Open the product on your store and check the AR try-on. Tip: if you opened the product page recently, hard refresh it (Ctrl+F5) — the theme keeps the old version cached for a few seconds.",
       "saveError": "Couldn't save",
       "tipsTitle": "Quick tips",
       "tip1": "If the model appears sideways, use \"Turn left/right\" until it faces the camera.",

@@ -419,7 +419,7 @@
       "save": "Guardar calibración",
       "reset": "Restablecer valores",
       "cancel": "Cancelar",
-      "saveSuccess": "Calibración guardada. Abre el producto en tu tienda y revisa la prueba AR.",
+      "saveSuccess": "Calibración guardada. Abre el producto en tu tienda y revisa la prueba AR. Consejo: si abriste la página del producto hace poco, actualízala con Ctrl+F5 — el tema guarda la versión anterior por unos segundos.",
       "saveError": "No se pudo guardar",
       "tipsTitle": "Consejos rápidos",
       "tip1": "Si el modelo aparece de lado, usa \"Girar izquierda/derecha\" hasta ponerlo de frente.",

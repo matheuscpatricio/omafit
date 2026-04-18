@@ -168,8 +168,32 @@
       Calibração visual (rotação/altura/tamanho) vem do metafield omafit.ar_calibration
       definido pela página "Calibrar posição" no admin.
     {% endcomment %}
+    {% comment %}
+      Regra da calibração no runtime:
+      1) Se o lojista guardou calibração, aplicamos os valores verbatim.
+         Inclusive rotação zero é intencional: ao gravar o metafield, o lojista
+         tomou controlo, e a heurística de auto-rotação do widget (runtime sign-fix)
+         deve parar de agir para não sobrepor a escolha.
+      2) Sem calibração, NÃO emitimos canonical-fix-yxz nem wear-position —
+         assim o widget mantém a heurística/defaults que já funcionavam para
+         produtos não calibrados.
+
+      Como lemos o metafield:
+        - Passamos o JSON inteiro via `| json` no DOM. Isso bypassa a diferença
+          entre versões do Shopify Liquid que ora entregam `.value` já parseado
+          como hash, ora entregam string. O widget parseia no JS.
+        - Para manter os data-attrs existentes (model-scale, bridge-y-factor,
+          canonical-fix-yxz, mindar-wear-position) também geramos os campos
+          aqui via Liquid, tentando os dois caminhos de acesso (com `.value`
+          e direto). Assim o widget tem as duas fontes e usa a que existir.
+    {% endcomment %}
     {% liquid
-      assign cal = product.metafields.omafit.ar_calibration.value
+      assign cal_mf = product.metafields.omafit.ar_calibration
+      assign cal_hash = cal_mf.value
+      if cal_hash == blank
+        assign cal_hash = cal_mf
+      endif
+      assign cal_present = false
       assign cal_rx = 0
       assign cal_ry = 0
       assign cal_rz = 0
@@ -178,34 +202,39 @@
       assign cal_wear_y = 0
       assign cal_wear_z = 0
       assign cal_scale = 1
-      if cal
-        if cal.rx != blank
-          assign cal_rx = cal.rx
+      if cal_hash
+        assign cal_present = true
+        if cal_hash.rx != blank
+          assign cal_rx = cal_hash.rx
         endif
-        if cal.ry != blank
-          assign cal_ry = cal.ry
+        if cal_hash.ry != blank
+          assign cal_ry = cal_hash.ry
         endif
-        if cal.rz != blank
-          assign cal_rz = cal.rz
+        if cal_hash.rz != blank
+          assign cal_rz = cal_hash.rz
         endif
-        if cal.bridgeY != blank
-          assign cal_bridge_y = cal.bridgeY
+        if cal_hash.bridgeY != blank
+          assign cal_bridge_y = cal_hash.bridgeY
         endif
-        if cal.wearX != blank
-          assign cal_wear_x = cal.wearX
+        if cal_hash.wearX != blank
+          assign cal_wear_x = cal_hash.wearX
         endif
-        if cal.wearY != blank
-          assign cal_wear_y = cal.wearY
+        if cal_hash.wearY != blank
+          assign cal_wear_y = cal_hash.wearY
         endif
-        if cal.wearZ != blank
-          assign cal_wear_z = cal.wearZ
+        if cal_hash.wearZ != blank
+          assign cal_wear_z = cal_hash.wearZ
         endif
-        if cal.scale != blank
-          assign cal_scale = cal.scale
+        if cal_hash.scale != blank
+          assign cal_scale = cal_hash.scale
         endif
       endif
-      assign cal_fix_yxz = cal_rx | append: ', ' | append: cal_ry | append: ', ' | append: cal_rz
-      assign cal_wear_position = cal_wear_x | append: ' ' | append: cal_wear_y | append: ' ' | append: cal_wear_z
+      assign cal_fix_yxz = ''
+      assign cal_wear_position = ''
+      if cal_present
+        assign cal_fix_yxz = cal_rx | append: ', ' | append: cal_ry | append: ', ' | append: cal_rz
+        assign cal_wear_position = cal_wear_x | append: ' ' | append: cal_wear_y | append: ' ' | append: cal_wear_z
+      endif
     %}
     <div
       id="omafit-ar-root"
@@ -246,6 +275,8 @@
       data-ar-mindar-filter-beta=""
       data-ar-bridge-y-factor="{{ cal_bridge_y }}"
       data-ar-canonical-fix-yxz="{{ cal_fix_yxz }}"
+      data-ar-omafit-cal-source="{% if cal_present %}metafield:product{% else %}none{% endif %}"
+      data-ar-omafit-calibration="{{ cal_mf | json | escape }}"
     ></div>
     <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
   {% endif %}

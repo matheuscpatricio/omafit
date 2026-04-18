@@ -1272,13 +1272,13 @@ async function runArSession({
 
     // --- Sign disambiguation (runtime) ---
     // Detect sign issues from world-space vertex analysis, then bake the
-    // correction into geometry via world→local conversion so the static
-    // orientation is exact.  The bake effectively inserts a rotation inside the
-    // face-tracking hierarchy which inverts pitch; we compensate per-frame in
-    // the animation loop (sfPitchComp group with α = π − 2θ).
+    // correction into geometry via world→local conversion (localBake =
+    // wm⁻¹·worldBake·wm). Mathematically this is equivalent to inserting
+    // `worldBake` as a static node just below the point where `wm` was
+    // captured, so the corrected model follows the face anchor as a rigid
+    // body — pitch behaves naturally without any per-frame compensation.
     const sfOverride = cfgAttr("arCanonicalFixYxz", "").trim();
     let _sfFlipY = false, _sfFlipZ = false;
-    let _sfNeedsPitchComp = false;
     function bakeWorldRotationIntoGeometries(worldMat) {
       glasses.traverse((obj) => {
         if (!obj.isMesh || !obj.geometry) return;
@@ -1295,7 +1295,6 @@ async function runArSession({
       sfBakeMat.makeRotationFromEuler(new THREE.Euler(rad(sfD.x), rad(sfD.y), rad(sfD.z), "YXZ"));
       glbWideAlign.updateMatrixWorld(true);
       bakeWorldRotationIntoGeometries(sfBakeMat);
-      _sfNeedsPitchComp = true;
     } else {
       glbWideAlign.updateMatrixWorld(true);
       const sfPos = [];
@@ -1348,13 +1347,10 @@ async function runArSession({
         let sfBakeMat = null;
         if (_sfFlipY && _sfFlipZ) {
           sfBakeMat = new THREE.Matrix4().makeRotationX(Math.PI);
-          _sfNeedsPitchComp = true;
         } else if (_sfFlipY) {
           sfBakeMat = new THREE.Matrix4().makeRotationZ(Math.PI);
-          _sfNeedsPitchComp = true;
         } else if (_sfFlipZ) {
           sfBakeMat = new THREE.Matrix4().makeRotationY(Math.PI);
-          _sfNeedsPitchComp = true;
         }
         if (sfBakeMat) {
           bakeWorldRotationIntoGeometries(sfBakeMat);
@@ -1479,26 +1475,22 @@ async function runArSession({
 
     ipdSnap.add(wearAlign);
 
-    const sfPitchComp = new GroupCtor();
-    sfPitchComp.rotation.order = "YXZ";
-    sfPitchComp.add(ipdSnap);
-    anchor.group.add(sfPitchComp);
+    /**
+     * `ipdSnap` liga-se directamente à âncora: o sign fix em runtime é
+     * feito por bake na geometria, que é matematicamente equivalente a um
+     * offset estático inserido abaixo de `autoOrient`, e portanto segue a
+     * pose da face como corpo rígido — nenhuma compensação por frame é
+     * necessária (uma compensação `Rx(π − 2θ)` previamente usada invertia
+     * a pitch: Rx(θ)·Rx(π−2θ)·Rx(π)·v = Rx(−θ)·v).
+     */
+    anchor.group.add(ipdSnap);
 
     const { renderer, scene, camera } = mindarThree;
     let didFaceScaleBlend = false;
     const useFs = /^1|true|on$/i.test(cfgAttr("arMindarUseFaceScale", "").toLowerCase());
-    const _sfCompQ = new THREE.Quaternion();
-    const _sfCompE = new THREE.Euler();
-    const _sfCompV = new THREE.Vector3();
     renderer.setAnimationLoop(() => {
       const estLoop =
         typeof mindarThree.getLatestEstimate === "function" ? mindarThree.getLatestEstimate() : null;
-      if (_sfNeedsPitchComp) {
-        anchor.group.updateMatrixWorld(true);
-        anchor.group.matrixWorld.decompose(_sfCompV, _sfCompQ, _sfCompV);
-        _sfCompE.setFromQuaternion(_sfCompQ, "YXZ");
-        sfPitchComp.rotation.x = Math.PI - 2 * _sfCompE.x;
-      }
       /** Até haver `metricLandmarks`, `ipdSnap.quaternion` fica identidade — 1–2 frames podem parecer “desalinhados”. */
       if (!disableIpdSnap) {
         const ml = estLoop && estLoop.metricLandmarks;
@@ -1586,7 +1578,6 @@ async function runArSession({
         signFixFlipY: _sfFlipY,
         signFixFlipZ: _sfFlipZ,
         signFixOverride: sfOverride || null,
-        signFixPitchComp: _sfNeedsPitchComp,
         xAxisAlreadyWidth,
         glbPreBboxSize: { x: wx, y: wy, z: wz },
         useFaceScale: useFs,

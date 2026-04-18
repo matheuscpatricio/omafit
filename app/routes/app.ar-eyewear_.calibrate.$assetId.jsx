@@ -559,8 +559,8 @@ function CalibrationSliders({ cal, setField, t }) {
         output
         label={t("arEyewear.calibrate.sliders.roll.label")}
         helpText={t("arEyewear.calibrate.sliders.roll.help")}
-        min={-45}
-        max={45}
+        min={-90}
+        max={90}
         step={1}
         value={cal.rz}
         onChange={setField("rz")}

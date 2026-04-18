@@ -651,20 +651,36 @@ function PreviewModel({ src, cal }) {
                 return;
               }
 
-              // Normalizar rotação intrínseca do scene root (Blender/Maya
-              // convertidos para glTF costumam ter uma rotação no root).
-              // Sem isto, a Euler YXZ do calibRot colapsa eixos visuais e
-              // sliders distintos (yaw/roll) parecem fazer a mesma coisa.
-              // Ver comentário paralelo em omafit-ar-widget.js.
+              // Bake + flatten das transformações do GLB (root + nós filhos).
+              // Aplica a matrixWorld de cada mesh (não-skinned, sem morphs)
+              // ao próprio geometry clonado e reseta todas as rotações.
+              // Resultado: qualquer rotação intrínseca fica bakeada na
+              // geometria, e as rotações do calibRot passam a actuar em
+              // torno dos eixos do mundo — rz = roll puro (uma ponta sobe,
+              // outra desce), ry = yaw puro, rx = pitch puro. Ver comentário
+              // paralelo em omafit-ar-widget.js.
               const originalQuat = root.quaternion.clone();
               const rootWasRotated =
                 Math.abs(originalQuat.x) > 1e-4 ||
                 Math.abs(originalQuat.y) > 1e-4 ||
                 Math.abs(originalQuat.z) > 1e-4 ||
                 Math.abs(originalQuat.w - 1) > 1e-4;
-              root.rotation.set(0, 0, 0);
-              root.quaternion.identity();
-              root.scale.setScalar(1);
+              let bakedMeshCount = 0;
+              let skippedAnimatedMeshCount = 0;
+              try {
+                bakeGLBTransforms(THREE, root, (info) => {
+                  bakedMeshCount = info.baked;
+                  skippedAnimatedMeshCount = info.skipped;
+                });
+              } catch (bakeErr) {
+                console.warn(
+                  "[omafit-calibrate] bake do GLB falhou, seguindo só com reset do root:",
+                  bakeErr?.message || bakeErr,
+                );
+                root.rotation.set(0, 0, 0);
+                root.quaternion.identity();
+                root.scale.setScalar(1);
+              }
               root.updateMatrix();
               root.updateMatrixWorld(true);
 
@@ -704,6 +720,8 @@ function PreviewModel({ src, cal }) {
                   x: originalQuat.x, y: originalQuat.y,
                   z: originalQuat.z, w: originalQuat.w,
                 },
+                bakedMeshCount,
+                skippedAnimatedMeshCount,
               });
             } catch (e) {
               console.error("[omafit-calibrate] erro no setup do GLB:", e, src);
@@ -838,6 +856,59 @@ const overlayTopStyle = {
   maxHeight: "60%",
   overflow: "auto",
 };
+
+/**
+ * Bake + flatten das transformações intrínsecas de um GLB.
+ *
+ * Versão idêntica à do widget AR (`omafit-ar-widget.js`) — mantém as duas
+ * pipelines a produzir exactamente o mesmo resultado visual. Ver comentário
+ * extenso no widget para detalhes sobre o "porquê" e nas implicações para
+ * os sliders de rotação (rz=roll puro, ry=yaw puro, rx=pitch puro).
+ */
+function bakeGLBTransforms(THREE, root, onDone) {
+  if (!root || typeof root.traverse !== "function") return;
+  root.updateMatrixWorld(true);
+
+  const meshes = [];
+  const skinnedOrMorph = [];
+  root.traverse((obj) => {
+    if (!obj || !obj.isMesh) return;
+    const isSkinned = !!obj.isSkinnedMesh;
+    const hasMorph =
+      Array.isArray(obj.morphTargetInfluences) &&
+      obj.morphTargetInfluences.length > 0;
+    if (isSkinned || hasMorph) skinnedOrMorph.push(obj);
+    else meshes.push(obj);
+  });
+
+  for (const mesh of meshes) {
+    mesh.updateMatrixWorld(true);
+    const clonedGeom = mesh.geometry.clone();
+    clonedGeom.applyMatrix4(mesh.matrixWorld);
+    mesh.geometry = clonedGeom;
+  }
+
+  for (const mesh of meshes) {
+    if (mesh.parent && mesh.parent !== root) mesh.parent.remove(mesh);
+    mesh.position.set(0, 0, 0);
+    mesh.rotation.set(0, 0, 0);
+    mesh.scale.set(1, 1, 1);
+    mesh.quaternion.identity();
+    mesh.updateMatrix();
+    if (mesh.parent !== root) root.add(mesh);
+  }
+
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
+  root.scale.set(1, 1, 1);
+  root.quaternion.identity();
+  root.updateMatrix();
+  root.updateMatrixWorld(true);
+
+  if (typeof onDone === "function") {
+    onDone({ baked: meshes.length, skipped: skinnedOrMorph.length });
+  }
+}
 
 function applyCalibrationToState(s, cal) {
   if (!s || !s.THREE || !s.calibRot) return;

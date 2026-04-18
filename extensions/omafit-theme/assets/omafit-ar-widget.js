@@ -68,6 +68,71 @@ const Z_SHELL = 2147483640;
  * Evita GLB “preso” em cache (Three.Cache + CDN) quando o URL do ficheiro não muda mas o conteúdo sim.
  * `data-ar-glb-version` no DOM deve mudar quando o produto é guardado (Liquid).
  */
+/**
+ * Bake + flatten das transformações de um GLB carregado.
+ *
+ * Aplica a `matrixWorld` de cada mesh (não-skinned, sem morph targets) ao
+ * próprio `geometry` (clonado para preservar o cache do loader se o GLB for
+ * reutilizado) e depois reparente todos os meshes directamente sob o root,
+ * com `position/rotation/scale` em identity.
+ *
+ * Resultado: qualquer rotação intrínseca (root **ou** nós filhos) fica
+ * bakeada na geometria. Depois disto, rotações aplicadas externamente
+ * (p.ex. via `calibRot.rotation.set(x, y, z, "YXZ")`) actuam em torno dos
+ * eixos do mundo — +X=direita, +Y=cima, +Z=frente — e correspondem
+ * visualmente ao que o lojista espera dos sliders.
+ *
+ * Pula SkinnedMesh e meshes com `morphTargetInfluences`, porque bakear
+ * a `matrixWorld` neles destruiria a correspondência com o esqueleto /
+ * morphs. Para óculos estáticos normais, nenhum destes casos ocorre.
+ *
+ * O callback `onDone({ baked, skipped })` recebe contadores para debug.
+ */
+function bakeGLBTransforms(THREE, root, onDone) {
+  if (!root || typeof root.traverse !== "function") return;
+  root.updateMatrixWorld(true);
+
+  const meshes = [];
+  const skinnedOrMorph = [];
+  root.traverse((obj) => {
+    if (!obj || !obj.isMesh) return;
+    const isSkinned = !!obj.isSkinnedMesh;
+    const hasMorph =
+      Array.isArray(obj.morphTargetInfluences) &&
+      obj.morphTargetInfluences.length > 0;
+    if (isSkinned || hasMorph) skinnedOrMorph.push(obj);
+    else meshes.push(obj);
+  });
+
+  for (const mesh of meshes) {
+    mesh.updateMatrixWorld(true);
+    const clonedGeom = mesh.geometry.clone();
+    clonedGeom.applyMatrix4(mesh.matrixWorld);
+    mesh.geometry = clonedGeom;
+  }
+
+  for (const mesh of meshes) {
+    if (mesh.parent && mesh.parent !== root) mesh.parent.remove(mesh);
+    mesh.position.set(0, 0, 0);
+    mesh.rotation.set(0, 0, 0);
+    mesh.scale.set(1, 1, 1);
+    mesh.quaternion.identity();
+    mesh.updateMatrix();
+    if (mesh.parent !== root) root.add(mesh);
+  }
+
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
+  root.scale.set(1, 1, 1);
+  root.quaternion.identity();
+  root.updateMatrix();
+  root.updateMatrixWorld(true);
+
+  if (typeof onDone === "function") {
+    onDone({ baked: meshes.length, skipped: skinnedOrMorph.length });
+  }
+}
+
 function buildGlbLoaderUrl(baseUrl, version) {
   const u = String(baseUrl || "").trim();
   const v = String(version || "").trim();
@@ -1328,26 +1393,45 @@ async function runArSession({
     await new Promise((resolve) => requestAnimationFrame(resolve));
     glasses.updateMatrixWorld(true);
 
-    /** 1) Normalizar a orientação intrínseca do scene root do GLB.
+    /** 1) Normalizar COMPLETAMENTE a orientação do GLB (bake + flatten).
      *
      *    Porquê: GLBs exportados de Blender/Maya (ou convertidos via FBX/OBJ)
-     *    costumam ter rotação no scene root para compensar convenções de
-     *    "up axis" (Blender: +Z up; glTF: +Y up → rotação -90° em X no root).
-     *    Se essa rotação fica, a Euler YXZ do `calibRot` não roda em torno
-     *    dos eixos do mundo/âncora: roda em torno dos eixos ROdados do GLB,
-     *    o que faz com que sliders distintos (yaw vs roll) produzam
-     *    visualmente o mesmo movimento (dois eixos do Euler colapsam para
-     *    o mesmo eixo visual, dependendo da intrinsic).
+     *    costumam ter rotações não só no scene root mas também em nós
+     *    filhos intermediários (pivot groups, armatures, export rigs). Se
+     *    qualquer uma dessas rotações permanecer, a Euler YXZ do `calibRot`
+     *    não roda em torno dos eixos do mundo/âncora — roda em torno dos
+     *    eixos rodados do GLB, o que faz com que sliders distintos colapsem
+     *    visualmente para o mesmo movimento (p.ex. "Girar esq/dir" e
+     *    "Inclinar lateralmente" a produzirem o mesmo efeito).
      *
-     *    A solução é zerar rotation/quaternion do root **antes** de
-     *    computar a bbox — assim +X_glb = direita do mundo, +Y_glb = cima
-     *    do mundo, +Z_glb = fora do ecrã (face-frame da MindAR). Os filhos
-     *    do root mantêm as suas rotações próprias (partes do modelo que
-     *    devem mesmo estar rodadas, ex.: hastes dos óculos). */
+     *    A solução robusta é fazer **bake**: aplicar a matrixWorld de cada
+     *    mesh ao próprio geometry (clonado para não mutar o cache do GLTF
+     *    se for reutilizado) e depois resetar todas as transformações
+     *    locais para identity. O resultado: cada mesh está no frame do
+     *    MUNDO, com +X=direita, +Y=cima, +Z=frente das lentes, e a
+     *    Euler YXZ do `calibRot` sempre corresponde aos eixos visuais
+     *    esperados (rz = roll puro, ry = yaw puro, rx = pitch puro).
+     *
+     *    Skinned meshes e morph targets não são bakeáveis deste modo
+     *    (destruir-se-ia a correspondência com o esqueleto). Saltamos
+     *    esses casos — não fazem sentido para óculos estáticos. */
     const originalQuat = glasses.quaternion.clone();
-    glasses.rotation.set(0, 0, 0);
-    glasses.quaternion.identity();
-    glasses.scale.setScalar(1);
+    let bakedMeshCount = 0;
+    let skippedAnimatedMeshCount = 0;
+    try {
+      bakeGLBTransforms(THREE, glasses, (info) => {
+        bakedMeshCount = info.baked;
+        skippedAnimatedMeshCount = info.skipped;
+      });
+    } catch (e) {
+      console.warn(
+        "[omafit-ar] bake do GLB falhou, seguindo só com reset do root:",
+        e?.message || e,
+      );
+      glasses.rotation.set(0, 0, 0);
+      glasses.quaternion.identity();
+      glasses.scale.setScalar(1);
+    }
     glasses.updateMatrix();
     glasses.updateMatrixWorld(true);
 
@@ -1476,6 +1560,8 @@ async function runArSession({
           Math.abs(originalQuat.y) > 1e-4 ||
           Math.abs(originalQuat.z) > 1e-4 ||
           Math.abs(originalQuat.w - 1) > 1e-4,
+        bakedMeshCount,
+        skippedAnimatedMeshCount,
         calSource: arCfg?.dataset?.arOmafitCalSource || "unknown",
       },
     });

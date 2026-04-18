@@ -170,13 +170,10 @@
     {% endcomment %}
     {% comment %}
       Regra da calibração no runtime:
-      1) Se o lojista guardou calibração, aplicamos os valores verbatim.
-         Inclusive rotação zero é intencional: ao gravar o metafield, o lojista
-         tomou controlo, e a heurística de auto-rotação do widget (runtime sign-fix)
-         deve parar de agir para não sobrepor a escolha.
-      2) Sem calibração, NÃO emitimos canonical-fix-yxz nem wear-position —
-         assim o widget mantém a heurística/defaults que já funcionavam para
-         produtos não calibrados.
+      1) Rotação base (sem metafield): data-ar-canonical-fix-yxz = "0, -180, -90"
+         (cima/baixo 0°, esquerda/direita -180°, inclinação lateral -90°).
+      2) Com metafield omafit.ar_calibration, sobrepomos os campos guardados.
+      3) data-ar-mindar-wear-position só quando há metafield (ajustes finos).
 
       Como lemos o metafield:
         - Passamos o JSON inteiro via `| json` no DOM. Isso bypassa a diferença
@@ -229,10 +226,9 @@
           assign cal_scale = cal_hash.scale
         endif
       endif
-      assign cal_fix_yxz = ''
+      assign cal_fix_yxz = cal_rx | append: ', ' | append: cal_ry | append: ', ' | append: cal_rz
       assign cal_wear_position = ''
       if cal_present
-        assign cal_fix_yxz = cal_rx | append: ', ' | append: cal_ry | append: ', ' | append: cal_rz
         assign cal_wear_position = cal_wear_x | append: ' ' | append: cal_wear_y | append: ' ' | append: cal_wear_z
       endif
     %}

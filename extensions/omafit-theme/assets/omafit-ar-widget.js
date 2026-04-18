@@ -1323,8 +1323,21 @@ async function runArSession({
     glasses.scale.setScalar(baseUnitScale);
 
     /** 4) Hierarquia idêntica ao preview do admin:
-     *      anchor.group → wearPosition → calibRot → centerOffset → glasses
+     *      anchor.group → mirrorX(sx=-1) → wearPosition → calibRot → centerOffset → glasses
+     *
+     *    `mirrorX` (scale.x = -1) compensa a reflexão que a MindAR introduz na
+     *    matriz do âncora quando `flipFace=true` (padrão do modo selfie). A
+     *    MindAR inverte o frame antes de rodar a detecção facial (ver
+     *    `controller.js: processVideo → scale(-1, 1)` no código-fonte), o que
+     *    faz o Procrustes fit produzir uma `faceMatrix` com determinante -1.
+     *    Se a gente não compensar, o GLB aparece rodado/espelhado no AR
+     *    mesmo quando o preview do admin mostra-o correcto. O preview do
+     *    admin usa exactamente o mesmo grupo, para garantir paridade visual.
      */
+    const mirrorX = new GroupCtor();
+    mirrorX.name = "omafit_mirrorX";
+    mirrorX.scale.x = -1;
+
     const centerOffset = new GroupCtor();
     centerOffset.position.y = -bridgeY * sz.y * baseUnitScale;
     centerOffset.add(glasses);
@@ -1338,7 +1351,8 @@ async function runArSession({
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
     wearPosition.add(calibRot);
 
-    anchor.group.add(wearPosition);
+    mirrorX.add(wearPosition);
+    anchor.group.add(mirrorX);
 
     /** 5) Loop de render — sem correções por frame. */
     const { renderer, scene, camera } = mindarThree;

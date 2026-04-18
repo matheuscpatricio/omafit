@@ -453,10 +453,19 @@ export default function ArEyewearCalibratePage() {
  * de rotação por componente). Assim o que o lojista vê aqui é o que o cliente
  * vai ver no AR.
  *
- * Hierarquia: scene → wearPosition(group, pos=wearX/Y/Z) →
- *   calibRot(group, Euler(rx, ry, rz, "YXZ")) →
- *     centerOffset(group, pos.y=-bridgeY*size.y) →
- *       glb (escalado para ~1 unidade e multiplicado por cal.scale)
+ * Hierarquia:
+ *   scene
+ *     → wearPosition(group, pos=wearX/Y/Z)
+ *       → calibRot(group, Euler(rx, ry, rz, "YXZ"))
+ *         → centerOffset(group, pos.y=-bridgeY*size.y)
+ *           → glb (escalado para ~1 unidade e multiplicado por cal.scale)
+ *
+ * O widget aplica internamente um `mirrorX(scale.x=-1)` logo abaixo da âncora
+ * facial para cancelar a reflexão implícita da MindAR (a lib inverte o frame
+ * antes da detecção). Com M²=I, o efeito combinado é identidade — o widget
+ * renderiza o GLB com a mesma orientação que este preview (sem espelho).
+ * Por isso aqui NÃO aplicamos espelho: se aplicássemos, teríamos duplicação
+ * no admin contra a própria âncora já canónica do widget.
  */
 function PreviewModel({ src, cal }) {
   const hostRef = useRef(null);
@@ -477,6 +486,7 @@ function PreviewModel({ src, cal }) {
   });
   const calRef = useRef(cal);
   const [phase, setPhase] = useState(src ? "loading" : "empty");
+  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     if (!src || typeof window === "undefined") {
@@ -549,32 +559,48 @@ function PreviewModel({ src, cal }) {
           src,
           (gltf) => {
             if (cancelled || stateRef.current.disposed) return;
-            const root = gltf.scene || gltf.scenes?.[0];
-            if (!root) {
+            try {
+              const root = gltf.scene || gltf.scenes?.[0];
+              if (!root) {
+                setErrorMsg("O arquivo 3D não contém cena visível.");
+                setPhase("error");
+                return;
+              }
+              const box = new THREE.Box3().setFromObject(root);
+              if (typeof box.isEmpty === "function" && box.isEmpty()) {
+                setErrorMsg("O arquivo 3D não contém geometria renderizável.");
+                setPhase("error");
+                return;
+              }
+              const size = new THREE.Vector3();
+              const center = new THREE.Vector3();
+              box.getSize(size);
+              box.getCenter(center);
+              root.position.sub(center);
+              const maxDim = Math.max(size.x, size.y, size.z, 1e-4);
+              const baseScale = 0.16 / maxDim;
+              root.scale.setScalar(baseScale);
+              s.model = root;
+              s.size = size.clone().multiplyScalar(baseScale);
+              s.baseScale = baseScale;
+              centerOffset.add(root);
+              applyCalibrationToState(stateRef.current, calRef.current || cal);
+              setPhase("ready");
+              renderOnce();
+            } catch (e) {
+              console.error("[calibrate] gltf setup error", e);
+              setErrorMsg(`Erro ao processar o modelo: ${e?.message || e}`);
               setPhase("error");
-              return;
             }
-            const box = new THREE.Box3().setFromObject(root);
-            const size = new THREE.Vector3();
-            const center = new THREE.Vector3();
-            box.getSize(size);
-            box.getCenter(center);
-            root.position.sub(center);
-            const maxDim = Math.max(size.x, size.y, size.z, 1e-4);
-            const baseScale = 0.16 / maxDim;
-            root.scale.setScalar(baseScale);
-            s.model = root;
-            s.size = size.clone().multiplyScalar(baseScale);
-            s.baseScale = baseScale;
-            centerOffset.add(root);
-            applyCalibrationToState(stateRef.current, calRef.current || cal);
-            setPhase("ready");
-            renderOnce();
           },
           undefined,
           (err) => {
             console.warn("[calibrate] GLTFLoader error", err);
-            if (!cancelled) setPhase("error");
+            if (!cancelled) {
+              const msg = err?.message || err?.target?.status || String(err) || "falha desconhecida";
+              setErrorMsg(`Não foi possível baixar o arquivo 3D (${msg}). URL: ${src}`);
+              setPhase("error");
+            }
           },
         );
 
@@ -601,6 +627,7 @@ function PreviewModel({ src, cal }) {
       .catch((e) => {
         if (cancelled) return;
         console.warn("[calibrate] loadThreeModules error", e);
+        setErrorMsg(`Falha ao carregar o motor 3D: ${e?.message || e}`);
         setPhase("error");
       });
 
@@ -642,7 +669,14 @@ function PreviewModel({ src, cal }) {
       ) : phase === "loading" ? (
         <div style={centeredMsgStyle}>Carregando visualizador 3D…</div>
       ) : phase === "error" ? (
-        <div style={centeredMsgStyle}>Não foi possível carregar o modelo</div>
+        <div style={{ ...centeredMsgStyle, flexDirection: "column", padding: "16px", textAlign: "center" }}>
+          <div style={{ marginBottom: 6 }}>Não foi possível carregar o modelo.</div>
+          {errorMsg ? (
+            <div style={{ fontSize: "11px", opacity: 0.8, maxWidth: "100%", wordBreak: "break-word" }}>
+              {errorMsg}
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

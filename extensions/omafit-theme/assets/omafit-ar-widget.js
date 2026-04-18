@@ -1345,10 +1345,14 @@ async function runArSession({
     }
     glasses.position.sub(center);
 
-    /** 2) Calibração do lojista (fallback para produtos sem metafield). */
+    /** 2) Calibração do lojista (fallback para produtos sem metafield: 0,0,0,
+     *    i.e. GLB na orientação nativa do autor). O lojista calibra visualmente
+     *    na ferramenta do admin — não há heurística "default correcto" que
+     *    funcione para todos os GLBs, porque cada autor exporta em convenções
+     *    diferentes. */
     const calRotDeg = parseEulerDegComponents(
-      cfgAttr("arCanonicalFixYxz", "0, -180, -90"),
-      0, -180, -90,
+      cfgAttr("arCanonicalFixYxz", "0, 0, 0"),
+      0, 0, 0,
     );
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
@@ -1379,6 +1383,43 @@ async function runArSession({
 
     anchor.group.add(wearPosition);
 
+    /** 4.1) Modo debug — activado por `?omafit_ar_debug=1` na URL OU
+     *       `data-ar-debug="1"` no elemento embed. Adiciona ao anchor:
+     *       - AxesHelper (X=vermelho/Y=verde/Z=azul) de 0.3 unidades de âncora
+     *         a mostrar onde fica o frame do landmark 168 (ponte do nariz).
+     *       - BBox wireframe ciano à volta do GLB para ver o centro/escala.
+     *       Útil para confirmar que o widget desenha IDÊNTICO ao preview do
+     *       admin quando há queixas de mismatch. Desligado por padrão. */
+    let debugEnabled = false;
+    try {
+      const qs = new URLSearchParams(window.location?.search || "");
+      const qDebug = qs.get("omafit_ar_debug");
+      const aDebug = cfgAttr("arDebug", "");
+      debugEnabled =
+        /^(1|true|on|yes)$/i.test(String(qDebug || "").trim()) ||
+        /^(1|true|on|yes)$/i.test(String(aDebug || "").trim());
+    } catch { /* noop */ }
+    if (debugEnabled && THREE.AxesHelper && THREE.Box3Helper) {
+      try {
+        const dbgAxes = new THREE.AxesHelper(0.3);
+        dbgAxes.name = "omafit-ar-debug-axes";
+        anchor.group.add(dbgAxes);
+
+        const dbgBbox = new THREE.Box3Helper(
+          new THREE.Box3(
+            new THREE.Vector3(-sz.x / 2, -sz.y / 2, -sz.z / 2),
+            new THREE.Vector3(sz.x / 2, sz.y / 2, sz.z / 2),
+          ),
+          0x00e0ff,
+        );
+        dbgBbox.name = "omafit-ar-debug-bbox";
+        dbgBbox.scale.setScalar(baseUnitScale);
+        calibRot.add(dbgBbox);
+      } catch (e) {
+        console.warn("[omafit-ar] debug helpers falharam:", e?.message || e);
+      }
+    }
+
     /** 5) Loop de render — sem correções por frame. */
     const { renderer, scene, camera } = mindarThree;
     renderer.setAnimationLoop(() => {
@@ -1399,6 +1440,7 @@ async function runArSession({
         mindarDisableMirrorExplicit: mindarDmExplicit,
         calibrationDeg: calRotDeg,
         wearPositionM: wearPosM,
+        debugEnabled,
         modelScaleMul,
         baseUnitScale,
         glbMaxDim: maxDim,

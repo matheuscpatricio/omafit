@@ -557,10 +557,13 @@ export async function setVariantArGlbMetafield(admin, variantId, glbUrl) {
  * Metafield de calibração do modelo 3D no widget AR.
  * namespace: omafit / key: ar_calibration / type: json / PRODUCT + PRODUCTVARIANT.
  * Valores (todos opcionais, clamped pelos sliders do admin):
- *   rx, ry, rz   → graus (defaults: 0, -180, -90 — alinhados ao tema sem metafield)
- *   bridgeY      → fator 0..1 (altura no rosto; default 0.15)
- *   wearX,Y,Z    → metros (offsets finos; default 0)
- *   scale        → multiplicador (default 1)
+ *   rx, ry, rz   → graus (defaults: 0, 0, 0 — GLB na sua orientação nativa;
+ *                          lojista calibra visualmente no admin)
+ *   bridgeY      → retido no schema por compatibilidade; IGNORADO pelo pipeline.
+ *   wearX        → unidades de âncora (±0.1 ≈ ±1.4 cm) — offset horizontal.
+ *   wearY        → unidades de âncora (±0.15 ≈ ±2.1 cm) — ÚNICO controlo vertical.
+ *   wearZ        → unidades de âncora (±0.1 ≈ ±1.4 cm) — afastar/aproximar.
+ *   scale        → multiplicador (default 1; a largura base já ≈ face-width).
  */
 const AR_CALIBRATION_METAFIELD = {
   namespace: "omafit",
@@ -577,11 +580,11 @@ export function sanitizeArCalibrationInput(raw) {
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
   return {
     rx: clamp(num(src.rx, 0), -180, 180),
-    ry: clamp(num(src.ry, -180), -180, 180),
-    rz: clamp(num(src.rz, -90), -180, 180),
-    bridgeY: clamp(num(src.bridgeY, 0.15), -0.5, 0.5),
+    ry: clamp(num(src.ry, 0), -180, 180),
+    rz: clamp(num(src.rz, 0), -180, 180),
+    bridgeY: clamp(num(src.bridgeY, 0), -0.5, 0.5),
     wearX: clamp(num(src.wearX, 0), -0.1, 0.1),
-    wearY: clamp(num(src.wearY, 0), -0.1, 0.1),
+    wearY: clamp(num(src.wearY, 0), -0.15, 0.15),
     wearZ: clamp(num(src.wearZ, 0), -0.1, 0.1),
     scale: clamp(num(src.scale, 1), 0.3, 3),
   };

@@ -480,6 +480,16 @@ export default function ArEyewearCalibratePage() {
  * ~face-width no viewport (silhueta de ~240 px num viewport de 400 px, câmara
  * a z=0.45 com FOV 35° → ~0.168 unidades visíveis em mundo = face-width).
  */
+/**
+ * Tamanho do placeholder (cubo wireframe ciano) que aparece sempre no calibRot:
+ * 0.14 × 0.04 × 0.04 m — uma "caixa de óculos" aproximada com as proporções de
+ * uma armação típica (~14 cm de largura, ~4 cm de altura/profundidade).
+ * Fica semi-transparente por baixo do GLB quando este carrega, mostrando ao
+ * lojista a bbox esperada; se o GLB falhar a carregar, serve de referência
+ * visual para o lojista conseguir pelo menos experimentar a calibração.
+ */
+const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
+
 function PreviewModel({ src, cal }) {
   const hostRef = useRef(null);
   const stateRef = useRef({
@@ -490,6 +500,7 @@ function PreviewModel({ src, cal }) {
     calibRot: null,
     wearPosition: null,
     model: null,
+    placeholder: null,
     bboxHelper: null,
     size: null,
     baseScale: 1,
@@ -510,6 +521,7 @@ function PreviewModel({ src, cal }) {
     if (!host) return undefined;
     stateRef.current.disposed = false;
     setPhase("loading");
+    setErrorMsg("");
 
     let cancelled = false;
 
@@ -537,6 +549,7 @@ function PreviewModel({ src, cal }) {
         renderer.domElement.style.inset = "0";
         renderer.domElement.style.width = "100%";
         renderer.domElement.style.height = "100%";
+        renderer.domElement.style.zIndex = "1";
         host.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 0.85));
@@ -557,25 +570,37 @@ function PreviewModel({ src, cal }) {
         wearPosition.add(calibRot);
 
         // Diagnóstico: eixos (X vermelho, Y verde, Z azul) no origin da cena.
-        // Ajuda o lojista a perceber que o preview está a renderizar, mesmo
-        // antes do GLB carregar, e também evidencia se o GLB está a ir para
-        // dentro do volume visível depois de carregar.
+        // Confirma que o pipeline de render está vivo mesmo sem GLB.
         const axes = new THREE.AxesHelper(0.08);
         axes.name = "omafit-axes";
         scene.add(axes);
+
+        // Placeholder: cubo wireframe ciano no calibRot com proporções de
+        // armação real (~14×4×4 cm). Fica SEMPRE visível enquanto o GLB não
+        // carrega, e mesmo depois de carregar (semi-transparente) para o
+        // lojista conferir se o GLB está alinhado com a bbox esperada.
+        const placeholderGeom = new THREE.BoxGeometry(
+          PLACEHOLDER_SIZE.x, PLACEHOLDER_SIZE.y, PLACEHOLDER_SIZE.z,
+        );
+        const placeholderEdges = new THREE.EdgesGeometry(placeholderGeom);
+        const placeholder = new THREE.LineSegments(
+          placeholderEdges,
+          new THREE.LineBasicMaterial({
+            color: 0x00e0ff,
+            transparent: true,
+            opacity: 0.8,
+          }),
+        );
+        placeholder.name = "omafit-placeholder";
+        calibRot.add(placeholder);
 
         s.renderer = renderer;
         s.scene = scene;
         s.camera = camera;
         s.wearPosition = wearPosition;
         s.calibRot = calibRot;
-
-        const renderOnce = () => {
-          const st = stateRef.current;
-          if (st.disposed || !st.renderer) return;
-          st.renderer.render(st.scene, st.camera);
-        };
-        s.renderOnce = renderOnce;
+        s.placeholder = placeholder;
+        s.baseScale = 1; // placeholder usa escala 1
 
         renderer.setAnimationLoop(() => {
           const st = stateRef.current;
@@ -595,9 +620,13 @@ function PreviewModel({ src, cal }) {
         ro.observe(host);
         s.ro = ro;
 
+        // Aplicar calibração imediatamente ao placeholder — dá ao lojista
+        // feedback visual dos sliders mesmo antes do GLB carregar.
+        applyCalibrationToState(s, calRef.current || cal);
+
         const loader = new GLTFLoader();
         loader.setCrossOrigin("anonymous");
-        console.log("[calibrate] loading GLB from:", src);
+        console.log("[omafit-calibrate] loading GLB:", src);
         loader.load(
           src,
           (gltf) => {
@@ -605,14 +634,14 @@ function PreviewModel({ src, cal }) {
             try {
               const root = gltf.scene || gltf.scenes?.[0];
               if (!root) {
-                console.warn("[calibrate] GLB without scene", { src });
+                console.warn("[omafit-calibrate] GLB sem cena:", src);
                 setErrorMsg("O arquivo 3D não contém cena visível.");
                 setPhase("error");
                 return;
               }
               const box = new THREE.Box3().setFromObject(root);
               if (typeof box.isEmpty === "function" && box.isEmpty()) {
-                console.warn("[calibrate] GLB bbox empty", { src });
+                console.warn("[omafit-calibrate] GLB sem geometria:", src);
                 setErrorMsg("O arquivo 3D não contém geometria renderizável.");
                 setPhase("error");
                 return;
@@ -630,29 +659,19 @@ function PreviewModel({ src, cal }) {
               s.baseScale = baseScale;
               calibRot.add(root);
 
-              // Diagnóstico: bbox wireframe azul ciano à volta do GLB. Está
-              // dentro de calibRot, portanto roda com o modelo — confirma
-              // visualmente que o centro e a escala estão correctos.
-              try {
-                const bboxHelper = new THREE.Box3Helper(
-                  new THREE.Box3(
-                    new THREE.Vector3(-size.x / 2, -size.y / 2, -size.z / 2),
-                    new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2),
-                  ),
-                  0x00e0ff,
-                );
-                bboxHelper.name = "omafit-bbox";
-                calibRot.add(bboxHelper);
-                s.bboxHelper = bboxHelper;
-              } catch (_e) { /* diagnóstico opcional */ }
+              // Placeholder fica mais discreto quando GLB carrega (20% opacity).
+              if (s.placeholder?.material) {
+                s.placeholder.material.opacity = 0.2;
+              }
 
               applyCalibrationToState(stateRef.current, calRef.current || cal);
               setPhase("ready");
-              console.log("[calibrate] GLB loaded ok", {
-                src, maxDim, baseScale, size: size.toArray(),
+              console.log("[omafit-calibrate] GLB carregado:", {
+                src, maxDim, baseScale, sizeRaw: size.toArray(),
+                childMeshCount: countVisibleMeshes(root),
               });
             } catch (e) {
-              console.error("[calibrate] gltf setup error", e, { src });
+              console.error("[omafit-calibrate] erro no setup do GLB:", e, src);
               setErrorMsg(`Erro ao processar o modelo: ${e?.message || e}`);
               setPhase("error");
             }
@@ -660,11 +679,11 @@ function PreviewModel({ src, cal }) {
           (ev) => {
             if (ev && ev.lengthComputable && ev.total > 0) {
               const pct = Math.round((ev.loaded / ev.total) * 100);
-              console.log(`[calibrate] GLB loading… ${pct}%`);
+              console.log(`[omafit-calibrate] GLB a descarregar: ${pct}%`);
             }
           },
           (err) => {
-            console.warn("[calibrate] GLTFLoader error", err, { src });
+            console.warn("[omafit-calibrate] GLTFLoader falhou:", err, src);
             if (!cancelled) {
               const status = err?.target?.status;
               const statusTxt = err?.target?.statusText;
@@ -673,9 +692,7 @@ function PreviewModel({ src, cal }) {
                 (status ? `HTTP ${status} ${statusTxt || ""}`.trim() : null) ||
                 String(err) ||
                 "falha desconhecida";
-              setErrorMsg(
-                `Não foi possível baixar o arquivo 3D (${msg}). URL: ${src}`,
-              );
+              setErrorMsg(msg);
               setPhase("error");
             }
           },
@@ -683,7 +700,7 @@ function PreviewModel({ src, cal }) {
       })
       .catch((e) => {
         if (cancelled) return;
-        console.warn("[calibrate] loadThreeModules error", e);
+        console.warn("[omafit-calibrate] falha a carregar Three.js:", e);
         setErrorMsg(`Falha ao carregar o motor 3D: ${e?.message || e}`);
         setPhase("error");
       });
@@ -706,53 +723,89 @@ function PreviewModel({ src, cal }) {
       stateRef.current = {
         THREE: null, renderer: null, scene: null, camera: null,
         calibRot: null, wearPosition: null,
-        model: null, bboxHelper: null, size: null, baseScale: 1,
-        raf: 0, ro: null, disposed: true,
+        model: null, placeholder: null, bboxHelper: null,
+        size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
       };
     };
-    
   }, [src]);
 
   useEffect(() => {
     calRef.current = cal;
-    const s = stateRef.current;
-    if (!s.renderer || !s.model) return;
-    applyCalibrationToState(s, cal);
+    applyCalibrationToState(stateRef.current, cal);
   }, [cal]);
 
   return (
     <div ref={hostRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-      {phase === "empty" ? (
-        <div style={centeredMsgStyle}>—</div>
-      ) : phase === "loading" ? (
-        <div style={centeredMsgStyle}>Carregando visualizador 3D…</div>
-      ) : phase === "error" ? (
-        <div style={{ ...centeredMsgStyle, flexDirection: "column", padding: "16px", textAlign: "center" }}>
-          <div style={{ marginBottom: 6 }}>Não foi possível carregar o modelo.</div>
+      {/*
+        Overlay de status/erro — zIndex: 2 para garantir que fica ACIMA do
+        canvas WebGL (o canvas é inserido via appendChild no useEffect, depois
+        deste JSX, então sem zIndex explicito o canvas cobria esta div).
+      */}
+      {phase === "loading" ? (
+        <div style={{ ...overlayTopStyle, color: "rgba(255,255,255,0.85)" }}>
+          Carregando modelo 3D…
+        </div>
+      ) : null}
+      {phase === "error" ? (
+        <div style={{ ...overlayTopStyle, background: "rgba(220,38,38,0.92)" }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            Não foi possível carregar o modelo 3D.
+          </div>
           {errorMsg ? (
-            <div style={{ fontSize: "11px", opacity: 0.8, maxWidth: "100%", wordBreak: "break-word" }}>
+            <div style={{ fontSize: "11px", opacity: 0.95, wordBreak: "break-word" }}>
               {errorMsg}
             </div>
           ) : null}
+          {src ? (
+            <div style={{
+              fontSize: "10px",
+              opacity: 0.8,
+              marginTop: 4,
+              wordBreak: "break-all",
+              fontFamily: "monospace",
+            }}>
+              URL: {src}
+            </div>
+          ) : null}
+          <div style={{ fontSize: "11px", opacity: 0.9, marginTop: 6 }}>
+            Continue a calibrar usando a caixa ciano como referência — os seus
+            ajustes serão aplicados ao modelo real no AR.
+          </div>
         </div>
+      ) : null}
+      {phase === "empty" ? (
+        <div style={{ ...overlayTopStyle, color: "rgba(255,255,255,0.7)" }}>—</div>
       ) : null}
     </div>
   );
 }
 
-const centeredMsgStyle = {
+function countVisibleMeshes(root) {
+  let n = 0;
+  root.traverse((obj) => {
+    if (obj.isMesh && obj.visible) n += 1;
+  });
+  return n;
+}
+
+const overlayTopStyle = {
   position: "absolute",
-  inset: 0,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "rgba(255,255,255,0.8)",
-  fontSize: "13px",
+  top: 12,
+  left: 12,
+  right: 12,
+  padding: "8px 12px",
+  borderRadius: 6,
+  color: "#fff",
+  fontSize: "12px",
+  background: "rgba(0,0,0,0.6)",
   pointerEvents: "none",
+  zIndex: 2,
+  maxHeight: "60%",
+  overflow: "auto",
 };
 
 function applyCalibrationToState(s, cal) {
-  if (!s || !s.THREE || !s.calibRot || !s.model) return;
+  if (!s || !s.THREE || !s.calibRot) return;
   const toRad = (d) => (Number(d) || 0) * Math.PI / 180;
   s.calibRot.rotation.set(toRad(cal.rx), toRad(cal.ry), toRad(cal.rz), "YXZ");
   s.wearPosition.position.set(
@@ -761,12 +814,16 @@ function applyCalibrationToState(s, cal) {
     Number(cal.wearZ) || 0,
   );
   const sc = Number(cal.scale);
-  const effScale = s.baseScale * (Number.isFinite(sc) && sc > 0 ? sc : 1);
-  s.model.scale.setScalar(effScale);
-  // bbox wireframe precisa ser re-escalado para acompanhar o model.
-  if (s.bboxHelper && s.size && s.THREE) {
-    const ratio = effScale / s.baseScale;
-    s.bboxHelper.scale.setScalar(ratio);
+  const mul = Number.isFinite(sc) && sc > 0 ? sc : 1;
+
+  // Model (quando carregado): escala base + multiplicador do lojista.
+  if (s.model) {
+    s.model.scale.setScalar(s.baseScale * mul);
+  }
+  // Placeholder: sempre escalado pelo multiplicador (tamanho próprio
+  // já é ~14 cm, igual à largura típica de uma armação).
+  if (s.placeholder) {
+    s.placeholder.scale.setScalar(mul);
   }
 }
 

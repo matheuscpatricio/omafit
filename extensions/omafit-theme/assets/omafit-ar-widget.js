@@ -1511,9 +1511,12 @@ async function runArSession({
 
     /** 4.1) Modo debug — activado por `?omafit_ar_debug=1` na URL OU
      *       `data-ar-debug="1"` no elemento embed. Adiciona ao anchor:
-     *       - AxesHelper (X=vermelho/Y=verde/Z=azul) de 0.3 unidades de âncora
-     *         a mostrar onde fica o frame do landmark 168 (ponte do nariz).
+     *       - AxesHelper GRANDE (X=vermelho/Y=verde/Z=azul) a mostrar onde fica
+     *         o frame do landmark 168 (ponte do nariz) durante o tracking.
      *       - BBox wireframe ciano à volta do GLB para ver o centro/escala.
+     *       - Cubo sólido minúsculo no anchor origin (referência visual).
+     *       - Face mesh wireframe (contorno do rosto detectado pela MindAR)
+     *         para diagnosticar desalinhamentos entre rosto real e GLB.
      *       Útil para confirmar que o widget desenha IDÊNTICO ao preview do
      *       admin quando há queixas de mismatch. Desligado por padrão. */
     let debugEnabled = false;
@@ -1525,30 +1528,261 @@ async function runArSession({
         /^(1|true|on|yes)$/i.test(String(qDebug || "").trim()) ||
         /^(1|true|on|yes)$/i.test(String(aDebug || "").trim());
     } catch { /* noop */ }
-    if (debugEnabled && THREE.AxesHelper && THREE.Box3Helper) {
+    /** 4.0) Painel de debug ON-SCREEN — essencial em mobile (iPhone) onde
+     *       não temos acesso fácil à consola do Safari. Sobreposto ao vídeo,
+     *       mostra em tempo real os logs `[omafit-ar]` formatados, com botão
+     *       para copiar. Só é criado quando `debugEnabled=true`. */
+    let debugHud = null;
+    let debugHudBody = null;
+    const debugLines = [];
+    const appendDebugLine = (label, payload) => {
       try {
-        const dbgAxes = new THREE.AxesHelper(0.3);
-        dbgAxes.name = "omafit-ar-debug-axes";
-        anchor.group.add(dbgAxes);
+        const text = typeof payload === "string"
+          ? payload
+          : JSON.stringify(payload, null, 2);
+        const entry = `--- ${label} ---\n${text}\n`;
+        debugLines.push(entry);
+        if (debugHudBody) {
+          const pre = document.createElement("pre");
+          pre.style.margin = "0 0 8px 0";
+          pre.style.whiteSpace = "pre-wrap";
+          pre.style.wordBreak = "break-all";
+          pre.textContent = entry;
+          debugHudBody.appendChild(pre);
+          debugHudBody.scrollTop = debugHudBody.scrollHeight;
+        }
+      } catch { /* no-op */ }
+    };
+    if (debugEnabled) {
+      try {
+        debugHud = el("div", {
+          style: {
+            position: "absolute",
+            top: "8px",
+            left: "8px",
+            right: "8px",
+            maxHeight: "55%",
+            background: "rgba(0,0,0,0.78)",
+            color: "#b5f7c6",
+            fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+            fontSize: "10px",
+            lineHeight: "1.35",
+            padding: "8px",
+            borderRadius: "8px",
+            zIndex: "5",
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+            pointerEvents: "auto",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+          },
+        });
+        const hudHeader = el("div", {
+          style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            color: "#fff",
+            fontWeight: "600",
+            fontSize: "11px",
+          },
+        });
+        hudHeader.appendChild(document.createTextNode("OMAFIT AR · DEBUG"));
+        const hudActions = el("div", { style: { display: "flex", gap: "6px" } });
+        const btnStyle = {
+          background: "#0ea5e9",
+          color: "#fff",
+          border: "none",
+          borderRadius: "4px",
+          padding: "4px 8px",
+          fontSize: "10px",
+          cursor: "pointer",
+          fontFamily: "inherit",
+        };
+        const copyBtn = el("button", { style: btnStyle });
+        copyBtn.type = "button";
+        copyBtn.textContent = "Copiar";
+        copyBtn.onclick = async () => {
+          const full = debugLines.join("\n");
+          try {
+            await navigator.clipboard.writeText(full);
+            copyBtn.textContent = "Copiado!";
+            setTimeout(() => { copyBtn.textContent = "Copiar"; }, 1500);
+          } catch {
+            const ta = document.createElement("textarea");
+            ta.value = full;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand("copy"); } catch { /* noop */ }
+            document.body.removeChild(ta);
+            copyBtn.textContent = "Copiado!";
+            setTimeout(() => { copyBtn.textContent = "Copiar"; }, 1500);
+          }
+        };
+        const clearBtn = el("button", {
+          style: { ...btnStyle, background: "#6b7280" },
+        });
+        clearBtn.type = "button";
+        clearBtn.textContent = "Limpar";
+        clearBtn.onclick = () => {
+          debugLines.length = 0;
+          if (debugHudBody) debugHudBody.innerHTML = "";
+        };
+        const hideBtn = el("button", {
+          style: { ...btnStyle, background: "#dc2626" },
+        });
+        hideBtn.type = "button";
+        hideBtn.textContent = "X";
+        hideBtn.onclick = () => {
+          if (debugHud) debugHud.style.display = "none";
+        };
+        hudActions.appendChild(copyBtn);
+        hudActions.appendChild(clearBtn);
+        hudActions.appendChild(hideBtn);
+        hudHeader.appendChild(hudActions);
 
-        const dbgBbox = new THREE.Box3Helper(
-          new THREE.Box3(
-            new THREE.Vector3(-sz.x / 2, -sz.y / 2, -sz.z / 2),
-            new THREE.Vector3(sz.x / 2, sz.y / 2, sz.z / 2),
-          ),
-          0x00e0ff,
+        debugHudBody = el("div", {
+          style: {
+            overflowY: "auto",
+            flex: "1 1 auto",
+            background: "rgba(255,255,255,0.04)",
+            borderRadius: "4px",
+            padding: "6px",
+          },
+        });
+
+        debugHud.appendChild(hudHeader);
+        debugHud.appendChild(debugHudBody);
+        arFit.appendChild(debugHud);
+
+        /** Intercepta console.log/warn/error que começam com "[omafit-ar]"
+         *  e replica no painel para visualização em mobile. */
+        const origLog = console.log.bind(console);
+        const origWarn = console.warn.bind(console);
+        const origErr = console.error.bind(console);
+        const isOmafit = (args) =>
+          args && args[0] && typeof args[0] === "string" &&
+          /^\[omafit-ar/i.test(args[0]);
+        const hookLog = (origFn, label) => (...args) => {
+          try {
+            if (isOmafit(args)) {
+              const [head, ...rest] = args;
+              const payload = rest.length === 1 ? rest[0] : rest;
+              appendDebugLine(`${label} ${head}`, payload);
+            }
+          } catch { /* no-op */ }
+          return origFn(...args);
+        };
+        console.log = hookLog(origLog, "LOG");
+        console.warn = hookLog(origWarn, "WARN");
+        console.error = hookLog(origErr, "ERR");
+      } catch (e) {
+        console.warn("[omafit-ar] HUD debug falhou:", e?.message || e);
+      }
+    }
+
+    if (debugEnabled) {
+      try {
+        if (THREE.AxesHelper) {
+          const dbgAxes = new THREE.AxesHelper(1.0);
+          dbgAxes.name = "omafit-ar-debug-axes";
+          anchor.group.add(dbgAxes);
+        }
+        if (THREE.Box3Helper) {
+          const dbgBbox = new THREE.Box3Helper(
+            new THREE.Box3(
+              new THREE.Vector3(-sz.x / 2, -sz.y / 2, -sz.z / 2),
+              new THREE.Vector3(sz.x / 2, sz.y / 2, sz.z / 2),
+            ),
+            0x00e0ff,
+          );
+          dbgBbox.name = "omafit-ar-debug-bbox";
+          dbgBbox.scale.setScalar(baseUnitScale);
+          calibRot.add(dbgBbox);
+        }
+        const dbgCube = new THREE.Mesh(
+          new THREE.BoxGeometry(0.05, 0.05, 0.05),
+          new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: false }),
         );
-        dbgBbox.name = "omafit-ar-debug-bbox";
-        dbgBbox.scale.setScalar(baseUnitScale);
-        calibRot.add(dbgBbox);
+        dbgCube.name = "omafit-ar-debug-cube";
+        anchor.group.add(dbgCube);
+
+        if (typeof mindarThree.addFaceMesh === "function") {
+          const faceMesh = mindarThree.addFaceMesh();
+          faceMesh.material = new THREE.MeshBasicMaterial({
+            color: 0x00ff66,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.35,
+          });
+          faceMesh.name = "omafit-ar-debug-face";
+        }
       } catch (e) {
         console.warn("[omafit-ar] debug helpers falharam:", e?.message || e);
       }
     }
 
-    /** 5) Loop de render — sem correções por frame. */
+    /** 4.2) Log dos eixos do calibRot após as rotações aplicadas —
+     *       útil para verificar visualmente que rz=90 põe o Y do GLB a apontar
+     *       para o Z/X do mundo (roll esperado), e assim por diante.
+     *       Replica o log em console que o preview do admin produz. */
+    try {
+      const dbgAxX = new THREE.Vector3(1, 0, 0).applyQuaternion(calibRot.quaternion);
+      const dbgAxY = new THREE.Vector3(0, 1, 0).applyQuaternion(calibRot.quaternion);
+      const dbgAxZ = new THREE.Vector3(0, 0, 1).applyQuaternion(calibRot.quaternion);
+      console.log("[omafit-ar] calibração aplicada", {
+        rxDeg: calRotDeg.x,
+        ryDeg: calRotDeg.y,
+        rzDeg: calRotDeg.z,
+        wearPosM,
+        modelScaleMul,
+        baseUnitScale,
+        calibRotXinWorld: [
+          dbgAxX.x.toFixed(3), dbgAxX.y.toFixed(3), dbgAxX.z.toFixed(3),
+        ],
+        calibRotYinWorld: [
+          dbgAxY.x.toFixed(3), dbgAxY.y.toFixed(3), dbgAxY.z.toFixed(3),
+        ],
+        calibRotZinWorld: [
+          dbgAxZ.x.toFixed(3), dbgAxZ.y.toFixed(3), dbgAxZ.z.toFixed(3),
+        ],
+        calSource: arCfg?.dataset?.arOmafitCalSource || "unknown",
+      });
+    } catch { /* no-op */ }
+
+    /** 5) Loop de render — captura o primeiro faceMatrix recebido para log
+     *     de diagnóstico. Permite confirmar que a âncora chega ao widget com
+     *     o frame esperado (identidade + translação, para rosto frontal). */
     const { renderer, scene, camera } = mindarThree;
+    let firstAnchorMatrixLogged = false;
     renderer.setAnimationLoop(() => {
+      if (!firstAnchorMatrixLogged) {
+        try {
+          const m = anchor.group.matrix?.elements;
+          const nonIdentity =
+            m && (
+              Math.abs(m[0] - 1) > 1e-4 || Math.abs(m[5] - 1) > 1e-4 ||
+              Math.abs(m[10] - 1) > 1e-4 || Math.abs(m[12]) > 1e-4 ||
+              Math.abs(m[13]) > 1e-4 || Math.abs(m[14]) > 1e-4
+            );
+          if (nonIdentity) {
+            firstAnchorMatrixLogged = true;
+            console.log("[omafit-ar] primeiro faceMatrix recebido:", {
+              basisX: [m[0].toFixed(3), m[1].toFixed(3), m[2].toFixed(3)],
+              basisY: [m[4].toFixed(3), m[5].toFixed(3), m[6].toFixed(3)],
+              basisZ: [m[8].toFixed(3), m[9].toFixed(3), m[10].toFixed(3)],
+              translation: [
+                m[12].toFixed(3), m[13].toFixed(3), m[14].toFixed(3),
+              ],
+              hint:
+                "Para rosto frontal, basisX≈(1,0,0), basisY≈(0,1,0), basisZ≈(0,0,1). " +
+                "Qualquer coisa muito diferente indica problema no tracking.",
+            });
+          }
+        } catch { /* no-op */ }
+      }
       renderer.render(scene, camera);
     });
 

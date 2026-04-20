@@ -273,12 +273,6 @@
       if ar_type_guess == blank
         assign ar_cat_lc = ar_category_path | downcase
         if ar_cat_lc != blank
-          {%- comment -%}
-            ORDEM: relógios primeiro para evitar que "Smart Watch Bands" ou
-            "Watch Accessories" caiam em `bracelet`. Depois óculos, colares e
-            pulseiras. Cobre taxonomia Shopify PT/EN/ES + variantes ("smart
-            watch", "wristwatch", "fitness tracker", "relógio de pulso", etc.).
-          {%- endcomment -%}
           if ar_cat_lc contains 'watch' or ar_cat_lc contains 'smartwatch' or ar_cat_lc contains 'wristwatch' or ar_cat_lc contains 'timepiece' or ar_cat_lc contains 'chronograph' or ar_cat_lc contains 'cronógrafo' or ar_cat_lc contains 'cronografo' or ar_cat_lc contains 'fitness tracker' or ar_cat_lc contains 'activity tracker' or ar_cat_lc contains 'smart band' or ar_cat_lc contains 'smartband' or ar_cat_lc contains 'relogio' or ar_cat_lc contains 'relógio' or ar_cat_lc contains 'reloj' or ar_cat_lc contains 'relojes' or ar_cat_lc contains 'fitbit' or ar_cat_lc contains 'garmin' or ar_cat_lc contains 'amazfit' or ar_cat_lc contains 'apple watch' or ar_cat_lc contains 'galaxy watch'
             assign ar_type_guess = 'watch'
           elsif ar_cat_lc contains 'sunglass' or ar_cat_lc contains 'eyewear' or ar_cat_lc contains 'eyeglass' or ar_cat_lc contains 'spectacle' or ar_cat_lc contains 'reading glasses' or ar_cat_lc contains 'glasses' or ar_cat_lc contains 'gafas' or ar_cat_lc contains 'oculos' or ar_cat_lc contains 'óculos' or ar_cat_lc contains 'optical' or ar_cat_lc contains 'armaç' or ar_cat_lc contains 'montura' or ar_cat_lc contains 'anteojo'

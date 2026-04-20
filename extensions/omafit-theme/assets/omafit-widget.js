@@ -1866,6 +1866,31 @@
     var glbPass = getOmafitArGlbUrlFromDom();
     if (glbPass) {
       widgetUrl += '&arGlbUrl=' + encodeURIComponent(glbPass) + '&omafit_mode=eyewear_ar';
+      /**
+       * Propaga ao iframe Netlify todos os `data-ar-*` emitidos pelo Liquid —
+       * sem eles o widget interno cai em `glasses` por default e mostra
+       * textos de óculos para relógios/pulseiras/colares. Ler `arRoot` em
+       * vez de `rootEl` porque o bloco AR é independente do bloco tamanho.
+       */
+      try {
+        var arRoot = document.getElementById('omafit-ar-root');
+        if (arRoot) {
+          var passAttr = function (queryKey, dataKey) {
+            var v = (arRoot.getAttribute(dataKey) || '').trim();
+            if (v) widgetUrl += '&' + queryKey + '=' + encodeURIComponent(v);
+          };
+          passAttr('arAccessoryType', 'data-ar-accessory-type');
+          passAttr('arCategoryPath', 'data-ar-category-path');
+          passAttr('arProductType', 'data-ar-product-type');
+          passAttr('arProductTags', 'data-ar-product-tags');
+          passAttr('arTrackingStack', 'data-ar-tracking-stack');
+          passAttr('arPreferredCamera', 'data-ar-preferred-camera');
+          passAttr('arMindarAnchor', 'data-ar-mindar-anchor');
+          passAttr('arOmafitCalibration', 'data-ar-omafit-calibration');
+        }
+      } catch (e) {
+        if (OMAFIT_DEBUG) console.warn('Omafit: propagar data-ar-* para iframe falhou', e);
+      }
     }
 
     iframe.src = widgetUrl;

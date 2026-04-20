@@ -1514,9 +1514,11 @@ async function runArSession({
       if (ak !== undefined && String(ak).trim() !== "") return String(ak).trim();
       return String(fallback ?? "").trim();
     }
-    // Prioridade: o valor já calculado pelo Liquid é autoritativo (tem acesso
-    // à `product.category.ancestors` + tags + product.type). Só re-inferimos
-    // no cliente se estiver vazio ou inválido (temas antigos / fallback).
+    /**
+     * Resolução alinhada com `main()` — se o cliente detectou um tipo
+     * específico a partir de categoria/tags/título REAIS e esse difere do
+     * Liquid, o cliente ganha (o metafield pode estar desactualizado).
+     */
     const AR_VALID_TYPES = ["glasses", "necklace", "watch", "bracelet"];
     const liquidAccessoryType = String(
       cfgAttrDispatch("arAccessoryType", ""),
@@ -1524,35 +1526,70 @@ async function runArSession({
       .trim()
       .toLowerCase();
     const clientDetected = omafitResolveAccessoryType(cfgAttrDispatch);
-    const accessoryType = AR_VALID_TYPES.includes(liquidAccessoryType)
-      ? liquidAccessoryType
-      : AR_VALID_TYPES.includes(clientDetected)
-        ? clientDetected
-        : "glasses";
+    const dispatchCategoryPath = cfgAttrDispatch("arCategoryPath", "");
+    const dispatchProductType = cfgAttrDispatch("arProductType", "");
+    const dispatchProductTags = cfgAttrDispatch("arProductTags", "");
+    const dispatchProductTitle = cfgAttrDispatch("productTitle", "");
+    const clientHasStrongSignal = (() => {
+      if (!AR_VALID_TYPES.includes(clientDetected)) return false;
+      if (clientDetected !== "glasses") return true;
+      const hay = `${dispatchCategoryPath} ${dispatchProductType} ${dispatchProductTitle} ${dispatchProductTags}`.toLowerCase();
+      return /\b(oculo|óculos|glasses|sunglass|eyewear|eyeglass|spectacle|optical|gafa|montura|anteojo|armaç)/i.test(
+        hay,
+      );
+    })();
+
+    let accessoryType;
+    let accessoryTypeSource;
+    if (clientHasStrongSignal && clientDetected !== liquidAccessoryType) {
+      accessoryType = clientDetected;
+      accessoryTypeSource = `client-override (liquid=${liquidAccessoryType || "∅"} ≠ client=${clientDetected})`;
+    } else if (AR_VALID_TYPES.includes(liquidAccessoryType)) {
+      accessoryType = liquidAccessoryType;
+      accessoryTypeSource = "liquid-metafield";
+    } else if (AR_VALID_TYPES.includes(clientDetected)) {
+      accessoryType = clientDetected;
+      accessoryTypeSource = "client-fallback";
+    } else {
+      accessoryType = "glasses";
+      accessoryTypeSource = "default";
+    }
+
     const trackingStackRaw = String(
       (embedCfg?.dataset?.arTrackingStack ?? arCfg?.dataset?.arTrackingStack ?? "")
         .toString()
         .trim()
         .toLowerCase(),
     );
+    /**
+     * Se o `accessoryType` resolvido aqui não bate com o stack emitido pelo
+     * Liquid (e.g. override de cliente), recalculamos o stack em vez de
+     * respeitar um valor de tema desactualizado.
+     */
+    const inferredStack =
+      accessoryType === "watch" || accessoryType === "bracelet"
+        ? "hand"
+        : "face";
+    const liquidStackValid =
+      trackingStackRaw === "hand" || trackingStackRaw === "face";
     const trackingStack =
-      trackingStackRaw === "hand" || trackingStackRaw === "face"
+      liquidStackValid && accessoryTypeSource === "liquid-metafield"
         ? trackingStackRaw
-        : accessoryType === "watch" || accessoryType === "bracelet"
-          ? "hand"
-          : "face";
+        : inferredStack;
 
     console.log("[omafit-ar] dispatcher snapshot", {
       accessoryType,
+      source: accessoryTypeSource,
       trackingStack,
       liquidAccessoryType,
       clientDetected,
+      clientHasStrongSignal,
       arAccessoryTypeAttr: cfgAttrDispatch("arAccessoryType", ""),
       arTrackingStackAttr: trackingStackRaw,
-      arCategoryPath: cfgAttrDispatch("arCategoryPath", "").slice(0, 120),
-      arProductType: cfgAttrDispatch("arProductType", ""),
-      arProductTags: cfgAttrDispatch("arProductTags", "").slice(0, 120),
-      productTitle: cfgAttrDispatch("productTitle", "").slice(0, 60),
+      arCategoryPath: dispatchCategoryPath || "(empty — product.category not set)",
+      arProductType: dispatchProductType || "(empty)",
+      arProductTags: dispatchProductTags ? dispatchProductTags.slice(0, 180) : "(empty)",
+      productTitle: dispatchProductTitle.slice(0, 80),
       arPreferredCamera: cfgAttrDispatch("arPreferredCamera", ""),
     });
 
@@ -2845,11 +2882,76 @@ async function main() {
     .trim()
     .toLowerCase();
   const clientArType = omafitResolveAccessoryType(cfgAttrMain);
-  const accessoryType = AR_VALID_TYPES.includes(liquidArType)
-    ? liquidArType
-    : AR_VALID_TYPES.includes(clientArType)
-      ? clientArType
-      : "glasses";
+  const arCategoryPath = cfgAttrMain("arCategoryPath", "");
+  const arProductType = cfgAttrMain("arProductType", "");
+  const arProductTags = cfgAttrMain("arProductTags", "");
+  const productTitleAttr = cfgAttrMain("productTitle", "");
+
+  /**
+   * Resolução do tipo de acessório — hierarquia robusta:
+   *   A) Se o cliente detecta um tipo específico (não-default) a partir de
+   *      categoria/tags/title REAIS do DOM, esse tem prioridade — o metafield
+   *      pode estar desactualizado (e.g. foi gravado antes da deteção cobrir
+   *      "Smart Watches" ou "Apple Watch").
+   *   B) Caso contrário, usa o valor do metafield via Liquid.
+   *   C) Por fim, fallback default (glasses).
+   *
+   * "Cliente detectou tipo específico" = clientArType != "glasses" OU
+   * clientArType === "glasses" mas há evidência textual explícita de óculos.
+   */
+  const clientHasStrongSignal = (() => {
+    if (!AR_VALID_TYPES.includes(clientArType)) return false;
+    if (clientArType !== "glasses") return true;
+    const hay = `${arCategoryPath} ${arProductType} ${productTitleAttr} ${arProductTags}`.toLowerCase();
+    return /\b(oculo|óculos|glasses|sunglass|eyewear|eyeglass|spectacle|optical|gafa|montura|anteojo|armaç)/i.test(
+      hay,
+    );
+  })();
+
+  let accessoryType;
+  let accessoryTypeSource;
+  if (clientHasStrongSignal && clientArType !== liquidArType) {
+    accessoryType = clientArType;
+    accessoryTypeSource = `client-override (liquid=${liquidArType || "∅"} ≠ client=${clientArType})`;
+  } else if (AR_VALID_TYPES.includes(liquidArType)) {
+    accessoryType = liquidArType;
+    accessoryTypeSource = "liquid-metafield";
+  } else if (AR_VALID_TYPES.includes(clientArType)) {
+    accessoryType = clientArType;
+    accessoryTypeSource = "client-fallback";
+  } else {
+    accessoryType = "glasses";
+    accessoryTypeSource = "default";
+  }
+
+  /** Log prominente — aparece sempre (não só com ?omafit_ar_debug=1),
+   *  pois é essencial para diagnosticar mismatches reportados pelo lojista. */
+  console.log("[omafit-ar] accessory type resolved", {
+    accessoryType,
+    source: accessoryTypeSource,
+    liquidArType: liquidArType || "(empty)",
+    clientArType,
+    clientHasStrongSignal,
+    arCategoryPath: arCategoryPath || "(empty — product.category not set in Shopify)",
+    arProductType: arProductType || "(empty)",
+    arProductTags: arProductTags ? arProductTags.slice(0, 180) : "(empty)",
+    productTitle: productTitleAttr.slice(0, 80),
+    lang,
+  });
+
+  // Disponibiliza no window para debug rápido via devtools mobile/desktop.
+  try {
+    window.__OMAFIT_AR_RESOLVED__ = {
+      accessoryType,
+      source: accessoryTypeSource,
+      liquidArType,
+      clientArType,
+      arCategoryPath,
+      arProductType,
+      arProductTags,
+      productTitle: productTitleAttr,
+    };
+  } catch { /* no-op */ }
 
   const t = resolveCopyForType(lang, accessoryType);
   const linkText =

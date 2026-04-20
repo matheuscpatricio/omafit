@@ -571,6 +571,18 @@ const AR_CALIBRATION_METAFIELD = {
   type: "json",
 };
 
+/**
+ * Metafield determinístico com o tipo de acessório AR do produto.
+ * Evita que o Liquid tenha de adivinhar via tags/categoria — é o valor
+ * resolvido no servidor no momento da criação do asset.
+ * namespace: omafit / key: ar_accessory_type / type: single_line_text_field
+ */
+const AR_ACCESSORY_TYPE_METAFIELD = {
+  namespace: "omafit",
+  key: "ar_accessory_type",
+  type: "single_line_text_field",
+};
+
 export function sanitizeArCalibrationInput(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   const num = (v, def) => {
@@ -791,6 +803,115 @@ export async function fetchProductArCalibrationContext(admin, productId) {
  * Usado quando o cliente não enviou `accessoryType` explicitamente
  * (ex: ao criar um asset AR novo).
  */
+/**
+ * Cria (idempotentemente) a definition do metafield `omafit.ar_accessory_type`
+ * a nível de produto. Usa o mesmo padrão de tentativas que a calibração.
+ */
+export async function ensureArAccessoryTypeMetafieldDefinition(admin) {
+  const definition = {
+    name: "Omafit AR — Tipo de acessório",
+    namespace: AR_ACCESSORY_TYPE_METAFIELD.namespace,
+    key: AR_ACCESSORY_TYPE_METAFIELD.key,
+    description:
+      "Tipo de acessório AR (glasses | necklace | watch | bracelet). Determina a stack de tracking no provador.",
+    type: AR_ACCESSORY_TYPE_METAFIELD.type,
+    ownerType: "PRODUCT",
+    access: { admin: "MERCHANT_READ_WRITE", storefront: "PUBLIC_READ" },
+  };
+  try {
+    const response = await admin.graphql(METAFIELD_DEF_CREATE, {
+      variables: { definition },
+    });
+    const json = await response.json();
+    if (Array.isArray(json?.errors) && json.errors.length) {
+      console.warn(
+        "[ar-eyewear] ensureArAccessoryTypeMetafieldDefinition GraphQL:",
+        json.errors.map((e) => e?.message).join("; "),
+      );
+      return { ok: false };
+    }
+    const userErrors = json?.data?.metafieldDefinitionCreate?.userErrors || [];
+    const isDup = userErrors.some(
+      (e) =>
+        /duplicate|already exists|taken|already been taken/i.test(
+          String(e?.message || ""),
+        ) || String(e?.code || "") === "TAKEN",
+    );
+    if (!isDup && userErrors.length) {
+      console.warn(
+        "[ar-eyewear] ensureArAccessoryTypeMetafieldDefinition userErrors:",
+        userErrors.map((e) => e?.message).join("; "),
+      );
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn(
+      "[ar-eyewear] ensureArAccessoryTypeMetafieldDefinition falhou:",
+      e?.message || e,
+    );
+    return { ok: false };
+  }
+}
+
+/**
+ * Grava (ou sobrescreve) `omafit.ar_accessory_type` no produto com o tipo
+ * detectado. Se `type` vier inválido, usa o DEFAULT. Erros são registados
+ * mas não bloqueiam o fluxo chamador (fire-and-forget-friendly).
+ */
+export async function setProductArAccessoryTypeMetafield(admin, productId, type) {
+  const safe = normalizeAccessoryType(type) || AR_ACCESSORY_TYPE_DEFAULT;
+  try {
+    const response = await admin.graphql(METAFIELD_SET, {
+      variables: {
+        metafields: [
+          {
+            ownerId: toProductGid(productId),
+            namespace: AR_ACCESSORY_TYPE_METAFIELD.namespace,
+            key: AR_ACCESSORY_TYPE_METAFIELD.key,
+            type: AR_ACCESSORY_TYPE_METAFIELD.type,
+            value: safe,
+          },
+        ],
+      },
+    });
+    const json = await response.json();
+    const errs = json?.data?.metafieldsSet?.userErrors || [];
+    if (errs.length) {
+      console.warn(
+        "[ar-eyewear] setProductArAccessoryTypeMetafield userErrors:",
+        errs.map((e) => e?.message).join("; "),
+      );
+      return null;
+    }
+    return json?.data?.metafieldsSet?.metafields?.[0] || null;
+  } catch (e) {
+    console.warn(
+      "[ar-eyewear] setProductArAccessoryTypeMetafield falhou:",
+      e?.message || e,
+    );
+    return null;
+  }
+}
+
+/**
+ * Detecta o tipo de acessório para um produto e persiste-o no metafield
+ * `omafit.ar_accessory_type`. Retorna o tipo detectado. Operação best-effort:
+ * falhas na gravação do metafield não bloqueiam a detecção.
+ */
+export async function detectAndPersistAccessoryType(admin, productId) {
+  const type = await detectAccessoryTypeForProduct(admin, productId);
+  try {
+    await ensureArAccessoryTypeMetafieldDefinition(admin);
+    await setProductArAccessoryTypeMetafield(admin, productId, type);
+  } catch (e) {
+    console.warn(
+      "[ar-eyewear] detectAndPersistAccessoryType persist falhou:",
+      e?.message || e,
+    );
+  }
+  return type;
+}
+
 export async function detectAccessoryTypeForProduct(admin, productId) {
   try {
     const response = await admin.graphql(
@@ -933,7 +1054,7 @@ export async function enrichAssetsWithFreshAccessoryType(admin, assets = []) {
     const fresh = pid ? byProduct.get(pid) : null;
     if (fresh && fresh !== a.accessory_type) {
       out.push({ ...a, accessory_type: fresh });
-      toPersist.push({ id: a.id, accessory_type: fresh });
+      toPersist.push({ id: a.id, product_id: pid, accessory_type: fresh });
     } else {
       out.push(a);
     }
@@ -947,6 +1068,25 @@ export async function enrichAssetsWithFreshAccessoryType(admin, assets = []) {
       );
     });
   }
+  // Backfill do metafield `omafit.ar_accessory_type` para TODOS os produtos
+  // (não só os corrigidos). Garante que lojas antigas passem a ter o metafield
+  // populado na próxima vez que abrem a lista de envios. Operação fire-and-forget.
+  (async () => {
+    try {
+      await ensureArAccessoryTypeMetafieldDefinition(admin);
+      const done = new Set();
+      for (const [pid, type] of byProduct.entries()) {
+        if (done.has(pid)) continue;
+        done.add(pid);
+        await setProductArAccessoryTypeMetafield(admin, pid, type);
+      }
+    } catch (e) {
+      console.warn(
+        "[ar-eyewear] backfill metafield ar_accessory_type falhou:",
+        e?.message || e,
+      );
+    }
+  })();
   return out;
 }
 

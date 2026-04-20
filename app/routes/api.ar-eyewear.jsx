@@ -18,7 +18,9 @@ import {
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
   normalizeAccessoryType,
-  detectAccessoryTypeForProduct,
+  detectAndPersistAccessoryType,
+  setProductArAccessoryTypeMetafield,
+  ensureArAccessoryTypeMetafieldDefinition,
   enrichAssetsWithFreshAccessoryType,
 } from "../ar-eyewear.server";
 
@@ -124,9 +126,27 @@ export async function action({ request }) {
         ? Number(String(frameWidthMmRaw).replace(",", "."))
         : null;
     const accessoryTypeRaw = String(form.get("accessoryType") || "").trim();
+    const manualAccessoryType = normalizeAccessoryType(accessoryTypeRaw);
     const accessoryType =
-      normalizeAccessoryType(accessoryTypeRaw) ||
-      (await detectAccessoryTypeForProduct(admin, productId));
+      manualAccessoryType ||
+      (await detectAndPersistAccessoryType(admin, productId));
+    // Se o lojista escolheu manualmente o tipo (override), persistir também
+    // no metafield para que o Liquid sirva o valor certo ao widget.
+    if (manualAccessoryType) {
+      try {
+        await ensureArAccessoryTypeMetafieldDefinition(admin);
+        await setProductArAccessoryTypeMetafield(
+          admin,
+          productId,
+          manualAccessoryType,
+        );
+      } catch (e) {
+        console.warn(
+          "[api.ar-eyewear] setProductArAccessoryTypeMetafield manual:",
+          e?.message || e,
+        );
+      }
+    }
 
     const front = form.get("front");
     const threeQuarter = form.get("threeQuarter");

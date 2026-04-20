@@ -35,7 +35,9 @@ import {
   getShopArEyewearEnabled,
   fetchProductArCalibrationContext,
   ensureArCalibrationMetafieldDefinition,
+  ensureArAccessoryTypeMetafieldDefinition,
   setProductArCalibrationMetafield,
+  setProductArAccessoryTypeMetafield,
   setVariantArCalibrationMetafield,
   sanitizeArCalibrationInput,
   defaultArCalibration,
@@ -174,6 +176,25 @@ export async function action({ request, params }) {
       await setVariantArCalibrationMetafield(admin, variantGid, calibration);
     } else {
       await setProductArCalibrationMetafield(admin, row.product_id, calibration);
+    }
+    // Sincroniza o metafield `omafit.ar_accessory_type` com o tipo guardado
+    // em BD (re-detecção feita no loader). Assim o Liquid serve sempre o
+    // tipo correcto ao widget, sem depender de tags/categoria em runtime.
+    // Best-effort: nunca bloqueia o salvar da calibração.
+    if (row?.accessory_type && row?.product_id) {
+      try {
+        await ensureArAccessoryTypeMetafieldDefinition(admin);
+        await setProductArAccessoryTypeMetafield(
+          admin,
+          row.product_id,
+          row.accessory_type,
+        );
+      } catch (metaErr) {
+        console.warn(
+          "[ar-eyewear.calibrate] setProductArAccessoryTypeMetafield falhou:",
+          metaErr?.message || metaErr,
+        );
+      }
     }
     return Response.json({ ok: true, calibration, target, variantGid });
   } catch (e) {

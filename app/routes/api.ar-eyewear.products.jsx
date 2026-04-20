@@ -15,7 +15,9 @@ import {
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
   normalizeAccessoryType,
-  detectAccessoryTypeForProduct,
+  detectAndPersistAccessoryType,
+  setProductArAccessoryTypeMetafield,
+  ensureArAccessoryTypeMetafieldDefinition,
 } from "../ar-eyewear.server";
 import { fetchEyewearProductsForShop } from "../ar-eyewear-products.server";
 
@@ -122,9 +124,25 @@ export async function action({ request }) {
       return Response.json({ error: "productId is required" }, { status: 400 });
     }
 
+    const manualAccessoryType = normalizeAccessoryType(accessoryTypeRaw);
     const accessoryType =
-      normalizeAccessoryType(accessoryTypeRaw) ||
-      (await detectAccessoryTypeForProduct(admin, productId));
+      manualAccessoryType ||
+      (await detectAndPersistAccessoryType(admin, productId));
+    if (manualAccessoryType) {
+      try {
+        await ensureArAccessoryTypeMetafieldDefinition(admin);
+        await setProductArAccessoryTypeMetafield(
+          admin,
+          productId,
+          manualAccessoryType,
+        );
+      } catch (e) {
+        console.warn(
+          "[api.ar-eyewear.products] setProductArAccessoryTypeMetafield manual:",
+          e?.message || e,
+        );
+      }
+    }
     if (!imageFrontUrl) {
       return Response.json({ error: "URL da imagem para geração 3D é obrigatória (imageFrontUrl)" }, { status: 400 });
     }

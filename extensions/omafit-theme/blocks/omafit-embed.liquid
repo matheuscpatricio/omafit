@@ -235,10 +235,13 @@
     {%- comment -%}
       Deteção do tipo de acessório AR (glasses|necklace|watch|bracelet).
       Prioridade:
-        1) tags `ar:glasses|ar:necklace|ar:watch|ar:bracelet`
-        2) categoria taxonómica Shopify (product.category + ancestors), ex.: … > Watches
-        3) product.type (pt/en)
-        4) fallback: glasses
+        1) metafield `omafit.ar_accessory_type` (valor autoritativo gravado
+           pelo servidor quando o asset AR é criado — remove a adivinhação
+           no runtime do tema).
+        2) tags `ar:glasses|ar:necklace|ar:watch|ar:bracelet`
+        3) categoria taxonómica Shopify (product.category + ancestors), ex.: … > Watches
+        4) product.type (pt/en)
+        5) fallback: glasses
       Sincronizado com app/ar-accessory-type.shared.js e detectAccessoryType no servidor.
     {%- endcomment -%}
     {%- liquid
@@ -251,15 +254,21 @@
       endif
       assign ar_tags_csv = product.tags | join: ','
       assign ar_type_guess = ''
+      assign ar_type_mf = product.metafields.omafit.ar_accessory_type | default: '' | strip | downcase
+      if ar_type_mf == 'glasses' or ar_type_mf == 'necklace' or ar_type_mf == 'watch' or ar_type_mf == 'bracelet'
+        assign ar_type_guess = ar_type_mf
+      endif
       assign ar_tags_lc = ar_tags_csv | downcase
-      if ar_tags_lc contains 'ar:watch'
-        assign ar_type_guess = 'watch'
-      elsif ar_tags_lc contains 'ar:bracelet'
-        assign ar_type_guess = 'bracelet'
-      elsif ar_tags_lc contains 'ar:necklace'
-        assign ar_type_guess = 'necklace'
-      elsif ar_tags_lc contains 'ar:glasses'
-        assign ar_type_guess = 'glasses'
+      if ar_type_guess == blank
+        if ar_tags_lc contains 'ar:watch'
+          assign ar_type_guess = 'watch'
+        elsif ar_tags_lc contains 'ar:bracelet'
+          assign ar_type_guess = 'bracelet'
+        elsif ar_tags_lc contains 'ar:necklace'
+          assign ar_type_guess = 'necklace'
+        elsif ar_tags_lc contains 'ar:glasses'
+          assign ar_type_guess = 'glasses'
+        endif
       endif
       if ar_type_guess == blank
         assign ar_cat_lc = ar_category_path | downcase

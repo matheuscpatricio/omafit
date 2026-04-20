@@ -1,5 +1,6 @@
 /**
- * Lista produtos elegíveis para AR óculos (tipo, taxonomia, tags, título).
+ * Lista produtos elegíveis para provador AR (óculos, colares, relógios,
+ * pulseiras, etc.) — filtro por tipo, taxonomia Shopify, tags e título.
  * Shopify Admin GraphQL.
  */
 
@@ -142,7 +143,56 @@ const EYEWEAR_HINTS = [
   /anteojo/i,
 ];
 
-function productEyewearText(node) {
+/** Colares / necklaces (PT, EN, ES) */
+const NECKLACE_HINTS = [
+  /\bcolar(es)?\b/i,
+  /\bcollar(es)?\b/i,
+  /\bnecklace/i,
+  /\bpendant/i,
+  /\bchoker\b/i,
+  /\bgargantilha/i,
+  /\bcord(ão|oes)\b/i,
+];
+
+/** Relógios / watches (PT, EN, ES) */
+const WATCH_HINTS = [
+  /\brelogio/i,
+  /\brelógio/i,
+  /\bwatch(es)?\b/i,
+  /\bwristwatch/i,
+  /\breloj(es)?\b/i,
+  /\bcronógrafo/i,
+  /\bchronograph\b/i,
+  /\bsmartwatch/i,
+];
+
+/** Pulseiras / bracelets (PT, EN, ES) */
+const BRACELET_HINTS = [
+  /\bpulseira/i,
+  /\bbracelet/i,
+  /\bbangle/i,
+  /\bmanilha/i,
+  /\bcharm\s+bracelet/i,
+];
+
+const AR_ACCESSORY_CATEGORY_HINTS = [
+  ...EYEWEAR_HINTS,
+  ...NECKLACE_HINTS,
+  ...WATCH_HINTS,
+  ...BRACELET_HINTS,
+];
+
+/** Tag explícita `ar:<tipo>` — o produto entra na lista mesmo fora das heurísticas. */
+function hasExplicitArAccessoryTag(node) {
+  const tags = Array.isArray(node?.tags) ? node.tags : [];
+  return tags.some((t) =>
+    /^ar[:\-_]?(glasses|necklace|watch|bracelet|oculos|colar|relogio|pulseira)\b/i.test(
+      String(t || "").trim(),
+    ),
+  );
+}
+
+function productAccessorySearchText(node) {
   const parts = [
     node?.productType,
     node?.title,
@@ -152,10 +202,21 @@ function productEyewearText(node) {
   return parts.join(" | ");
 }
 
-export function isEyewearCategoryProduct(node) {
-  const text = productEyewearText(node);
+/**
+ * Produto elegível para aparecer em “Acessórios AR”: óculos, colar, relógio
+ * ou pulseira (por texto) ou tag `ar:*` explícita.
+ */
+export function isArAccessoryCategoryProduct(node) {
+  if (!node) return false;
+  if (hasExplicitArAccessoryTag(node)) return true;
+  const text = productAccessorySearchText(node);
   if (!text.trim()) return false;
-  return EYEWEAR_HINTS.some((re) => re.test(text));
+  return AR_ACCESSORY_CATEGORY_HINTS.some((re) => re.test(text));
+}
+
+/** @deprecated Use `isArAccessoryCategoryProduct` — mantido por compatibilidade. */
+export function isEyewearCategoryProduct(node) {
+  return isArAccessoryCategoryProduct(node);
 }
 
 export function gidToNumericProductId(gid) {
@@ -236,7 +297,7 @@ export async function fetchEyewearProductsForShop(admin, opts = {}) {
     const conn = json?.data?.products;
     const edges = conn?.edges || [];
     for (const { node } of edges) {
-      if (node && isEyewearCategoryProduct(node)) {
+      if (node && isArAccessoryCategoryProduct(node)) {
         const numericId = gidToNumericProductId(node.id);
         candidates.push({
           id: numericId,

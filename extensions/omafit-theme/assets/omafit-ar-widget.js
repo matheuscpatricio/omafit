@@ -322,6 +322,12 @@ function pickLocale(raw) {
   return "pt";
 }
 
+/**
+ * Bundle de textos por idioma. O bloco `byType` sobrescreve chaves específicas
+ * por tipo de acessório (glasses | necklace | watch | bracelet), permitindo
+ * que o título, a descrição, o "como funciona" e as mensagens de erro sejam
+ * específicos ao contexto (rosto, pescoço, pulso). Ver `resolveCopyForType`.
+ */
 const COPY = {
   pt: {
     title: "Provador AR de óculos",
@@ -332,6 +338,7 @@ const COPY = {
     cta: "Começar experiência AR",
     privacy: "Ao continuar, você concorda em usar a câmera apenas localmente no seu navegador para visualização.",
     close: "Fechar",
+    linkTextFallback: "Experimentar óculos (AR)",
     arLoading: "A iniciar câmera e modelo 3D…",
     errCamera: "Permita o uso da câmera para o provador AR.",
     errFace: "Não foi possível carregar a detecção facial.",
@@ -343,6 +350,38 @@ const COPY = {
     addedToCart: "Adicionado!",
     addToCartError: "Erro ao adicionar",
     loadingModel: "Carregando modelo…",
+    byType: {
+      glasses: {},
+      necklace: {
+        title: "Provador AR de colares",
+        desc: "Veja como este colar fica no seu pescoço em tempo real, usando a câmera do seu dispositivo.",
+        howBody:
+          "Na próxima etapa, autorize o uso da câmera. Deixe o rosto e a parte superior do peito visíveis na tela — o colar 3D acompanha o seu pescoço. Os dados não são gravados nos nossos servidores.",
+        linkTextFallback: "Experimentar colar (AR)",
+        arLoading: "A iniciar câmera e modelo 3D do colar…",
+        errFace: "Não foi possível carregar a detecção do rosto/pescoço.",
+      },
+      watch: {
+        title: "Provador AR de relógios",
+        desc: "Veja como este relógio fica no seu pulso em tempo real, usando a câmera traseira do seu celular.",
+        howBody:
+          "Na próxima etapa, autorize o uso da câmera traseira. Mantenha a mão aberta ao centro da tela, com o pulso bem visível — o relógio 3D se encaixa no pulso. Os dados não são gravados nos nossos servidores.",
+        linkTextFallback: "Experimentar relógio (AR)",
+        arLoading: "A iniciar câmera e modelo 3D do relógio…",
+        errCamera: "Permita o uso da câmera traseira para experimentar o relógio.",
+        errFace: "Não foi possível carregar a detecção da mão.",
+      },
+      bracelet: {
+        title: "Provador AR de pulseiras",
+        desc: "Veja como esta pulseira fica no seu pulso em tempo real, usando a câmera traseira do seu celular.",
+        howBody:
+          "Na próxima etapa, autorize o uso da câmera traseira. Mantenha a mão aberta ao centro da tela, com o pulso bem visível — a pulseira 3D se encaixa no pulso. Os dados não são gravados nos nossos servidores.",
+        linkTextFallback: "Experimentar pulseira (AR)",
+        arLoading: "A iniciar câmera e modelo 3D da pulseira…",
+        errCamera: "Permita o uso da câmera traseira para experimentar a pulseira.",
+        errFace: "Não foi possível carregar a detecção da mão.",
+      },
+    },
   },
   en: {
     title: "AR eyewear try-on",
@@ -353,6 +392,7 @@ const COPY = {
     cta: "Start AR experience",
     privacy: "By continuing, you agree to use the camera locally in your browser for preview only.",
     close: "Close",
+    linkTextFallback: "Try glasses on (AR)",
     arLoading: "Starting camera and 3D model…",
     errCamera: "Allow camera access for AR try-on.",
     errFace: "Could not load face detection.",
@@ -364,6 +404,38 @@ const COPY = {
     addedToCart: "Added!",
     addToCartError: "Error adding",
     loadingModel: "Loading model…",
+    byType: {
+      glasses: {},
+      necklace: {
+        title: "AR necklace try-on",
+        desc: "See how this necklace looks on your neck in real time using your device camera.",
+        howBody:
+          "Next, allow camera access. Keep your face and upper chest visible on screen — the 3D necklace tracks your neckline. Video is processed locally and is not uploaded to our servers.",
+        linkTextFallback: "Try necklace on (AR)",
+        arLoading: "Starting camera and 3D necklace…",
+        errFace: "Could not load face/neck detection.",
+      },
+      watch: {
+        title: "AR watch try-on",
+        desc: "See how this watch looks on your wrist in real time using your phone's rear camera.",
+        howBody:
+          "Next, allow rear-camera access. Keep your open hand centered on screen with your wrist clearly visible — the 3D watch snaps onto your wrist. Video is processed locally and is not uploaded to our servers.",
+        linkTextFallback: "Try watch on (AR)",
+        arLoading: "Starting rear camera and 3D watch…",
+        errCamera: "Allow rear-camera access to try the watch on.",
+        errFace: "Could not load hand detection.",
+      },
+      bracelet: {
+        title: "AR bracelet try-on",
+        desc: "See how this bracelet looks on your wrist in real time using your phone's rear camera.",
+        howBody:
+          "Next, allow rear-camera access. Keep your open hand centered on screen with your wrist clearly visible — the 3D bracelet snaps onto your wrist. Video is processed locally and is not uploaded to our servers.",
+        linkTextFallback: "Try bracelet on (AR)",
+        arLoading: "Starting rear camera and 3D bracelet…",
+        errCamera: "Allow rear-camera access to try the bracelet on.",
+        errFace: "Could not load hand detection.",
+      },
+    },
   },
   es: {
     title: "Probador AR de gafas",
@@ -374,6 +446,7 @@ const COPY = {
     cta: "Empezar experiencia AR",
     privacy: "Al continuar, aceptas usar la cámara solo en tu navegador para la vista previa.",
     close: "Cerrar",
+    linkTextFallback: "Probar gafas (AR)",
     arLoading: "Iniciando cámara y modelo 3D…",
     errCamera: "Permite el acceso a la cámara para el probador AR.",
     errFace: "No se pudo cargar la detección facial.",
@@ -385,8 +458,55 @@ const COPY = {
     addedToCart: "¡Añadido!",
     addToCartError: "Error al añadir",
     loadingModel: "Cargando modelo…",
+    byType: {
+      glasses: {},
+      necklace: {
+        title: "Probador AR de collares",
+        desc: "Mira cómo queda este collar en tu cuello en tiempo real con la cámara de tu dispositivo.",
+        howBody:
+          "En el siguiente paso, autoriza la cámara. Mantén el rostro y la parte superior del pecho visibles en pantalla: el collar 3D sigue tu cuello. El vídeo se procesa localmente y no se sube a nuestros servidores.",
+        linkTextFallback: "Probar collar (AR)",
+        arLoading: "Iniciando cámara y modelo 3D del collar…",
+        errFace: "No se pudo cargar la detección del rostro/cuello.",
+      },
+      watch: {
+        title: "Probador AR de relojes",
+        desc: "Mira cómo queda este reloj en tu muñeca en tiempo real con la cámara trasera del móvil.",
+        howBody:
+          "En el siguiente paso, autoriza la cámara trasera. Mantén la mano abierta en el centro de la pantalla con la muñeca visible: el reloj 3D se ajusta a la muñeca. El vídeo se procesa localmente y no se sube a nuestros servidores.",
+        linkTextFallback: "Probar reloj (AR)",
+        arLoading: "Iniciando cámara trasera y reloj 3D…",
+        errCamera: "Permite el acceso a la cámara trasera para probar el reloj.",
+        errFace: "No se pudo cargar la detección de la mano.",
+      },
+      bracelet: {
+        title: "Probador AR de pulseras",
+        desc: "Mira cómo queda esta pulsera en tu muñeca en tiempo real con la cámara trasera del móvil.",
+        howBody:
+          "En el siguiente paso, autoriza la cámara trasera. Mantén la mano abierta en el centro de la pantalla con la muñeca visible: la pulsera 3D se ajusta a la muñeca. El vídeo se procesa localmente y no se sube a nuestros servidores.",
+        linkTextFallback: "Probar pulsera (AR)",
+        arLoading: "Iniciando cámara trasera y pulsera 3D…",
+        errCamera: "Permite el acceso a la cámara trasera para probar la pulsera.",
+        errFace: "No se pudo cargar la detección de la mano.",
+      },
+    },
   },
 };
+
+/**
+ * Devolve o bundle de textos para (idioma, tipo de acessório), com merge raso
+ * sobre o bundle base. Fallback: idioma → `pt`; tipo → `glasses`.
+ */
+function resolveCopyForType(lang, accessoryType) {
+  const base = COPY[lang] || COPY.pt;
+  const typeKey = ["glasses", "necklace", "watch", "bracelet"].includes(
+    accessoryType,
+  )
+    ? accessoryType
+    : "glasses";
+  const override = (base.byType && base.byType[typeKey]) || {};
+  return { ...base, ...override };
+}
 
 /** Estilo TryOnWidget: font-family com nomes entre aspas + !important em todo o subtree. */
 function formatCssFontFamilyStack(raw) {
@@ -2601,11 +2721,44 @@ async function main() {
   ).trim();
   if (logoUrl.startsWith("//")) logoUrl = `https:${logoUrl}`;
   const shopName = (root.dataset.shopName || root.getAttribute("data-shop-name") || "").trim();
-  const linkText =
-    (adminBrand?.linkText || root.dataset.linkText || "Experimentar óculos (AR)").trim() ||
-    "Experimentar óculos (AR)";
   const lang = pickLocale(root.dataset.locale);
-  const t = COPY[lang] || COPY.pt;
+
+  /**
+   * Tipo de acessório do produto actual. Prioridade: (1) valor calculado pelo
+   * Liquid em `data-ar-accessory-type` (tem acesso a `product.category.ancestors`),
+   * (2) re-deteção no cliente a partir de `data-ar-product-tags/type/category-path`
+   * e título, (3) fallback `glasses`. Determina o bundle de textos do modal e o
+   * link trigger. O dispatcher de stack (face/hand) usa a mesma lógica em
+   * `runArSession`.
+   */
+  const AR_VALID_TYPES = ["glasses", "necklace", "watch", "bracelet"];
+  function cfgAttrMain(camelKey, fallback = "") {
+    const ek = (typeof document !== "undefined"
+      ? document.getElementById("omafit-widget-root")
+      : null)?.dataset?.[camelKey];
+    if (ek !== undefined && String(ek).trim() !== "") return String(ek).trim();
+    const rk = root?.dataset?.[camelKey];
+    if (rk !== undefined && String(rk).trim() !== "") return String(rk).trim();
+    return String(fallback ?? "").trim();
+  }
+  const liquidArType = String(cfgAttrMain("arAccessoryType", ""))
+    .trim()
+    .toLowerCase();
+  const clientArType = omafitResolveAccessoryType(cfgAttrMain);
+  const accessoryType = AR_VALID_TYPES.includes(liquidArType)
+    ? liquidArType
+    : AR_VALID_TYPES.includes(clientArType)
+      ? clientArType
+      : "glasses";
+
+  const t = resolveCopyForType(lang, accessoryType);
+  const linkText =
+    (adminBrand?.linkText ||
+      root.dataset.linkText ||
+      t.linkTextFallback ||
+      "Experimentar (AR)").trim() ||
+    t.linkTextFallback ||
+    "Experimentar (AR)";
   const autoOpen =
     root.dataset.autoOpen === "1" || root.getAttribute("data-auto-open") === "1";
 

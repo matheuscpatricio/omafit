@@ -210,9 +210,109 @@ function getOmafitArHandModuleBundle() {
 }
 
 /**
- * Alinhado com `app/ar-accessory-type.shared.js` — mantém a stack (face vs mão)
- * correcta na loja usando categoria taxonómica + tipo + título + tags.
+ * Deteção de tipo de acessório AR (client-side, sem módulos ES — este ficheiro
+ * é servido pelo tema do Shopify).
+ *
+ * Espelho fiel de `app/ar-accessory-type.shared.js`. Mantém os mesmos padrões
+ * e prioridade: (1) tag `ar:*`, (2) leaf da categoria Shopify, (3) caminho
+ * completo da categoria, (4) fallback por texto agregado.
+ *
+ * Cobre variações de relógio: `Watches`, `Smart Watches`, `Wristwatches`,
+ * `Watch Bands`, `Fitness Trackers`, `Relógios de Pulso`, `Relógios
+ * Inteligentes`, `Relojes`, `Cronógrafos`, brand names (Apple Watch, Fitbit,
+ * Garmin, Amazfit, Mi Band, Galaxy Watch).
  */
+const OMAFIT_AR_WATCH_REGEX = [
+  /\brel[oó]gio(s)?\b/i,
+  /\brel[oó]gio(s)?\s+de\s+pulso\b/i,
+  /\brel[oó]gio(s)?\s+(inteligente|digital|autom[aá]tico|anal[oó]gico)\b/i,
+  /\bwatch(es|band|bands|straps?)?\b/i,
+  /\bsmart[\s-]?watch(es)?\b/i,
+  /\bwrist[\s-]?watch(es)?\b/i,
+  /\btimepiece(s)?\b/i,
+  /\bchronograph(s)?\b/i,
+  /\bfitness[\s-]?tracker(s)?\b/i,
+  /\bactivity[\s-]?tracker(s)?\b/i,
+  /\bsmart[\s-]?band(s)?\b/i,
+  /\breloj(es|er[ií]as?)?\b/i,
+  /\bcron[oó]grafo(s)?\b/i,
+  /\breloj(es)?\s+inteligente(s)?\b/i,
+  /\bapple[\s-]?watch\b/i,
+  /\bgalaxy[\s-]?watch\b/i,
+  /\bfitbit\b/i,
+  /\bgarmin\b/i,
+  /\bamazfit\b/i,
+  /\bmi[\s-]?band\b/i,
+];
+const OMAFIT_AR_BRACELET_REGEX = [
+  /\bpulseira(s)?\b/i,
+  /\bbracelete(s)?\b/i,
+  /\bbracelet(s)?\b/i,
+  /\bbangle(s)?\b/i,
+  /\bcuff[\s-]?bracelet(s)?\b/i,
+  /\btennis[\s-]?bracelet(s)?\b/i,
+  /\bid[\s-]?bracelet(s)?\b/i,
+  /\bcharm[\s-]?bracelet(s)?\b/i,
+  /\banklet(s)?\b/i,
+  /\bwristband(s)?\b/i,
+  /\bpulsera(s)?\b/i,
+  /\bmanilla(s)?\b/i,
+  /\bbrazalete(s)?\b/i,
+];
+const OMAFIT_AR_NECKLACE_REGEX = [
+  /\bcolar(es)?\b/i,
+  /\bcord[aã]o(s|es)?\b/i,
+  /\bgargantilha(s)?\b/i,
+  /\bpingente(s)?\b/i,
+  /\bnecklace(s)?\b/i,
+  /\bpendant(s)?\b/i,
+  /\bchoker(s)?\b/i,
+  /\blocket(s)?\b/i,
+  /\bcollar(es)?\b/i,
+  /\bcolgante(s)?\b/i,
+];
+const OMAFIT_AR_GLASSES_REGEX = [
+  /[oó]culos/i,
+  /\boculos\b/i,
+  /\barma[çc][aã]o(s|es|oes)?\b/i,
+  /\blente(s)?\s+de\s+sol\b/i,
+  /\bsunglass(es)?\b/i,
+  /\beyeglass(es)?\b/i,
+  /\beyewear\b/i,
+  /\bspectacle(s)?\b/i,
+  /\boptical\b/i,
+  /\bglasses\b/i,
+  /\breading[\s-]?glasses\b/i,
+  /\bgafa(s)?\b/i,
+  /\bmontura(s)?\b/i,
+  /\banteojo(s)?\b/i,
+  /\blente(s)?\s+(de\s+sol|graduada?s?)\b/i,
+];
+
+function omafitAnyMatch(list, text) {
+  if (!text) return false;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].test(text)) return true;
+  }
+  return false;
+}
+
+function omafitClassifySegment(segment) {
+  if (!segment) return null;
+  if (omafitAnyMatch(OMAFIT_AR_WATCH_REGEX, segment)) return "watch";
+  if (omafitAnyMatch(OMAFIT_AR_GLASSES_REGEX, segment)) return "glasses";
+  if (omafitAnyMatch(OMAFIT_AR_NECKLACE_REGEX, segment)) return "necklace";
+  if (omafitAnyMatch(OMAFIT_AR_BRACELET_REGEX, segment)) return "bracelet";
+  return null;
+}
+
+function omafitCategoryLeaf(categoryFullName) {
+  const s = String(categoryFullName || "").trim();
+  if (!s) return "";
+  const parts = s.split(">").map((p) => p.trim()).filter(Boolean);
+  return parts[parts.length - 1] || "";
+}
+
 function omafitDetectAccessoryTypeFromContext({
   tags,
   productType,
@@ -242,28 +342,18 @@ function omafitDetectAccessoryTypeFromContext({
     }
   }
 
-  const hay = [categoryFullName, productType, title]
+  const leaf = omafitCategoryLeaf(categoryFullName);
+  const fromLeaf = omafitClassifySegment(leaf);
+  if (fromLeaf) return fromLeaf;
+
+  const fromCategoryFull = omafitClassifySegment(String(categoryFullName || ""));
+  if (fromCategoryFull) return fromCategoryFull;
+
+  const hay = [productType, title, tagList.join(" ")]
     .filter(Boolean)
-    .join(" | ")
-    .toLowerCase();
-  if (!hay.trim()) return AR_DEFAULT;
-
-  const glass =
-    /\b(oculo|oculos|óculos|glasses|sunglasses|eyewear|spectacle|gafas|optical|eyeglass)\b/i.test(
-      hay,
-    ) || /armaç(ão|ões|o|oes)/i.test(hay);
-  const neck =
-    /\b(colar|colares|necklace|pendant|choker|gargantilha|collar)\b/i.test(hay);
-  const watch = /\b(relogio|relógio|watch|watches|reloj|wristwatch|smartwatch|chronograph)\b/i.test(
-    hay,
-  );
-  const brace = /\b(pulseira|bracelet|bangle|manilha)\b/i.test(hay);
-
-  if (glass) return "glasses";
-  if (neck) return "necklace";
-  if (watch && brace) return "watch";
-  if (watch) return "watch";
-  if (brace) return "bracelet";
+    .join(" | ");
+  const fromText = omafitClassifySegment(hay);
+  if (fromText) return fromText;
 
   return AR_DEFAULT;
 }

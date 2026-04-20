@@ -273,26 +273,32 @@
       if ar_type_guess == blank
         assign ar_cat_lc = ar_category_path | downcase
         if ar_cat_lc != blank
-          if ar_cat_lc contains 'sunglasses' or ar_cat_lc contains 'eyewear' or ar_cat_lc contains 'eyeglasses' or ar_cat_lc contains 'spectacle' or ar_cat_lc contains 'gafas' or ar_cat_lc contains 'oculos' or ar_cat_lc contains 'óculos' or ar_cat_lc contains 'optical' or ar_cat_lc contains 'optical frames'
-            assign ar_type_guess = 'glasses'
-          elsif ar_cat_lc contains 'necklace' or ar_cat_lc contains 'pendant' or ar_cat_lc contains 'choker' or ar_cat_lc contains 'colar' or ar_cat_lc contains 'gargantilha' or ar_cat_lc contains 'collar'
-            assign ar_type_guess = 'necklace'
-          elsif ar_cat_lc contains 'wristwatch' or ar_cat_lc contains 'smartwatch' or ar_cat_lc contains 'watches' or ar_cat_lc contains 'relogio' or ar_cat_lc contains 'relógio' or ar_cat_lc contains 'reloj'
+          {%- comment -%}
+            ORDEM: relógios primeiro para evitar que "Smart Watch Bands" ou
+            "Watch Accessories" caiam em `bracelet`. Depois óculos, colares e
+            pulseiras. Cobre taxonomia Shopify PT/EN/ES + variantes ("smart
+            watch", "wristwatch", "fitness tracker", "relógio de pulso", etc.).
+          {%- endcomment -%}
+          if ar_cat_lc contains 'watch' or ar_cat_lc contains 'smartwatch' or ar_cat_lc contains 'wristwatch' or ar_cat_lc contains 'timepiece' or ar_cat_lc contains 'chronograph' or ar_cat_lc contains 'cronógrafo' or ar_cat_lc contains 'cronografo' or ar_cat_lc contains 'fitness tracker' or ar_cat_lc contains 'activity tracker' or ar_cat_lc contains 'smart band' or ar_cat_lc contains 'smartband' or ar_cat_lc contains 'relogio' or ar_cat_lc contains 'relógio' or ar_cat_lc contains 'reloj' or ar_cat_lc contains 'relojes' or ar_cat_lc contains 'fitbit' or ar_cat_lc contains 'garmin' or ar_cat_lc contains 'amazfit' or ar_cat_lc contains 'apple watch' or ar_cat_lc contains 'galaxy watch'
             assign ar_type_guess = 'watch'
-          elsif ar_cat_lc contains 'bracelet' or ar_cat_lc contains 'bangle' or ar_cat_lc contains 'pulseira' or ar_cat_lc contains 'manilha'
+          elsif ar_cat_lc contains 'sunglass' or ar_cat_lc contains 'eyewear' or ar_cat_lc contains 'eyeglass' or ar_cat_lc contains 'spectacle' or ar_cat_lc contains 'reading glasses' or ar_cat_lc contains 'glasses' or ar_cat_lc contains 'gafas' or ar_cat_lc contains 'oculos' or ar_cat_lc contains 'óculos' or ar_cat_lc contains 'optical' or ar_cat_lc contains 'armaç' or ar_cat_lc contains 'montura' or ar_cat_lc contains 'anteojo'
+            assign ar_type_guess = 'glasses'
+          elsif ar_cat_lc contains 'necklace' or ar_cat_lc contains 'pendant' or ar_cat_lc contains 'choker' or ar_cat_lc contains 'locket' or ar_cat_lc contains 'colar' or ar_cat_lc contains 'cordão' or ar_cat_lc contains 'cordao' or ar_cat_lc contains 'gargantilha' or ar_cat_lc contains 'pingente' or ar_cat_lc contains 'collar' or ar_cat_lc contains 'colgante'
+            assign ar_type_guess = 'necklace'
+          elsif ar_cat_lc contains 'bracelet' or ar_cat_lc contains 'bangle' or ar_cat_lc contains 'anklet' or ar_cat_lc contains 'wristband' or ar_cat_lc contains 'pulseira' or ar_cat_lc contains 'bracelete' or ar_cat_lc contains 'manilha' or ar_cat_lc contains 'pulsera' or ar_cat_lc contains 'manilla' or ar_cat_lc contains 'brazalete'
             assign ar_type_guess = 'bracelet'
           endif
         endif
       endif
       if ar_type_guess == blank
         assign pt_lc = product.type | downcase
-        if pt_lc contains 'relogio' or pt_lc contains 'relógio' or pt_lc contains 'watch'
+        if pt_lc contains 'watch' or pt_lc contains 'wristwatch' or pt_lc contains 'smartwatch' or pt_lc contains 'timepiece' or pt_lc contains 'chronograph' or pt_lc contains 'cronógrafo' or pt_lc contains 'cronografo' or pt_lc contains 'fitness tracker' or pt_lc contains 'smart band' or pt_lc contains 'relogio' or pt_lc contains 'relógio' or pt_lc contains 'reloj'
           assign ar_type_guess = 'watch'
-        elsif pt_lc contains 'pulseira' or pt_lc contains 'bracelet'
+        elsif pt_lc contains 'pulseira' or pt_lc contains 'bracelete' or pt_lc contains 'bracelet' or pt_lc contains 'bangle' or pt_lc contains 'anklet' or pt_lc contains 'wristband' or pt_lc contains 'manilha' or pt_lc contains 'pulsera' or pt_lc contains 'brazalete'
           assign ar_type_guess = 'bracelet'
-        elsif pt_lc contains 'colar' or pt_lc contains 'necklace' or pt_lc contains 'pendant'
+        elsif pt_lc contains 'colar' or pt_lc contains 'gargantilha' or pt_lc contains 'pingente' or pt_lc contains 'necklace' or pt_lc contains 'pendant' or pt_lc contains 'choker' or pt_lc contains 'collar' or pt_lc contains 'colgante'
           assign ar_type_guess = 'necklace'
-        elsif pt_lc contains 'oculo' or pt_lc contains 'óculos' or pt_lc contains 'glasses' or pt_lc contains 'sunglasses' or pt_lc contains 'eyewear'
+        elsif pt_lc contains 'oculo' or pt_lc contains 'óculos' or pt_lc contains 'armaç' or pt_lc contains 'glasses' or pt_lc contains 'sunglass' or pt_lc contains 'eyeglass' or pt_lc contains 'eyewear' or pt_lc contains 'spectacle' or pt_lc contains 'optical' or pt_lc contains 'gafa' or pt_lc contains 'montura' or pt_lc contains 'anteojo'
           assign ar_type_guess = 'glasses'
         endif
       endif

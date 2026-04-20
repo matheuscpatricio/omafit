@@ -123,57 +123,18 @@ function isLikelyCategoryFieldError(errs) {
   return /category|fullName|unknown field|Field ['"]?category/i.test(msg);
 }
 
-/** Heurística: óculos / sunglasses / eyewear (PT, EN, ES) + taxonomia Shopify */
-const EYEWEAR_HINTS = [
-  /óculos/i,
-  /\boculos\b/i,
-  /sunglass/i,
-  /sunglasses/i,
-  /eyeglass/i,
-  /eyeglasses/i,
-  /eyewear/i,
-  /\bgafas\b/i,
-  /gafa\b/i,
-  /lentes?\s+de\s+sol/i,
-  /optical/i,
-  /armaç(ão|ões|oes|o|a)/i,
-  /spectacle/i,
-  /monturas?/i,
-  /anteojos/i,
-  /anteojo/i,
-];
+import { AR_ACCESSORY_HINT_REGEXES } from "./ar-accessory-type.shared.js";
 
-/** Colares / necklaces (PT, EN, ES) */
-const NECKLACE_HINTS = [
-  /\bcolar(es)?\b/i,
-  /\bcollar(es)?\b/i,
-  /\bnecklace/i,
-  /\bpendant/i,
-  /\bchoker\b/i,
-  /\bgargantilha/i,
-  /\bcord(ão|oes)\b/i,
-];
-
-/** Relógios / watches (PT, EN, ES) */
-const WATCH_HINTS = [
-  /\brelogio/i,
-  /\brelógio/i,
-  /\bwatch(es)?\b/i,
-  /\bwristwatch/i,
-  /\breloj(es)?\b/i,
-  /\bcronógrafo/i,
-  /\bchronograph\b/i,
-  /\bsmartwatch/i,
-];
-
-/** Pulseiras / bracelets (PT, EN, ES) */
-const BRACELET_HINTS = [
-  /\bpulseira/i,
-  /\bbracelet/i,
-  /\bbangle/i,
-  /\bmanilha/i,
-  /\bcharm\s+bracelet/i,
-];
+/**
+ * Heurísticas (PT/EN/ES) importadas de `ar-accessory-type.shared.js` para
+ * garantir que a listagem ("Acessórios AR") e a deteção de tipo usam
+ * exactamente os mesmos padrões — qualquer produto que apareça na lista
+ * é classificado de forma consistente pelo detector.
+ */
+const EYEWEAR_HINTS = AR_ACCESSORY_HINT_REGEXES.glasses;
+const NECKLACE_HINTS = AR_ACCESSORY_HINT_REGEXES.necklace;
+const WATCH_HINTS = AR_ACCESSORY_HINT_REGEXES.watch;
+const BRACELET_HINTS = AR_ACCESSORY_HINT_REGEXES.bracelet;
 
 const AR_ACCESSORY_CATEGORY_HINTS = [
   ...EYEWEAR_HINTS,

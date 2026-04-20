@@ -113,14 +113,57 @@ export async function loader({ request, params }) {
     console.warn("[calibrate] fetchProductArCalibrationContext:", e?.message || e);
   }
 
-  const accessoryType =
-    normalizeAccessoryType(row.accessory_type) ||
-    detectAccessoryType({
-      tags: productContext?.tags,
-      productType: productContext?.productType,
-      categoryFullName: productContext?.categoryFullName,
-      title: productContext?.title,
-    });
+  /**
+   * Deteção preferindo SEMPRE o produto actual (tags + categoria + título)
+   * sobre o valor em BD — que pode estar desactualizado (ex.: criado antes
+   * da deteção por categoria taxonómica). Só caímos para a BD quando não
+   * conseguimos carregar o contexto do produto.
+   *
+   * Persiste o valor corrigido em: (1) `ar_eyewear_assets.accessory_type`
+   * (fire-and-forget) e (2) metafield `omafit.ar_accessory_type` no produto,
+   * para o Liquid servir o widget com o tipo certo.
+   */
+  const dbType = normalizeAccessoryType(row.accessory_type);
+  const freshType = productContext
+    ? detectAccessoryType({
+        tags: productContext.tags,
+        productType: productContext.productType,
+        categoryFullName: productContext.categoryFullName,
+        title: productContext.title,
+      })
+    : null;
+  const accessoryType = freshType || dbType || "glasses";
+
+  if (freshType && freshType !== row.accessory_type && row.id) {
+    // Atualizar DB sem bloquear o render.
+    import("../ar-eyewear.server.js")
+      .then(({ patchAsset }) =>
+        patchAsset(row.id, { accessory_type: freshType }),
+      )
+      .catch((e) =>
+        console.warn(
+          "[calibrate] patch accessory_type falhou:",
+          e?.message || e,
+        ),
+      );
+  }
+  if (freshType && row.product_id) {
+    (async () => {
+      try {
+        await ensureArAccessoryTypeMetafieldDefinition(admin);
+        await setProductArAccessoryTypeMetafield(
+          admin,
+          row.product_id,
+          freshType,
+        );
+      } catch (e) {
+        console.warn(
+          "[calibrate] setProductArAccessoryTypeMetafield loader:",
+          e?.message || e,
+        );
+      }
+    })();
+  }
 
   const productCalibration =
     productContext?.productCalibration || defaultArCalibration(accessoryType);

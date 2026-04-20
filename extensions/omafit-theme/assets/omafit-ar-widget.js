@@ -1452,9 +1452,19 @@ async function runArSession({
           ? "hand"
           : "face";
 
-    console.log(
-      `[omafit-ar] dispatcher: accessoryType=${accessoryType} trackingStack=${trackingStack} categoryPath=${cfgAttrDispatch("arCategoryPath", "").slice(0, 80)}`,
-    );
+    console.log("[omafit-ar] dispatcher snapshot", {
+      accessoryType,
+      trackingStack,
+      liquidAccessoryType,
+      clientDetected,
+      arAccessoryTypeAttr: cfgAttrDispatch("arAccessoryType", ""),
+      arTrackingStackAttr: trackingStackRaw,
+      arCategoryPath: cfgAttrDispatch("arCategoryPath", "").slice(0, 120),
+      arProductType: cfgAttrDispatch("arProductType", ""),
+      arProductTags: cfgAttrDispatch("arProductTags", "").slice(0, 120),
+      productTitle: cfgAttrDispatch("productTitle", "").slice(0, 60),
+      arPreferredCamera: cfgAttrDispatch("arPreferredCamera", ""),
+    });
 
     if (trackingStack === "hand") {
       const [threeModHand, gltfModuleHand, visionMod] = await getOmafitArHandModuleBundle();

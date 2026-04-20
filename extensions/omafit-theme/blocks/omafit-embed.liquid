@@ -232,6 +232,48 @@
         assign cal_wear_position = cal_wear_x | append: ' ' | append: cal_wear_y | append: ' ' | append: cal_wear_z
       endif
     %}
+    {%- comment -%}
+      Deteção do tipo de acessório AR (glasses|necklace|watch|bracelet).
+      Prioridade:
+        1) tag explícita `ar:glasses|ar:necklace|ar:watch|ar:bracelet`
+        2) heurística sobre `product.type` (pt/en)
+        3) fallback: glasses
+      Deve ficar sincronizado com `detectAccessoryType` em app/ar-eyewear.server.js.
+    {%- endcomment -%}
+    {%- liquid
+      assign ar_type_guess = 'glasses'
+      assign ar_tags_lc = product.tags | join: ',' | downcase
+      if ar_tags_lc contains 'ar:watch'
+        assign ar_type_guess = 'watch'
+      elsif ar_tags_lc contains 'ar:bracelet'
+        assign ar_type_guess = 'bracelet'
+      elsif ar_tags_lc contains 'ar:necklace'
+        assign ar_type_guess = 'necklace'
+      elsif ar_tags_lc contains 'ar:glasses'
+        assign ar_type_guess = 'glasses'
+      else
+        assign pt_lc = product.type | downcase
+        if pt_lc contains 'relogio' or pt_lc contains 'relógio' or pt_lc contains 'watch'
+          assign ar_type_guess = 'watch'
+        elsif pt_lc contains 'pulseira' or pt_lc contains 'bracelet'
+          assign ar_type_guess = 'bracelet'
+        elsif pt_lc contains 'colar' or pt_lc contains 'necklace' or pt_lc contains 'pendant'
+          assign ar_type_guess = 'necklace'
+        elsif pt_lc contains 'oculo' or pt_lc contains 'óculos' or pt_lc contains 'glasses' or pt_lc contains 'sunglasses' or pt_lc contains 'eyewear'
+          assign ar_type_guess = 'glasses'
+        endif
+      endif
+
+      assign ar_anchor_default = 168
+      if ar_type_guess == 'necklace'
+        assign ar_anchor_default = 152
+      endif
+
+      assign ar_tracking_stack = 'face'
+      if ar_type_guess == 'watch' or ar_type_guess == 'bracelet'
+        assign ar_tracking_stack = 'hand'
+      endif
+    -%}
     <div
       id="omafit-ar-root"
       class="omafit-ar-root"
@@ -256,7 +298,9 @@
       data-ar-flip-ipd-axis=""
       data-ar-pose-lerp="0.92"
       data-ar-use-mp-matrix=""
-      data-ar-mindar-anchor="168"
+      data-ar-accessory-type="{{ ar_type_guess }}"
+      data-ar-tracking-stack="{{ ar_tracking_stack }}"
+      data-ar-mindar-anchor="{{ ar_anchor_default }}"
       data-ar-mindar-disable-mirror=""
       data-ar-mindar-model-scale="{{ cal_scale }}"
       data-ar-mindar-wear-yxz=""

@@ -14,6 +14,8 @@ import {
   invokeArEyewearGenerate,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
+  normalizeAccessoryType,
+  detectAccessoryTypeForProduct,
 } from "../ar-eyewear.server";
 import { fetchEyewearProductsForShop } from "../ar-eyewear-products.server";
 
@@ -88,7 +90,7 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   try {
-    const { session } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     if (!(await getShopArEyewearEnabled(session.shop))) {
       return Response.json({ error: "AR Eyewear disabled for this shop" }, { status: 403 });
     }
@@ -114,10 +116,15 @@ export async function action({ request }) {
       frameWidthMmRaw != null && String(frameWidthMmRaw).trim() !== ""
         ? Number(String(frameWidthMmRaw).replace(",", "."))
         : null;
+    const accessoryTypeRaw = String(body.accessoryType || "").trim();
 
     if (!productId) {
       return Response.json({ error: "productId is required" }, { status: 400 });
     }
+
+    const accessoryType =
+      normalizeAccessoryType(accessoryTypeRaw) ||
+      (await detectAccessoryTypeForProduct(admin, productId));
     if (!imageFrontUrl) {
       return Response.json({ error: "URL da imagem para geração 3D é obrigatória (imageFrontUrl)" }, { status: 400 });
     }
@@ -140,6 +147,7 @@ export async function action({ request }) {
       variant_id: variantId,
       status: "uploaded",
       frame_width_mm: Number.isFinite(frameWidthMm) ? frameWidthMm : null,
+      accessory_type: accessoryType,
     });
 
     const id = row.id;

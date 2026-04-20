@@ -62,6 +62,23 @@ const ESM_GLTF_MIND = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/GLT
 /** Sem `bundle`: `three` deduplica com `ESM_THREE_MJS`. */
 const ESM_MINDAR_FACE_THREE = `${ESM_SH}/mind-ar@1.2.5/dist/mindar-face-three.prod.js?deps=three@${ESM_THREE_VER}`;
 
+/**
+ * MediaPipe Tasks Vision para hand tracking (relógios, pulseiras).
+ * Só é carregado sob demanda quando `data-ar-tracking-stack="hand"`.
+ *
+ * - `tasks-vision` v0.10.22 expõe `HandLandmarker` com `detectForVideo`.
+ * - WASM + TFLite model vêm da Google CDN (gstatic).
+ *
+ * @see https://developers.google.com/mediapipe/solutions/vision/hand_landmarker/web_js
+ */
+const MEDIAPIPE_VISION_VER = "0.10.22";
+const ESM_MEDIAPIPE_VISION =
+  `${ESM_SH}/@mediapipe/tasks-vision@${MEDIAPIPE_VISION_VER}`;
+const MEDIAPIPE_WASM_BASE =
+  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VISION_VER}/wasm`;
+const MEDIAPIPE_HAND_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+
 const Z_SHELL = 2147483640;
 
 /**
@@ -164,6 +181,32 @@ function getOmafitArModuleBundle() {
     });
   }
   return window.__omafitArModuleBundlePromise;
+}
+
+/**
+ * Lazy-load do bundle de hand tracking: Three.js + GLTFLoader + MediaPipe
+ * Tasks Vision (HandLandmarker). Só chamado quando o produto é `watch` ou
+ * `bracelet` — lojas só de óculos não pagam o custo (~1MB WASM + 5MB model).
+ */
+function getOmafitArHandModuleBundle() {
+  if (typeof window === "undefined") {
+    return Promise.all([
+      import(ESM_THREE_MJS),
+      import(ESM_GLTF_MIND),
+      import(ESM_MEDIAPIPE_VISION),
+    ]);
+  }
+  if (!window.__omafitArHandModuleBundlePromise) {
+    window.__omafitArHandModuleBundlePromise = Promise.all([
+      import(ESM_THREE_MJS),
+      import(ESM_GLTF_MIND),
+      import(ESM_MEDIAPIPE_VISION),
+    ]).catch((e) => {
+      window.__omafitArHandModuleBundlePromise = null;
+      throw e;
+    });
+  }
+  return window.__omafitArHandModuleBundlePromise;
 }
 
 // #region agent log
@@ -1107,6 +1150,12 @@ async function runArSession({
 
   let mindarThree = null;
   let arResizeObserver = null;
+  /**
+   * Handler opcional instalado por motores alternativos (p.ex. MediaPipe
+   * Hand Landmarker) para libertar câmara, rAF loop, landmarker, etc.
+   * É chamado em cada `cleanup()` para garantir paridade com o face path.
+   */
+  let arEngineCleanup = null;
 
   const cleanup = () => {
     try {
@@ -1132,6 +1181,14 @@ async function runArSession({
       }
       mindarThree = null;
     }
+    if (typeof arEngineCleanup === "function") {
+      try {
+        arEngineCleanup();
+      } catch {
+        /* ignore */
+      }
+      arEngineCleanup = null;
+    }
   };
 
   const headerClose = header.querySelector("[data-omafit-ar-close-modal]");
@@ -1150,14 +1207,75 @@ async function runArSession({
   }
 
   try {
+    /**
+     * Dispatcher de stack de tracking com base no tipo de acessório emitido
+     * pelo Liquid em `data-ar-accessory-type` / `data-ar-tracking-stack`:
+     *   - glasses, necklace → MindAR Face (abaixo, stack legado)
+     *   - watch, bracelet  → MediaPipe Hand Landmarker (`runHandArSession`)
+     *
+     * Fallback: se o atributo vier vazio (temas antigos) assumimos `glasses`
+     * para não quebrar lojas existentes.
+     */
+    const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const embedCfg = typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
+    const accessoryTypeRaw = String(
+      (embedCfg?.dataset?.arAccessoryType ?? arCfg?.dataset?.arAccessoryType ?? "")
+        .toString()
+        .trim()
+        .toLowerCase(),
+    );
+    const trackingStackRaw = String(
+      (embedCfg?.dataset?.arTrackingStack ?? arCfg?.dataset?.arTrackingStack ?? "")
+        .toString()
+        .trim()
+        .toLowerCase(),
+    );
+    const accessoryType = ["glasses", "necklace", "watch", "bracelet"].includes(accessoryTypeRaw)
+      ? accessoryTypeRaw
+      : "glasses";
+    const trackingStack = trackingStackRaw === "hand" || trackingStackRaw === "face"
+      ? trackingStackRaw
+      : accessoryType === "watch" || accessoryType === "bracelet"
+        ? "hand"
+        : "face";
+
+    console.log(
+      `[omafit-ar] dispatcher: accessoryType=${accessoryType} trackingStack=${trackingStack}`,
+    );
+
+    if (trackingStack === "hand") {
+      const [threeModHand, gltfModuleHand, visionMod] = await getOmafitArHandModuleBundle();
+      const THREEHand =
+        threeModHand.default && typeof threeModHand.default.Group === "function"
+          ? threeModHand.default
+          : threeModHand;
+      const { GLTFLoader: GLTFLoaderHand } = gltfModuleHand;
+      const handCleanup = await runHandArSession({
+        THREE: THREEHand,
+        GLTFLoader: GLTFLoaderHand,
+        vision: visionMod,
+        arCfg,
+        embedCfg,
+        accessoryType,
+        arFit,
+        mindarHost,
+        loading,
+        glbUrl,
+        t,
+        variants,
+        productId,
+      });
+      if (typeof handCleanup === "function") {
+        arEngineCleanup = handCleanup;
+      }
+      return;
+    }
+
     const [threeMod, gltfModule, mindFaceMod] = await getOmafitArModuleBundle();
     const THREE =
       threeMod.default && typeof threeMod.default.Group === "function" ? threeMod.default : threeMod;
     const { GLTFLoader } = gltfModule;
     const MindARThree = mindFaceMod.MindARThree || mindFaceMod.default;
-
-    const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
-    const embedCfg = typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
     /** Valor não vazio em `#omafit-widget-root` sobrepõe `#omafit-ar-root` (evita só o wear no embed e o resto “partido”). */
     function cfgAttr(camelKey, fallback = "") {
       const ek = embedCfg?.dataset?.[camelKey];
@@ -1840,6 +1958,469 @@ async function runArSession({
     }
     cleanup();
   }
+}
+
+/**
+ * Sessão AR para acessórios de pulso (relógios, pulseiras) usando
+ * MediaPipe Hand Landmarker + Three.js directamente (sem MindAR).
+ *
+ * Hierarquia Three.js igual à do face path:
+ *   anchorGroup → wearPosition → calibRot → glbRoot
+ *
+ * `anchorGroup` é re-orientado a cada frame a partir de 3 landmarks:
+ *   - 0  (wrist)
+ *   - 5  (index finger MCP)
+ *   - 17 (pinky finger MCP)
+ * Estes três pontos definem um plano (costas/palma da mão) e uma base
+ * ortonormada {X, Y, Z} consistente com a face path:
+ *   - X = direcção pinky→index (largura do pulso, eixo lateral)
+ *   - Y = normal do plano da mão (costas/palma, “para cima”)
+ *   - Z = Y × X (perpendicular, “para a frente”)
+ *
+ * Retorna um callback de cleanup que é wired em `runArSession`.
+ */
+async function runHandArSession({
+  THREE,
+  GLTFLoader,
+  vision,
+  arCfg,
+  embedCfg,
+  accessoryType,
+  arFit,
+  mindarHost,
+  loading,
+  glbUrl,
+  t,
+  variants: _variants, // reservado para futura UI de variantes na hand path
+  productId: _productId,
+}) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const deg = (r) => (r * 180) / Math.PI;
+
+  function cfgAttr(camelKey, fallback = "") {
+    const ek = embedCfg?.dataset?.[camelKey];
+    if (ek !== undefined && String(ek).trim() !== "") return String(ek).trim();
+    const ak = arCfg?.dataset?.[camelKey];
+    if (ak !== undefined && String(ak).trim() !== "") return String(ak).trim();
+    return String(fallback ?? "").trim();
+  }
+
+  function parseEulerDegComponents(raw, defX, defY, defZ) {
+    const str = String(raw || "").trim();
+    if (!str) return { x: defX, y: defY, z: defZ };
+    const parts = str.split(/[\s,;]+/).map((t) => Number(t.trim()));
+    if (parts.length < 3 || parts.some((n) => Number.isNaN(n)))
+      return { x: defX, y: defY, z: defZ };
+    return { x: parts[0], y: parts[1], z: parts[2] };
+  }
+  function parseXyzMeters(raw, defX, defY, defZ) {
+    const str = String(raw || "").trim();
+    if (!str) return { x: defX, y: defY, z: defZ };
+    const parts = str.split(/[\s,;]+/).map((t) => Number(t.trim()));
+    if (parts.length < 3 || parts.some((n) => Number.isNaN(n)))
+      return { x: defX, y: defY, z: defZ };
+    return { x: parts[0], y: parts[1], z: parts[2] };
+  }
+
+  if (!window.isSecureContext) {
+    loading.textContent = t.errHttps || t.errGeneric;
+    throw new Error("omafit-ar: contexto não seguro (HTTPS).");
+  }
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    loading.textContent = t.errMediaDevices || t.errGeneric;
+    throw new Error("omafit-ar: getUserMedia indisponível.");
+  }
+
+  const debug = /[?&]omafit_ar_debug=1\b/.test(String(location?.search || ""));
+
+  loading.textContent = t.loadingCamera || t.loading || "A carregar câmara...";
+
+  const video = document.createElement("video");
+  video.setAttribute("playsinline", "");
+  video.muted = true;
+  video.autoplay = true;
+  Object.assign(video.style, {
+    position: "absolute",
+    inset: "0",
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    transform: "scaleX(-1)",
+    zIndex: "1",
+  });
+  mindarHost.appendChild(video);
+
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+  } catch (e) {
+    loading.textContent = t.errCamera || t.errGeneric;
+    throw e;
+  }
+  video.srcObject = stream;
+  await new Promise((resolve, reject) => {
+    const onLoaded = () => {
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("error", onErr);
+      resolve();
+    };
+    const onErr = (e) => {
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("error", onErr);
+      reject(e);
+    };
+    video.addEventListener("loadedmetadata", onLoaded);
+    video.addEventListener("error", onErr);
+  });
+  await video.play().catch(() => {});
+
+  loading.textContent = t.loadingTracking || t.loading || "A carregar tracking...";
+
+  const { FilesetResolver, HandLandmarker } = vision;
+  const filesetResolver = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE);
+  const handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_HAND_MODEL_URL,
+      delegate: "GPU",
+    },
+    runningMode: "VIDEO",
+    numHands: 1,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+
+  const canvas = document.createElement("canvas");
+  Object.assign(canvas.style, {
+    position: "absolute",
+    inset: "0",
+    width: "100%",
+    height: "100%",
+    zIndex: "2",
+    pointerEvents: "none",
+  });
+  mindarHost.appendChild(canvas);
+
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    alpha: true,
+    antialias: true,
+    preserveDrawingBuffer: false,
+  });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  const hostRect = () => mindarHost.getBoundingClientRect();
+  const resizeRenderer = () => {
+    const r = hostRect();
+    const w = Math.max(1, Math.floor(r.width));
+    const h = Math.max(1, Math.floor(r.height));
+    renderer.setSize(w, h, false);
+    if (camera) {
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+  };
+
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
+
+  const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 100);
+  camera.position.set(0, 0, 0);
+  camera.lookAt(0, 0, -1);
+
+  /**
+   * Hierarquia espelha a face path para paridade com o preview do admin:
+   *   anchor → wearPosition → calibRot → glbRoot
+   */
+  const anchor = new THREE.Group();
+  anchor.matrixAutoUpdate = false;
+  scene.add(anchor);
+
+  const wearPosition = new THREE.Group();
+  anchor.add(wearPosition);
+
+  const calibRot = new THREE.Group();
+  wearPosition.add(calibRot);
+
+  const glbRoot = new THREE.Group();
+  glbRoot.visible = false;
+  calibRot.add(glbRoot);
+
+  // Apply stored calibration to the transform hierarchy.
+  const fix = parseEulerDegComponents(cfgAttr("arCanonicalFixYxz", "0, 0, 0"), 0, 0, 0);
+  const wearXYZ = parseXyzMeters(cfgAttr("arMindarWearPosition", "0 0 0"), 0, 0, 0);
+  const userScale = Number(cfgAttr("arMindarModelScale", "1")) || 1;
+
+  const applyCalibRot = () => {
+    calibRot.rotation.set(0, 0, 0);
+    calibRot.quaternion.identity();
+    const axisX = new THREE.Vector3(1, 0, 0);
+    const axisY = new THREE.Vector3(0, 1, 0);
+    const axisZ = new THREE.Vector3(0, 0, 1);
+    calibRot.rotateOnWorldAxis(axisY, rad(fix.y));
+    calibRot.rotateOnWorldAxis(axisX, rad(fix.x));
+    calibRot.rotateOnWorldAxis(axisZ, rad(fix.z));
+  };
+  applyCalibRot();
+
+  wearPosition.position.set(wearXYZ.x, wearXYZ.y, wearXYZ.z);
+
+  // Load the GLB.
+  const glbLoader = new GLTFLoader();
+  const versionHint =
+    arCfg?.dataset?.arGlbVersion || arCfg?.getAttribute?.("data-ar-glb-version") || "";
+  const finalGlbUrl = buildGlbLoaderUrl(glbUrl, versionHint);
+  let baseScale = 0.1;
+  await new Promise((resolve, reject) => {
+    glbLoader.load(
+      finalGlbUrl,
+      (gltf) => {
+        const glbScene = gltf.scene || gltf.scenes?.[0];
+        if (!glbScene) {
+          reject(new Error("GLB sem cena"));
+          return;
+        }
+        bakeGLBTransforms(THREE, glbScene, ({ baked, skipped }) => {
+          console.log(
+            `[omafit-ar] hand GLB baked meshes=${baked} skipped=${skipped}`,
+          );
+        });
+        glbRoot.add(glbScene);
+
+        const bbox = new THREE.Box3().setFromObject(glbScene);
+        const size = new THREE.Vector3();
+        bbox.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        // Relógios típicos: ~0.05 m de largura; pulseiras: ~0.07 m.
+        const targetSize = accessoryType === "bracelet" ? 0.085 : 0.07;
+        baseScale = targetSize / maxDim;
+        glbRoot.scale.setScalar(baseScale * (userScale > 0 ? userScale : 1));
+
+        const center = new THREE.Vector3();
+        bbox.getCenter(center);
+        glbScene.position.sub(center);
+
+        glbRoot.visible = true;
+        resolve();
+      },
+      undefined,
+      (err) => reject(err),
+    );
+  });
+
+  if (debug) {
+    anchor.add(new THREE.AxesHelper(0.1));
+    const marker = new THREE.Mesh(
+      new THREE.BoxGeometry(0.01, 0.01, 0.01),
+      new THREE.MeshBasicMaterial({ color: 0xff00ff }),
+    );
+    anchor.add(marker);
+  }
+
+  // Size + start animation loop.
+  resizeRenderer();
+  const ro = new ResizeObserver(() => resizeRenderer());
+  ro.observe(mindarHost);
+
+  const tmpMat = new THREE.Matrix4();
+  const tmpX = new THREE.Vector3();
+  const tmpY = new THREE.Vector3();
+  const tmpZ = new THREE.Vector3();
+  const tmpPos = new THREE.Vector3();
+  const tmpCross = new THREE.Vector3();
+
+  let running = true;
+  let lastHandTimestamp = -1;
+  let rafId = 0;
+  let missedFrames = 0;
+  const MISSED_HIDE_THRESHOLD = 6;
+
+  /**
+   * Converte um landmark de imagem normalizada (x,y ∈ [0,1], z depth
+   * relativo ao wrist) para um ponto em “espaço da câmara” da cena
+   * Three.js.
+   *
+   * Assumimos o vídeo está `scaleX(-1)` (mirror selfie), por isso
+   * invertemos x antes de projectar: em landmarks o x=0 é à esquerda do
+   * frame original, mas o utilizador vê espelhado.
+   *
+   * O plano de projecção está a distância `zDist` da câmara, escolhida
+   * para que a largura do hand-span normalizado mapeie para ~0.1 m
+   * (tamanho típico do dorso da mão). Isto dá-nos um scale razoável
+   * consistente com o preview do admin.
+   */
+  function unprojectLandmark(lm, zDist) {
+    const fov = rad(camera.fov);
+    const h = 2 * Math.tan(fov / 2) * zDist;
+    const w = h * camera.aspect;
+    const xMirrored = 1 - lm.x;
+    return new THREE.Vector3((xMirrored - 0.5) * w, -(lm.y - 0.5) * h, -zDist);
+  }
+
+  function updateAnchorFromHand(lms) {
+    // Estimate depth from normalized hand span (wrist → middle MCP distance).
+    const wristN = lms[0];
+    const middleMcpN = lms[9] || lms[5];
+    const dx = middleMcpN.x - wristN.x;
+    const dy = middleMcpN.y - wristN.y;
+    const spanN = Math.sqrt(dx * dx + dy * dy);
+    // Mapear tamanho normalizado da mão (tipicamente 0.1-0.3 do frame em selfie)
+    // para distância à câmara (0.25 m quando a mão ocupa ~25% do frame).
+    const zDist = Math.max(0.12, Math.min(1.2, 0.06 / Math.max(0.02, spanN)));
+
+    const wristW = unprojectLandmark(wristN, zDist);
+    const indexW = unprojectLandmark(lms[5], zDist * 0.98);
+    const pinkyW = unprojectLandmark(lms[17], zDist * 0.98);
+
+    tmpX.subVectors(indexW, pinkyW).normalize();
+    tmpCross.subVectors(indexW, wristW);
+    tmpZ.subVectors(pinkyW, wristW);
+    tmpY.crossVectors(tmpCross, tmpZ).normalize();
+    // Re-orthogonalize Z = X × Y so the basis is perfectly ortonormal.
+    tmpZ.crossVectors(tmpX, tmpY).normalize();
+
+    tmpPos.copy(wristW);
+    tmpMat.makeBasis(tmpX, tmpY, tmpZ);
+    tmpMat.setPosition(tmpPos);
+    anchor.matrix.copy(tmpMat);
+    anchor.matrixWorldNeedsUpdate = true;
+  }
+
+  function tick() {
+    if (!running) return;
+    rafId = requestAnimationFrame(tick);
+    if (video.readyState < 2) {
+      renderer.render(scene, camera);
+      return;
+    }
+    const nowTs = performance.now();
+    if (nowTs === lastHandTimestamp) {
+      renderer.render(scene, camera);
+      return;
+    }
+    lastHandTimestamp = nowTs;
+
+    let res = null;
+    try {
+      res = handLandmarker.detectForVideo(video, nowTs);
+    } catch (e) {
+      console.warn("[omafit-ar] handLandmarker.detectForVideo:", e?.message || e);
+    }
+
+    const landmarks = res?.landmarks?.[0];
+    if (landmarks && landmarks.length >= 18) {
+      missedFrames = 0;
+      updateAnchorFromHand(landmarks);
+      anchor.visible = true;
+    } else {
+      missedFrames += 1;
+      if (missedFrames > MISSED_HIDE_THRESHOLD) {
+        anchor.visible = false;
+      }
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  loading.style.display = "none";
+  rafId = requestAnimationFrame(tick);
+
+  // Live variant override hook: compatível com o face path.
+  const prevSwitch = window.__omafitArSwitchGlb || null;
+  window.__omafitArSwitchGlb = async (nextUrl, cal) => {
+    try {
+      if (cal && typeof cal === "object") {
+        if (Number.isFinite(Number(cal.rx))) fix.x = Number(cal.rx);
+        if (Number.isFinite(Number(cal.ry))) fix.y = Number(cal.ry);
+        if (Number.isFinite(Number(cal.rz))) fix.z = Number(cal.rz);
+        applyCalibRot();
+        if (Number.isFinite(Number(cal.wearX))) wearPosition.position.x = Number(cal.wearX);
+        if (Number.isFinite(Number(cal.wearY))) wearPosition.position.y = Number(cal.wearY);
+        if (Number.isFinite(Number(cal.wearZ))) wearPosition.position.z = Number(cal.wearZ);
+        if (Number.isFinite(Number(cal.scale)) && Number(cal.scale) > 0) {
+          glbRoot.scale.setScalar(baseScale * Number(cal.scale));
+        }
+      }
+      if (nextUrl && typeof nextUrl === "string") {
+        await new Promise((resolve) => {
+          glbLoader.load(
+            buildGlbLoaderUrl(nextUrl, versionHint),
+            (gltf) => {
+              const next = gltf.scene || gltf.scenes?.[0];
+              if (!next) return resolve();
+              bakeGLBTransforms(THREE, next, () => {});
+              while (glbRoot.children.length) glbRoot.remove(glbRoot.children[0]);
+              glbRoot.add(next);
+              const bbox = new THREE.Box3().setFromObject(next);
+              const size = new THREE.Vector3();
+              bbox.getSize(size);
+              const maxDim = Math.max(size.x, size.y, size.z) || 1;
+              const targetSize = accessoryType === "bracelet" ? 0.085 : 0.07;
+              baseScale = targetSize / maxDim;
+              const s = Number(cal?.scale);
+              glbRoot.scale.setScalar(baseScale * (Number.isFinite(s) && s > 0 ? s : 1));
+              const center = new THREE.Vector3();
+              bbox.getCenter(center);
+              next.position.sub(center);
+              resolve();
+            },
+            undefined,
+            () => resolve(),
+          );
+        });
+      }
+    } catch (e) {
+      console.warn("[omafit-ar] hand switchGlb falhou:", e?.message || e);
+    }
+  };
+
+  return function cleanupHand() {
+    running = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = 0;
+    try {
+      ro.disconnect();
+    } catch {
+      /* ignore */
+    }
+    try {
+      handLandmarker.close?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      renderer.dispose();
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (canvas?.parentNode) canvas.parentNode.removeChild(canvas);
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (video?.parentNode) video.parentNode.removeChild(video);
+    } catch {
+      /* ignore */
+    }
+    try {
+      stream?.getTracks()?.forEach((tr) => tr.stop());
+    } catch {
+      /* ignore */
+    }
+    if (window.__omafitArSwitchGlb && prevSwitch == null) {
+      window.__omafitArSwitchGlb = null;
+    }
+    void arFit;
+    void deg;
+  };
 }
 
 let __omafitArMainStarted = false;

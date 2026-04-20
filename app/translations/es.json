@@ -399,6 +399,16 @@
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoría",
     "queueWorkerBanner": "Hay envíos en procesamiento. Actualiza en unos instantes para seguir el progreso y publicar los nuevos modelos 3D.",
+    "accessoryType": {
+      "glasses": "Gafas",
+      "necklace": "Collar",
+      "watch": "Reloj",
+      "bracelet": "Pulsera"
+    },
+    "detection": {
+      "detectedLabel": "Tipo detectado",
+      "hint": "Detectamos el tipo a partir de las etiquetas (ej.: ar:watch, ar:necklace) y luego por el tipo de producto de Shopify. Para sobrescribir, añade una etiqueta como ar:watch, ar:bracelet, ar:necklace o ar:glasses al producto antes de enviar."
+    },
     "calibrate": {
       "openButton": "Calibrar posición",
       "title": "Calibrar el modelo 3D sobre el rostro",

@@ -39,6 +39,8 @@ import {
   setVariantArCalibrationMetafield,
   sanitizeArCalibrationInput,
   defaultArCalibration,
+  detectAccessoryType,
+  normalizeAccessoryType,
   storageCreateSignedUrl,
 } from "../ar-eyewear.server.js";
 import { useAppI18n } from "../contexts/AppI18n";
@@ -109,8 +111,15 @@ export async function loader({ request, params }) {
     console.warn("[calibrate] fetchProductArCalibrationContext:", e?.message || e);
   }
 
+  const accessoryType =
+    normalizeAccessoryType(row.accessory_type) ||
+    detectAccessoryType({
+      tags: productContext?.tags,
+      productType: productContext?.productType,
+    });
+
   const productCalibration =
-    productContext?.productCalibration || defaultArCalibration();
+    productContext?.productCalibration || defaultArCalibration(accessoryType);
 
   const variants = (productContext?.variants || []).map((v) => ({
     id: v.id,
@@ -127,13 +136,15 @@ export async function loader({ request, params }) {
       variant_id: row.variant_id || null,
       status: row.status,
       product_name: row.product_name || productContext?.title || "",
+      accessory_type: accessoryType,
     },
+    accessoryType,
     productTitle: productContext?.title || row.product_name || "",
     productImageUrl: productContext?.featuredImageUrl || "",
     glbPreviewUrl,
     productCalibration,
     variants,
-    defaultCalibration: defaultArCalibration(),
+    defaultCalibration: defaultArCalibration(accessoryType),
   };
 }
 
@@ -341,7 +352,11 @@ export default function ArEyewearCalibratePage() {
                     borderRadius: "8px",
                   }}
                 >
-                  <FaceSilhouette />
+                  {data.accessoryType === "watch" || data.accessoryType === "bracelet" ? (
+                    <HandSilhouette />
+                  ) : (
+                    <FaceSilhouette />
+                  )}
                   <PreviewModel src={data.glbPreviewUrl} cal={cal} />
                   <div
                     style={{
@@ -369,7 +384,13 @@ export default function ArEyewearCalibratePage() {
                     <Text as="h2" variant="headingMd">
                       {data.productTitle || data.asset.product_name || t("arEyewear.productUnknown")}
                     </Text>
-                    <Badge tone="info">{t(`arEyewear.status.${data.asset.status}`)}</Badge>
+                    <InlineStack gap="200" wrap>
+                      <Badge tone="info">{t(`arEyewear.status.${data.asset.status}`)}</Badge>
+                      <Badge tone="attention">
+                        {t(`arEyewear.accessoryType.${data.accessoryType}`) ||
+                          data.accessoryType}
+                      </Badge>
+                    </InlineStack>
                   </BlockStack>
 
                   {data.variants.length > 1 ? (
@@ -406,7 +427,13 @@ export default function ArEyewearCalibratePage() {
 
                   <Divider />
 
-                  <CalibrationSliders cal={cal} setField={setField} setCal={setCal} t={t} />
+                  <CalibrationSliders
+                    cal={cal}
+                    setField={setField}
+                    setCal={setCal}
+                    t={t}
+                    accessoryType={data.accessoryType}
+                  />
 
                   <Divider />
 
@@ -1051,9 +1078,24 @@ function applyCalibrationToState(s, cal) {
 }
 
 
-function CalibrationSliders({ cal, setField, setCal, t }) {
+function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
   const resetRotation = () => {
     setCal((prev) => ({ ...prev, rx: 0, ry: 0, rz: 0 }));
+  };
+  /**
+   * Tenta primeiro a key tipada (sibling `${leaf}ByType.<type>`) e só cai
+   * para a key genérica se a tipada devolver a própria key (sinal de que
+   * não existe no dicionário). Exemplo:
+   *   baseKey="arEyewear.calibrate.sliders.tilt.help"
+   *   tipada="arEyewear.calibrate.sliders.tilt.helpByType.watch"
+   */
+  const tt = (baseKey) => {
+    const parts = baseKey.split(".");
+    const leaf = parts.pop();
+    const typedKey = [...parts, `${leaf}ByType`, accessoryType].join(".");
+    const typed = t(typedKey);
+    if (typed && typed !== typedKey) return typed;
+    return t(baseKey);
   };
   return (
     <BlockStack gap="300">
@@ -1067,8 +1109,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       </InlineStack>
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.tilt.label")}
-        helpText={t("arEyewear.calibrate.sliders.tilt.help")}
+        label={tt("arEyewear.calibrate.sliders.tilt.label")}
+        helpText={tt("arEyewear.calibrate.sliders.tilt.help")}
         min={-180}
         max={180}
         step={1}
@@ -1078,8 +1120,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       />
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.yaw.label")}
-        helpText={t("arEyewear.calibrate.sliders.yaw.help")}
+        label={tt("arEyewear.calibrate.sliders.yaw.label")}
+        helpText={tt("arEyewear.calibrate.sliders.yaw.help")}
         min={-180}
         max={180}
         step={1}
@@ -1089,8 +1131,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       />
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.roll.label")}
-        helpText={t("arEyewear.calibrate.sliders.roll.help")}
+        label={tt("arEyewear.calibrate.sliders.roll.label")}
+        helpText={tt("arEyewear.calibrate.sliders.roll.help")}
         min={-180}
         max={180}
         step={1}
@@ -1107,8 +1149,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       */}
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.nudgeY.label")}
-        helpText={t("arEyewear.calibrate.sliders.nudgeY.help")}
+        label={tt("arEyewear.calibrate.sliders.nudgeY.label")}
+        helpText={tt("arEyewear.calibrate.sliders.nudgeY.help")}
         min={-0.15}
         max={0.15}
         step={0.005}
@@ -1118,8 +1160,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       />
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.depth.label")}
-        helpText={t("arEyewear.calibrate.sliders.depth.help")}
+        label={tt("arEyewear.calibrate.sliders.depth.label")}
+        helpText={tt("arEyewear.calibrate.sliders.depth.help")}
         min={-0.05}
         max={0.05}
         step={0.001}
@@ -1129,8 +1171,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       />
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.nudgeX.label")}
-        helpText={t("arEyewear.calibrate.sliders.nudgeX.help")}
+        label={tt("arEyewear.calibrate.sliders.nudgeX.label")}
+        helpText={tt("arEyewear.calibrate.sliders.nudgeX.help")}
         min={-0.05}
         max={0.05}
         step={0.001}
@@ -1140,8 +1182,8 @@ function CalibrationSliders({ cal, setField, setCal, t }) {
       />
       <RangeSlider
         output
-        label={t("arEyewear.calibrate.sliders.scale.label")}
-        helpText={t("arEyewear.calibrate.sliders.scale.help")}
+        label={tt("arEyewear.calibrate.sliders.scale.label")}
+        helpText={tt("arEyewear.calibrate.sliders.scale.help")}
         min={0.5}
         max={1.8}
         step={0.01}
@@ -1196,6 +1238,54 @@ function FaceSilhouette() {
       <path d="M170 340 Q200 358 230 340" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" />
       {/* Eye line reference */}
       <line x1="60" y1="230" x2="340" y2="230" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 6" />
+    </svg>
+  );
+}
+
+function HandSilhouette() {
+  return (
+    <svg
+      viewBox="0 0 400 500"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        pointerEvents: "none",
+      }}
+      aria-hidden="true"
+    >
+      <defs>
+        <radialGradient id="handGrad" cx="50%" cy="50%" r="55%">
+          <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
+          <stop offset="60%" stopColor="rgba(255,255,255,0.08)" />
+          <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+        </radialGradient>
+      </defs>
+      {/* Forearm */}
+      <rect x="150" y="330" width="100" height="160" rx="50" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+      {/* Wrist line (reference for watch/bracelet) */}
+      <line x1="140" y1="340" x2="260" y2="340" stroke="rgba(255,255,255,0.45)" strokeWidth="2" strokeDasharray="6 4" />
+      {/* Palm */}
+      <path
+        d="M170 335 Q162 260 178 200 Q188 170 200 170 Q214 170 220 200 Q236 260 230 335 Z"
+        fill="url(#handGrad)"
+        stroke="rgba(255,255,255,0.25)"
+        strokeWidth="1.5"
+      />
+      {/* Thumb */}
+      <path d="M172 300 Q130 270 128 230 Q130 210 148 212 Q168 218 178 250" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+      {/* Index */}
+      <path d="M184 200 Q180 130 188 100 Q196 90 200 100 Q204 130 200 200" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+      {/* Middle */}
+      <path d="M200 200 Q198 115 206 80 Q214 72 218 82 Q222 115 216 200" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+      {/* Ring */}
+      <path d="M216 200 Q216 125 224 95 Q232 88 234 98 Q236 125 230 200" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+      {/* Pinky */}
+      <path d="M230 205 Q232 150 238 128 Q244 122 246 130 Q248 160 240 205" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
+      {/* Center dot (wrist anchor reference) */}
+      <circle cx="200" cy="340" r="4" fill="rgba(255,255,255,0.55)" />
     </svg>
   );
 }

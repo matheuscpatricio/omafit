@@ -17,6 +17,8 @@ import {
   invokeArEyewearGenerate,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
+  normalizeAccessoryType,
+  detectAccessoryTypeForProduct,
 } from "../ar-eyewear.server";
 
 const BUCKET_UPLOADS = "ar-eyewear-uploads";
@@ -87,7 +89,7 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   try {
-    const { session } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     if (!(await getShopArEyewearEnabled(session.shop))) {
       return Response.json({ error: "AR Eyewear disabled for this shop" }, { status: 403 });
     }
@@ -116,6 +118,10 @@ export async function action({ request }) {
       frameWidthMmRaw != null && String(frameWidthMmRaw).trim() !== ""
         ? Number(String(frameWidthMmRaw).replace(",", "."))
         : null;
+    const accessoryTypeRaw = String(form.get("accessoryType") || "").trim();
+    const accessoryType =
+      normalizeAccessoryType(accessoryTypeRaw) ||
+      (await detectAccessoryTypeForProduct(admin, productId));
 
     const front = form.get("front");
     const threeQuarter = form.get("threeQuarter");
@@ -146,6 +152,7 @@ export async function action({ request }) {
       variant_id: variantId,
       status: "uploaded",
       frame_width_mm: Number.isFinite(frameWidthMm) ? frameWidthMm : null,
+      accessory_type: accessoryType,
     });
 
     const id = row.id;

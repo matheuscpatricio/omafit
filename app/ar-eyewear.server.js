@@ -590,10 +590,91 @@ export function sanitizeArCalibrationInput(raw) {
   };
 }
 
+/**
+ * Tipos de acessório AR suportados. Determina a stack de tracking e os
+ * defaults de calibração. Fallback: `glasses` (retrocompatível com assets
+ * antigos sem `accessory_type`).
+ */
+export const AR_ACCESSORY_TYPES = Object.freeze([
+  "glasses",
+  "necklace",
+  "watch",
+  "bracelet",
+]);
+
+export const AR_ACCESSORY_TYPE_DEFAULT = "glasses";
+
+/**
+ * Normaliza um valor qualquer para um tipo de acessório válido.
+ * Retorna `null` se não reconhecido (útil para distinguir NULL na BD).
+ */
+export function normalizeAccessoryType(value) {
+  const v = String(value || "").trim().toLowerCase();
+  if (AR_ACCESSORY_TYPES.includes(v)) return v;
+  return null;
+}
+
+/**
+ * Heurística para inferir o tipo de acessório a partir de tags e
+ * `product.type` do Shopify. Prioridade:
+ *   1) tags `ar:glasses|ar:necklace|ar:watch|ar:bracelet`
+ *   2) `product.type` contém uma palavra-chave conhecida (pt/en)
+ *   3) fallback → `glasses`
+ *
+ * Parâmetros aceitam strings ou arrays; strings de tags podem ser CSV.
+ */
+export function detectAccessoryType({ tags, productType } = {}) {
+  const tagList = (() => {
+    if (Array.isArray(tags)) return tags;
+    if (typeof tags === "string") return tags.split(",");
+    return [];
+  })()
+    .map((t) => String(t || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const tag of tagList) {
+    const m = tag.match(/^ar[:\-_]?(glasses|necklace|watch|bracelet|oculos|colar|relogio|pulseira)$/);
+    if (m) {
+      const key = m[1];
+      if (key === "oculos") return "glasses";
+      if (key === "colar") return "necklace";
+      if (key === "relogio") return "watch";
+      if (key === "pulseira") return "bracelet";
+      return key;
+    }
+  }
+
+  const pt = String(productType || "").toLowerCase();
+  if (pt) {
+    if (/\b(oculo|oculos|óculos|glasses|sunglasses|eyewear)\b/.test(pt)) return "glasses";
+    if (/\b(colar|colares|necklace|pendant)\b/.test(pt)) return "necklace";
+    if (/\b(relogio|relógio|relogios|watch|watches)\b/.test(pt)) return "watch";
+    if (/\b(pulseira|pulseiras|bracelet|bracelets)\b/.test(pt)) return "bracelet";
+  }
+
+  return AR_ACCESSORY_TYPE_DEFAULT;
+}
+
+/**
+ * Defaults de calibração por tipo. Cada tipo tem uma rotação/posição base
+ * diferente para que o lojista parta de um ponto razoável (ex: colar já
+ * começa com wearY negativo para descer ao pescoço).
+ *
+ * Os valores retornados JÁ passam por `sanitizeArCalibrationInput` (clamp).
+ */
+const AR_CALIBRATION_DEFAULTS_BY_TYPE = {
+  glasses: {},
+  necklace: { wearY: -0.12 },
+  watch: { scale: 1, wearY: 0 },
+  bracelet: { scale: 1.1, wearY: 0 },
+};
+
 const DEFAULT_AR_CALIBRATION = sanitizeArCalibrationInput({});
 
-export function defaultArCalibration() {
-  return { ...DEFAULT_AR_CALIBRATION };
+export function defaultArCalibration(accessoryType) {
+  const type = normalizeAccessoryType(accessoryType) || AR_ACCESSORY_TYPE_DEFAULT;
+  const overrides = AR_CALIBRATION_DEFAULTS_BY_TYPE[type] || {};
+  return sanitizeArCalibrationInput({ ...DEFAULT_AR_CALIBRATION, ...overrides });
 }
 
 export async function ensureArCalibrationMetafieldDefinition(admin) {
@@ -687,6 +768,8 @@ const GET_PRODUCT_AR_CALIBRATION = `#graphql
     product(id: $id) {
       id
       title
+      productType
+      tags
       featuredImage { url }
       calibration: metafield(namespace: "omafit", key: "ar_calibration") { value }
       glb: metafield(namespace: "omafit", key: "ar_glb_url") { value }
@@ -721,6 +804,8 @@ export async function fetchProductArCalibrationContext(admin, productId) {
   return {
     id: product.id,
     title: product.title || "",
+    productType: product.productType || "",
+    tags: Array.isArray(product.tags) ? product.tags : [],
     featuredImageUrl: product.featuredImage?.url || "",
     productGlbUrl: product.glb?.value || "",
     productCalibration: parseCal(product.calibration?.value),
@@ -732,6 +817,38 @@ export async function fetchProductArCalibrationContext(admin, productId) {
       calibration: parseCal(v.calibration?.value),
     })),
   };
+}
+
+/**
+ * Faz uma query rápida à Shopify para obter `productType` + `tags`, e
+ * devolve o tipo de acessório detectado via `detectAccessoryType`.
+ * Usado quando o cliente não enviou `accessoryType` explicitamente
+ * (ex: ao criar um asset AR novo).
+ */
+export async function detectAccessoryTypeForProduct(admin, productId) {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query ArAccessoryTypeProbe($id: ID!) {
+          product(id: $id) { productType tags }
+        }
+      `,
+      { variables: { id: toProductGid(productId) } },
+    );
+    const json = await response.json();
+    const p = json?.data?.product;
+    if (!p) return AR_ACCESSORY_TYPE_DEFAULT;
+    return detectAccessoryType({
+      tags: p.tags,
+      productType: p.productType,
+    });
+  } catch (e) {
+    console.warn(
+      "[ar-eyewear] detectAccessoryTypeForProduct falhou:",
+      e?.message || e,
+    );
+    return AR_ACCESSORY_TYPE_DEFAULT;
+  }
 }
 
 export async function getShopArEyewearEnabled(shopDomain) {

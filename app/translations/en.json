@@ -399,6 +399,16 @@
     "productTypeLabel": "Type",
     "categoryLabel": "Category",
     "queueWorkerBanner": "Some submissions are being processed. Refresh shortly to follow progress and publish the new 3D models.",
+    "accessoryType": {
+      "glasses": "Glasses",
+      "necklace": "Necklace",
+      "watch": "Watch",
+      "bracelet": "Bracelet"
+    },
+    "detection": {
+      "detectedLabel": "Detected type",
+      "hint": "We detect the type from Shopify tags (e.g. ar:watch, ar:necklace) first, then fall back to the product type. To override, add a tag such as ar:watch, ar:bracelet, ar:necklace or ar:glasses to the product before uploading."
+    },
     "calibrate": {
       "openButton": "Calibrate position",
       "title": "Calibrate the 3D model on the face",
@@ -428,15 +438,30 @@
       "sliders": {
         "tilt": {
           "label": "Tilt up / down",
-          "help": "Use this if the model is leaning forwards or backwards."
+          "help": "Use this if the model is leaning forwards or backwards.",
+          "helpByType": {
+            "watch": "Use this if the watch appears tilted forwards or backwards on top of the wrist.",
+            "bracelet": "Use this if the bracelet appears tilted forwards or backwards on the wrist.",
+            "necklace": "Use this if the necklace appears tilted forwards or backwards on the neck."
+          }
         },
         "yaw": {
           "label": "Turn left / right",
-          "help": "Use this if the model is showing its side instead of facing forward."
+          "help": "Use this if the model is showing its side instead of facing forward.",
+          "helpByType": {
+            "watch": "Use this if the watch face is turned sideways instead of facing the camera.",
+            "bracelet": "Use this if the bracelet looks twisted sideways instead of following the wrist.",
+            "necklace": "Use this if the pendant is turned sideways instead of facing forward."
+          }
         },
         "roll": {
           "label": "Roll sideways",
-          "help": "Straighten the model if it appears tilted to one side."
+          "help": "Straighten the model if it appears tilted to one side.",
+          "helpByType": {
+            "watch": "Rolls the watch around the arm — one side lifts while the other drops.",
+            "bracelet": "Rolls the bracelet around the arm — one side lifts while the other drops.",
+            "necklace": "Rolls the necklace around the neck axis."
+          }
         },
         "height": {
           "label": "Height on face",
@@ -444,19 +469,49 @@
         },
         "depth": {
           "label": "Move closer / further from the face",
-          "help": "Bring the model closer or push it slightly away from the face."
+          "labelByType": {
+            "watch": "Move closer / further from the wrist",
+            "bracelet": "Move closer / further from the wrist",
+            "necklace": "Move closer / further from the neck"
+          },
+          "help": "Bring the model closer or push it slightly away from the face.",
+          "helpByType": {
+            "watch": "Bring the watch closer to the skin or push it slightly away from the wrist.",
+            "bracelet": "Bring the bracelet closer to the skin or push it slightly away from the wrist.",
+            "necklace": "Bring the necklace closer to the skin or push it slightly away from the neck."
+          }
         },
         "nudgeY": {
           "label": "Height on face",
-          "help": "Moves the glasses up or down (in cm) to align with the eyeline."
+          "labelByType": {
+            "watch": "Position along the wrist",
+            "bracelet": "Position along the wrist",
+            "necklace": "Height on the neck"
+          },
+          "help": "Moves the glasses up or down (in cm) to align with the eyeline.",
+          "helpByType": {
+            "watch": "Slides the watch along the arm (in cm) — tweak if it sits above or below the wrist bone.",
+            "bracelet": "Slides the bracelet along the arm (in cm) — useful to place it exactly where the customer would wear it.",
+            "necklace": "Raises or lowers the necklace (in cm) — adjust until the pendant sits at the desired chest height."
+          }
         },
         "nudgeX": {
           "label": "Nudge sideways",
-          "help": "Center the model if it looks shifted to the left or right."
+          "help": "Center the model if it looks shifted to the left or right.",
+          "helpByType": {
+            "watch": "Nudges the watch left or right on the wrist — useful if it sits off-center.",
+            "bracelet": "Nudges the bracelet left or right on the wrist.",
+            "necklace": "Nudges the necklace left or right on the neck."
+          }
         },
         "scale": {
           "label": "Size",
-          "help": "Makes the whole model bigger or smaller. Use sparingly: too big covers the face."
+          "help": "Makes the whole model bigger or smaller. Use sparingly: too big covers the face.",
+          "helpByType": {
+            "watch": "Makes the watch bigger or smaller. Too small and it vanishes on the wrist; too big and it looks unrealistic.",
+            "bracelet": "Makes the bracelet bigger or smaller. Use sparingly: too big starts to look like a cuff.",
+            "necklace": "Makes the necklace bigger or smaller. Use sparingly: too big covers the whole neck."
+          }
         }
       }
     }

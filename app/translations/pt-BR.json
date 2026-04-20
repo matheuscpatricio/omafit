@@ -399,6 +399,16 @@
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoria",
     "queueWorkerBanner": "Existem envios em processamento. Atualize em instantes para acompanhar o andamento e publicar os novos modelos 3D.",
+    "accessoryType": {
+      "glasses": "Óculos",
+      "necklace": "Colar",
+      "watch": "Relógio",
+      "bracelet": "Pulseira"
+    },
+    "detection": {
+      "detectedLabel": "Tipo detectado",
+      "hint": "Detectamos o tipo a partir das tags (ex.: ar:watch, ar:necklace) e depois do tipo de produto da Shopify. Para sobrepor, adicione uma tag como ar:watch, ar:bracelet, ar:necklace ou ar:glasses ao produto antes de enviar."
+    },
     "calibrate": {
       "openButton": "Calibrar posição",
       "title": "Calibrar o modelo 3D no rosto",
@@ -428,15 +438,30 @@
       "sliders": {
         "tilt": {
           "label": "Girar para cima / para baixo",
-          "help": "Use se o modelo aparecer tombado para frente ou para trás."
+          "help": "Use se o modelo aparecer tombado para frente ou para trás.",
+          "helpByType": {
+            "watch": "Use se o relógio aparecer tombado para a frente ou para trás em cima do pulso.",
+            "bracelet": "Use se a pulseira aparecer tombada para a frente ou para trás em cima do pulso.",
+            "necklace": "Use se o colar aparecer tombado para a frente ou para trás em cima do pescoço."
+          }
         },
         "yaw": {
           "label": "Girar para esquerda / para direita",
-          "help": "Use se o modelo estiver virado de lado em vez de aparecer de frente."
+          "help": "Use se o modelo estiver virado de lado em vez de aparecer de frente.",
+          "helpByType": {
+            "watch": "Use se o mostrador do relógio estiver virado de lado em vez de voltado para a câmara.",
+            "bracelet": "Use se a pulseira estiver virada de lado em vez de alinhada com o pulso.",
+            "necklace": "Use se o pingente do colar estiver virado de lado."
+          }
         },
         "roll": {
           "label": "Inclinar lateralmente",
-          "help": "Endireita o modelo quando ele fica torto para um dos lados."
+          "help": "Endireita o modelo quando ele fica torto para um dos lados.",
+          "helpByType": {
+            "watch": "Inclina o relógio no eixo do braço — uma das laterais sobe e a outra desce.",
+            "bracelet": "Inclina a pulseira no eixo do braço — uma das laterais sobe e a outra desce.",
+            "necklace": "Inclina o colar no eixo do pescoço."
+          }
         },
         "height": {
           "label": "Altura no rosto",
@@ -444,19 +469,49 @@
         },
         "depth": {
           "label": "Aproximar / afastar do rosto",
-          "help": "Traz o modelo para mais perto ou o afasta um pouco do rosto."
+          "labelByType": {
+            "watch": "Aproximar / afastar do pulso",
+            "bracelet": "Aproximar / afastar do pulso",
+            "necklace": "Aproximar / afastar do pescoço"
+          },
+          "help": "Traz o modelo para mais perto ou o afasta um pouco do rosto.",
+          "helpByType": {
+            "watch": "Traz o relógio para mais perto da pele ou o afasta um pouco do pulso.",
+            "bracelet": "Traz a pulseira para mais perto da pele ou a afasta um pouco do pulso.",
+            "necklace": "Traz o colar para mais perto do pescoço ou o afasta um pouco."
+          }
         },
         "nudgeY": {
           "label": "Altura no rosto",
-          "help": "Sobe ou desce os óculos (em cm) para alinhar com a linha dos olhos."
+          "labelByType": {
+            "watch": "Posição ao longo do pulso",
+            "bracelet": "Posição ao longo do pulso",
+            "necklace": "Altura no pescoço"
+          },
+          "help": "Sobe ou desce os óculos (em cm) para alinhar com a linha dos olhos.",
+          "helpByType": {
+            "watch": "Desloca o relógio ao longo do braço (em cm) — ajuste se ficar acima ou abaixo do osso do pulso.",
+            "bracelet": "Desloca a pulseira ao longo do braço (em cm) — útil para a colocar exatamente onde o cliente usaria.",
+            "necklace": "Sobe ou desce o colar (em cm) — ajuste até o pingente ficar na altura do peito desejada."
+          }
         },
         "nudgeX": {
           "label": "Empurrar para o lado",
-          "help": "Centraliza o modelo se ele ficar deslocado para a esquerda ou direita."
+          "help": "Centraliza o modelo se ele ficar deslocado para a esquerda ou direita.",
+          "helpByType": {
+            "watch": "Empurra o relógio para a esquerda ou direita no pulso — útil se estiver desalinhado.",
+            "bracelet": "Empurra a pulseira para a esquerda ou direita no pulso.",
+            "necklace": "Empurra o colar para a esquerda ou direita no pescoço."
+          }
         },
         "scale": {
           "label": "Tamanho",
-          "help": "Aumenta ou diminui o modelo inteiro. Use com cuidado: muito grande cobre o rosto."
+          "help": "Aumenta ou diminui o modelo inteiro. Use com cuidado: muito grande cobre o rosto.",
+          "helpByType": {
+            "watch": "Aumenta ou diminui o relógio. Relógios pequenos demais desaparecem no pulso; muito grandes parecem artificiais.",
+            "bracelet": "Aumenta ou diminui a pulseira. Use com cuidado: muito grande parece uma manilha.",
+            "necklace": "Aumenta ou diminui o colar. Use com cuidado: muito grande tapa o pescoço todo."
+          }
         }
       }
     }

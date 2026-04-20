@@ -44,6 +44,35 @@ export const loader = async ({ request }) => {
   return null;
 };
 
+/**
+ * Mantém-se sincronizado com `detectAccessoryType` em
+ * `app/ar-eyewear.server.js`. Usado para mostrar ao lojista, antes de
+ * confirmar o envio, qual tipo vai ser persistido — e como sobrepor via
+ * tag Shopify se estiver incorrecto.
+ */
+function detectAccessoryTypeClient(product) {
+  const tagList = (Array.isArray(product?.tags) ? product.tags : [])
+    .map((t) => String(t || "").trim().toLowerCase())
+    .filter(Boolean);
+  for (const tag of tagList) {
+    const m = tag.match(/^ar[:\-_]?(glasses|necklace|watch|bracelet|oculos|colar|relogio|pulseira)$/);
+    if (m) {
+      const key = m[1];
+      if (key === "oculos") return "glasses";
+      if (key === "colar") return "necklace";
+      if (key === "relogio") return "watch";
+      if (key === "pulseira") return "bracelet";
+      return key;
+    }
+  }
+  const pt = String(product?.productType || "").toLowerCase();
+  if (/\b(oculo|oculos|óculos|glasses|sunglasses|eyewear)\b/.test(pt)) return "glasses";
+  if (/\b(colar|colares|necklace|pendant)\b/.test(pt)) return "necklace";
+  if (/\b(relogio|relógio|relogios|watch|watches)\b/.test(pt)) return "watch";
+  if (/\b(pulseira|pulseiras|bracelet|bracelets)\b/.test(pt)) return "bracelet";
+  return "glasses";
+}
+
 function statusTone(status) {
   switch (status) {
     case "published":
@@ -334,6 +363,23 @@ export default function ArEyewearPage() {
                       {t("arEyewear.categoryLabel")}: {selectedProduct.categoryFullName}
                     </Text>
                   ) : null}
+                  {(() => {
+                    const detected = detectAccessoryTypeClient(selectedProduct);
+                    const label = t(`arEyewear.accessoryType.${detected}`);
+                    return (
+                      <Banner tone="info">
+                        <InlineStack gap="200" wrap>
+                          <Text as="span" variant="bodySm">
+                            {t("arEyewear.detection.detectedLabel")}:
+                          </Text>
+                          <Badge tone="attention">{label}</Badge>
+                        </InlineStack>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t("arEyewear.detection.hint")}
+                        </Text>
+                      </Banner>
+                    );
+                  })()}
                   <InlineStack gap="200" wrap>
                     {(selectedProduct.images || []).slice(0, 8).map((im, idx) => (
                       <Thumbnail key={`${im.url}-${idx}`} source={im.url} alt={im.altText || ""} size="large" />
@@ -415,13 +461,21 @@ export default function ArEyewearPage() {
                   {assets.map((a) => (
                     <Card key={a.id} padding="400">
                       <BlockStack gap="300">
-                        <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack align="space-between" blockAlign="center" wrap>
                           <Text as="p" fontWeight="semibold">
                             {a.product_name || productNameById.get(String(a.product_id || "")) || t("arEyewear.productUnknown")}
                           </Text>
-                          <Badge tone={statusTone(a.status)}>
-                            {t(`arEyewear.status.${a.status}`)}
-                          </Badge>
+                          <InlineStack gap="200" wrap>
+                            {a.accessory_type ? (
+                              <Badge tone="attention">
+                                {t(`arEyewear.accessoryType.${a.accessory_type}`) ||
+                                  a.accessory_type}
+                              </Badge>
+                            ) : null}
+                            <Badge tone={statusTone(a.status)}>
+                              {t(`arEyewear.status.${a.status}`)}
+                            </Badge>
+                          </InlineStack>
                         </InlineStack>
                         {a.error_message && (
                           <Text as="p" tone="critical">

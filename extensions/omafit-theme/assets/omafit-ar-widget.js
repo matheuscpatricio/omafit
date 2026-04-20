@@ -1478,9 +1478,29 @@ async function runArSession({
      *     unidades do GLB, o efeito variava conforme a geometria. Agora tudo
      *     se reduz a wearX/Y/Z em unidades de âncora (previsíveis).
      */
+    /**
+     * Rotação da calibração: usada `rotateOnWorldAxis` em vez de Euler YXZ
+     * (ver comentário extenso em `app.ar-eyewear_.calibrate.$assetId.jsx` →
+     * `applyCalibrationToState`). Cada axis é sempre do MUNDO — o slider
+     * "Inclinar lateralmente" (rz) sempre roda em Z do mundo, mesmo que rx/ry
+     * tenham valores herdados de calibrações anteriores.
+     *
+     * Ordem de composição (premultiply): Y → X → Z, igual ao preview.
+     */
     const calibRot = new GroupCtor();
-    calibRot.rotation.order = "YXZ";
-    calibRot.rotation.set(rad(calRotDeg.x), rad(calRotDeg.y), rad(calRotDeg.z));
+    {
+      const ryRad = rad(calRotDeg.y);
+      const rxRad = rad(calRotDeg.x);
+      const rzRad = rad(calRotDeg.z);
+      const ax = new THREE.Vector3(1, 0, 0);
+      const ay = new THREE.Vector3(0, 1, 0);
+      const az = new THREE.Vector3(0, 0, 1);
+      if (ryRad) calibRot.rotateOnWorldAxis(ay, ryRad);
+      if (rxRad) calibRot.rotateOnWorldAxis(ax, rxRad);
+      if (rzRad) calibRot.rotateOnWorldAxis(az, rzRad);
+      calibRot.updateMatrix();
+      calibRot.updateMatrixWorld(true);
+    }
     calibRot.add(glasses);
 
     const wearPosition = new GroupCtor();

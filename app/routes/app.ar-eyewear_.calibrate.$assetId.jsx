@@ -241,6 +241,27 @@ export default function ArEyewearCalibratePage() {
     }
   }, [initialCalibration]);
 
+  // Log o estado inicial da calibração. Se o lojista reportar que o slider
+  // "Inclinar lateralmente" se comporta como "Girar esquerda/direita", o
+  // primeiro suspeito é um `ry` não-zero herdado de uma calibração anterior
+  // (a nossa pipeline agora rota em world-axis, mas é útil confirmar no
+  // console qual o ponto de partida).
+  useEffect(() => {
+    if (typeof console !== "undefined") {
+      // eslint-disable-next-line no-console
+      console.info("[omafit-calibrate] calibração inicial", {
+        target,
+        rx: initialCalibration?.rx,
+        ry: initialCalibration?.ry,
+        rz: initialCalibration?.rz,
+        wearX: initialCalibration?.wearX,
+        wearY: initialCalibration?.wearY,
+        wearZ: initialCalibration?.wearZ,
+        scale: initialCalibration?.scale,
+      });
+    }
+  }, [initialCalibration, target]);
+
   const isSaving = fetcher.state !== "idle";
   const saveResult = fetcher.data;
 
@@ -385,7 +406,7 @@ export default function ArEyewearCalibratePage() {
 
                   <Divider />
 
-                  <CalibrationSliders cal={cal} setField={setField} t={t} />
+                  <CalibrationSliders cal={cal} setField={setField} setCal={setCal} t={t} />
 
                   <Divider />
 
@@ -569,18 +590,37 @@ function PreviewModel({ src, cal }) {
         calibRot.rotation.order = "YXZ";
         wearPosition.add(calibRot);
 
-        // Diagnóstico: eixos (X vermelho, Y verde, Z azul) no origin da cena.
-        // Confirma que o pipeline de render está vivo mesmo sem GLB.
-        const axes = new THREE.AxesHelper(0.08);
-        axes.name = "omafit-axes";
-        scene.add(axes);
+        // Diagnóstico 1: eixos do MUNDO (fixos na cena, não rodam com a
+        // calibração). Servem de referência absoluta para o lojista ver
+        // onde é +X (direita), +Y (cima), +Z (fora do ecrã). Ficam um
+        // pouco atenuados (depthTest activo) para não poluírem.
+        const worldAxes = new THREE.AxesHelper(0.12);
+        worldAxes.name = "omafit-world-axes";
+        scene.add(worldAxes);
 
-        // Placeholder: cubo wireframe ciano com AxesHelper interno no calibRot.
-        // Proporções de armação real (~14×4×4 cm), o AxesHelper indica
-        // claramente +X (vermelho, direita), +Y (verde, cima) e +Z (azul,
-        // para fora do ecrã = lentes apontando para o user). Assim o lojista
-        // vê imediatamente como cada slider afecta os eixos do modelo e
-        // consegue distinguir yaw (Y) de roll (Z) mesmo num GLB simétrico.
+        // Diagnóstico 2: eixos DO MODELO (dentro do calibRot, rodam com
+        // ele). São o que indica ao lojista para onde "aponta" o frente
+        // (+Z), cima (+Y), direita (+X) do GLB depois de aplicadas as
+        // rotações. Usamos depthTest: false e renderOrder alto para que
+        // fiquem SEMPRE visíveis, mesmo por cima do GLB opaco — era este
+        // o bug anterior: o AxesHelper ficava oculto dentro do modelo
+        // opaco, e o lojista só via as rotações sem saber em torno de
+        // que eixo estavam a acontecer.
+        const modelAxes = new THREE.AxesHelper(0.14);
+        modelAxes.name = "omafit-model-axes";
+        modelAxes.renderOrder = 999;
+        // AxesHelper tem 1 material partilhado por via de LineBasicMaterial:
+        // set depthTest:false para o eixo ser desenhado por cima de tudo.
+        if (modelAxes.material) {
+          modelAxes.material.depthTest = false;
+          modelAxes.material.transparent = true;
+        }
+        calibRot.add(modelAxes);
+
+        // Placeholder: cubo wireframe ciano com proporções de armação
+        // real (~14×4×4 cm). Fica SEMPRE visível enquanto o GLB não
+        // carrega, e semi-transparente depois (acompanha a rotação e
+        // dá contexto de "tamanho e orientação esperados").
         const placeholder = new THREE.Group();
         placeholder.name = "omafit-placeholder";
 
@@ -598,11 +638,7 @@ function PreviewModel({ src, cal }) {
         );
         placeholder.add(phBox);
 
-        const phAxes = new THREE.AxesHelper(PLACEHOLDER_SIZE.x * 0.6);
-        placeholder.add(phAxes);
-
         calibRot.add(placeholder);
-        // Guardar referência ao material para alterar opacity quando o GLB carregar.
         placeholder.userData.boxMaterial = phBox.material;
 
         s.renderer = renderer;
@@ -829,9 +865,35 @@ function PreviewModel({ src, cal }) {
       {phase === "empty" ? (
         <div style={{ ...overlayTopStyle, color: "rgba(255,255,255,0.7)" }}>—</div>
       ) : null}
+      {/*
+        Legenda de eixos (canto inferior direito). Ajuda o lojista a
+        interpretar o que cada slider de rotação faz visualmente.
+        Os eixos coloridos aparecem dentro do próprio preview 3D.
+      */}
+      <div style={legendStyle}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Eixos</div>
+        <div><span style={{ color: "#ff4a4a", fontWeight: 700 }}>X</span> vermelho — direita</div>
+        <div><span style={{ color: "#3cf06c", fontWeight: 700 }}>Y</span> verde — cima</div>
+        <div><span style={{ color: "#4a9bff", fontWeight: 700 }}>Z</span> azul — frente</div>
+      </div>
     </div>
   );
 }
+
+const legendStyle = {
+  position: "absolute",
+  right: 10,
+  bottom: 10,
+  padding: "6px 10px",
+  borderRadius: 6,
+  background: "rgba(0,0,0,0.55)",
+  color: "#fff",
+  fontSize: "10px",
+  lineHeight: 1.45,
+  pointerEvents: "none",
+  zIndex: 2,
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+};
 
 function countVisibleMeshes(root) {
   let n = 0;
@@ -910,10 +972,53 @@ function bakeGLBTransforms(THREE, root, onDone) {
   }
 }
 
+/**
+ * Aplica a calibração ao estado do preview.
+ *
+ * Rotação: usa `rotateOnWorldAxis` em vez de Euler YXZ. Porquê?
+ *
+ *   Com Euler YXZ (convenção Three.js), `rotation.set(rx, ry, rz, "YXZ")`
+ *   aplica rotações INTRÍNSECAS: primeiro em torno de Y do mundo, depois
+ *   em torno de X *já rodado por Y*, depois em torno de Z *duplamente
+ *   rodado*. Se `ry` é não-zero, o eixo Z "local" deixa de estar
+ *   alinhado com Z do mundo — o slider "Inclinar lateralmente" deixa
+ *   de produzir roll puro e passa a produzir uma mistura que visualmente
+ *   parece yaw (especialmente se `ry` herdou um valor de calibrações
+ *   anteriores do mesmo produto).
+ *
+ *   Com `rotateOnWorldAxis`, cada rotação é sempre em torno de um eixo
+ *   FIXO do mundo, independentemente dos outros sliders. Resultado:
+ *     • Slider "Rodar cima/baixo" (rx) → sempre pitch em torno do X mundo.
+ *     • Slider "Rodar esquerda/direita" (ry) → sempre yaw em torno do Y mundo.
+ *     • Slider "Inclinar lateralmente" (rz) → sempre roll em torno do Z mundo.
+ *
+ *   Ordem de composição: Y → X → Z (mantém intuição de "primeiro enquadro
+ *   horizontal, depois afino vertical, depois incliner"). Duas calibrações
+ *   com os mesmos 3 valores produzem exactamente a mesma orientação — os
+ *   produtos já guardados continuam a render igual.
+ */
 function applyCalibrationToState(s, cal) {
   if (!s || !s.THREE || !s.calibRot) return;
+  const THREE = s.THREE;
   const toRad = (d) => (Number(d) || 0) * Math.PI / 180;
-  s.calibRot.rotation.set(toRad(cal.rx), toRad(cal.ry), toRad(cal.rz), "YXZ");
+  const rxRad = toRad(cal.rx);
+  const ryRad = toRad(cal.ry);
+  const rzRad = toRad(cal.rz);
+
+  if (!s.worldAxes) {
+    s.worldAxes = {
+      X: new THREE.Vector3(1, 0, 0),
+      Y: new THREE.Vector3(0, 1, 0),
+      Z: new THREE.Vector3(0, 0, 1),
+    };
+  }
+  s.calibRot.quaternion.identity();
+  if (ryRad) s.calibRot.rotateOnWorldAxis(s.worldAxes.Y, ryRad);
+  if (rxRad) s.calibRot.rotateOnWorldAxis(s.worldAxes.X, rxRad);
+  if (rzRad) s.calibRot.rotateOnWorldAxis(s.worldAxes.Z, rzRad);
+  s.calibRot.updateMatrix();
+  s.calibRot.updateMatrixWorld(true);
+
   s.wearPosition.position.set(
     Number(cal.wearX) || 0,
     Number(cal.wearY) || 0,
@@ -922,20 +1027,44 @@ function applyCalibrationToState(s, cal) {
   const sc = Number(cal.scale);
   const mul = Number.isFinite(sc) && sc > 0 ? sc : 1;
 
-  // Model (quando carregado): escala base + multiplicador do lojista.
   if (s.model) {
     s.model.scale.setScalar(s.baseScale * mul);
   }
-  // Placeholder: sempre escalado pelo multiplicador (tamanho próprio
-  // já é ~14 cm, igual à largura típica de uma armação).
   if (s.placeholder) {
     s.placeholder.scale.setScalar(mul);
   }
+
+  if (typeof console !== "undefined" && console.debug) {
+    // Exporta onde cada axis do calibRot aponta actualmente, em world-space.
+    // Ajuda a confirmar visualmente: se rz=45°, o eixo Z do calibRot deve
+    // continuar a apontar ~paralelo ao Z do mundo (não rodar para o lado).
+    const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(s.calibRot.quaternion);
+    const ay = new THREE.Vector3(0, 1, 0).applyQuaternion(s.calibRot.quaternion);
+    const az = new THREE.Vector3(0, 0, 1).applyQuaternion(s.calibRot.quaternion);
+    console.debug("[omafit-calibrate] apply", {
+      rxDeg: cal.rx, ryDeg: cal.ry, rzDeg: cal.rz,
+      calibRotXinWorld: [ax.x.toFixed(3), ax.y.toFixed(3), ax.z.toFixed(3)],
+      calibRotYinWorld: [ay.x.toFixed(3), ay.y.toFixed(3), ay.z.toFixed(3)],
+      calibRotZinWorld: [az.x.toFixed(3), az.y.toFixed(3), az.z.toFixed(3)],
+    });
+  }
 }
 
-function CalibrationSliders({ cal, setField, t }) {
+
+function CalibrationSliders({ cal, setField, setCal, t }) {
+  const resetRotation = () => {
+    setCal((prev) => ({ ...prev, rx: 0, ry: 0, rz: 0 }));
+  };
   return (
     <BlockStack gap="300">
+      <InlineStack align="space-between" blockAlign="center" gap="200">
+        <Text as="h4" variant="headingSm">
+          {t("arEyewear.calibrate.sliders.rotationGroup") || "Rotação"}
+        </Text>
+        <Button size="slim" onClick={resetRotation}>
+          {t("arEyewear.calibrate.sliders.rotationReset") || "Reiniciar rotação"}
+        </Button>
+      </InlineStack>
       <RangeSlider
         output
         label={t("arEyewear.calibrate.sliders.tilt.label")}

@@ -407,7 +407,7 @@
     },
     "detection": {
       "detectedLabel": "Tipo detectado",
-      "hint": "Detectamos o tipo a partir das tags (ex.: ar:watch, ar:necklace) e depois do tipo de produto da Shopify. Para sobrepor, adicione uma tag como ar:watch, ar:bracelet, ar:necklace ou ar:glasses ao produto antes de enviar."
+      "hint": "Usamos primeiro as tags (ex.: ar:watch), depois a categoria de produto da Shopify (ex.: … > Watches), o tipo de produto e o título. Para forçar um tipo, adicione uma tag ar:watch, ar:bracelet, ar:necklace ou ar:glasses antes de enviar."
     },
     "calibrate": {
       "openButton": "Calibrar posição",

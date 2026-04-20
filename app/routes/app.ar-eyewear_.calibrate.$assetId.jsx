@@ -116,6 +116,8 @@ export async function loader({ request, params }) {
     detectAccessoryType({
       tags: productContext?.tags,
       productType: productContext?.productType,
+      categoryFullName: productContext?.categoryFullName,
+      title: productContext?.title,
     });
 
   const productCalibration =

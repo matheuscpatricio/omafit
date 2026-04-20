@@ -23,6 +23,7 @@ import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
 import { getShopDomain } from "../utils/getShopDomain";
 import { useAppI18n } from "../contexts/AppI18n";
+import { detectAccessoryType } from "../ar-accessory-type.shared.js";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -43,35 +44,6 @@ export const loader = async ({ request }) => {
   }
   return null;
 };
-
-/**
- * Mantém-se sincronizado com `detectAccessoryType` em
- * `app/ar-eyewear.server.js`. Usado para mostrar ao lojista, antes de
- * confirmar o envio, qual tipo vai ser persistido — e como sobrepor via
- * tag Shopify se estiver incorrecto.
- */
-function detectAccessoryTypeClient(product) {
-  const tagList = (Array.isArray(product?.tags) ? product.tags : [])
-    .map((t) => String(t || "").trim().toLowerCase())
-    .filter(Boolean);
-  for (const tag of tagList) {
-    const m = tag.match(/^ar[:\-_]?(glasses|necklace|watch|bracelet|oculos|colar|relogio|pulseira)$/);
-    if (m) {
-      const key = m[1];
-      if (key === "oculos") return "glasses";
-      if (key === "colar") return "necklace";
-      if (key === "relogio") return "watch";
-      if (key === "pulseira") return "bracelet";
-      return key;
-    }
-  }
-  const pt = String(product?.productType || "").toLowerCase();
-  if (/\b(oculo|oculos|óculos|glasses|sunglasses|eyewear)\b/.test(pt)) return "glasses";
-  if (/\b(colar|colares|necklace|pendant)\b/.test(pt)) return "necklace";
-  if (/\b(relogio|relógio|relogios|watch|watches)\b/.test(pt)) return "watch";
-  if (/\b(pulseira|pulseiras|bracelet|bracelets)\b/.test(pt)) return "bracelet";
-  return "glasses";
-}
 
 function statusTone(status) {
   switch (status) {
@@ -168,9 +140,20 @@ export default function ArEyewearPage() {
       (p) =>
         (p.title || "").toLowerCase().includes(q) ||
         (p.handle || "").toLowerCase().includes(q) ||
-        (p.productType || "").toLowerCase().includes(q),
+        (p.productType || "").toLowerCase().includes(q) ||
+        (p.categoryFullName || "").toLowerCase().includes(q),
     );
   }, [products, productFilter]);
+
+  const detectedAccessoryType = useMemo(() => {
+    if (!selectedProduct) return "glasses";
+    return detectAccessoryType({
+      tags: selectedProduct.tags,
+      productType: selectedProduct.productType,
+      categoryFullName: selectedProduct.categoryFullName,
+      title: selectedProduct.title,
+    });
+  }, [selectedProduct]);
 
   const selectShopProduct = (p) => {
     setSelectedProduct(p);
@@ -363,23 +346,20 @@ export default function ArEyewearPage() {
                       {t("arEyewear.categoryLabel")}: {selectedProduct.categoryFullName}
                     </Text>
                   ) : null}
-                  {(() => {
-                    const detected = detectAccessoryTypeClient(selectedProduct);
-                    const label = t(`arEyewear.accessoryType.${detected}`);
-                    return (
-                      <Banner tone="info">
-                        <InlineStack gap="200" wrap>
-                          <Text as="span" variant="bodySm">
-                            {t("arEyewear.detection.detectedLabel")}:
-                          </Text>
-                          <Badge tone="attention">{label}</Badge>
-                        </InlineStack>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t("arEyewear.detection.hint")}
-                        </Text>
-                      </Banner>
-                    );
-                  })()}
+                  <Banner tone="info">
+                    <InlineStack gap="200" wrap>
+                      <Text as="span" variant="bodySm">
+                        {t("arEyewear.detection.detectedLabel")}:
+                      </Text>
+                      <Badge tone="attention">
+                        {t(`arEyewear.accessoryType.${detectedAccessoryType}`) ||
+                          detectedAccessoryType}
+                      </Badge>
+                    </InlineStack>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t("arEyewear.detection.hint")}
+                    </Text>
+                  </Banner>
                   <InlineStack gap="200" wrap>
                     {(selectedProduct.images || []).slice(0, 8).map((im, idx) => (
                       <Thumbnail key={`${im.url}-${idx}`} source={im.url} alt={im.altText || ""} size="large" />
@@ -409,13 +389,15 @@ export default function ArEyewearPage() {
                       helpText={t("arEyewear.variantSelectHelp")}
                     />
                   ) : null}
-                  <TextField
-                    label={t("arEyewear.frameWidth")}
-                    value={frameWidthMm}
-                    onChange={setFrameWidthMm}
-                    autoComplete="off"
-                    helpText={t("arEyewear.frameWidthHelp")}
-                  />
+                  {detectedAccessoryType === "glasses" ? (
+                    <TextField
+                      label={t("arEyewear.frameWidth")}
+                      value={frameWidthMm}
+                      onChange={setFrameWidthMm}
+                      autoComplete="off"
+                      helpText={t("arEyewear.frameWidthHelp")}
+                    />
+                  ) : null}
                   <Button
                     variant="primary"
                     loading={confirmingShop}

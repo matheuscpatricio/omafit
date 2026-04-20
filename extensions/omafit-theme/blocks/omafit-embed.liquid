@@ -235,14 +235,23 @@
     {%- comment -%}
       Deteção do tipo de acessório AR (glasses|necklace|watch|bracelet).
       Prioridade:
-        1) tag explícita `ar:glasses|ar:necklace|ar:watch|ar:bracelet`
-        2) heurística sobre `product.type` (pt/en)
-        3) fallback: glasses
-      Deve ficar sincronizado com `detectAccessoryType` em app/ar-eyewear.server.js.
+        1) tags `ar:glasses|ar:necklace|ar:watch|ar:bracelet`
+        2) categoria taxonómica Shopify (product.category + ancestors), ex.: … > Watches
+        3) product.type (pt/en)
+        4) fallback: glasses
+      Sincronizado com app/ar-accessory-type.shared.js e detectAccessoryType no servidor.
     {%- endcomment -%}
     {%- liquid
-      assign ar_type_guess = 'glasses'
-      assign ar_tags_lc = product.tags | join: ',' | downcase
+      assign ar_category_path = ''
+      if product.category
+        for ancestor in product.category.ancestors
+          assign ar_category_path = ar_category_path | append: ancestor.name | append: ' > '
+        endfor
+        assign ar_category_path = ar_category_path | append: product.category.name
+      endif
+      assign ar_tags_csv = product.tags | join: ','
+      assign ar_type_guess = ''
+      assign ar_tags_lc = ar_tags_csv | downcase
       if ar_tags_lc contains 'ar:watch'
         assign ar_type_guess = 'watch'
       elsif ar_tags_lc contains 'ar:bracelet'
@@ -251,7 +260,22 @@
         assign ar_type_guess = 'necklace'
       elsif ar_tags_lc contains 'ar:glasses'
         assign ar_type_guess = 'glasses'
-      else
+      endif
+      if ar_type_guess == blank
+        assign ar_cat_lc = ar_category_path | downcase
+        if ar_cat_lc != blank
+          if ar_cat_lc contains 'sunglasses' or ar_cat_lc contains 'eyewear' or ar_cat_lc contains 'eyeglasses' or ar_cat_lc contains 'spectacle' or ar_cat_lc contains 'gafas' or ar_cat_lc contains 'oculos' or ar_cat_lc contains 'óculos' or ar_cat_lc contains 'optical' or ar_cat_lc contains 'optical frames'
+            assign ar_type_guess = 'glasses'
+          elsif ar_cat_lc contains 'necklace' or ar_cat_lc contains 'pendant' or ar_cat_lc contains 'choker' or ar_cat_lc contains 'colar' or ar_cat_lc contains 'gargantilha' or ar_cat_lc contains 'collar'
+            assign ar_type_guess = 'necklace'
+          elsif ar_cat_lc contains 'wristwatch' or ar_cat_lc contains 'smartwatch' or ar_cat_lc contains 'watches' or ar_cat_lc contains 'relogio' or ar_cat_lc contains 'relógio' or ar_cat_lc contains 'reloj'
+            assign ar_type_guess = 'watch'
+          elsif ar_cat_lc contains 'bracelet' or ar_cat_lc contains 'bangle' or ar_cat_lc contains 'pulseira' or ar_cat_lc contains 'manilha'
+            assign ar_type_guess = 'bracelet'
+          endif
+        endif
+      endif
+      if ar_type_guess == blank
         assign pt_lc = product.type | downcase
         if pt_lc contains 'relogio' or pt_lc contains 'relógio' or pt_lc contains 'watch'
           assign ar_type_guess = 'watch'
@@ -263,6 +287,9 @@
           assign ar_type_guess = 'glasses'
         endif
       endif
+      if ar_type_guess == blank
+        assign ar_type_guess = 'glasses'
+      endif
 
       assign ar_anchor_default = 168
       if ar_type_guess == 'necklace'
@@ -272,6 +299,11 @@
       assign ar_tracking_stack = 'face'
       if ar_type_guess == 'watch' or ar_type_guess == 'bracelet'
         assign ar_tracking_stack = 'hand'
+      endif
+
+      assign ar_preferred_camera = 'user'
+      if ar_type_guess == 'watch' or ar_type_guess == 'bracelet'
+        assign ar_preferred_camera = 'environment'
       endif
     -%}
     <div
@@ -300,6 +332,10 @@
       data-ar-use-mp-matrix=""
       data-ar-accessory-type="{{ ar_type_guess }}"
       data-ar-tracking-stack="{{ ar_tracking_stack }}"
+      data-ar-category-path="{{ ar_category_path | strip | escape }}"
+      data-ar-product-type="{{ product.type | escape }}"
+      data-ar-product-tags="{{ ar_tags_csv | escape }}"
+      data-ar-preferred-camera="{{ ar_preferred_camera }}"
       data-ar-mindar-anchor="{{ ar_anchor_default }}"
       data-ar-mindar-disable-mirror=""
       data-ar-mindar-model-scale="{{ cal_scale }}"

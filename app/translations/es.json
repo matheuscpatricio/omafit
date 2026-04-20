@@ -407,7 +407,7 @@
     },
     "detection": {
       "detectedLabel": "Tipo detectado",
-      "hint": "Detectamos el tipo a partir de las etiquetas (ej.: ar:watch, ar:necklace) y luego por el tipo de producto de Shopify. Para sobrescribir, añade una etiqueta como ar:watch, ar:bracelet, ar:necklace o ar:glasses al producto antes de enviar."
+      "hint": "Primero usamos las etiquetas (ej.: ar:watch), luego la categoría de producto de Shopify (ej.: … > Watches), el tipo y el título. Para forzar un tipo, añade ar:watch, ar:bracelet, ar:necklace o ar:glasses antes de enviar."
     },
     "calibrate": {
       "openButton": "Calibrar posición",

@@ -209,6 +209,85 @@ function getOmafitArHandModuleBundle() {
   return window.__omafitArHandModuleBundlePromise;
 }
 
+/**
+ * Alinhado com `app/ar-accessory-type.shared.js` — mantém a stack (face vs mão)
+ * correcta na loja usando categoria taxonómica + tipo + título + tags.
+ */
+function omafitDetectAccessoryTypeFromContext({
+  tags,
+  productType,
+  categoryFullName,
+  title,
+} = {}) {
+  const AR_DEFAULT = "glasses";
+  const tagList = (() => {
+    if (Array.isArray(tags)) return tags;
+    if (typeof tags === "string") return tags.split(",");
+    return [];
+  })()
+    .map((t) => String(t || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const tag of tagList) {
+    const m = tag.match(
+      /^ar[:\-_]?(glasses|necklace|watch|bracelet|oculos|colar|relogio|pulseira)$/,
+    );
+    if (m) {
+      const key = m[1];
+      if (key === "oculos") return "glasses";
+      if (key === "colar") return "necklace";
+      if (key === "relogio") return "watch";
+      if (key === "pulseira") return "bracelet";
+      return key;
+    }
+  }
+
+  const hay = [categoryFullName, productType, title]
+    .filter(Boolean)
+    .join(" | ")
+    .toLowerCase();
+  if (!hay.trim()) return AR_DEFAULT;
+
+  const glass =
+    /\b(oculo|oculos|óculos|glasses|sunglasses|eyewear|spectacle|gafas|optical|eyeglass)\b/i.test(
+      hay,
+    ) || /armaç(ão|ões|o|oes)/i.test(hay);
+  const neck =
+    /\b(colar|colares|necklace|pendant|choker|gargantilha|collar)\b/i.test(hay);
+  const watch = /\b(relogio|relógio|watch|watches|reloj|wristwatch|smartwatch|chronograph)\b/i.test(
+    hay,
+  );
+  const brace = /\b(pulseira|bracelet|bangle|manilha)\b/i.test(hay);
+
+  if (glass) return "glasses";
+  if (neck) return "necklace";
+  if (watch && brace) return "watch";
+  if (watch) return "watch";
+  if (brace) return "bracelet";
+
+  return AR_DEFAULT;
+}
+
+/**
+ * Lê `data-ar-*` do embed + `#omafit-ar-root` e infere o tipo (sobrepõe só o
+ * valor em cache do Liquid quando há categoria/título novos no DOM).
+ */
+function omafitResolveAccessoryType(cfgAttrFn) {
+  const tagsCsv = cfgAttrFn("arProductTags", "");
+  const tagList = tagsCsv
+    ? String(tagsCsv)
+        .split(",")
+        .map((t) => String(t).trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+  return omafitDetectAccessoryTypeFromContext({
+    tags: tagList,
+    productType: cfgAttrFn("arProductType", ""),
+    categoryFullName: cfgAttrFn("arCategoryPath", ""),
+    title: cfgAttrFn("productTitle", ""),
+  });
+}
+
 // #region agent log
 /** Ativa com `window.__OMAFIT_AR_DEBUG_LOG__ = true` antes de abrir o AR (ingest local opcional). */
 function __omafitArDbgLog(payload) {
@@ -1218,29 +1297,34 @@ async function runArSession({
      */
     const arCfg = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
     const embedCfg = typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
-    const accessoryTypeRaw = String(
-      (embedCfg?.dataset?.arAccessoryType ?? arCfg?.dataset?.arAccessoryType ?? "")
-        .toString()
-        .trim()
-        .toLowerCase(),
-    );
+    function cfgAttrDispatch(camelKey, fallback = "") {
+      const ek = embedCfg?.dataset?.[camelKey];
+      if (ek !== undefined && String(ek).trim() !== "") return String(ek).trim();
+      const ak = arCfg?.dataset?.[camelKey];
+      if (ak !== undefined && String(ak).trim() !== "") return String(ak).trim();
+      return String(fallback ?? "").trim();
+    }
+    const accessoryTypeResolved = omafitResolveAccessoryType(cfgAttrDispatch);
+    const accessoryType = ["glasses", "necklace", "watch", "bracelet"].includes(
+      accessoryTypeResolved,
+    )
+      ? accessoryTypeResolved
+      : "glasses";
     const trackingStackRaw = String(
       (embedCfg?.dataset?.arTrackingStack ?? arCfg?.dataset?.arTrackingStack ?? "")
         .toString()
         .trim()
         .toLowerCase(),
     );
-    const accessoryType = ["glasses", "necklace", "watch", "bracelet"].includes(accessoryTypeRaw)
-      ? accessoryTypeRaw
-      : "glasses";
-    const trackingStack = trackingStackRaw === "hand" || trackingStackRaw === "face"
-      ? trackingStackRaw
-      : accessoryType === "watch" || accessoryType === "bracelet"
-        ? "hand"
-        : "face";
+    const trackingStack =
+      trackingStackRaw === "hand" || trackingStackRaw === "face"
+        ? trackingStackRaw
+        : accessoryType === "watch" || accessoryType === "bracelet"
+          ? "hand"
+          : "face";
 
     console.log(
-      `[omafit-ar] dispatcher: accessoryType=${accessoryType} trackingStack=${trackingStack}`,
+      `[omafit-ar] dispatcher: accessoryType=${accessoryType} trackingStack=${trackingStack} categoryPath=${cfgAttrDispatch("arCategoryPath", "").slice(0, 80)}`,
     );
 
     if (trackingStack === "hand") {
@@ -2035,35 +2119,78 @@ async function runHandArSession({
 
   loading.textContent = t.loadingCamera || t.loading || "A carregar câmara...";
 
+  /**
+   * Relógio / pulseira: câmara traseira no telemóvel (filmar a mão).
+   * Óculos / colar usam stack face (MindAR) com câmara frontal — não passa aqui.
+   */
+  const preferredCam = String(cfgAttr("arPreferredCamera", "") || "").toLowerCase();
+  const wantRearCamera =
+    preferredCam === "environment" ||
+    accessoryType === "watch" ||
+    accessoryType === "bracelet";
+
   const video = document.createElement("video");
   video.setAttribute("playsinline", "");
   video.muted = true;
   video.autoplay = true;
+  mindarHost.appendChild(video);
+
+  let stream = null;
+  /** Espelho horizontal do vídeo: selfie frontal costuma espelhar; câmara traseira não. */
+  let mirrorVideoX = true;
+
+  const baseVideoConstraint = {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+  };
+
+  try {
+    if (wantRearCamera) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { ...baseVideoConstraint, facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        mirrorVideoX = false;
+      } catch (e1) {
+        console.warn("[omafit-ar] câmara traseira indisponível, a tentar frontal:", e1?.message || e1);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { ...baseVideoConstraint, facingMode: { ideal: "user" } },
+          audio: false,
+        });
+        mirrorVideoX = true;
+      }
+    } else {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { ...baseVideoConstraint, facingMode: { ideal: "user" } },
+        audio: false,
+      });
+      mirrorVideoX = true;
+    }
+  } catch (e) {
+    loading.textContent = t.errCamera || t.errGeneric;
+    throw e;
+  }
+
+  try {
+    const track = stream.getVideoTracks?.()?.[0];
+    const fm = track?.getSettings?.()?.facingMode;
+    if (fm === "environment") mirrorVideoX = false;
+    if (fm === "user") mirrorVideoX = true;
+  } catch {
+    /* ignore */
+  }
+
   Object.assign(video.style, {
     position: "absolute",
     inset: "0",
     width: "100%",
     height: "100%",
     objectFit: "cover",
-    transform: "scaleX(-1)",
+    transform: mirrorVideoX ? "scaleX(-1)" : "scaleX(1)",
     zIndex: "1",
   });
-  mindarHost.appendChild(video);
 
-  let stream = null;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "user",
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
-    });
-  } catch (e) {
-    loading.textContent = t.errCamera || t.errGeneric;
-    throw e;
-  }
   video.srcObject = stream;
   await new Promise((resolve, reject) => {
     const onLoaded = () => {
@@ -2247,21 +2374,15 @@ async function runHandArSession({
    * relativo ao wrist) para um ponto em “espaço da câmara” da cena
    * Three.js.
    *
-   * Assumimos o vídeo está `scaleX(-1)` (mirror selfie), por isso
-   * invertemos x antes de projectar: em landmarks o x=0 é à esquerda do
-   * frame original, mas o utilizador vê espelhado.
-   *
-   * O plano de projecção está a distância `zDist` da câmara, escolhida
-   * para que a largura do hand-span normalizado mapeie para ~0.1 m
-   * (tamanho típico do dorso da mão). Isto dá-nos um scale razoável
-   * consistente com o preview do admin.
+   * Com vídeo espelhado (`mirrorVideoX`, típico da frontal), invertemos x
+   * para alinhar ao que o utilizador vê. Com câmara traseira, não espelhamos.
    */
   function unprojectLandmark(lm, zDist) {
     const fov = rad(camera.fov);
     const h = 2 * Math.tan(fov / 2) * zDist;
     const w = h * camera.aspect;
-    const xMirrored = 1 - lm.x;
-    return new THREE.Vector3((xMirrored - 0.5) * w, -(lm.y - 0.5) * h, -zDist);
+    const xNorm = mirrorVideoX ? 1 - lm.x : lm.x;
+    return new THREE.Vector3((xNorm - 0.5) * w, -(lm.y - 0.5) * h, -zDist);
   }
 
   function updateAnchorFromHand(lms) {

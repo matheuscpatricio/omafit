@@ -407,7 +407,7 @@
     },
     "detection": {
       "detectedLabel": "Detected type",
-      "hint": "We detect the type from Shopify tags (e.g. ar:watch, ar:necklace) first, then fall back to the product type. To override, add a tag such as ar:watch, ar:bracelet, ar:necklace or ar:glasses to the product before uploading."
+      "hint": "We use tags first (e.g. ar:watch), then the Shopify product category (e.g. … > Watches), product type, and title. To force a type, add ar:watch, ar:bracelet, ar:necklace or ar:glasses before uploading."
     },
     "calibrate": {
       "openButton": "Calibrate position",

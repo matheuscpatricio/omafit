@@ -66,14 +66,17 @@ const ESM_MINDAR_FACE_THREE = `${ESM_SH}/mind-ar@1.2.5/dist/mindar-face-three.pr
  * MediaPipe Tasks Vision para hand tracking (relógios, pulseiras).
  * Só é carregado sob demanda quando `data-ar-tracking-stack="hand"`.
  *
- * - `tasks-vision` v0.10.22 expõe `HandLandmarker` com `detectForVideo`.
- * - WASM + TFLite model vêm da Google CDN (gstatic).
+ * - `tasks-vision` expõe `HandLandmarker` com `detectForVideo`.
+ * - Import directo do npm via jsDelivr (`vision_bundle.mjs`) — o URL bare no
+ *   esm.sh (`…/tasks-vision@0.10.x` sem entry) passou a responder 404.
+ * - WASM + modelo vêm do mesmo pacote em `/wasm` no jsDelivr.
  *
  * @see https://developers.google.com/mediapipe/solutions/vision/hand_landmarker/web_js
  */
-const MEDIAPIPE_VISION_VER = "0.10.22";
-const ESM_MEDIAPIPE_VISION =
-  `${ESM_SH}/@mediapipe/tasks-vision@${MEDIAPIPE_VISION_VER}`;
+const MEDIAPIPE_VISION_VER = "0.10.34";
+/** Bundle ESM oficial do pacote npm (alinha com `module` em package.json). */
+const MEDIAPIPE_VISION_BUNDLE =
+  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VISION_VER}/vision_bundle.mjs`;
 const MEDIAPIPE_WASM_BASE =
   `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VISION_VER}/wasm`;
 const MEDIAPIPE_HAND_MODEL_URL =
@@ -193,14 +196,14 @@ function getOmafitArHandModuleBundle() {
     return Promise.all([
       import(ESM_THREE_MJS),
       import(ESM_GLTF_MIND),
-      import(ESM_MEDIAPIPE_VISION),
+      import(MEDIAPIPE_VISION_BUNDLE),
     ]);
   }
   if (!window.__omafitArHandModuleBundlePromise) {
     window.__omafitArHandModuleBundlePromise = Promise.all([
       import(ESM_THREE_MJS),
       import(ESM_GLTF_MIND),
-      import(ESM_MEDIAPIPE_VISION),
+      import(MEDIAPIPE_VISION_BUNDLE),
     ]).catch((e) => {
       window.__omafitArHandModuleBundlePromise = null;
       throw e;
@@ -1199,6 +1202,52 @@ function buildInfoModal({
   return shell;
 }
 
+/**
+ * MindAR `_startVideo` chama `getUserMedia({ video: { facingMode: "user" } })` com
+ * string curta. Em iOS / Edge / alguns Android isso falha (OverconstrainedError)
+ * ou abre a câmara errada. Interceptamos só durante `start()` e tentamos
+ * `facingMode: { ideal: … }` e depois `video: true` como último recurso.
+ *
+ * @see https://github.com/hiukim/mind-ar-js/issues/370
+ */
+async function startMindARFaceWithReliableCamera(mindarThree) {
+  const md = navigator.mediaDevices;
+  if (!md || typeof md.getUserMedia !== "function") {
+    await mindarThree.start();
+    return;
+  }
+  const orig = md.getUserMedia.bind(md);
+  let patchActive = true;
+  md.getUserMedia = function (constraints) {
+    if (!patchActive) return orig(constraints);
+    try {
+      const vid = constraints && constraints.video;
+      if (vid && typeof vid === "object" && !vid.deviceId) {
+        const fm = vid.facingMode;
+        if (fm === "user" || fm === "face") {
+          return orig({ audio: false, video: { facingMode: { ideal: "user" } } })
+            .catch(() => orig({ audio: false, video: { facingMode: "user" } }))
+            .catch(() => orig({ audio: false, video: true }));
+        }
+        if (fm === "environment") {
+          return orig({ audio: false, video: { facingMode: { ideal: "environment" } } })
+            .catch(() => orig({ audio: false, video: { facingMode: "environment" } }))
+            .catch(() => orig({ audio: false, video: true }));
+        }
+      }
+    } catch {
+      /* usar pedido original */
+    }
+    return orig(constraints);
+  };
+  try {
+    await mindarThree.start();
+  } finally {
+    patchActive = false;
+    md.getUserMedia = orig;
+  }
+}
+
 async function runArSession({
   shell,
   mainRow,
@@ -1748,6 +1797,13 @@ async function runArSession({
     if (Number.isFinite(fBeta)) mindarOpts.filterBeta = fBeta;
 
     mindarThree = new MindARThree(mindarOpts);
+    /** Óculos/colar: câmara frontal; só `environment` se o tema pedir explicitamente. */
+    {
+      const arPreferredCam = String(cfgAttr("arPreferredCamera", "user"))
+        .trim()
+        .toLowerCase();
+      mindarThree.shouldFaceUser = arPreferredCam !== "environment";
+    }
     mindarThree.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     mindarThree.scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.45));
 
@@ -1789,7 +1845,7 @@ async function runArSession({
       }
     });
 
-    await mindarThree.start();
+    await startMindARFaceWithReliableCamera(mindarThree);
 
     /**
      * Pipeline simples: rotação vem inteiramente do `data-ar-canonical-fix-yxz`
@@ -2864,15 +2920,21 @@ async function main() {
   __omafitArLastRootSig = rootSig;
 
   const adminBrand = await waitForOmafitWidgetAdminBranding();
+  /** `#omafit-ar-root` (Liquid / iframe) e `#omafit-widget-root` (`data-omafit-admin-primary`) antes do fallback. */
+  const widgetRootEl =
+    typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
+  const embedPrimary = String(
+    widgetRootEl?.getAttribute("data-omafit-admin-primary") || "",
+  ).trim();
+  const rootPrimary = String(root.dataset.primaryColor || "").trim().replace(/[<>]/g, "");
   const primaryColor =
-    (adminBrand?.primary || root.dataset.primaryColor || "#810707").trim().replace(/[<>]/g, "") ||
-    "#810707";
+    (rootPrimary || embedPrimary || adminBrand?.primary || "#810707")
+      .trim()
+      .replace(/[<>]/g, "") || "#810707";
   const productTitle = root.dataset.productTitle || "Produto";
   const productImage = root.dataset.productImage || "";
-  let logoUrl = (
-    adminBrand?.storeLogo ||
-    (root.dataset.storeLogo || root.getAttribute("data-store-logo") || "").trim()
-  ).trim();
+  const rootLogo = (root.dataset.storeLogo || root.getAttribute("data-store-logo") || "").trim();
+  let logoUrl = (rootLogo || adminBrand?.storeLogo || "").trim();
   if (logoUrl.startsWith("//")) logoUrl = `https:${logoUrl}`;
   const shopName = (root.dataset.shopName || root.getAttribute("data-shop-name") || "").trim();
   const lang = pickLocale(root.dataset.locale);
@@ -2971,9 +3033,10 @@ async function main() {
   } catch { /* no-op */ }
 
   const t = resolveCopyForType(lang, accessoryType);
+  const rootLink = String(root.dataset.linkText || "").trim();
   const linkText =
-    (adminBrand?.linkText ||
-      root.dataset.linkText ||
+    (rootLink ||
+      adminBrand?.linkText ||
       t.linkTextFallback ||
       "Experimentar (AR)").trim() ||
     t.linkTextFallback ||

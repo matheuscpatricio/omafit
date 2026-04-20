@@ -363,7 +363,14 @@
       data-ar-omafit-cal-source="{% if cal_present %}metafield:product{% else %}none{% endif %}"
       data-ar-omafit-calibration="{{ cal_mf | json | escape }}"
     ></div>
-    <script type="module" src="{{ 'omafit-ar-widget.js' | asset_url }}&omafit_ar_cb={{ block.id }}&t={{ now | date: '%s' }}"></script>
+    {%- liquid
+      assign ar_script_url = 'omafit-ar-widget.js' | asset_url
+      assign ar_cb_sep = '?'
+      if ar_script_url contains '?'
+        assign ar_cb_sep = '&'
+      endif
+    -%}
+    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}"></script>
   {% endif %}
 {% endif %}
 

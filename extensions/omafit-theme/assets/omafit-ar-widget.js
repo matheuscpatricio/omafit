@@ -683,6 +683,23 @@ function waitForOmafitWidgetAdminBranding(maxMs = 8000) {
     if (typeof window !== "undefined") {
       window.addEventListener("omafit:widget-config", onEvt, { passive: true });
     }
+    /**
+     * Iframe Netlify (`WidgetPage.tsx`): não existe `#omafit-widget-root` — só
+     * `#omafit-ar-root` com `data-*` da query. Sem este atalho, `readWidgetRootAdminBranding`
+     * fica sempre null e o RAF espera o timeout completo (8s), deixando o ecrã em branco.
+     * Na loja Shopify o div existe no Liquid (mesmo vazio até o defer do omafit-widget.js).
+     */
+    if (
+      typeof document !== "undefined" &&
+      !document.getElementById("omafit-widget-root")
+    ) {
+      settle({
+        primary: "#810707",
+        linkText: "Experimentar virtualmente",
+        storeLogo: "",
+      });
+      return;
+    }
     const first = readWidgetRootAdminBranding();
     if (first && first.primary) {
       settle(first);
@@ -742,8 +759,8 @@ function injectGlobalStyles(root, primaryOverride) {
     .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
     .omafit-ar-try-on-link:focus { outline: 2px solid ${primary}; outline-offset: 2px; }
-    /* Temas que metem × via ::before/::after em <button> — sem isto parecem dois X sobrepostos. */
-    /* `div[role=button]` evita regras globais do tema em `button::before` (X duplicado). */
+    /* Temas que metem x via ::before/::after em <button> — sem isto parecem dois X sobrepostos. */
+    /* div[role=button] evita regras globais do tema em button::before (X duplicado). */
     .omafit-ar-shell .omafit-ar-close-btn {
       -webkit-appearance: none;
       appearance: none;

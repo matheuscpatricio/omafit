@@ -19,6 +19,7 @@ import {
   arEyewearSupabaseConfigError,
   normalizeAccessoryType,
   detectAccessoryTypeForProduct,
+  enrichAssetsWithFreshAccessoryType,
 } from "../ar-eyewear.server";
 
 const BUCKET_UPLOADS = "ar-eyewear-uploads";
@@ -59,7 +60,7 @@ async function validateImageOptional(file) {
 
 export async function loader({ request }) {
   try {
-    const { session } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     if (!(await getShopArEyewearEnabled(session.shop))) {
       return Response.json({ error: "AR Eyewear disabled for this shop" }, { status: 403 });
     }
@@ -71,7 +72,11 @@ export async function loader({ request }) {
         { status: 500 },
       );
     }
-    const rows = await listAssets(session.shop, { limit: 100 });
+    const rowsRaw = await listAssets(session.shop, { limit: 100 });
+    // Re-deteção defensiva do accessory_type com dados actuais da Shopify.
+    // Corrige valores antigos em BD (quando criados antes da deteção por
+    // categoria) e persiste o valor correcto de forma "fire-and-forget".
+    const rows = await enrichAssetsWithFreshAccessoryType(admin, rowsRaw);
     const { max: arProductsMax, plan: billingPlan } = await fetchShopArProductsLimit(session.shop);
     const arProductsUsed = await countDistinctArProductsExcludingTerminal(session.shop);
     return Response.json({

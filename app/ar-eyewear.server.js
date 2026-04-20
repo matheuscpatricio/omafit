@@ -824,6 +824,132 @@ export async function detectAccessoryTypeForProduct(admin, productId) {
   }
 }
 
+/**
+ * Query batch para obter título / tipo / tags / categoria de vários produtos
+ * de uma só vez (1 round-trip). `nodes(ids: [...])` da Admin API aceita GIDs.
+ */
+const AR_ACCESSORY_NODES_QUERY = `#graphql
+  query ArAccessoryTypeNodes($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        id
+        title
+        productType
+        tags
+        category { fullName }
+      }
+    }
+  }
+`;
+
+const AR_ACCESSORY_NODES_QUERY_NO_CAT = `#graphql
+  query ArAccessoryTypeNodesNoCat($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        id
+        title
+        productType
+        tags
+      }
+    }
+  }
+`;
+
+/**
+ * Dado `admin` + lista de assets, devolve um `Map<productId, accessoryType>` re-detectado
+ * com os dados actuais da Shopify. Funciona em batches de 100 (limite nodes()).
+ * Silencia falhas por produto (retorna default) para não bloquear a listagem.
+ */
+export async function refreshAccessoryTypeForAssets(admin, assets = []) {
+  /** @type {Map<string, string>} */
+  const byProduct = new Map();
+  if (!admin || !Array.isArray(assets) || !assets.length) return byProduct;
+
+  const productIds = Array.from(
+    new Set(
+      assets
+        .map((a) => String(a?.product_id ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!productIds.length) return byProduct;
+
+  const gids = productIds.map((pid) => toProductGid(pid));
+  const BATCH = 100;
+  let useCategory = true;
+  for (let i = 0; i < gids.length; i += BATCH) {
+    const slice = gids.slice(i, i + BATCH);
+    try {
+      const res = await admin.graphql(
+        useCategory ? AR_ACCESSORY_NODES_QUERY : AR_ACCESSORY_NODES_QUERY_NO_CAT,
+        { variables: { ids: slice } },
+      );
+      const json = await res.json();
+      if (Array.isArray(json?.errors) && json.errors.length) {
+        const msg = json.errors.map((e) => e?.message || "").join(" ");
+        if (useCategory && /category|fullName|unknown field|Field ['"]?category/i.test(msg)) {
+          useCategory = false;
+          i -= BATCH;
+          continue;
+        }
+        console.warn("[ar-eyewear] refreshAccessoryTypeForAssets errors:", msg);
+        continue;
+      }
+      const nodes = Array.isArray(json?.data?.nodes) ? json.data.nodes : [];
+      for (const node of nodes) {
+        if (!node?.id) continue;
+        const numericId = String(node.id).match(/Product\/(\d+)/)?.[1] || null;
+        if (!numericId) continue;
+        const type = detectAccessoryType({
+          tags: node.tags,
+          productType: node.productType,
+          categoryFullName: node.category?.fullName,
+          title: node.title,
+        });
+        byProduct.set(numericId, type);
+      }
+    } catch (e) {
+      console.warn(
+        "[ar-eyewear] refreshAccessoryTypeForAssets batch falhou:",
+        e?.message || e,
+      );
+    }
+  }
+  return byProduct;
+}
+
+/**
+ * Aplica o re-detect em `assets` (in-place retornando cópia), e persiste na BD
+ * as correções onde `accessory_type` está desactualizado. Erros de persistência
+ * não bloqueiam (apenas log). Retorna a lista de assets com o campo corrigido.
+ */
+export async function enrichAssetsWithFreshAccessoryType(admin, assets = []) {
+  const byProduct = await refreshAccessoryTypeForAssets(admin, assets);
+  if (!byProduct.size) return assets;
+  const out = [];
+  const toPersist = [];
+  for (const a of assets) {
+    const pid = String(a?.product_id ?? "").trim();
+    const fresh = pid ? byProduct.get(pid) : null;
+    if (fresh && fresh !== a.accessory_type) {
+      out.push({ ...a, accessory_type: fresh });
+      toPersist.push({ id: a.id, accessory_type: fresh });
+    } else {
+      out.push(a);
+    }
+  }
+  for (const row of toPersist) {
+    patchAsset(row.id, { accessory_type: row.accessory_type }).catch((e) => {
+      console.warn(
+        "[ar-eyewear] enrichAssetsWithFreshAccessoryType persist falhou:",
+        row.id,
+        e?.message || e,
+      );
+    });
+  }
+  return out;
+}
+
 export async function getShopArEyewearEnabled(shopDomain) {
   if (process.env.OMAFIT_AR_EYEWEAR_OPEN_BETA === "1") return true;
   const { url, key } = getSupabaseConfig();

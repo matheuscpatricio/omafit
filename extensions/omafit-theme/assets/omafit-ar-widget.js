@@ -1304,12 +1304,21 @@ async function runArSession({
       if (ak !== undefined && String(ak).trim() !== "") return String(ak).trim();
       return String(fallback ?? "").trim();
     }
-    const accessoryTypeResolved = omafitResolveAccessoryType(cfgAttrDispatch);
-    const accessoryType = ["glasses", "necklace", "watch", "bracelet"].includes(
-      accessoryTypeResolved,
+    // Prioridade: o valor já calculado pelo Liquid é autoritativo (tem acesso
+    // à `product.category.ancestors` + tags + product.type). Só re-inferimos
+    // no cliente se estiver vazio ou inválido (temas antigos / fallback).
+    const AR_VALID_TYPES = ["glasses", "necklace", "watch", "bracelet"];
+    const liquidAccessoryType = String(
+      cfgAttrDispatch("arAccessoryType", ""),
     )
-      ? accessoryTypeResolved
-      : "glasses";
+      .trim()
+      .toLowerCase();
+    const clientDetected = omafitResolveAccessoryType(cfgAttrDispatch);
+    const accessoryType = AR_VALID_TYPES.includes(liquidAccessoryType)
+      ? liquidAccessoryType
+      : AR_VALID_TYPES.includes(clientDetected)
+        ? clientDetected
+        : "glasses";
     const trackingStackRaw = String(
       (embedCfg?.dataset?.arTrackingStack ?? arCfg?.dataset?.arTrackingStack ?? "")
         .toString()

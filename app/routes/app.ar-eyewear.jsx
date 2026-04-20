@@ -72,6 +72,29 @@ function imageSelectOptions(images, t) {
   ];
 }
 
+const AR_TYPES = ["glasses", "necklace", "watch", "bracelet"];
+
+/**
+ * Badge "Tipo" na lista de envios: o valor em BD (`accessory_type`) pode estar
+ * desatualizado (criado antes da deteção por categoria). Priorizamos sempre
+ * `detectAccessoryType` com os dados actuais do produto na lista.
+ */
+function resolveAccessoryTypeForAsset(asset, productById) {
+  const pid = String(asset?.product_id ?? "").trim();
+  const fromDb = asset?.accessory_type;
+  const fallback =
+    fromDb && AR_TYPES.includes(fromDb) ? fromDb : "glasses";
+  if (!pid || !productById?.get) return fallback;
+  const p = productById.get(pid);
+  if (!p) return fallback;
+  return detectAccessoryType({
+    tags: p.tags,
+    productType: p.productType,
+    categoryFullName: p.categoryFullName,
+    title: p.title,
+  });
+}
+
 export default function ArEyewearPage() {
   const { t } = useAppI18n();
   const [searchParams] = useSearchParams();
@@ -228,6 +251,12 @@ export default function ArEyewearPage() {
   const productNameById = useMemo(() => {
     const map = new Map();
     for (const p of products || []) map.set(String(p.id || ""), p.title || "");
+    return map;
+  }, [products]);
+
+  const productById = useMemo(() => {
+    const map = new Map();
+    for (const p of products || []) map.set(String(p.id || ""), p);
     return map;
   }, [products]);
 
@@ -440,7 +469,9 @@ export default function ArEyewearPage() {
                 </Text>
               ) : (
                 <BlockStack gap="300">
-                  {assets.map((a) => (
+                  {assets.map((a) => {
+                    const displayAccessoryType = resolveAccessoryTypeForAsset(a, productById);
+                    return (
                     <Card key={a.id} padding="400">
                       <BlockStack gap="300">
                         <InlineStack align="space-between" blockAlign="center" wrap>
@@ -448,12 +479,10 @@ export default function ArEyewearPage() {
                             {a.product_name || productNameById.get(String(a.product_id || "")) || t("arEyewear.productUnknown")}
                           </Text>
                           <InlineStack gap="200" wrap>
-                            {a.accessory_type ? (
-                              <Badge tone="attention">
-                                {t(`arEyewear.accessoryType.${a.accessory_type}`) ||
-                                  a.accessory_type}
-                              </Badge>
-                            ) : null}
+                            <Badge tone="attention">
+                              {t(`arEyewear.accessoryType.${displayAccessoryType}`) ||
+                                displayAccessoryType}
+                            </Badge>
                             <Badge tone={statusTone(a.status)}>
                               {t(`arEyewear.status.${a.status}`)}
                             </Badge>
@@ -515,7 +544,8 @@ export default function ArEyewearPage() {
                         </InlineStack>
                       </BlockStack>
                     </Card>
-                  ))}
+                    );
+                  })}
                 </BlockStack>
               )}
             </BlockStack>

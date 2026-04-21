@@ -82,6 +82,15 @@ const MEDIAPIPE_WASM_BASE =
 const MEDIAPIPE_HAND_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
 
+/**
+ * Escala de mundo para relógio/pulseira após bbox (`baseScale = worldMax / maxDim`).
+ * ~0,052 m ≈ caixa 52 mm num GLB cuja bbox engloba o modelo — adequado ao pulso.
+ * **Não** usar 0,16 (isso é para óculos/colar no preview facial). Tem de coincidir
+ * com `PreviewModel` quando `accessoryType` é watch/bracelet.
+ */
+const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.052;
+const OMAFIT_BRACELET_AR_WORLD_MAX_DIM = 0.058;
+
 const Z_SHELL = 2147483640;
 
 /**
@@ -784,6 +793,12 @@ function injectGlobalStyles(root, primaryOverride) {
       width: 24px;
       height: 24px;
     }
+    /* MindAR: feed da câmara fica atrás do canvas; fundos opacos no canvas tapam o vídeo. */
+    .omafit-ar-mindar-host canvas,
+    .omafit-ar-shell .omafit-ar-mindar-host canvas {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
   `;
   document.head.appendChild(s);
   const hasThemeFontFace = document.getElementById("omafit-ar-theme-font-face");
@@ -1248,6 +1263,46 @@ async function startMindARFaceWithReliableCamera(mindarThree) {
   }
 }
 
+/**
+ * MindAR coloca o `<video>` da câmara atrás do canvas (z-index -2). O fundo só
+ * se vê se o WebGL limpar com **alpha 0**; caso contrário o canvas tapa o vídeo
+ * com preto opaco — o GLB continua visível, mas o feed da câmara desaparece.
+ * Reforça também estilos do vídeo/canvas contra regras agressivas do tema.
+ */
+function fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost) {
+  try {
+    const { scene, renderer, cssRenderer } = mindarThree || {};
+    if (scene && "background" in scene) scene.background = null;
+    if (renderer && typeof renderer.setClearColor === "function") {
+      renderer.setClearColor(0x000000, 0);
+    }
+    const cssEl = cssRenderer?.domElement;
+    if (cssEl) {
+      cssEl.style.backgroundColor = "transparent";
+      cssEl.style.pointerEvents = "none";
+    }
+    const video = mindarHost?.querySelector?.("video");
+    if (video) {
+      video.setAttribute("playsinline", "");
+      video.setAttribute("muted", "");
+      video.playsInline = true;
+      video.muted = true;
+      video.style.opacity = "1";
+      video.style.visibility = "visible";
+      video.style.pointerEvents = "none";
+      void video.play?.().catch?.(() => {});
+    }
+    const canvases = mindarHost?.querySelectorAll?.("canvas") || [];
+    for (let i = 0; i < canvases.length; i++) {
+      const c = canvases[i];
+      c.style.backgroundColor = "transparent";
+      c.style.pointerEvents = "none";
+    }
+  } catch (e) {
+    console.warn("[omafit-ar] fixMindARFaceVideoBehindCanvas:", e?.message || e);
+  }
+}
+
 async function runArSession({
   shell,
   mainRow,
@@ -1296,10 +1351,12 @@ async function runArSession({
   });
 
   const mindarHost = el("div", {
+    className: "omafit-ar-mindar-host",
     style: {
       position: "absolute",
       inset: "0",
       overflow: "hidden",
+      isolation: "isolate",
     },
   });
   arFit.appendChild(mindarHost);
@@ -1835,6 +1892,11 @@ async function runArSession({
       } catch {
         /* ignore */
       }
+      try {
+        if (mindarThree) fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
+      } catch {
+        /* ignore */
+      }
     });
     arResizeObserver.observe(arWrap);
     requestAnimationFrame(() => {
@@ -1846,6 +1908,12 @@ async function runArSession({
     });
 
     await startMindARFaceWithReliableCamera(mindarThree);
+    /**
+     * Não usar `scene.background` + VideoTexture: isso altera o pipeline WebGL do
+     * MindAR e opacity 0 no elemento video pode quebrar faceMesh/detect (drawImage).
+     * Mantemos vídeo DOM atrás do canvas com limpeza transparente (ver loop).
+     */
+    fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
 
     /**
      * Pipeline simples: rotação vem inteiramente do `data-ar-canonical-fix-yxz`
@@ -2299,6 +2367,14 @@ async function runArSession({
     const { renderer, scene, camera } = mindarThree;
     let firstAnchorMatrixLogged = false;
     renderer.setAnimationLoop(() => {
+      try {
+        if (scene && scene.background != null) scene.background = null;
+        if (renderer && typeof renderer.setClearColor === "function") {
+          renderer.setClearColor(0x000000, 0);
+        }
+      } catch {
+        /* ignore */
+      }
       if (!firstAnchorMatrixLogged) {
         try {
           const m = anchor.group.matrix?.elements;
@@ -2326,6 +2402,7 @@ async function runArSession({
       }
       renderer.render(scene, camera);
     });
+    fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
 
     loading.style.display = "none";
 
@@ -2606,6 +2683,7 @@ async function runHandArSession({
    *   anchor → wearPosition → calibRot → glbRoot
    */
   const anchor = new THREE.Group();
+  /** Matriz escrita em `updateAnchorFromHand` — não deixar o Three interpolar. */
   anchor.matrixAutoUpdate = false;
   scene.add(anchor);
 
@@ -2664,9 +2742,11 @@ async function runHandArSession({
         const size = new THREE.Vector3();
         bbox.getSize(size);
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        // Relógios típicos: ~0.05 m de largura; pulseiras: ~0.07 m.
-        const targetSize = accessoryType === "bracelet" ? 0.085 : 0.07;
-        baseScale = targetSize / maxDim;
+        const wristWorldMax =
+          accessoryType === "bracelet"
+            ? OMAFIT_BRACELET_AR_WORLD_MAX_DIM
+            : OMAFIT_WRIST_AR_WORLD_MAX_DIM;
+        baseScale = wristWorldMax / maxDim;
         glbRoot.scale.setScalar(baseScale * (userScale > 0 ? userScale : 1));
 
         const center = new THREE.Vector3();
@@ -2700,7 +2780,6 @@ async function runHandArSession({
   const tmpY = new THREE.Vector3();
   const tmpZ = new THREE.Vector3();
   const tmpPos = new THREE.Vector3();
-  const tmpCross = new THREE.Vector3();
 
   let running = true;
   let lastHandTimestamp = -1;
@@ -2725,32 +2804,37 @@ async function runHandArSession({
   }
 
   function updateAnchorFromHand(lms) {
-    // Estimate depth from normalized hand span (wrist → middle MCP distance).
+    // Profundidade: largura aparente pulso → MCP médio no plano da imagem.
     const wristN = lms[0];
     const middleMcpN = lms[9] || lms[5];
     const dx = middleMcpN.x - wristN.x;
     const dy = middleMcpN.y - wristN.y;
     const spanN = Math.sqrt(dx * dx + dy * dy);
-    // Mapear tamanho normalizado da mão (tipicamente 0.1-0.3 do frame em selfie)
-    // para distância à câmara (0.25 m quando a mão ocupa ~25% do frame).
     const zDist = Math.max(0.12, Math.min(1.2, 0.06 / Math.max(0.02, spanN)));
+    const zNear = zDist * 0.99;
 
-    const wristW = unprojectLandmark(wristN, zDist);
-    const indexW = unprojectLandmark(lms[5], zDist * 0.98);
-    const pinkyW = unprojectLandmark(lms[17], zDist * 0.98);
+    const w0 = unprojectLandmark(wristN, zDist);
+    const w5 = unprojectLandmark(lms[5], zNear);
+    const w9 = unprojectLandmark(lms[9], zNear);
+    const w17 = unprojectLandmark(lms[17], zNear);
 
-    tmpX.subVectors(indexW, pinkyW).normalize();
-    tmpCross.subVectors(indexW, wristW);
-    tmpZ.subVectors(pinkyW, wristW);
-    tmpY.crossVectors(tmpCross, tmpZ).normalize();
-    // Re-orthogonalize Z = X × Y so the basis is perfectly ortonormal.
+    /**
+     * Base estável para relógio no dorso:
+     *   X = mindinho → índice (largura do pulso)
+     *   Y = normal ao plano palma/dorso (cross do eixo “para os nós” com X)
+     *   Z = X × Y (eixo ao longo do antebraço quando a mão está estendida)
+     */
+    tmpX.subVectors(w5, w17).normalize();
+    const towardKnuckles = new THREE.Vector3().subVectors(w9, w0);
+    tmpY.crossVectors(towardKnuckles, tmpX).normalize();
     tmpZ.crossVectors(tmpX, tmpY).normalize();
 
-    tmpPos.copy(wristW);
+    tmpPos.copy(w0);
     tmpMat.makeBasis(tmpX, tmpY, tmpZ);
     tmpMat.setPosition(tmpPos);
     anchor.matrix.copy(tmpMat);
     anchor.matrixWorldNeedsUpdate = true;
+    anchor.updateMatrixWorld(true);
   }
 
   function tick() {
@@ -2822,8 +2906,11 @@ async function runHandArSession({
               const size = new THREE.Vector3();
               bbox.getSize(size);
               const maxDim = Math.max(size.x, size.y, size.z) || 1;
-              const targetSize = accessoryType === "bracelet" ? 0.085 : 0.07;
-              baseScale = targetSize / maxDim;
+              const wristWorldMax =
+                accessoryType === "bracelet"
+                  ? OMAFIT_BRACELET_AR_WORLD_MAX_DIM
+                  : OMAFIT_WRIST_AR_WORLD_MAX_DIM;
+              baseScale = wristWorldMax / maxDim;
               const s = Number(cal?.scale);
               glbRoot.scale.setScalar(baseScale * (Number.isFinite(s) && s > 0 ? s : 1));
               const center = new THREE.Vector3();

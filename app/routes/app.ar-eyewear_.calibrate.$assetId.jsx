@@ -423,7 +423,11 @@ export default function ArEyewearCalibratePage() {
                   ) : (
                     <FaceSilhouette />
                   )}
-                  <PreviewModel src={data.glbPreviewUrl} cal={cal} />
+                  <PreviewModel
+                    src={data.glbPreviewUrl}
+                    cal={cal}
+                    accessoryType={data.accessoryType}
+                  />
                   <div
                     style={{
                       position: "absolute",
@@ -604,7 +608,12 @@ export default function ArEyewearCalibratePage() {
  */
 const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
 
-function PreviewModel({ src, cal }) {
+/** Coincidir com `OMAFIT_WRIST_AR_*` / bracelete em `omafit-ar-widget.js` (hand AR). */
+const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
+const PREVIEW_WORLD_MAX_DIM_WRIST = 0.052;
+const PREVIEW_WORLD_MAX_DIM_BRACELET = 0.058;
+
+function PreviewModel({ src, cal, accessoryType = "glasses" }) {
   const hostRef = useRef(null);
   const stateRef = useRef({
     THREE: null,
@@ -826,7 +835,13 @@ function PreviewModel({ src, cal }) {
               box.getCenter(center);
               root.position.sub(center);
               const maxDim = Math.max(size.x, size.y, size.z, 1e-4);
-              const baseScale = 0.16 / maxDim;
+              const worldMax =
+                accessoryType === "bracelet"
+                  ? PREVIEW_WORLD_MAX_DIM_BRACELET
+                  : accessoryType === "watch"
+                    ? PREVIEW_WORLD_MAX_DIM_WRIST
+                    : PREVIEW_WORLD_MAX_DIM_FACE;
+              const baseScale = worldMax / maxDim;
               root.scale.setScalar(baseScale);
               s.model = root;
               s.size = size.clone().multiplyScalar(baseScale);
@@ -909,7 +924,7 @@ function PreviewModel({ src, cal }) {
         size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
       };
     };
-  }, [src]);
+  }, [src, accessoryType]);
 
   useEffect(() => {
     calRef.current = cal;

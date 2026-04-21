@@ -116,7 +116,27 @@ const OMAFIT_HAND_AXIS_TAU_MS = 180;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_crop-fix+watch-stab-v3";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_watch+glasses-sync-v5-syntaxfix";
+
+/**
+ * Loga o banner de build imediatamente ao carregar o módulo.
+ * Faz isto no topo do ficheiro (antes de qualquer early-return noutras funções)
+ * e apenas uma vez por sessão/origin para não poluir a consola.
+ * Isto substitui o log que era feito em `bootOmafitArWidget()` — que nunca
+ * disparava no fluxo iframe (Netlify) porque `hasArGlbUrlQueryParam()` cortava.
+ */
+if (typeof window !== "undefined" && !window.__OMAFIT_AR_BUILD_LOGGED__) {
+  window.__OMAFIT_AR_BUILD_LOGGED__ = true;
+  try {
+    const flow = typeof location !== "undefined" && /omafit\.netlify\.app/i.test(location.host)
+      ? "netlify-iframe"
+      : "shopify-cdn-inline";
+    console.log(
+      `%c[omafit-ar] build: ${OMAFIT_AR_WIDGET_BUILD} (${flow})`,
+      "color:#fff;background:#111;padding:2px 6px;border-radius:4px;font-weight:bold;",
+    );
+  } catch { /* ignore */ }
+}
 
 const Z_SHELL = 2147483640;
 
@@ -826,43 +846,12 @@ function injectGlobalStyles(root, primaryOverride) {
       background: transparent !important;
       background-color: transparent !important;
     }
-    /**
-     * Forçar vídeo + canvas do MindAR/HandAR a cobrir 100% do host com
-     * object-fit: cover. Substitui o posicionamento absoluto em px que o
-     * MindAR._resize() aplica, porque depende de medições de container que
-     * ficam obsoletas quando o modal muda de tamanho (abertura, teclado,
-     * rotação de ecrã) e resultam em "vídeo cortado à direita/em baixo".
-     *
-     * object-fit: cover produz sempre um crop simétrico (centro preservado);
-     * a matriz de câmara do MindAR é reconstruída por _resize() para bater
-     * certo com as dimensões intrínsecas do vídeo, portanto o overlay 3D
-     * continua alinhado com os landmarks detectados no frame.
-     */
-    .omafit-ar-mindar-host > video,
-    .omafit-ar-shell .omafit-ar-mindar-host > video {
-      position: absolute !important;
-      top: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      object-fit: cover !important;
-      object-position: center center !important;
-      transform: none;
-    }
-    .omafit-ar-mindar-host > canvas,
-    .omafit-ar-shell .omafit-ar-mindar-host > canvas {
-      position: absolute !important;
-      top: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      object-fit: cover !important;
-      object-position: center center !important;
-    }
+    /* NAO sobrepor width/height/top/left do video ou canvas do MindAR.    */
+    /* A biblioteca calcula em _resize() posicoes em pixels para fazer       */
+    /* object-fit: cover manual (top/left negativos para centrar overflow).  */
+    /* Se forcarmos width/height:100% no canvas por CSS, o canvas "estica"   */
+    /* ao container mas as projecoes 3D continuam calculadas para o aspect   */
+    /* do video -> oculos aparecem rodados/offset ("virado pro lado").       */
   `;
   document.head.appendChild(s);
   const hasThemeFontFace = document.getElementById("omafit-ar-theme-font-face");
@@ -1775,6 +1764,7 @@ async function runArSession({
         : inferredStack;
 
     console.log("[omafit-ar] dispatcher snapshot", {
+      build: OMAFIT_AR_WIDGET_BUILD,
       accessoryType,
       source: accessoryTypeSource,
       trackingStack,

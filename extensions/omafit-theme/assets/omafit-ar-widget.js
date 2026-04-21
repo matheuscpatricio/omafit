@@ -1,6 +1,14 @@
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
- * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js), como o try-on oficial.
+ * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js).
+ *
+ * Referência de UX (filtro de óculos no Instagram / Facebook): esses efeitos
+ * usam Spark AR no app nativo — malha facial densa, oclusão e iluminação
+ * próprias do runtime. No Web não há Spark AR; o equivalente prático aqui é
+ * MindAR (MediaPipe Face Mesh + solvePnP + One Euro por landmark), com
+ * calibração do lojista e defaults de filtro/resolução afinados para aproximar
+ * a estabilidade “tipo Instagram” dentro do que o browser permite.
+ *
  * @see https://github.com/hiukim/mind-ar-js
  * @see https://hiukim.github.io/mind-ar-js-doc/face-tracking-examples/tryon
  */
@@ -155,7 +163,16 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_watch-dorsal-bracelet-scale-v11.4";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_spark-ar-face-defaults-v11.5";
+
+/**
+ * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
+ * Defaults da lib: filterMinCF=0.001, filterBeta=1. Valores ligeiramente mais
+ * baixos em minCutOff reduzem micro-tremor (mais “filtro Instagram”), com
+ * custo mínimo de latência. Override via data-ar-mindar-filter-min-cf / beta.
+ */
+const OMAFIT_MINDAR_DEFAULT_FILTER_MIN_CF = 0.00058;
+const OMAFIT_MINDAR_DEFAULT_FILTER_BETA = 0.92;
 
 /**
  * Loga o banner de build imediatamente ao carregar o módulo.
@@ -1325,6 +1342,12 @@ async function startMindARFaceWithReliableCamera(mindarThree) {
   }
   const orig = md.getUserMedia.bind(md);
   let patchActive = true;
+  /** Pedido extra de resolução/frameRate: landmarks mais estáveis (mais próximo do nível “filtro Instagram”). */
+  const faceVideoIdeal = {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 30 },
+  };
   md.getUserMedia = function (constraints) {
     if (!patchActive) return orig(constraints);
     try {
@@ -1332,13 +1355,23 @@ async function startMindARFaceWithReliableCamera(mindarThree) {
       if (vid && typeof vid === "object" && !vid.deviceId) {
         const fm = vid.facingMode;
         if (fm === "user" || fm === "face") {
-          return orig({ audio: false, video: { facingMode: { ideal: "user" } } })
-            .catch(() => orig({ audio: false, video: { facingMode: "user" } }))
+          return orig({
+            audio: false,
+            video: { facingMode: { ideal: "user" }, ...faceVideoIdeal },
+          })
+            .catch(() =>
+              orig({ audio: false, video: { facingMode: "user" } }),
+            )
             .catch(() => orig({ audio: false, video: true }));
         }
         if (fm === "environment") {
-          return orig({ audio: false, video: { facingMode: { ideal: "environment" } } })
-            .catch(() => orig({ audio: false, video: { facingMode: "environment" } }))
+          return orig({
+            audio: false,
+            video: { facingMode: { ideal: "environment" }, ...faceVideoIdeal },
+          })
+            .catch(() =>
+              orig({ audio: false, video: { facingMode: "environment" } }),
+            )
             .catch(() => orig({ audio: false, video: true }));
         }
       }
@@ -1971,17 +2004,23 @@ async function runArSession({
       disableFaceMirror = true;
     }
 
-    const fMin = Number(String(cfgAttr("arMindarFilterMinCf", "")).trim());
-    const fBeta = Number(String(cfgAttr("arMindarFilterBeta", "")).trim());
+    const fMinStr = String(cfgAttr("arMindarFilterMinCf", "")).trim();
+    const fBetaStr = String(cfgAttr("arMindarFilterBeta", "")).trim();
+    const fMinParsed = fMinStr.length > 0 ? Number(fMinStr) : NaN;
+    const fBetaParsed = fBetaStr.length > 0 ? Number(fBetaStr) : NaN;
     const mindarOpts = {
       container: mindarHost,
       uiLoading: "no",
       uiScanning: "no",
       uiError: "no",
       disableFaceMirror,
+      filterMinCF: Number.isFinite(fMinParsed)
+        ? fMinParsed
+        : OMAFIT_MINDAR_DEFAULT_FILTER_MIN_CF,
+      filterBeta: Number.isFinite(fBetaParsed)
+        ? fBetaParsed
+        : OMAFIT_MINDAR_DEFAULT_FILTER_BETA,
     };
-    if (Number.isFinite(fMin)) mindarOpts.filterMinCF = fMin;
-    if (Number.isFinite(fBeta)) mindarOpts.filterBeta = fBeta;
 
     mindarThree = new MindARThree(mindarOpts);
     /** Óculos/colar: câmara frontal; só `environment` se o tema pedir explicitamente. */

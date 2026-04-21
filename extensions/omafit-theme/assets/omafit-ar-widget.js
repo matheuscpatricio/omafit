@@ -155,7 +155,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_wrist-fit-rotation-anti-flip-v11.3";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_watch-dorsal-bracelet-scale-v11.4";
 
 /**
  * Loga o banner de build imediatamente ao carregar o módulo.
@@ -3088,6 +3088,20 @@ async function runHandArSession({
    * `updateAnchorFromHand` para `smoothWristRadius`.
    */
   const OMAFIT_DEFAULT_WRIST_R_M = 0.026;
+  /**
+   * Folga radial (m) entre pele e face INTERNA do GLB após escala adaptativa.
+   * Pulseira: 2,5 mm (v11.4 — subir de 2 mm porque utilizadores ainda viam
+   * anel visualmente mais estreito que o pulso). Relógio: 1 mm (correia firme).
+   */
+  const OMAFIT_BRACELET_WRIST_GAP_M = 0.0025;
+  const OMAFIT_WATCH_WRIST_GAP_M = 0.001;
+  /**
+   * Ratio knuckle-span → raio do pulso (landmarks 5–17). Pulseira usa valor
+   * mais alto que relógio: feedback persistente de pulseira sub-dimensionada
+   * mesmo com 0.34 único em v11.3.
+   */
+  const OMAFIT_BRACELET_KNUCKLE_TO_WRIST_R = 0.36;
+  const OMAFIT_WATCH_KNUCKLE_TO_WRIST_R = 0.34;
 
   /**
    * === CÁLCULO DO RAIO INTERNO REAL DO ANEL ===
@@ -3324,9 +3338,12 @@ async function runHandArSession({
      * scale = targetInnerR / localInnerR   (escalar pela INTERNA, não pelo eixo).
      *
      * Relógio: gap = 1 mm (folga mínima para a correia não enterrar na pele).
-     * Pulseira: gap = 2 mm (conforto, ainda wrap visível).
+     * Pulseira: gap = 2,5 mm (v11.4 — alinha com runtime + preview calibrate).
      */
-    const gapOffset = accessoryType === "bracelet" ? 0.002 : 0.001;
+    const gapOffset =
+      accessoryType === "bracelet"
+        ? OMAFIT_BRACELET_WRIST_GAP_M
+        : OMAFIT_WATCH_WRIST_GAP_M;
     const targetInnerR = OMAFIT_DEFAULT_WRIST_R_M + gapOffset;
     const calcBaseScale = targetInnerR / localInnerR;
 
@@ -3443,6 +3460,10 @@ async function runHandArSession({
   const tmpY = new THREE.Vector3();
   const tmpZ = new THREE.Vector3();
   const tmpPos = new THREE.Vector3();
+  /** Triângulo punho→MCP índice / mindinho: normal ≈ palma vs dorso (só relógio). */
+  const wristTriA = new THREE.Vector3();
+  const wristTriB = new THREE.Vector3();
+  const palmTriN = new THREE.Vector3();
 
   /** Estado suavizado (EMA) dos eixos/posição — aproxima o filtro OneEuro do MindAR. */
   const smX = new THREE.Vector3();
@@ -3578,6 +3599,33 @@ async function runHandArSession({
     const toMcp = new THREE.Vector3().subVectors(w9, w0);
     if (handLabel === "Left") tmpX.negate();
     tmpY.crossVectors(toMcp, tmpX).normalize();
+    /**
+     * === RELÓGIO: refinamento dorso vs palma (v11.4) ===
+     *
+     * `toMcp × X` segue bem o antebraço, mas em algumas poses o vector
+     * punho→MCP-médio oscila e o eixo Y (normal palmar/dorsal) deixa de
+     * separar tão bem a "face" do relógio (dorso) do lado da palma.
+     *
+     * A normal do triângulo (w5−w0) × (w17−w0) é aproximadamente perpendicular
+     * ao plano da prega do pulso — mais estável para distinguir lado de cima
+     * (dorso, mostrador) vs lado de baixo (palma, fecho). Misturamos ~52 %
+     * desta normal com o Y clássico e projectamos de volta no plano ⊥ a X
+     * para manter base ortonormal.
+     */
+    if (accessoryType === "watch") {
+      wristTriA.subVectors(w5, w0);
+      wristTriB.subVectors(w17, w0);
+      palmTriN.copy(wristTriA).cross(wristTriB);
+      const triLen = palmTriN.length();
+      if (triLen > 1e-7) {
+        palmTriN.multiplyScalar(1 / triLen);
+        if (palmTriN.dot(tmpY) < 0) palmTriN.negate();
+        tmpY.lerp(palmTriN, 0.52).normalize();
+        tmpY.addScaledVector(tmpX, -tmpY.dot(tmpX));
+        const yLen = tmpY.length();
+        if (yLen > 1e-7) tmpY.multiplyScalar(1 / yLen);
+      }
+    }
     tmpZ.crossVectors(tmpX, tmpY).normalize();
 
     /**
@@ -3677,7 +3725,7 @@ async function runHandArSession({
      * entre knuckle-indicador (w5) e knuckle-mindinho (w17). Razão anatómica
      * típica: raio do pulso ≈ 35-40 % da largura entre knuckles.
      *
-     * Clamp entre 18-32 mm cobre desde criança a adulto com pulso largo.
+     * Clamp do raio (ver bloco wristRadiusRaw) cobre criança a adulto.
      * Actualiza o scale Y do cilindro (ao longo do braço) para se manter
      * proporcional — antebraços curtos (crianças) ficam com cilindro mais
      * curto para não "flutuar" para lá do cotovelo virtual.
@@ -3686,7 +3734,7 @@ async function runHandArSession({
      */
     const handKnuckleSpan = w5.distanceTo(w17);
     /**
-     * === ESTIMATIVA ANTROPOMÉTRICA DO RAIO DO PULSO (v11.3) ===
+     * === ESTIMATIVA ANTROPOMÉTRICA DO RAIO DO PULSO (v11.4) ===
      *
      * Dados reais (WHO/NHANES adult hand anthropometry) dão um ratio
      * muitíssimo consistente entre raio do pulso e distância entre knuckles
@@ -3698,16 +3746,23 @@ async function runHandArSession({
      *   M 95º       92 mm         190 mm      30.2 mm   0.328
      *   M 99º       98 mm         210 mm      33.4 mm   0.341
      *
-     * → usa 0.34 (ligeiramente acima da média): melhor errar por pulso
-     *   grande (GLB envolve folgadamente) do que pulso pequeno (GLB fica
-     *   DENTRO do braço, com clipping visível). Safety-first.
+     * v11.4: ratio depende do produto — pulseira 0.36, relógio 0.34.
+     *   Feedback: pulseira ainda parecia mais estreita que o pulso com 0.34
+     *   único; relógio mantém ratio conservador.
      *
      * Clamp [18, 42] mm: lower cobre percentil 3 feminino + crianças;
      *   upper cobre percentil 99.5 masculino + atletas (pulso muito largo).
      *   v11.2 tinha 34 mm (clipava pulsos largos → utilizador via "GLB
      *   menor que o pulso"). Subida para 42 mm resolve este clipping.
      */
-    const wristRadiusRaw = Math.max(0.018, Math.min(0.042, handKnuckleSpan * 0.34));
+    const knuckleToWristRatio =
+      accessoryType === "bracelet"
+        ? OMAFIT_BRACELET_KNUCKLE_TO_WRIST_R
+        : OMAFIT_WATCH_KNUCKLE_TO_WRIST_R;
+    const wristRadiusRaw = Math.max(
+      0.018,
+      Math.min(0.042, handKnuckleSpan * knuckleToWristRatio),
+    );
     /**
      * Comprimento do antebraço (para occluder): ratio ≈ 3.2 × knuckleSpan
      * (comprimento médio de antebraço adulto 25-30 cm vs knuckleSpan 78-92 mm).
@@ -3775,10 +3830,13 @@ async function runHandArSession({
      * O resultado: não há "gap" visível porque o anel envolve o pulso
      * exactamente à superfície, como um produto real no braço.
      *
-     * gap: 1 mm p/ relógio (strap nunca enterra), 2 mm p/ pulseira (conforto).
+     * gap: ver OMAFIT_*_WRIST_GAP_M (relógio 1 mm, pulseira 2,5 mm v11.4).
      */
     if (glbRoot && localInnerR > 1e-6) {
-      const gapOffset = accessoryType === "bracelet" ? 0.002 : 0.001;
+      const gapOffset =
+        accessoryType === "bracelet"
+          ? OMAFIT_BRACELET_WRIST_GAP_M
+          : OMAFIT_WATCH_WRIST_GAP_M;
       const targetInnerR = smoothWristRadius + gapOffset;
       const defaultTargetR = OMAFIT_DEFAULT_WRIST_R_M + gapOffset;
       const adaptMul = targetInnerR / defaultTargetR;
@@ -3794,11 +3852,14 @@ async function runHandArSession({
         Number.isFinite(Number(userScale)) && Number(userScale) > 0
           ? Number(userScale)
           : 1;
-      const gapOffset = accessoryType === "bracelet" ? 0.002 : 0.001;
+      const gapOffset =
+        accessoryType === "bracelet"
+          ? OMAFIT_BRACELET_WRIST_GAP_M
+          : OMAFIT_WATCH_WRIST_GAP_M;
       const adaptMul =
         (smoothWristRadius + gapOffset) /
         (OMAFIT_DEFAULT_WRIST_R_M + gapOffset);
-      console.debug("[omafit-ar] hand anchor v11.3", {
+      console.debug("[omafit-ar] hand anchor v11.4", {
         hand: handLabel || "?",
         handScore: (lastHandScore || 0).toFixed(2),
         anchor: "w0 (wrist)",

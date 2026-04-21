@@ -1056,7 +1056,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                   measuredInner < localRingR * 0.99
                     ? measuredInner
                     : Math.max(localRingR * 0.9, 1e-4);
-                const gap = accessoryType === "bracelet" ? 0.002 : 0.001;
+                const gap = accessoryType === "bracelet" ? 0.0025 : 0.001;
                 baseScale = (PREVIEW_DEFAULT_WRIST_R_M + gap) / localInnerR;
                 console.log("[omafit-calibrate] wrist fit by inner radius", {
                   accessoryType,

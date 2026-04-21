@@ -84,12 +84,29 @@ const MEDIAPIPE_HAND_MODEL_URL =
 
 /**
  * Escala de mundo para relógio/pulseira após bbox (`baseScale = worldMax / maxDim`).
- * ~0,052 m ≈ caixa 52 mm num GLB cuja bbox engloba o modelo — adequado ao pulso.
+ *   - Relógio: 0,045 m → bbox máxima 45 mm (mostrador grande ~40 mm + strap ~5 mm).
+ *   - Pulseira: 0,052 m → bbox máxima 52 mm (pulseiras costumam ser mais largas).
  * **Não** usar 0,16 (isso é para óculos/colar no preview facial). Tem de coincidir
- * com `PreviewModel` quando `accessoryType` é watch/bracelet.
+ * com `PreviewModel` em `app.ar-eyewear_.calibrate.$assetId.jsx` quando
+ * `accessoryType` é watch/bracelet.
  */
-const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.052;
-const OMAFIT_BRACELET_AR_WORLD_MAX_DIM = 0.058;
+const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.045;
+const OMAFIT_BRACELET_AR_WORLD_MAX_DIM = 0.052;
+
+/**
+ * Comprimento real (m) do segmento punho→MCP-médio numa mão adulta.
+ * Usado para estimar `zDist` a partir do tamanho aparente na imagem.
+ * Fonte: anatomia média do adulto (9,5–10,5 cm).
+ */
+const OMAFIT_WRIST_TO_MCP_M = 0.10;
+
+/**
+ * Constantes de suavização exponencial para os eixos/posição da âncora da mão.
+ * `alpha = 1 - exp(-dt / tau)` com `tau` em ms.
+ * Valores maiores de `tau` = mais estável + maior latência.
+ */
+const OMAFIT_HAND_POS_TAU_MS = 60;
+const OMAFIT_HAND_AXIS_TAU_MS = 90;
 
 const Z_SHELL = 2147483640;
 
@@ -1568,6 +1585,8 @@ async function runArSession({
    * É chamado em cada `cleanup()` para garantir paridade com o face path.
    */
   let arEngineCleanup = null;
+  /** Listeners de orientação/visibilidade adicionados dentro de `runArSession`. */
+  let removeOrientationListeners = null;
 
   const cleanup = () => {
     try {
@@ -1600,6 +1619,14 @@ async function runArSession({
         /* ignore */
       }
       arEngineCleanup = null;
+    }
+    if (typeof removeOrientationListeners === "function") {
+      try {
+        removeOrientationListeners();
+      } catch {
+        /* ignore */
+      }
+      removeOrientationListeners = null;
     }
   };
 
@@ -1886,26 +1913,56 @@ async function runArSession({
       throw new Error("omafit-ar: mediaDevices/getUserMedia indisponível.");
     }
 
-    arResizeObserver = new ResizeObserver(() => {
+    /**
+     * MindAR liga-se apenas ao evento `window.resize`. Se o `mindarHost`
+     * mudar de tamanho (modal a abrir/fechar, teclado virtual, rotação,
+     * orientação), o `_resize` interno não corre sozinho e o vídeo fica
+     * posicionado com os `top/left` da medição inicial → parece “cortado
+     * à direita/em baixo”. Aqui disparamos o `resize` do window E, quando
+     * possível, chamamos o próprio `_resize` do MindAR directamente.
+     */
+    const triggerMindarResize = () => {
       try {
         window.dispatchEvent(new Event("resize"));
       } catch {
         /* ignore */
+      }
+      try {
+        if (mindarThree && typeof mindarThree._resize === "function") {
+          mindarThree._resize();
+        }
+      } catch (e) {
+        console.warn("[omafit-ar] mindarThree._resize falhou", e?.message || e);
       }
       try {
         if (mindarThree) fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
       } catch {
         /* ignore */
       }
-    });
+    };
+    arResizeObserver = new ResizeObserver(triggerMindarResize);
     arResizeObserver.observe(arWrap);
-    requestAnimationFrame(() => {
-      try {
-        window.dispatchEvent(new Event("resize"));
-      } catch {
-        /* ignore */
+    arResizeObserver.observe(mindarHost);
+    requestAnimationFrame(triggerMindarResize);
+    /** Disparos pós-layout adicionais: alguns telemóveis só reportam
+     *  `videoWidth/Height` após o primeiro frame pintado e o MindAR
+     *  mediu com dimensões antigas. */
+    setTimeout(triggerMindarResize, 250);
+    setTimeout(triggerMindarResize, 750);
+    try {
+      window.addEventListener("orientationchange", triggerMindarResize);
+      window.addEventListener("pageshow", triggerMindarResize);
+      if (screen?.orientation?.addEventListener) {
+        screen.orientation.addEventListener("change", triggerMindarResize);
       }
-    });
+      removeOrientationListeners = () => {
+        try { window.removeEventListener("orientationchange", triggerMindarResize); } catch { /* ignore */ }
+        try { window.removeEventListener("pageshow", triggerMindarResize); } catch { /* ignore */ }
+        try { screen?.orientation?.removeEventListener?.("change", triggerMindarResize); } catch { /* ignore */ }
+      };
+    } catch {
+      /* ignore */
+    }
 
     await startMindARFaceWithReliableCamera(mindarThree);
     /**
@@ -1920,9 +1977,22 @@ async function runArSession({
      * (calibração do lojista). Os antigos `arGlbYxz` / `arModelYxz` /
      * `arPoseCorrYxz` foram removidos — toda rotação concentra-se em `calibRot`.
      */
+    /**
+     * `arMindarModelScale` = multiplicador ao redor de **1 face-width**
+     * (MindAR `faceScale ≈ largura da cara em cm`). O UI do admin mostra
+     * 30 %–300 % (0,3 a 3,0). Se algum metafield antigo gravou um valor
+     * fora destes limites (p.ex. 14 por herança do código anterior),
+     * corrigir aqui evita óculos “gigantes” no store sem nova calibração.
+     */
     const scaleMulRaw = cfgAttr("arMindarModelScale", "");
     const nScale = Number(scaleMulRaw);
-    const modelScaleMul = Number.isFinite(nScale) && nScale > 0 ? nScale : 1;
+    let modelScaleMul = Number.isFinite(nScale) && nScale > 0 ? nScale : 1;
+    if (modelScaleMul < 0.3 || modelScaleMul > 3) {
+      console.warn(
+        `[omafit-ar] arMindarModelScale=${modelScaleMul} fora de [0.3,3] — a clampar (possível calibração antiga).`,
+      );
+      modelScaleMul = Math.max(0.3, Math.min(3, modelScaleMul || 1));
+    }
 
     const fromDom = (() => {
       const r = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
@@ -2072,9 +2142,21 @@ async function runArSession({
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
     /** 4) Escala base — óculos com ~1× a largura da cara (depois da multiplicação do
-     *    `anchor.group.matrix` por `faceScale` ≈ 14). Ver header no topo. */
+     *    `anchor.group.matrix` por `faceScale` ≈ largura da cara em cm).
+     *    Ver header no topo e o código fonte do MindAR 1.2.5 em
+     *    `src/face-target/controller.js:getLandmarkMatrix` (`fm[i]*s`). */
     const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
+    console.log("[omafit-ar] face scale resolved", {
+      maxDim,
+      modelScaleMul,
+      baseUnitScale,
+      wearPosM,
+      calRotDeg,
+      anchorIndex,
+      disableFaceMirror,
+      sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
+    });
 
     /** 4) Hierarquia mínima (idêntica ao preview do admin):
      *       anchor.group → wearPosition → calibRot → glasses
@@ -2747,11 +2829,22 @@ async function runHandArSession({
             ? OMAFIT_BRACELET_AR_WORLD_MAX_DIM
             : OMAFIT_WRIST_AR_WORLD_MAX_DIM;
         baseScale = wristWorldMax / maxDim;
-        glbRoot.scale.setScalar(baseScale * (userScale > 0 ? userScale : 1));
+        const finalMul = userScale > 0 ? userScale : 1;
+        glbRoot.scale.setScalar(baseScale * finalMul);
 
         const center = new THREE.Vector3();
         bbox.getCenter(center);
         glbScene.position.sub(center);
+
+        console.log("[omafit-ar] hand GLB baked", {
+          accessoryType,
+          maxDim,
+          wristWorldMax,
+          userScale: finalMul,
+          baseScale,
+          effectiveWorldMaxMm: Math.round(wristWorldMax * finalMul * 1000),
+          bbox: { x: size.x, y: size.y, z: size.z },
+        });
 
         glbRoot.visible = true;
         resolve();
@@ -2781,6 +2874,14 @@ async function runHandArSession({
   const tmpZ = new THREE.Vector3();
   const tmpPos = new THREE.Vector3();
 
+  /** Estado suavizado (EMA) dos eixos/posição — aproxima o filtro OneEuro do MindAR. */
+  const smX = new THREE.Vector3();
+  const smY = new THREE.Vector3();
+  const smZ = new THREE.Vector3();
+  const smPos = new THREE.Vector3();
+  let smoothInitialized = false;
+  let lastFrameTs = -1;
+
   let running = true;
   let lastHandTimestamp = -1;
   let rafId = 0;
@@ -2789,52 +2890,118 @@ async function runHandArSession({
 
   /**
    * Converte um landmark de imagem normalizada (x,y ∈ [0,1], z depth
-   * relativo ao wrist) para um ponto em “espaço da câmara” da cena
-   * Three.js.
+   * relativo ao pulso) para um ponto em “espaço da câmara” da cena Three.js.
+   *
+   * IMPORTANTE: os landmarks do MediaPipe são normalizados a `videoWidth`/
+   * `videoHeight` (proporção do VÍDEO) e não ao canvas WebGL. Se o aspect
+   * do canvas (`camera.aspect`) for diferente do vídeo, usar directamente
+   * `(xNorm - 0.5) * w_canvas` desloca o modelo (fica deslocado na
+   * horizontal, como se estivesse deslizado para um dos lados). Aqui
+   * projectamos com o aspect do VÍDEO e depois, se for preciso, corrigimos
+   * para o canvas (`object-fit: cover` conserva o centro mas corta as
+   * bordas, que é o que o vídeo HTML faz por default).
    *
    * Com vídeo espelhado (`mirrorVideoX`, típico da frontal), invertemos x
    * para alinhar ao que o utilizador vê. Com câmara traseira, não espelhamos.
    */
+  function videoAspect() {
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    if (vw > 0 && vh > 0) return vw / vh;
+    return camera.aspect;
+  }
   function unprojectLandmark(lm, zDist) {
     const fov = rad(camera.fov);
-    const h = 2 * Math.tan(fov / 2) * zDist;
-    const w = h * camera.aspect;
+    const hView = 2 * Math.tan(fov / 2) * zDist;
+    const vidAR = videoAspect();
+    const wView = hView * vidAR;
     const xNorm = mirrorVideoX ? 1 - lm.x : lm.x;
-    return new THREE.Vector3((xNorm - 0.5) * w, -(lm.y - 0.5) * h, -zDist);
+    return new THREE.Vector3((xNorm - 0.5) * wView, -(lm.y - 0.5) * hView, -zDist);
   }
 
-  function updateAnchorFromHand(lms) {
-    // Profundidade: largura aparente pulso → MCP médio no plano da imagem.
+  function updateAnchorFromHand(lms, dtMs) {
+    /**
+     * Profundidade: `zDist = L * focalNormalY / spanY`, onde:
+     *   - L = 0,10 m (comprimento real punho→MCP-médio em adulto)
+     *   - focalNormalY = 1 / (2·tan(fov_v/2))  (focal normalizada vertical)
+     *   - spanY = distância punho→MCP-médio convertida para unidades
+     *             verticais normalizadas (dx * videoAspect + dy).
+     *
+     * Derivação: um segmento de comprimento L a distância Z projecta-se
+     * com tamanho aparente (L · focal / Z). Resolvendo: Z = L · focal / span.
+     */
     const wristN = lms[0];
     const middleMcpN = lms[9] || lms[5];
-    const dx = middleMcpN.x - wristN.x;
+    const dx = (middleMcpN.x - wristN.x) * videoAspect();
     const dy = middleMcpN.y - wristN.y;
-    const spanN = Math.sqrt(dx * dx + dy * dy);
-    const zDist = Math.max(0.12, Math.min(1.2, 0.06 / Math.max(0.02, spanN)));
-    const zNear = zDist * 0.99;
-
+    const spanY = Math.sqrt(dx * dx + dy * dy);
+    const fov = rad(camera.fov);
+    const focalN = 1 / (2 * Math.tan(fov / 2));
+    let zDist = (OMAFIT_WRIST_TO_MCP_M * focalN) / Math.max(0.02, spanY);
+    zDist = Math.max(0.15, Math.min(1.5, zDist));
+    /** Usar o mesmo zDist para todos os landmarks evita escala relativa errada ao combinar. */
     const w0 = unprojectLandmark(wristN, zDist);
-    const w5 = unprojectLandmark(lms[5], zNear);
-    const w9 = unprojectLandmark(lms[9], zNear);
-    const w17 = unprojectLandmark(lms[17], zNear);
+    const w5 = unprojectLandmark(lms[5], zDist);
+    const w9 = unprojectLandmark(lms[9], zDist);
+    const w17 = unprojectLandmark(lms[17], zDist);
 
     /**
-     * Base estável para relógio no dorso:
-     *   X = mindinho → índice (largura do pulso)
-     *   Y = normal ao plano palma/dorso (cross do eixo “para os nós” com X)
-     *   Z = X × Y (eixo ao longo do antebraço quando a mão está estendida)
+     * Base estável do pulso, com o relógio assente no DORSO:
+     *   X = mindinho (17) → índice (5)         largura do pulso
+     *   Y = normal aprox. do plano palma/dorso  (cross com eixo pulso→MCPs)
+     *   Z = X × Y                               ao longo do antebraço
+     *
+     * Posição: pulso + 20 % do vector pulso→MCP-médio (w9−w0).
+     *   → Coloca a âncora ~2 cm em direcção à mão, onde o relógio assenta.
+     * Ajuste final em `wearX/Y/Z` (calibração) continua a funcionar em
+     * unidades de mundo (metros) via `wearPosition`.
      */
     tmpX.subVectors(w5, w17).normalize();
-    const towardKnuckles = new THREE.Vector3().subVectors(w9, w0);
-    tmpY.crossVectors(towardKnuckles, tmpX).normalize();
+    const toMcp = new THREE.Vector3().subVectors(w9, w0);
+    tmpY.crossVectors(toMcp, tmpX).normalize();
     tmpZ.crossVectors(tmpX, tmpY).normalize();
 
-    tmpPos.copy(w0);
-    tmpMat.makeBasis(tmpX, tmpY, tmpZ);
-    tmpMat.setPosition(tmpPos);
+    tmpPos.copy(w0).addScaledVector(toMcp, 0.2);
+
+    /**
+     * EMA independente para posição e para cada eixo.
+     * `alpha = 1 - exp(-dt / tau)` → responde em ~tau ms, amortece jitter
+     * de frame (MediaPipe hand) que é tipicamente 1-2 px @ 30 fps.
+     */
+    const clampDt = Math.max(8, Math.min(80, Number.isFinite(dtMs) ? dtMs : 16));
+    if (!smoothInitialized) {
+      smX.copy(tmpX);
+      smY.copy(tmpY);
+      smZ.copy(tmpZ);
+      smPos.copy(tmpPos);
+      smoothInitialized = true;
+    } else {
+      const aPos = 1 - Math.exp(-clampDt / OMAFIT_HAND_POS_TAU_MS);
+      const aAxis = 1 - Math.exp(-clampDt / OMAFIT_HAND_AXIS_TAU_MS);
+      smPos.lerp(tmpPos, aPos);
+      smX.lerp(tmpX, aAxis).normalize();
+      smY.lerp(tmpY, aAxis).normalize();
+      // Re-ortogonalizar: Z derivado de X×Y; Y re-derivado para manter base ortonormal.
+      smZ.crossVectors(smX, smY).normalize();
+      smY.crossVectors(smZ, smX).normalize();
+    }
+
+    tmpMat.makeBasis(smX, smY, smZ);
+    tmpMat.setPosition(smPos);
     anchor.matrix.copy(tmpMat);
     anchor.matrixWorldNeedsUpdate = true;
     anchor.updateMatrixWorld(true);
+
+    if (debug) {
+      console.debug("[omafit-ar] hand anchor", {
+        zDist: zDist.toFixed(3),
+        spanY: spanY.toFixed(3),
+        vidAR: videoAspect().toFixed(3),
+        camAR: camera.aspect.toFixed(3),
+        posY: smPos.y.toFixed(3),
+        posZ: smPos.z.toFixed(3),
+      });
+    }
   }
 
   function tick() {
@@ -2849,6 +3016,8 @@ async function runHandArSession({
       renderer.render(scene, camera);
       return;
     }
+    const dtMs = lastFrameTs < 0 ? 16 : nowTs - lastFrameTs;
+    lastFrameTs = nowTs;
     lastHandTimestamp = nowTs;
 
     let res = null;
@@ -2861,12 +3030,13 @@ async function runHandArSession({
     const landmarks = res?.landmarks?.[0];
     if (landmarks && landmarks.length >= 18) {
       missedFrames = 0;
-      updateAnchorFromHand(landmarks);
+      updateAnchorFromHand(landmarks, dtMs);
       anchor.visible = true;
     } else {
       missedFrames += 1;
       if (missedFrames > MISSED_HIDE_THRESHOLD) {
         anchor.visible = false;
+        smoothInitialized = false;
       }
     }
 

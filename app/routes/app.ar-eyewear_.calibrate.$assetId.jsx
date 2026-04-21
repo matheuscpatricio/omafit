@@ -608,10 +608,15 @@ export default function ArEyewearCalibratePage() {
  */
 const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
 
-/** Coincidir com `OMAFIT_WRIST_AR_*` / bracelete em `omafit-ar-widget.js` (hand AR). */
+/**
+ * Coincidir COM `OMAFIT_WRIST_AR_WORLD_MAX_DIM` e `OMAFIT_BRACELET_AR_WORLD_MAX_DIM`
+ * em `extensions/omafit-theme/assets/omafit-ar-widget.js`. Se mudares aqui,
+ * muda também lá (e vice-versa) — senão o tamanho no admin deixa de bater
+ * certo com o tamanho no widget da loja.
+ */
 const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
-const PREVIEW_WORLD_MAX_DIM_WRIST = 0.052;
-const PREVIEW_WORLD_MAX_DIM_BRACELET = 0.058;
+const PREVIEW_WORLD_MAX_DIM_WRIST = 0.045;
+const PREVIEW_WORLD_MAX_DIM_BRACELET = 0.052;
 
 function PreviewModel({ src, cal, accessoryType = "glasses" }) {
   const hostRef = useRef(null);

@@ -104,9 +104,19 @@ const OMAFIT_WRIST_TO_MCP_M = 0.10;
  * Constantes de suavização exponencial para os eixos/posição da âncora da mão.
  * `alpha = 1 - exp(-dt / tau)` com `tau` em ms.
  * Valores maiores de `tau` = mais estável + maior latência.
+ * 130/180 ms = amortece o jitter pixel-a-pixel do MediaPipe Hand
+ * sem introduzir atraso perceptível para AR try-on.
  */
-const OMAFIT_HAND_POS_TAU_MS = 60;
-const OMAFIT_HAND_AXIS_TAU_MS = 90;
+const OMAFIT_HAND_POS_TAU_MS = 130;
+const OMAFIT_HAND_AXIS_TAU_MS = 180;
+
+/**
+ * ID de build visível em `console.log`. Se este valor NÃO aparecer na
+ * consola do teu telemóvel/navegador, significa que o Shopify ainda está
+ * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
+ * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
+ */
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_crop-fix+watch-stab-v3";
 
 const Z_SHELL = 2147483640;
 
@@ -815,6 +825,43 @@ function injectGlobalStyles(root, primaryOverride) {
     .omafit-ar-shell .omafit-ar-mindar-host canvas {
       background: transparent !important;
       background-color: transparent !important;
+    }
+    /**
+     * Forçar vídeo + canvas do MindAR/HandAR a cobrir 100% do host com
+     * object-fit: cover. Substitui o posicionamento absoluto em px que o
+     * MindAR._resize() aplica, porque depende de medições de container que
+     * ficam obsoletas quando o modal muda de tamanho (abertura, teclado,
+     * rotação de ecrã) e resultam em "vídeo cortado à direita/em baixo".
+     *
+     * object-fit: cover produz sempre um crop simétrico (centro preservado);
+     * a matriz de câmara do MindAR é reconstruída por _resize() para bater
+     * certo com as dimensões intrínsecas do vídeo, portanto o overlay 3D
+     * continua alinhado com os landmarks detectados no frame.
+     */
+    .omafit-ar-mindar-host > video,
+    .omafit-ar-shell .omafit-ar-mindar-host > video {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+      object-position: center center !important;
+      transform: none;
+    }
+    .omafit-ar-mindar-host > canvas,
+    .omafit-ar-shell .omafit-ar-mindar-host > canvas {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+      object-position: center center !important;
     }
   `;
   document.head.appendChild(s);
@@ -1940,24 +1987,23 @@ async function runArSession({
         /* ignore */
       }
     };
+    /**
+     * Com o CSS global a forçar vídeo+canvas a `width/height: 100%; object-fit: cover`,
+     * o posicionamento já é robusto por si só — o `_resize` do MindAR só precisa
+     * correr para actualizar a matriz da câmara interna quando o aspecto do container
+     * muda (rotação de ecrã, etc). Dispensamos os timers arbitrários.
+     */
     arResizeObserver = new ResizeObserver(triggerMindarResize);
     arResizeObserver.observe(arWrap);
     arResizeObserver.observe(mindarHost);
     requestAnimationFrame(triggerMindarResize);
-    /** Disparos pós-layout adicionais: alguns telemóveis só reportam
-     *  `videoWidth/Height` após o primeiro frame pintado e o MindAR
-     *  mediu com dimensões antigas. */
-    setTimeout(triggerMindarResize, 250);
-    setTimeout(triggerMindarResize, 750);
     try {
       window.addEventListener("orientationchange", triggerMindarResize);
-      window.addEventListener("pageshow", triggerMindarResize);
       if (screen?.orientation?.addEventListener) {
         screen.orientation.addEventListener("change", triggerMindarResize);
       }
       removeOrientationListeners = () => {
         try { window.removeEventListener("orientationchange", triggerMindarResize); } catch { /* ignore */ }
-        try { window.removeEventListener("pageshow", triggerMindarResize); } catch { /* ignore */ }
         try { screen?.orientation?.removeEventListener?.("change", triggerMindarResize); } catch { /* ignore */ }
       };
     } catch {
@@ -2705,6 +2751,12 @@ async function runHandArSession({
     video.addEventListener("error", onErr);
   });
   await video.play().catch(() => {});
+  console.log("[omafit-ar] hand video ready", {
+    videoWidth: video.videoWidth,
+    videoHeight: video.videoHeight,
+    videoAspect: video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : null,
+    mirrorVideoX,
+  });
 
   loading.textContent = t.loadingTracking || t.loading || "A carregar tracking...";
 
@@ -2741,15 +2793,27 @@ async function runHandArSession({
   });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
   const hostRect = () => mindarHost.getBoundingClientRect();
+  /**
+   * Canvas backing store = vídeo intrínseco; CSS via `object-fit: cover` no
+   * CSS global (mesmo tratamento do face path). Camera.aspect = vídeo aspect
+   * ⇒ um landmark em (lm.x, lm.y) é desenhado no mesmo pixel CSS que o
+   * pixel (lm.x·vW, lm.y·vH) do vídeo, independentemente das proporções do
+   * contentor. Isto elimina o "relógio sempre deslocado para um lado" que
+   * acontecia quando camera.aspect ≠ videoAspect.
+   */
   const resizeRenderer = () => {
     const r = hostRect();
-    const w = Math.max(1, Math.floor(r.width));
-    const h = Math.max(1, Math.floor(r.height));
-    renderer.setSize(w, h, false);
+    const cssW = Math.max(1, Math.floor(r.width));
+    const cssH = Math.max(1, Math.floor(r.height));
+    const vW = video.videoWidth || cssW;
+    const vH = video.videoHeight || cssH;
+    renderer.setSize(vW, vH, false);
     if (camera) {
-      camera.aspect = w / h;
+      camera.aspect = vW / vH;
       camera.updateProjectionMatrix();
     }
+    void cssW;
+    void cssH;
   };
 
   const scene = new THREE.Scene();
@@ -2889,17 +2953,10 @@ async function runHandArSession({
   const MISSED_HIDE_THRESHOLD = 6;
 
   /**
-   * Converte um landmark de imagem normalizada (x,y ∈ [0,1], z depth
-   * relativo ao pulso) para um ponto em “espaço da câmara” da cena Three.js.
-   *
-   * IMPORTANTE: os landmarks do MediaPipe são normalizados a `videoWidth`/
-   * `videoHeight` (proporção do VÍDEO) e não ao canvas WebGL. Se o aspect
-   * do canvas (`camera.aspect`) for diferente do vídeo, usar directamente
-   * `(xNorm - 0.5) * w_canvas` desloca o modelo (fica deslocado na
-   * horizontal, como se estivesse deslizado para um dos lados). Aqui
-   * projectamos com o aspect do VÍDEO e depois, se for preciso, corrigimos
-   * para o canvas (`object-fit: cover` conserva o centro mas corta as
-   * bordas, que é o que o vídeo HTML faz por default).
+   * Desprojecta um landmark normalizado do MediaPipe (x,y ∈ [0,1]) para
+   * espaço da câmara Three.js, assumindo `camera.aspect = videoAspect`
+   * (garantido em `resizeRenderer`). Assim o mapeamento é 1:1 com o que
+   * o browser pinta via `object-fit: cover` no vídeo.
    *
    * Com vídeo espelhado (`mirrorVideoX`, típico da frontal), invertemos x
    * para alinhar ao que o utilizador vê. Com câmara traseira, não espelhamos.
@@ -2913,8 +2970,7 @@ async function runHandArSession({
   function unprojectLandmark(lm, zDist) {
     const fov = rad(camera.fov);
     const hView = 2 * Math.tan(fov / 2) * zDist;
-    const vidAR = videoAspect();
-    const wView = hView * vidAR;
+    const wView = hView * camera.aspect;
     const xNorm = mirrorVideoX ? 1 - lm.x : lm.x;
     return new THREE.Vector3((xNorm - 0.5) * wView, -(lm.y - 0.5) * hView, -zDist);
   }
@@ -3491,6 +3547,14 @@ function bootOmafitArWidget() {
   if (typeof window !== "undefined") {
     if (window.__OMAFIT_AR_WIDGET_BOOT__) return;
     window.__OMAFIT_AR_WIDGET_BOOT__ = true;
+    try {
+      console.log(
+        `%c[omafit-ar] build: ${OMAFIT_AR_WIDGET_BUILD}`,
+        "color:#fff;background:#111;padding:2px 6px;border-radius:4px;font-weight:bold;",
+      );
+    } catch {
+      /* ignore */
+    }
   }
   // #region agent log
   const scr =

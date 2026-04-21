@@ -90,8 +90,9 @@ const MEDIAPIPE_HAND_MODEL_URL =
  * com `PreviewModel` em `app.ar-eyewear_.calibrate.$assetId.jsx` quando
  * `accessoryType` é watch/bracelet.
  */
-const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.045;
-const OMAFIT_BRACELET_AR_WORLD_MAX_DIM = 0.052;
+/** ~54 mm bbox máx. — 0,045 ficava pequeno demais no pulso; manter < pulseira. */
+const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.054;
+const OMAFIT_BRACELET_AR_WORLD_MAX_DIM = 0.06;
 
 /**
  * Comprimento real (m) do segmento punho→MCP-médio numa mão adulta.
@@ -116,7 +117,7 @@ const OMAFIT_HAND_AXIS_TAU_MS = 180;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_watch+glasses-sync-v5-syntaxfix";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_watch-fit+camera-resize-v6";
 
 /**
  * Loga o banner de build imediatamente ao carregar o módulo.
@@ -1397,9 +1398,14 @@ async function runArSession({
       flex: "1 1 auto",
       width: "100%",
       minHeight: "min(520px, 62dvh)",
-      overflow: "hidden",
+      /* MindAR posiciona vídeo/canvas com top/left negativos (cover). overflow:hidden
+       * recorta frequentemente um lado se o layout ainda não está estável — "cortado à direita". */
+      overflow: "visible",
       background: "#000",
       boxSizing: "border-box",
+      direction: "ltr",
+      paddingLeft: "env(safe-area-inset-left, 0px)",
+      paddingRight: "env(safe-area-inset-right, 0px)",
     },
   });
 
@@ -1408,8 +1414,9 @@ async function runArSession({
     style: {
       position: "absolute",
       inset: "0",
-      overflow: "hidden",
+      overflow: "visible",
       isolation: "isolate",
+      direction: "ltr",
     },
   });
   arFit.appendChild(mindarHost);
@@ -1606,8 +1613,12 @@ async function runArSession({
   }
 
   colContent.style.padding = "0";
-  colContent.style.overflow = "auto";
-  colContent.style.overflowX = "hidden";
+  /**
+   * MindAR posiciona vídeo/canvas maior que o viewport (cover). `overflow:auto`
+   * no contentor recorta um dos lados — típico "cortado à direita" no AR facial.
+   */
+  colContent.style.overflow = "visible";
+  colContent.style.overflowX = "visible";
   colContent.style.flex = "1";
   colContent.style.display = "flex";
   colContent.style.flexDirection = "column";
@@ -1623,6 +1634,8 @@ async function runArSession({
   let arEngineCleanup = null;
   /** Listeners de orientação/visibilidade adicionados dentro de `runArSession`. */
   let removeOrientationListeners = null;
+  /** Timeouts de `_resize` tardio (layout do modal / safe-area) — limpar no cleanup. */
+  let lateMindarResizeTimerIds = [];
 
   const cleanup = () => {
     try {
@@ -1663,6 +1676,16 @@ async function runArSession({
         /* ignore */
       }
       removeOrientationListeners = null;
+    }
+    if (Array.isArray(lateMindarResizeTimerIds) && lateMindarResizeTimerIds.length) {
+      for (const tid of lateMindarResizeTimerIds) {
+        try {
+          clearTimeout(tid);
+        } catch {
+          /* ignore */
+        }
+      }
+      lateMindarResizeTimerIds = [];
     }
   };
 
@@ -1978,15 +2001,22 @@ async function runArSession({
       }
     };
     /**
-     * Com o CSS global a forçar vídeo+canvas a `width/height: 100%; object-fit: cover`,
-     * o posicionamento já é robusto por si só — o `_resize` do MindAR só precisa
-     * correr para actualizar a matriz da câmara interna quando o aspecto do container
-     * muda (rotação de ecrã, etc). Dispensamos os timers arbitrários.
+     * `ResizeObserver` + `resize` + timeouts tardios: o MindAR mede `clientWidth`
+     * do container; se o modal ainda não terminou layout, o vídeo fica descentrado
+     * e parece “cortado” num dos lados.
      */
     arResizeObserver = new ResizeObserver(triggerMindarResize);
     arResizeObserver.observe(arWrap);
     arResizeObserver.observe(mindarHost);
     requestAnimationFrame(triggerMindarResize);
+    requestAnimationFrame(() => requestAnimationFrame(triggerMindarResize));
+    for (const ms of [32, 96, 220, 500]) {
+      lateMindarResizeTimerIds.push(
+        setTimeout(() => {
+          triggerMindarResize();
+        }, ms),
+      );
+    }
     try {
       window.addEventListener("orientationchange", triggerMindarResize);
       if (screen?.orientation?.addEventListener) {
@@ -2232,6 +2262,36 @@ async function runArSession({
 
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
+    /**
+     * Espelho horizontal do GLB vs. vídeo selfie espelhado:
+     * - `data-ar-scene-x-mirror="1"` → scale.x = -1 (comum quando o modelo parece
+     *   “do outro lado” em relação ao reflexo no ecrã).
+     * - `"0"` → força sem espelho extra.
+     * - Vazio: com câmara frontal espelhada (default MindAR), aplicamos -1 para
+     *   alinhar ao que o utilizador vê; com `disableFaceMirror` (sem espelho no
+     *   vídeo), mantemos +1.
+     * Override: `?omafit_ar_scene_x_mirror=0|1` na URL da página.
+     */
+    try {
+      const sxAttr = String(cfgAttr("arSceneXMirror", "")).trim().toLowerCase();
+      let flipSceneX = null;
+      if (/^(1|true|yes|on)$/.test(sxAttr)) flipSceneX = true;
+      else if (/^(0|false|no|off)$/.test(sxAttr)) flipSceneX = false;
+      try {
+        const q = new URLSearchParams(window.location?.search || "");
+        const qs = (q.get("omafit_ar_scene_x_mirror") || "").trim().toLowerCase();
+        if (qs === "1" || qs === "true") flipSceneX = true;
+        if (qs === "0" || qs === "false") flipSceneX = false;
+      } catch {
+        /* noop */
+      }
+      if (flipSceneX === null) {
+        flipSceneX = !disableFaceMirror;
+      }
+      wearPosition.scale.set(flipSceneX ? -1 : 1, 1, 1);
+    } catch {
+      wearPosition.scale.set(1, 1, 1);
+    }
     wearPosition.add(calibRot);
 
     anchor.group.add(wearPosition);
@@ -3007,7 +3067,8 @@ async function runHandArSession({
     tmpY.crossVectors(toMcp, tmpX).normalize();
     tmpZ.crossVectors(tmpX, tmpY).normalize();
 
-    tmpPos.copy(w0).addScaledVector(toMcp, 0.2);
+    /** ~30 % punho→MCP: melhor centro do mostrador na face dorsal do pulso. */
+    tmpPos.copy(w0).addScaledVector(toMcp, 0.3);
 
     /**
      * EMA independente para posição e para cada eixo.

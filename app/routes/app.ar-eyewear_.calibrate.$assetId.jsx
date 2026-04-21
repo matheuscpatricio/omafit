@@ -615,8 +615,8 @@ const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
  * certo com o tamanho no widget da loja.
  */
 const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
-const PREVIEW_WORLD_MAX_DIM_WRIST = 0.045;
-const PREVIEW_WORLD_MAX_DIM_BRACELET = 0.052;
+const PREVIEW_WORLD_MAX_DIM_WRIST = 0.054;
+const PREVIEW_WORLD_MAX_DIM_BRACELET = 0.06;
 
 function PreviewModel({ src, cal, accessoryType = "glasses" }) {
   const hostRef = useRef(null);

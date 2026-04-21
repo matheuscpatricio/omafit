@@ -609,14 +609,95 @@ export default function ArEyewearCalibratePage() {
 const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
 
 /**
- * Coincidir COM `OMAFIT_WRIST_AR_WORLD_MAX_DIM` e `OMAFIT_BRACELET_AR_WORLD_MAX_DIM`
- * em `extensions/omafit-theme/assets/omafit-ar-widget.js`. Se mudares aqui,
+ * Coincidir COM `OMAFIT_WRIST_AR_WORLD_MAX_DIM` e
+ * `OMAFIT_BRACELET_AR_WORLD_MEDIAN_DIM` em
+ * `extensions/omafit-theme/assets/omafit-ar-widget.js`. Se mudares aqui,
  * muda também lá (e vice-versa) — senão o tamanho no admin deixa de bater
  * certo com o tamanho no widget da loja.
+ *
+ * NOTA: pulseiras usam MEDIANA do bbox (= diâmetro real do anel), não o
+ * máximo. Ver `fitWristGlb` no widget para detalhe da heurística.
  */
 const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
-const PREVIEW_WORLD_MAX_DIM_WRIST = 0.054;
-const PREVIEW_WORLD_MAX_DIM_BRACELET = 0.06;
+const PREVIEW_WORLD_MAX_DIM_WRIST = 0.072;
+const PREVIEW_WORLD_MEDIAN_DIM_BRACELET = 0.062;
+/**
+ * Raio padrão de pulso (m) usado no preview de admin (pulso médio adulto).
+ * No widget o valor é adaptado per-frame via `smoothWristRadius`. No admin,
+ * não há utilizador; usamos este default para dimensionar o cilindro de
+ * wrap + escalar o GLB. Coincidir com `OMAFIT_DEFAULT_WRIST_R_M` no widget.
+ */
+const PREVIEW_DEFAULT_WRIST_R_M = 0.026;
+
+/**
+ * Dobra (bending) vértices de uma mesh em torno de um cilindro virtual.
+ * Espelha `bendGeometryCylinder` em omafit-ar-widget.js. Mantém formato
+ * idêntico para garantir consistência entre preview admin e widget live.
+ */
+function bendGeometryCylinderPreview(THREE, root, bendAxis, armAxis, dorsalAxis, localR) {
+  const bA = bendAxis.clone().normalize();
+  const aA = armAxis.clone().normalize();
+  const dA = dorsalAxis.clone().normalize();
+  const v = new THREE.Vector3();
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    const pos = obj.geometry.attributes.position;
+    if (!pos) return;
+    const arr = pos.array;
+    for (let i = 0; i < arr.length; i += 3) {
+      v.set(arr[i], arr[i + 1], arr[i + 2]);
+      const bendC = v.dot(bA);
+      const armC = v.dot(aA);
+      const dorsalC = v.dot(dA);
+      const theta = bendC / localR;
+      const r = localR + dorsalC;
+      const newBend = r * Math.sin(theta);
+      const newDorsal = r * Math.cos(theta) - localR;
+      v.copy(bA).multiplyScalar(newBend)
+        .addScaledVector(aA, armC)
+        .addScaledVector(dA, newDorsal);
+      arr[i] = v.x;
+      arr[i + 1] = v.y;
+      arr[i + 2] = v.z;
+    }
+    pos.needsUpdate = true;
+    obj.geometry.computeBoundingBox();
+    obj.geometry.computeBoundingSphere();
+    obj.geometry.computeVertexNormals();
+  });
+}
+
+/**
+ * Espelha `computeLocalInnerRadius` do widget live. Devolve o raio da
+ * superfície INTERNA do anel (não do eixo). Usado para escalar o GLB
+ * de modo a que a face que toca a pele fique exactamente no raio de
+ * pulso padrão — igual comportamento ao widget para consistência
+ * merchant/utilizador final.
+ */
+function computeLocalInnerRadiusPreview(THREE, root, bbox) {
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+  const distances = [];
+  const v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    const pos = obj.geometry.attributes.position;
+    if (!pos) return;
+    obj.updateMatrixWorld(true);
+    const arr = pos.array;
+    for (let i = 0; i < arr.length; i += 3) {
+      v.set(arr[i], arr[i + 1], arr[i + 2]).applyMatrix4(obj.matrixWorld);
+      const dx = v.x - center.x;
+      const dy = v.y - center.y;
+      distances.push(Math.sqrt(dx * dx + dy * dy));
+    }
+  });
+  if (distances.length < 10) return null;
+  distances.sort((a, b) => a - b);
+  const idx = Math.max(0, Math.floor(distances.length * 0.02));
+  return distances[idx];
+}
 
 function PreviewModel({ src, cal, accessoryType = "glasses" }) {
   const hostRef = useRef(null);
@@ -834,19 +915,159 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                 setPhase("error");
                 return;
               }
-              const size = new THREE.Vector3();
-              const center = new THREE.Vector3();
+              let size = new THREE.Vector3();
               box.getSize(size);
-              box.getCenter(center);
-              root.position.sub(center);
-              const maxDim = Math.max(size.x, size.y, size.z, 1e-4);
-              const worldMax =
-                accessoryType === "bracelet"
-                  ? PREVIEW_WORLD_MAX_DIM_BRACELET
-                  : accessoryType === "watch"
-                    ? PREVIEW_WORLD_MAX_DIM_WRIST
-                    : PREVIEW_WORLD_MAX_DIM_FACE;
-              const baseScale = worldMax / maxDim;
+
+              /**
+               * === PULSEIRA: auto-rotação pelo eixo MAIS CURTO ===
+               *
+               * Alinha o anel com +Z local do preview (equivalente ao antebraço
+               * no widget). Sem isto, algumas GLBs aparecem como "disco
+               * achatado" em cima do pulso.
+               */
+              if (accessoryType === "bracelet") {
+                const sx = size.x;
+                const sy = size.y;
+                const sz = size.z;
+                let smallestAxis = "z";
+                if (sx <= sy && sx <= sz) smallestAxis = "x";
+                else if (sy <= sx && sy <= sz) smallestAxis = "y";
+
+                let rotApplied = false;
+                if (smallestAxis === "x") {
+                  root.quaternion.setFromAxisAngle(
+                    new THREE.Vector3(0, 1, 0),
+                    -Math.PI / 2,
+                  );
+                  rotApplied = true;
+                } else if (smallestAxis === "y") {
+                  root.quaternion.setFromAxisAngle(
+                    new THREE.Vector3(1, 0, 0),
+                    Math.PI / 2,
+                  );
+                  rotApplied = true;
+                }
+                if (rotApplied) {
+                  root.updateMatrixWorld(true);
+                  const newBox = new THREE.Box3().setFromObject(root);
+                  newBox.getSize(size);
+                  const newCenter = new THREE.Vector3();
+                  newBox.getCenter(newCenter);
+                  root.position.sub(newCenter);
+                }
+              }
+
+              /**
+               * === RELÓGIO PLANO: dobra cilíndrica ===
+               *
+               * Se ratio max/median > 2, GLB foi autorada com correia esticada
+               * a direito. Dobramos os vértices em torno de um cilindro
+               * virtual para o relógio envolver o pulso. Espelha lógica do
+               * widget (`fitWristGlb`) para consistência preview ↔ live.
+               */
+              let didBendWatch = false;
+              let bendLocalR = 0;
+              if (accessoryType === "watch") {
+                const axes = [
+                  { name: "x", size: size.x, vec: new THREE.Vector3(1, 0, 0) },
+                  { name: "y", size: size.y, vec: new THREE.Vector3(0, 1, 0) },
+                  { name: "z", size: size.z, vec: new THREE.Vector3(0, 0, 1) },
+                ];
+                axes.sort((a, b) => a.size - b.size);
+                const dorsal = axes[0];
+                const arm = axes[1];
+                const bend = axes[2];
+                const flatRatio = bend.size / Math.max(arm.size, 1e-6);
+                if (flatRatio > 2.0) {
+                  const wrapFraction = 0.83;
+                  const localR = bend.size / (2 * Math.PI * wrapFraction);
+
+                  const bboxCenter = new THREE.Vector3();
+                  box.getCenter(bboxCenter);
+                  const dorsalN = dorsal.vec.clone();
+                  if (bboxCenter.dot(dorsalN) < 0) dorsalN.negate();
+
+                  const bendN = bend.vec.clone();
+                  const armN = arm.vec.clone();
+                  const expectedArm = new THREE.Vector3().crossVectors(bendN, dorsalN);
+                  if (expectedArm.dot(armN) < 0) armN.negate();
+
+                  bendGeometryCylinderPreview(THREE, root, bendN, armN, dorsalN, localR);
+                  didBendWatch = true;
+                  bendLocalR = localR;
+
+                  const M = new THREE.Matrix4().makeBasis(bendN, dorsalN, armN);
+                  const invM = new THREE.Matrix4().copy(M).transpose();
+                  const q = new THREE.Quaternion().setFromRotationMatrix(invM);
+                  if (Math.abs(q.x) + Math.abs(q.y) + Math.abs(q.z) > 1e-6) {
+                    root.quaternion.premultiply(q);
+                    root.updateMatrixWorld(true);
+                  }
+                  const newBox2 = new THREE.Box3().setFromObject(root);
+                  newBox2.getSize(size);
+                  const newCenter2 = new THREE.Vector3();
+                  newBox2.getCenter(newCenter2);
+                  root.position.sub(newCenter2);
+                  console.log("[omafit-calibrate] watch strap bent", {
+                    localR,
+                    wrapFraction,
+                    postBbox: { x: size.x, y: size.y, z: size.z },
+                  });
+                }
+              }
+
+              if (accessoryType !== "bracelet" && !didBendWatch) {
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                root.position.sub(center);
+              }
+
+              /**
+               * === ESCALA PELA SUPERFÍCIE INTERNA (v11.2) ===
+               *
+               * Tal como no widget: escalamos pelo RAIO INTERNO real do
+               * anel (superfície que toca a pele) em vez do raio do eixo.
+               * Isto garante que a face interna do produto encaixa
+               * exactamente no pulso médio + folga mínima.
+               *
+               * gap: 2 mm pulseira (conforto) / 1 mm relógio (strap firme).
+               * Fallback: se não conseguirmos medir inner radius (ex.:
+               * geometria degenerada), usa 0.9·localRingR (10% espessura).
+               */
+              const sortedSizes = [size.x, size.y, size.z].sort((a, b) => a - b);
+              const medianDim = sortedSizes[1] || 1e-4;
+              const maxDim = Math.max(sortedSizes[2], 1e-4);
+              let baseScale;
+              if (accessoryType === "bracelet" || accessoryType === "watch") {
+                const localRingR =
+                  accessoryType === "watch" && didBendWatch
+                    ? Math.max(bendLocalR, 1e-4)
+                    : Math.max(medianDim / 2, 1e-4);
+                root.updateMatrixWorld(true);
+                const currentBox = new THREE.Box3().setFromObject(root);
+                const measuredInner = computeLocalInnerRadiusPreview(
+                  THREE,
+                  root,
+                  currentBox,
+                );
+                const localInnerR =
+                  measuredInner &&
+                  measuredInner > localRingR * 0.5 &&
+                  measuredInner < localRingR * 0.99
+                    ? measuredInner
+                    : Math.max(localRingR * 0.9, 1e-4);
+                const gap = accessoryType === "bracelet" ? 0.002 : 0.001;
+                baseScale = (PREVIEW_DEFAULT_WRIST_R_M + gap) / localInnerR;
+                console.log("[omafit-calibrate] wrist fit by inner radius", {
+                  accessoryType,
+                  localRingR_mm: (localRingR * 1000).toFixed(1),
+                  localInnerR_mm: (localInnerR * 1000).toFixed(1),
+                  ringThickness_mm: ((localRingR - localInnerR) * 1000).toFixed(1),
+                  didBendWatch,
+                });
+              } else {
+                baseScale = PREVIEW_WORLD_MAX_DIM_FACE / Math.max(maxDim, 1e-4);
+              }
               root.scale.setScalar(baseScale);
               s.model = root;
               s.size = size.clone().multiplyScalar(baseScale);

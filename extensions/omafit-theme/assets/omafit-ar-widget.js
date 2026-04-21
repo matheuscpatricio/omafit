@@ -163,7 +163,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_spark-ar-face-defaults-v11.5";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_wrist-occlusion-ellipse-v11.6";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -3022,12 +3022,12 @@ async function runHandArSession({
      * mesmo à frente do cilindro (strap dorsal tangencial) passam sempre
      * o depth test (strap_z < cyl_z_offset). Fragmentos atrás do
      * cilindro continuam a ser ocluídos (strap_z > cyl_z_offset).
-     * Elimina o z-fighting típico quando strap toca na superfície do
-     * braço sem impedir que a metade traseira seja ocluída.
+     * v11.6: factor/units ligeiramente maiores — com elipse + buffer
+     * maior, reduz artefactos de z-fighting nas tangentes do pulso.
      */
     polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
   });
   const armOccluder = new THREE.Mesh(armOccluderGeom, armOccluderMat);
   armOccluder.renderOrder = -100;
@@ -3821,25 +3821,36 @@ async function runHandArSession({
       smoothForearmLength += (forearmLengthRaw - smoothForearmLength) * aOcc;
     }
     /**
-     * Scale X,Z = raio (geometria tem raio=base 0.022; aplicamos factor).
+     * Scale do cilindro + elipse na secção do pulso (v11.6).
      *
-     * v11.3: occluder raio = smoothWristR + 4 mm (não apenas wristR). Motivo:
-     *   • Estimativa antropométrica pode subestimar o braço real em 1-3 mm.
-     *   • Braço humano é ligeiramente ELÍPTICO (mais largo no sentido palmar-dorsal
-     *     que no ulnar-radial), enquanto occluder é CIRCULAR. Margem cobre a
-     *     dimensão maior da elipse.
-     *   • Manter raio < raio externo da pulseira (≈ wristR + 7 mm) — assim o
-     *     OUTER do GLB continua à frente do occluder e é visível; apenas o
-     *     INNER/BACK fica atrás do occluder e é ocluído.
-     *   • Resolve "vejo a parte debaixo" quando o GLB está em ângulo: a parte
-     *     de trás da pulseira que o utilizador vê sobreposta ao braço real é
-     *     apanhada pelo depth buffer do occluder e fica invisível (mostrando
-     *     o braço real da câmara em vez do back-face do GLB).
+     * Raio base: smoothWristR + buffer (subestimação do tracker + pele vs osso).
+     * v11.6: buffer **6 mm** (era 4 mm) — cobre melhor a circunferência real
+     * quando a câmara está em perspectiva ou o braço está rodado.
+     *
+     * Elipse (não só círculo): após `armOccluder.quaternion`, o eixo local X do
+     * cilindro alinha com **anchor X** (largura punho, ulnar–radial) e o eixo
+     * local Z com **anchor Y** (normal palmar/dorso). O antebraço/pulso é mais
+     * largo nesses dois eixos do que um círculo com o mesmo raio médio; dois
+     * factores ≥1 cobrem a elipse anatómica sem expandir o comprimento (Y do
+     * cilindro = eixo do braço).
+     *
+     * `polygonOffset` no material mantém a face dorsal do GLB por cima do
+     * depth do occluder quando tangente; só a metade “para dentro” do braço
+     * é cortada.
      */
-    const occluderR = smoothWristRadius + 0.004;
+    const OMAFIT_OCCLUDER_WRIST_BUFFER_M = 0.006;
+    /** Ligeiramente maior ao longo da largura do punho (knuckle span). */
+    const OMAFIT_OCCLUDER_ELLIPSE_ULNAR_RADIAL = 1.1;
+    /** Ligeiramente maior na espessura palmar–dorsal (vista de perfil). */
+    const OMAFIT_OCCLUDER_ELLIPSE_PALMAR_DORSAL = 1.12;
+    const occluderR = smoothWristRadius + OMAFIT_OCCLUDER_WRIST_BUFFER_M;
     const radiusScale = occluderR / OMAFIT_ARM_OCCLUDER_RADIUS_M;
     const lengthScale = smoothForearmLength / OMAFIT_ARM_OCCLUDER_LENGTH_M;
-    armOccluder.scale.set(radiusScale, lengthScale, radiusScale);
+    armOccluder.scale.set(
+      radiusScale * OMAFIT_OCCLUDER_ELLIPSE_ULNAR_RADIAL,
+      lengthScale,
+      radiusScale * OMAFIT_OCCLUDER_ELLIPSE_PALMAR_DORSAL,
+    );
     /**
      * Re-posicionar: Y offset coloca o EIXO do cilindro no centro do braço.
      * Âncora está a +6 mm do dorso (tmpY direction). O eixo do braço está a
@@ -3907,7 +3918,10 @@ async function runHandArSession({
         /** wristR DEPOIS de aplicar ratio 0.34 + clamp [18, 42] mm. */
         wristR_mm: (smoothWristRadius * 1000).toFixed(1),
         /** Occluder raio (= wristR + 4 mm buffer). */
-        occluderR_mm: ((smoothWristRadius + 0.004) * 1000).toFixed(1),
+        occluderR_mm: (
+          (smoothWristRadius + OMAFIT_OCCLUDER_WRIST_BUFFER_M) *
+          1000
+        ).toFixed(1),
         forearmL_cm: (smoothForearmLength * 100).toFixed(1),
         bent: didBendWatch,
         /** Raio INTERNO do GLB (superfície que toca a pele em unidades GLB). */

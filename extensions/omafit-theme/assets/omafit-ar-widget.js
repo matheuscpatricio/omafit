@@ -1,4 +1,7 @@
-import { applyGlassesAutoBind } from "./omafit-glasses-orient.js";
+import {
+  applyGlassesAutoBind,
+  omafitApplyGlassesTripoOffsetContainer,
+} from "./omafit-glasses-orient.js";
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
  * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js).
@@ -191,7 +194,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-orient-js-asset-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-screen-rot-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -385,6 +388,244 @@ function normalizeGlassesModel(THREE, glasses, opts) {
 }
 
 /** @see `omafit-glasses-orient.js` (detecção de eixos, rim top/bottom, quaternion de bind) */
+
+/**
+ * UI mínima (sliders) para afinar `offsetGroup` (Â° em eixos mundo Y→X→Z,
+ * mesma função `omafitApplyGlassesTripoOffsetContainer`). Activa com
+ * `?omafit_ar_glasses_tripo_debug=1` ou `data-ar-glasses-tripto-debug="1"`.
+ * @returns {() => void} cleanup
+ */
+function installOmafitGlassesTripoDebugPanel(arFit, THREE, offsetGroup, y0, x0, z0) {
+  if (!arFit || !offsetGroup) return () => {};
+  const wrap = document.createElement("div");
+  wrap.setAttribute("data-omafit", "tripto-debug");
+  Object.assign(wrap.style, {
+    position: "absolute",
+    left: "8px",
+    bottom: "8px",
+    zIndex: "20",
+    maxWidth: "240px",
+    padding: "10px 12px",
+    background: "rgba(0,0,0,0.75)",
+    color: "#eee",
+    fontFamily: "system-ui,sans-serif",
+    fontSize: "11px",
+    lineHeight: "1.3",
+    borderRadius: "8px",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+    pointerEvents: "auto",
+  });
+  const title = document.createElement("div");
+  title.textContent = "Tripo offset (eixos mundo Y→X→Z, °)";
+  title.style.fontWeight = "600";
+  title.style.marginBottom = "6px";
+  wrap.appendChild(title);
+  const mk = (label, v0) => {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "6px";
+    row.style.marginBottom = "4px";
+    const lab = document.createElement("span");
+    lab.textContent = label;
+    lab.style.minWidth = "18px";
+    const inp = document.createElement("input");
+    inp.type = "range";
+    inp.min = "-180";
+    inp.max = "180";
+    inp.step = "1";
+    inp.value = String(v0);
+    inp.style.flex = "1";
+    const num = document.createElement("input");
+    num.type = "number";
+    num.min = "-180";
+    num.max = "180";
+    num.step = "1";
+    num.value = String(v0);
+    num.style.width = "48px";
+    num.style.fontSize = "10px";
+    return { row, lab, inp, num };
+  };
+  const mY = mk("Y", y0);
+  const mX = mk("X", x0);
+  const mZ = mk("Z", z0);
+  for (const m of [mY, mX, mZ]) {
+    m.row.append(m.lab, m.inp, m.num);
+    wrap.appendChild(m.row);
+  }
+  const apply = () => {
+    const y = parseFloat(mY.inp.value) || 0;
+    const x = parseFloat(mX.inp.value) || 0;
+    const z = parseFloat(mZ.inp.value) || 0;
+    mY.num.value = String(y);
+    mX.num.value = String(x);
+    mZ.num.value = String(z);
+    omafitApplyGlassesTripoOffsetContainer(THREE, offsetGroup, y, x, z);
+  };
+  for (const m of [mY, mX, mZ]) {
+    m.inp.addEventListener("input", apply);
+    m.num.addEventListener("change", () => {
+      m.inp.value = m.num.value;
+      apply();
+    });
+  }
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Copiar para consola (data-attr)";
+  Object.assign(btn.style, {
+    marginTop: "8px",
+    width: "100%",
+    padding: "6px",
+    cursor: "pointer",
+    fontSize: "11px",
+    borderRadius: "6px",
+    border: "1px solid #555",
+    background: "#2a2a2a",
+    color: "#fff",
+  });
+  btn.addEventListener("click", () => {
+    const y = parseFloat(mY.inp.value) || 0;
+    const x = parseFloat(mX.inp.value) || 0;
+    const z = parseFloat(mZ.inp.value) || 0;
+    const s = `data-ar-glasses-tripto-offset-world-deg=\"${y},${x},${z}\"`;
+    console.log(
+      "%c[omafit-ar] "+s,
+      "color:#0cf;font-weight:bold;",
+      "— adiciona no bloco Omafit embed (atributo no div #omafit-ar-widget-mindar).",
+    );
+    try {
+      void navigator.clipboard.writeText(
+        `arGlassesTripoOffsetWorldDeg: \"${y},${x},${z}\"`,
+      );
+    } catch {
+      /* ignore */
+    }
+  });
+  wrap.appendChild(btn);
+  arFit.appendChild(wrap);
+  return () => {
+    try {
+      wrap.remove();
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
+/**
+ * Botões +/− para rodar o GLB em eixos **locais** (rotateX/Y/Z incremental).
+ * O grupo fica *acima* de `glassesAnatomy` para não conflitar com
+ * `glassesAnatomy.rotation.z` (inclinação do olhar).
+ * @returns {() => void} cleanup
+ */
+function installOmafitGlassesScreenRotPanel(arFit, THREE, group, stepDeg) {
+  if (!arFit || !group) return () => {};
+  const step = THREE.MathUtils.degToRad(
+    Math.max(0.25, Math.min(90, Number(stepDeg) || 5)),
+  );
+  const wrap = document.createElement("div");
+  wrap.setAttribute("data-omafit", "glasses-screen-rot");
+  Object.assign(wrap.style, {
+    position: "absolute",
+    right: "8px",
+    bottom: "8px",
+    zIndex: "21",
+    maxWidth: "220px",
+    padding: "10px 12px",
+    background: "rgba(0,0,0,0.72)",
+    color: "#eee",
+    fontFamily: "system-ui,sans-serif",
+    fontSize: "11px",
+    lineHeight: "1.35",
+    borderRadius: "8px",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+    pointerEvents: "auto",
+  });
+  const title = document.createElement("div");
+  title.textContent = "Girar óculos (local)";
+  title.style.fontWeight = "600";
+  title.style.marginBottom = "6px";
+  wrap.appendChild(title);
+  const hint = document.createElement("div");
+  hint.textContent = `±${Number(stepDeg) || 5}° por toque (eixos X, Y, Z do modelo).`;
+  hint.style.opacity = "0.75";
+  hint.style.fontSize = "10px";
+  hint.style.marginBottom = "8px";
+  wrap.appendChild(hint);
+
+  const btn = (t) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = t;
+    Object.assign(b.style, {
+      minWidth: "34px",
+      padding: "6px 0",
+      cursor: "pointer",
+      fontSize: "12px",
+      lineHeight: "1.2",
+      borderRadius: "6px",
+      border: "1px solid #666",
+      background: "#333",
+      color: "#fff",
+      flex: "1",
+    });
+    return b;
+  };
+  const addAxis = (label, onMinus, onPlus) => {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "6px";
+    row.style.marginBottom = "4px";
+    const L = document.createElement("span");
+    L.textContent = label;
+    L.style.minWidth = "14px";
+    L.style.fontWeight = "500";
+    const bM = btn("−");
+    const bP = btn("+");
+    bM.addEventListener("click", (e) => {
+      e.preventDefault();
+      onMinus();
+    });
+    bP.addEventListener("click", (e) => {
+      e.preventDefault();
+      onPlus();
+    });
+    row.append(L, bM, bP);
+    wrap.appendChild(row);
+  };
+  addAxis("X", () => group.rotateX(-step), () => group.rotateX(step));
+  addAxis("Y", () => group.rotateY(-step), () => group.rotateY(step));
+  addAxis("Z", () => group.rotateZ(-step), () => group.rotateZ(step));
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.textContent = "Redefinir rotação";
+  Object.assign(reset.style, {
+    marginTop: "6px",
+    width: "100%",
+    padding: "6px",
+    cursor: "pointer",
+    fontSize: "11px",
+    borderRadius: "6px",
+    border: "1px solid #555",
+    background: "#2a2a2a",
+    color: "#fff",
+  });
+  reset.addEventListener("click", (e) => {
+    e.preventDefault();
+    group.rotation.set(0, 0, 0);
+    group.quaternion.identity();
+  });
+  wrap.appendChild(reset);
+  arFit.appendChild(wrap);
+  return () => {
+    try {
+      wrap.remove();
+    } catch {
+      /* ignore */
+    }
+  };
+}
 
 function bakeGLBTransforms(THREE, root, onDone) {
   if (!root || typeof root.traverse !== "function") return;
@@ -3154,6 +3395,10 @@ async function runArSession({
   let removeOrientationListeners = null;
   /** Timeouts de `_resize` tardio (layout do modal / safe-area) — limpar no cleanup. */
   let lateMindarResizeTimerIds = [];
+  /** Remover painel de debug Tripo (sliders) ao fechar o modal. */
+  let removeTripoDebugPanel = null;
+  /** Remover botões de rotação no ecrã (óculos). */
+  let removeGlassesScreenRotPanel = null;
 
   const cleanup = () => {
     try {
@@ -3213,6 +3458,22 @@ async function runArSession({
         }
       }
       lateMindarResizeTimerIds = [];
+    }
+    if (typeof removeTripoDebugPanel === "function") {
+      try {
+        removeTripoDebugPanel();
+      } catch {
+        /* ignore */
+      }
+      removeTripoDebugPanel = null;
+    }
+    if (typeof removeGlassesScreenRotPanel === "function") {
+      try {
+        removeGlassesScreenRotPanel();
+      } catch {
+        /* ignore */
+      }
+      removeGlassesScreenRotPanel = null;
     }
   };
 
@@ -3832,6 +4093,42 @@ async function runArSession({
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
     /**
+     * Contentor Tripo: rotação fixa num `offsetGroup` (filho de `calibRot`),
+     * NÃO no mesh — `anchor.group` + `wearPosition` + `faceParent` seguem a
+     * face; só o grupo de offset aplica a neutralização da exportação Tripo.
+     * Desligar: `data-ar-glasses-tripto-offset-container="0"`.
+     */
+    const useTripoOffsetContainer =
+      accessoryType === "glasses" &&
+      !/^(0|off|false|no)$/.test(
+        String(cfgAttr("arGlassesTripoOffsetContainer", "1")).trim().toLowerCase(),
+      );
+    const tripOffStr = String(cfgAttr("arGlassesTripoOffsetWorldDeg", "-90,180,0"));
+    const tripOffParts = tripOffStr.split(",").map((s) => parseFloat(String(s).trim()));
+    const tripDegY = Number.isFinite(tripOffParts[0]) ? tripOffParts[0] : -90;
+    const tripDegX = Number.isFinite(tripOffParts[1]) ? tripOffParts[1] : 180;
+    const tripDegZ = Number.isFinite(tripOffParts[2]) ? tripOffParts[2] : 0;
+
+    /** Botões +/− no ecrã: `data-ar-glasses-screen-rot="0"` desliga. Query: `?omafit_ar_glasses_screen_rot=0|1`. */
+    const screenRotAttr = String(cfgAttr("arGlassesScreenRot", "1")).trim().toLowerCase();
+    let useGlassesScreenRot =
+      accessoryType === "glasses" && !/^(0|off|false|no)$/.test(screenRotAttr);
+    try {
+      const q = new URLSearchParams(window.location?.search || "");
+      const qv = (q.get("omafit_ar_glasses_screen_rot") || "").trim().toLowerCase();
+      if (accessoryType === "glasses") {
+        if (qv === "1" || qv === "true") useGlassesScreenRot = true;
+        if (qv === "0" || qv === "false") useGlassesScreenRot = false;
+      }
+    } catch {
+      /* ignore */
+    }
+    const screenRotStepDeg = Math.max(
+      0.5,
+      Math.min(90, Number(String(cfgAttr("arGlassesScreenRotStepDeg", "5")).trim()) || 5),
+    );
+
+    /**
      * Eixo da “largura” do óculos no plano transversal: MindAR aplica
      * escala bochecha→largura no maior de X local vs Z local. A heurística
      * de profundidade (`omafit-glasses-orient.js`) roda a seguir, logo
@@ -3839,7 +4136,17 @@ async function runArSession({
      */
     let glassesFaceWideAxisX = sz.x >= sz.z;
 
-    if (accessoryType === "glasses") {
+    if (accessoryType === "glasses" && useTripoOffsetContainer) {
+      glasses.rotation.set(0, 0, 0);
+      glasses.quaternion.identity();
+      glasses.updateMatrix();
+      const szC = new THREE.Vector3();
+      new THREE.Box3().setFromObject(glasses).getSize(szC);
+      glassesFaceWideAxisX = szC.x >= szC.z;
+      console.log("[omafit-ar] glasses Tripo offset container (sem bind no mesh; rota no offsetGroup)", {
+        arGlassesTripoOffsetWorldDeg: { y: tripDegY, x: tripDegX, z: tripDegZ },
+      });
+    } else if (accessoryType === "glasses") {
       const rawBind = String(cfgAttr("arGlassesMindarBindFix", "") || "").trim();
       const rb = rawBind.toLowerCase();
       const autoAttr = String(
@@ -3957,9 +4264,13 @@ async function runArSession({
       sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
     });
 
-    /** 4) Hierarquia mínima (idêntica ao preview do admin):
-     *       anchor.group → wearPosition → calibRot → glassesAnatomy → glasses
+    /** 4) Hierarquia (óculos com contentor Tripo):
+     *   anchor.group → wearPosition → faceParent (âncora local identidade) →
+     *   calibRot → [offsetGroup Tripo] → [screenRot local] → glassesAnatomy → glasses
      *
+     *     - Rastreio MediaPipe / MindAR: `anchor.group.matrix` (e descendentes).
+     *     - `faceParent`: ponto lógico “pai da face” (não mexe no bind MindAR).
+     *     - `offsetGroup` (só óculos + contentor Tripo): rotação fixa Tripo.
      *     - `calibRot` roda o GLB em torno do seu centro (bbox centrada).
      *     - `wearPosition` translada em unidades de âncora (≈ 14cm/unit em mundo).
      *
@@ -3994,6 +4305,24 @@ async function runArSession({
     const glassesAnatomy = new GroupCtor();
     glassesAnatomy.name =
       accessoryType === "necklace" ? "omafit-ar-necklace-anatomy" : "omafit-ar-glasses-anatomy";
+    /** Pai lógico sob `wearPosition` — a matriz de tracking continua em `anchor.group`. */
+    const faceParentGroup = new GroupCtor();
+    faceParentGroup.name = "omafit-ar-face-parent";
+    /** Só óculos com `useTripoOffsetContainer`: rotação fixa export Tripo. */
+    /** @type {InstanceType<typeof GroupCtor> | null} */
+    let tripOffsetGroup = null;
+    if (useTripoOffsetContainer && accessoryType === "glasses") {
+      tripOffsetGroup = new GroupCtor();
+      tripOffsetGroup.name = "omafit-ar-tripto-offset";
+      omafitApplyGlassesTripoOffsetContainer(THREE, tripOffsetGroup, tripDegY, tripDegX, tripDegZ);
+    }
+    /** Entre offset/calib e anatomia — rotação manual (UI) sem colidir com `glassesAnatomy.rotation.z`. */
+    /** @type {InstanceType<typeof GroupCtor> | null} */
+    let glassesUserRotGroup = null;
+    if (useGlassesScreenRot) {
+      glassesUserRotGroup = new GroupCtor();
+      glassesUserRotGroup.name = "omafit-ar-glasses-screen-rot";
+    }
     /** @type {THREE.Group | null} */
     let necklaceSwingGroup = null;
     let necklaceShadowParts = null;
@@ -4004,6 +4333,17 @@ async function runArSession({
       necklaceSwingGroup.add(glassesAnatomy);
       necklaceShadowParts = omafitCreateNecklaceChestDropShadow(THREE);
       necklaceSwingGroup.add(necklaceShadowParts.mesh);
+    } else if (tripOffsetGroup) {
+      calibRot.add(tripOffsetGroup);
+      if (glassesUserRotGroup) {
+        tripOffsetGroup.add(glassesUserRotGroup);
+        glassesUserRotGroup.add(glassesAnatomy);
+      } else {
+        tripOffsetGroup.add(glassesAnatomy);
+      }
+    } else if (glassesUserRotGroup) {
+      calibRot.add(glassesUserRotGroup);
+      glassesUserRotGroup.add(glassesAnatomy);
     } else {
       calibRot.add(glassesAnatomy);
     }
@@ -4037,7 +4377,8 @@ async function runArSession({
     } catch {
       wearPosition.scale.set(1, 1, 1);
     }
-    wearPosition.add(calibRot);
+    wearPosition.add(faceParentGroup);
+    faceParentGroup.add(calibRot);
 
     anchor.group.add(wearPosition);
 
@@ -4955,6 +5296,52 @@ async function runArSession({
     fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
 
     loading.style.display = "none";
+
+    try {
+      let showTripoDbg = false;
+      try {
+        if (
+          new URLSearchParams(window.location?.search || "").get("omafit_ar_glasses_tripo_debug") ===
+          "1"
+        ) {
+          showTripoDbg = true;
+        }
+      } catch {
+        /* ignore */
+      }
+      if (
+        /^(1|true|yes|on)$/.test(
+          String(cfgAttr("arGlassesTripoDebug", "")).trim().toLowerCase(),
+        )
+      ) {
+        showTripoDbg = true;
+      }
+      if (showTripoDbg && tripOffsetGroup) {
+        removeTripoDebugPanel = installOmafitGlassesTripoDebugPanel(
+          arFit,
+          THREE,
+          tripOffsetGroup,
+          tripDegY,
+          tripDegX,
+          tripDegZ,
+        );
+      }
+    } catch (e) {
+      console.warn("[omafit-ar] Tripo debug UI:", e?.message || e);
+    }
+
+    try {
+      if (glassesUserRotGroup) {
+        removeGlassesScreenRotPanel = installOmafitGlassesScreenRotPanel(
+          arFit,
+          THREE,
+          glassesUserRotGroup,
+          screenRotStepDeg,
+        );
+      }
+    } catch (e) {
+      console.warn("[omafit-ar] screen rot UI:", e?.message || e);
+    }
 
     __omafitArDbgLog({
       location: "omafit-ar-widget.js:runArSession",

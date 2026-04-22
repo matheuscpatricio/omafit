@@ -11,6 +11,33 @@
  */
 
 /**
+ * Rotações fixas no **grupo contentor** do Tripo (não no mesh), em eixos
+ * **mundo** na ordem Y → X → Z. Defaults alinham ao pedido do pipeline Tripo:
+ *   Y = -90° (“virado para a direita”)
+ *   X = 180° (“cabeça para baixo”)
+ *   Z = 0°
+ *
+ * @param {any} THREE
+ * @param {any} group `THREE.Group` (offsetGroup)
+ * @param {number} yDeg
+ * @param {number} xDeg
+ * @param {number} zDeg
+ */
+export function omafitApplyGlassesTripoOffsetContainer(THREE, group, yDeg, xDeg, zDeg) {
+  if (!group) return;
+  group.rotation.set(0, 0, 0);
+  group.quaternion.identity();
+  const ax = new THREE.Vector3(1, 0, 0);
+  const ay = new THREE.Vector3(0, 1, 0);
+  const az = new THREE.Vector3(0, 0, 1);
+  const r = (d) => (d * Math.PI) / 180;
+  if (yDeg) group.rotateOnWorldAxis(ay, r(yDeg));
+  if (xDeg) group.rotateOnWorldAxis(ax, r(xDeg));
+  if (zDeg) group.rotateOnWorldAxis(az, r(zDeg));
+  group.updateMatrix();
+}
+
+/**
  * @param {any} p — Vector3 ou [x,y,z]
  * @param {0|1|2} wIdx
  * @param {0|1|2} hIdx

@@ -47,7 +47,7 @@ import {
 } from "../ar-eyewear.server.js";
 import { useAppI18n } from "../contexts/AppI18n";
 import { getShopDomain } from "../utils/getShopDomain";
-import { applyGlassesAutoBind } from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
+import { omafitApplyGlassesTripoOffsetContainer } from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
 
 function tryResignIfPrivate(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -709,6 +709,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
     camera: null,
     calibRot: null,
     wearPosition: null,
+    tripoOffsetGroup: null,
     model: null,
     placeholder: null,
     bboxHelper: null,
@@ -774,10 +775,14 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
         wearPosition.name = "wearPosition";
         scene.add(wearPosition);
 
+        const faceParent = new THREE.Group();
+        faceParent.name = "omafit-ar-face-parent";
+        wearPosition.add(faceParent);
+
         const calibRot = new THREE.Group();
         calibRot.name = "calibRot";
         calibRot.rotation.order = "YXZ";
-        wearPosition.add(calibRot);
+        faceParent.add(calibRot);
 
         // Diagnóstico 1: eixos do MUNDO (fixos na cena, não rodam com a
         // calibração). Servem de referência absoluta para o lojista ver
@@ -1072,39 +1077,28 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               root.scale.setScalar(baseScale);
 
               /**
-               * Bind óculos → mesmo referencial que `omafit-ar-widget.js`:
-               * heurística em `omafit-glasses-orient.js` (eixos largura /
-               * profundidade / altura + sinal frente-trás + rim top/bottom).
-               * Fallback: `Ry(180)` (GLB canonical Omafit: lentes -Z, hastes +Z).
+               * Óculos: mesmo pipeline que o widget — contentor Tripo
+               * (`omafitApplyGlassesTripoOffsetContainer`: Y-90° X 180° Z 0, eixos mundo),
+               * mesh centrado, sem rotação no root.
                */
               if (accessoryType === "glasses") {
                 root.rotation.set(0, 0, 0);
                 root.quaternion.identity();
-                let auto = null;
-                try {
-                  auto = applyGlassesAutoBind(THREE, root);
-                } catch (e) {
-                  console.warn("[omafit-calibrate] applyGlassesAutoBind:", e?.message || e);
-                }
-                if (!auto) {
-                  root.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI);
-                }
                 root.updateMatrixWorld(true);
-                if (auto) {
-                  console.log("[omafit-calibrate] glasses auto depth-axis", {
-                    widthAxis: auto.detected?.widthAxisIdx,
-                    heightAxis: auto.detected?.heightAxisIdx,
-                    depthAxis: auto.detected?.depthAxisIdx,
-                    rimHeightSign: auto.rimHeightSign,
-                    confidence: auto.detected?.confidence,
-                  });
-                }
+                const tripOff = new THREE.Group();
+                tripOff.name = "omafit-ar-tripto-offset";
+                omafitApplyGlassesTripoOffsetContainer(THREE, tripOff, -90, 180, 0);
+                tripOff.add(root);
+                s.tripoOffsetGroup = tripOff;
+                calibRot.add(tripOff);
+              } else {
+                s.tripoOffsetGroup = null;
+                calibRot.add(root);
               }
 
               s.model = root;
               s.size = size.clone().multiplyScalar(baseScale);
               s.baseScale = baseScale;
-              calibRot.add(root);
 
               // Placeholder fica mais discreto quando GLB carrega (20% opacity).
               // Mantemos os AxesHelper visíveis (não mexemos) para o lojista
@@ -1177,7 +1171,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
       } catch { /* no-op */ }
       stateRef.current = {
         THREE: null, renderer: null, scene: null, camera: null,
-        calibRot: null, wearPosition: null,
+        calibRot: null, wearPosition: null, tripoOffsetGroup: null,
         model: null, placeholder: null, bboxHelper: null,
         size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
       };

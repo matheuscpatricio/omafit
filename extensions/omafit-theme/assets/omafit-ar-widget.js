@@ -190,7 +190,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bind-ry180-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-face-basis-5lm-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -231,6 +231,8 @@ const OMAFIT_FACE_LM_RIGHT_CHEEK = 234;
 const OMAFIT_FACE_LM_EYE_L_OUT = 263;
 const OMAFIT_FACE_LM_EYE_R_OUT = 33;
 const OMAFIT_FACE_LM_NOSE_BRIDGE = 168;
+/** Topo da testa (glabela) + queixo: eixo vertical do rosto. */
+const OMAFIT_FACE_LM_FOREHEAD_TOP = 10;
 /** Região pré-auricular para prolongar oclusor (hastes “atrás da orelha”). */
 const OMAFIT_FACE_LM_EAR_L = 127;
 const OMAFIT_FACE_LM_EAR_R = 356;
@@ -336,6 +338,49 @@ function omafitApplyGlassesMindarBindFix(THREE, glasses, bindRxDeg, bindRyDeg, b
   if (rxr) glasses.rotateOnWorldAxis(ax, rxr);
   if (rzr) glasses.rotateOnWorldAxis(az, rzr);
   glasses.updateMatrix();
+}
+
+/**
+ * Normaliza o root do GLB de óculos antes de o anexar à âncora facial:
+ * 1. **Pivot**: computa `Box3` e translada o root para que o centro
+ *    geométrico do bounding box coincida com a origem (que depois vai
+ *    sobrepor-se à ponte do nariz = landmark 168). Sem isto, a rotação
+ *    da calibração e da âncora acontece em torno de uma haste ou lente
+ *    em vez do nariz.
+ * 2. **Orientação**: aplica um offset rotacional fixo (Y→X→Z em eixos
+ *    mundo) para compensar a convenção do exportador/canonicalização.
+ *    Para GLBs canonicalizados pelo pipeline Omafit (output do Tripo →
+ *    `workers/ar-eyewear-tripo/postprocess.py` → `shared/…canonicalize.mjs`)
+ *    usa **`Ry(180)`** como default, porque a canonicalização deixa a
+ *    **frente das lentes em `-Z`** e as **pontas das hastes em `+Z`**.
+ *    A âncora MindAR entrega `+Z` = para fora do rosto, logo precisamos
+ *    de virar 180° em Y para que a frente aponte para a câmara. Óculos
+ *    são simétricos em X ⇒ inverter +X (efeito colateral de Ry(180))
+ *    não é visível.
+ *
+ * @param {any} THREE
+ * @param {any} glasses GLB root (resultado de `gltf.scene`)
+ * @param {{ bindRxDeg?: number, bindRyDeg?: number, bindRzDeg?: number, skipCenter?: boolean }} opts
+ * @returns {{ sizeBbox: any, maxDim: number }}
+ */
+function normalizeGlassesModel(THREE, glasses, opts) {
+  const bx = Number(opts?.bindRxDeg) || 0;
+  const by = opts?.bindRyDeg === undefined ? 180 : Number(opts.bindRyDeg) || 0;
+  const bz = Number(opts?.bindRzDeg) || 0;
+  if (!opts?.skipCenter) {
+    const box = new THREE.Box3().setFromObject(glasses);
+    if (!(typeof box.isEmpty === "function" && box.isEmpty())) {
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      glasses.position.sub(center);
+    }
+  }
+  omafitApplyGlassesMindarBindFix(THREE, glasses, bx, by, bz);
+  const finalBox = new THREE.Box3().setFromObject(glasses);
+  const sizeBbox = new THREE.Vector3();
+  finalBox.getSize(sizeBbox);
+  const maxDim = Math.max(sizeBbox.x, sizeBbox.y, sizeBbox.z, 1e-6);
+  return { sizeBbox, maxDim };
 }
 
 function bakeGLBTransforms(THREE, root, onDone) {
@@ -914,6 +959,77 @@ function omafitDampMatrix4(THREE, out, raw, lambda) {
   q0.slerp(q1, t);
   s0.lerp(s1, t);
   out.compose(p0, q0, s0);
+}
+
+/**
+ * Constrói uma matriz 4×4 de base (rotação + translação) para óculos,
+ * derivada **somente** de 5 marcos do MediaPipe/MindAR no espaço métrico
+ * Three.js: 168 (ponte do nariz, origem), 33/263 (cantos externos dos
+ * olhos, eixo X = largura), 10 (glabela/testa) e 152 (queixo, eixo Y
+ * vertical). O eixo Z é derivado por produto vectorial (regra da mão
+ * direita), e depois `Y` é reortogonalizado via `Z × X` para garantir
+ * ortonormalidade (precisão numérica).
+ *
+ * Convenção do resultado (alinhada com o `anchor.group` do MindAR em
+ * condições frontais: câmara identidade → `+X` direita do ecrã, `+Y`
+ * cima, `+Z` fora do rosto):
+ *   column0 = (lm[263] − lm[33]).normalize()        ← direita do ecrã
+ *   column2 = cross(X, Y_raw).normalize()           ← fora do rosto
+ *   column1 = cross(Z, X)                            ← cima ortogonal
+ *   translation = lm[168]
+ *
+ * Falha (retorna `false`) se algum landmark estiver em falta, se
+ * `|eL−eR|²<ε` (cabeça em yaw ≥90°, olhos colapsam), ou se o plano
+ * X/Y for degenerado (raro; acontece quando a cara está virada para o
+ * chão/tecto). O chamador deve manter a última rotação válida nesse
+ * caso — evita popping quando o tracking oscila perto de bordos.
+ *
+ * **Performance**: aloca 0 objectos por frame quando `reuse` é fornecido;
+ * caso contrário cria vectores temporários. Chama-se uma vez por frame.
+ *
+ * @param {any} THREE
+ * @param {Array<[number,number,number]>} lm `payload.estimateResult.metricLandmarks` do MindAR
+ * @param {{ get(i: number): any } | null} smoother One Euro smoother com 10/33/152/168/263 registados; fallback para `lm[i]` bruto
+ * @param {any} outMat `THREE.Matrix4` destino (mutado in-place)
+ * @param {{ x: any, yRaw: any, y: any, z: any, p: any, tmp: any, O: any, eR: any, eL: any, fh: any, ch: any } | null} [reuse]
+ * @returns {boolean}
+ */
+function buildGlassesFaceBasisMatrix(THREE, lm, smoother, outMat, reuse) {
+  const tmp = reuse?.tmp || new THREE.Vector3();
+  const gp = (idx, out) => {
+    const p = smoother ? smoother.get(idx) : null;
+    if (p) {
+      out.copy(p);
+      return out;
+    }
+    const a = lm ? lm[idx] : null;
+    if (!a) return null;
+    out.set(a[0], a[1], a[2]);
+    return out;
+  };
+  const O = gp(OMAFIT_FACE_LM_NOSE_BRIDGE, reuse?.O || new THREE.Vector3());
+  const eR = gp(OMAFIT_FACE_LM_EYE_R_OUT, reuse?.eR || new THREE.Vector3());
+  const eL = gp(OMAFIT_FACE_LM_EYE_L_OUT, reuse?.eL || new THREE.Vector3());
+  const fh = gp(OMAFIT_FACE_LM_FOREHEAD_TOP, reuse?.fh || new THREE.Vector3());
+  const ch = gp(OMAFIT_FACE_LM_CHIN, reuse?.ch || new THREE.Vector3());
+  if (!O || !eR || !eL || !fh || !ch) return false;
+  const xAxis = reuse?.x || new THREE.Vector3();
+  xAxis.subVectors(eL, eR);
+  if (xAxis.lengthSq() < 1e-10) return false;
+  xAxis.normalize();
+  const yRaw = reuse?.yRaw || new THREE.Vector3();
+  yRaw.subVectors(fh, ch);
+  if (yRaw.lengthSq() < 1e-10) return false;
+  yRaw.normalize();
+  const zAxis = reuse?.z || new THREE.Vector3();
+  zAxis.crossVectors(xAxis, yRaw);
+  if (zAxis.lengthSq() < 1e-10) return false;
+  zAxis.normalize();
+  const yAxis = reuse?.y || new THREE.Vector3();
+  yAxis.crossVectors(zAxis, xAxis).normalize();
+  outMat.makeBasis(xAxis, yAxis, zAxis);
+  outMat.setPosition(O);
+  return true;
 }
 
 /**
@@ -3903,6 +4019,8 @@ async function runArSession({
               OMAFIT_FACE_LM_LEFT_CHEEK,
               OMAFIT_FACE_LM_EAR_L,
               OMAFIT_FACE_LM_EAR_R,
+              OMAFIT_FACE_LM_FOREHEAD_TOP,
+              OMAFIT_FACE_LM_CHIN,
             ],
             OMAFIT_FACE_ONE_EURO_MIN_CUTOFF,
             OMAFIT_FACE_ONE_EURO_BETA,
@@ -3927,6 +4045,24 @@ async function runArSession({
         ? OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_GLASSES
         : OMAFIT_FACE_MATRIX_EXTRA_SMOOTH;
 
+    /**
+     * Buffers pré-alocados usados em cada frame para construir a matriz de
+     * base dos óculos a partir dos 5 landmarks (168/33/263/10/152) sem
+     * alocar `Vector3`/`Matrix4` temporários. `glassesBasisActive` controla
+     * se a rotação da âncora MindAR é substituída pela derivada — desliga
+     * via `data-ar-glasses-face-basis="0"` para voltar ao comportamento
+     * antigo (só PnP do MindAR).
+     */
+    const glassesFaceBasisAttr = String(
+      cfgAttr("arGlassesFaceBasis", "1"),
+    ).trim().toLowerCase();
+    const glassesBasisActive =
+      accessoryType === "glasses" &&
+      !(glassesFaceBasisAttr === "0" ||
+        glassesFaceBasisAttr === "off" ||
+        glassesFaceBasisAttr === "false" ||
+        glassesFaceBasisAttr === "no");
+
     faceArEnhancementState = {
       faceControllerPrev: null,
       smoothAnchorMat: new THREE.Matrix4(),
@@ -3944,6 +4080,27 @@ async function runArSession({
       templeOccL,
       templeOccR,
       lmSmoother: faceLmSmoother,
+      glassesBasisActive,
+      glassesBasisMat: glassesBasisActive ? new THREE.Matrix4() : null,
+      glassesBasisReuse: glassesBasisActive
+        ? {
+            tmp: new THREE.Vector3(),
+            O: new THREE.Vector3(),
+            eR: new THREE.Vector3(),
+            eL: new THREE.Vector3(),
+            fh: new THREE.Vector3(),
+            ch: new THREE.Vector3(),
+            x: new THREE.Vector3(),
+            yRaw: new THREE.Vector3(),
+            y: new THREE.Vector3(),
+            z: new THREE.Vector3(),
+          }
+        : null,
+      glassesAnchorPos: glassesBasisActive ? new THREE.Vector3() : null,
+      glassesAnchorScale: glassesBasisActive ? new THREE.Vector3() : null,
+      glassesAnchorQuatRaw: glassesBasisActive ? new THREE.Quaternion() : null,
+      glassesAnchorQuatTarget: glassesBasisActive ? new THREE.Quaternion() : null,
+      glassesBasisLogged: false,
       hairUniforms: hairUniformsFaceAr,
       hairSegmenter: null,
       hairCategoryIndex: -1,
@@ -4001,6 +4158,64 @@ async function runArSession({
         if (!lm) return;
         const nowMs = performance.now();
         st.lmSmoother?.sample(lm, nowMs);
+
+        /**
+         * Óculos: verificação de qualidade da **base canonical** derivada
+         * de 5 landmarks (168/33/263/10/152) em `metricLandmarks`.
+         *
+         * Nota algébrica crítica (MindAR 1.2.5 `src/face-target/face-geometry/face-geometry.js`):
+         *   `metricLandmarks` (`T`) = `inv(U) × N`, onde `U = solveWeightedOrthogonal(SI, N)`
+         *   alinha canonical `SI` aos observados `N`. Logo `T ≈ SI` e NÃO
+         *   muda com yaw/pitch/roll do rosto — a rotação do rosto está
+         *   TODA encapsulada em `faceMatrix = vI` (que vem do `solvePnP`
+         *   sobre `T` + landmarks 2D, com `diag(1,-1,-1)` aplicada).
+         *
+         * Consequência: construir uma matriz de base 3×3 a partir dos
+         * eixos (eL-eR), (fh-ch), e cross destes, usando `metricLandmarks`,
+         * dá uma rotação ≈ identity **independentemente da pose do rosto**.
+         * Substituir o quaternion da `anchor.group.matrix` por essa base
+         * destruiria a rotação do PnP (os óculos ficariam fixos olhando
+         * para a câmara). Por isso **não substituímos** — a rotação do
+         * rosto no espaço mundo é a que o MindAR já calcula via PnP, que
+         * usa 468 landmarks ponderados por `cQ` (muito mais robusto que
+         * 5 pontos).
+         *
+         * A função `buildGlassesFaceBasisMatrix` é útil como **sonda de
+         * integridade**: se o desvio em relação a identity cresce muito
+         * (p. ex. `|quat.angleTo(identity)| > 15°`), é indício de
+         * landmarks mal detectados (expressão facial extrema, olho
+         * parcialmente oculto) e o tracking está ruidoso. Logado 1× só
+         * para telemetria, sem afectar o render.
+         */
+        if (st.glassesBasisActive && st.glassesBasisMat && !st.glassesBasisLogged) {
+          const basisOk = buildGlassesFaceBasisMatrix(
+            THREE,
+            lm,
+            st.lmSmoother,
+            st.glassesBasisMat,
+            st.glassesBasisReuse,
+          );
+          if (basisOk) {
+            st.glassesAnchorQuatTarget.setFromRotationMatrix(st.glassesBasisMat);
+            const angleFromIdentity = 2 * Math.acos(
+              Math.min(1, Math.abs(st.glassesAnchorQuatTarget.w)),
+            );
+            st.glassesBasisLogged = true;
+            console.log("[omafit-ar] glasses face-basis (canonical integrity sonda)", {
+              landmarks: [
+                OMAFIT_FACE_LM_NOSE_BRIDGE,
+                OMAFIT_FACE_LM_EYE_R_OUT,
+                OMAFIT_FACE_LM_EYE_L_OUT,
+                OMAFIT_FACE_LM_FOREHEAD_TOP,
+                OMAFIT_FACE_LM_CHIN,
+              ],
+              angleFromIdentityRad: angleFromIdentity.toFixed(4),
+              angleFromIdentityDeg: ((angleFromIdentity * 180) / Math.PI).toFixed(2),
+              note: "Esperado ~0° (metricLandmarks ≈ canonical SI). >15° indica tracking degradado.",
+            });
+          }
+        }
+
         if (!st.smoothInitialized) {
           st.smoothAnchorMat.copy(anchor.group.matrix);
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {

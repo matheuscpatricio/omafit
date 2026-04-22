@@ -194,7 +194,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-screen-rot-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-screen-rot-v2";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -395,15 +395,15 @@ function normalizeGlassesModel(THREE, glasses, opts) {
  * `?omafit_ar_glasses_tripo_debug=1` ou `data-ar-glasses-tripto-debug="1"`.
  * @returns {() => void} cleanup
  */
-function installOmafitGlassesTripoDebugPanel(arFit, THREE, offsetGroup, y0, x0, z0) {
-  if (!arFit || !offsetGroup) return () => {};
+function installOmafitGlassesTripoDebugPanel(layerHost, THREE, offsetGroup, y0, x0, z0) {
+  if (!layerHost || !offsetGroup) return () => {};
   const wrap = document.createElement("div");
   wrap.setAttribute("data-omafit", "tripto-debug");
   Object.assign(wrap.style, {
     position: "absolute",
-    left: "8px",
-    bottom: "8px",
-    zIndex: "20",
+    left: "max(8px, env(safe-area-inset-left, 0px))",
+    bottom: "max(8px, calc(8px + env(safe-area-inset-bottom, 0px)))",
+    zIndex: "48",
     maxWidth: "240px",
     padding: "10px 12px",
     background: "rgba(0,0,0,0.75)",
@@ -502,7 +502,7 @@ function installOmafitGlassesTripoDebugPanel(arFit, THREE, offsetGroup, y0, x0, 
     }
   });
   wrap.appendChild(btn);
-  arFit.appendChild(wrap);
+  layerHost.appendChild(wrap);
   return () => {
     try {
       wrap.remove();
@@ -516,30 +516,35 @@ function installOmafitGlassesTripoDebugPanel(arFit, THREE, offsetGroup, y0, x0, 
  * Botões +/− para rodar o GLB em eixos **locais** (rotateX/Y/Z incremental).
  * O grupo fica *acima* de `glassesAnatomy` para não conflitar com
  * `glassesAnatomy.rotation.z` (inclinação do olhar).
+ *
+ * @param {HTMLElement} layerHost `arWrap` (não `arFit`) — fora de `overflow:hidden`
+ *    do feed MindAR, para o painel ser visível e tocável no mobile.
  * @returns {() => void} cleanup
  */
-function installOmafitGlassesScreenRotPanel(arFit, THREE, group, stepDeg) {
-  if (!arFit || !group) return () => {};
+function installOmafitGlassesScreenRotPanel(layerHost, THREE, group, stepDeg) {
+  if (!layerHost || !group) return () => {};
   const step = THREE.MathUtils.degToRad(
     Math.max(0.25, Math.min(90, Number(stepDeg) || 5)),
   );
   const wrap = document.createElement("div");
   wrap.setAttribute("data-omafit", "glasses-screen-rot");
+  wrap.className = "omafit-ar-glasses-screen-rot";
   Object.assign(wrap.style, {
     position: "absolute",
-    right: "8px",
-    bottom: "8px",
-    zIndex: "21",
-    maxWidth: "220px",
+    right: "max(8px, env(safe-area-inset-right, 0px))",
+    bottom: "max(8px, calc(8px + env(safe-area-inset-bottom, 0px)))",
+    zIndex: "50",
+    maxWidth: "min(220px, 92vw)",
     padding: "10px 12px",
-    background: "rgba(0,0,0,0.72)",
+    background: "rgba(0,0,0,0.88)",
     color: "#eee",
     fontFamily: "system-ui,sans-serif",
-    fontSize: "11px",
+    fontSize: "12px",
     lineHeight: "1.35",
-    borderRadius: "8px",
-    boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+    borderRadius: "10px",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.55)",
     pointerEvents: "auto",
+    touchAction: "manipulation",
   });
   const title = document.createElement("div");
   title.textContent = "Girar óculos (local)";
@@ -557,17 +562,20 @@ function installOmafitGlassesScreenRotPanel(arFit, THREE, group, stepDeg) {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = t;
+    b.setAttribute("aria-label", t === "−" || t === "-" ? "diminuir" : "aumentar");
     Object.assign(b.style, {
-      minWidth: "34px",
-      padding: "6px 0",
+      minWidth: "40px",
+      minHeight: "40px",
+      padding: "0",
       cursor: "pointer",
-      fontSize: "12px",
-      lineHeight: "1.2",
-      borderRadius: "6px",
+      fontSize: "16px",
+      lineHeight: "1",
+      borderRadius: "8px",
       border: "1px solid #666",
       background: "#333",
       color: "#fff",
       flex: "1",
+      WebkitTapHighlightColor: "transparent",
     });
     return b;
   };
@@ -617,7 +625,7 @@ function installOmafitGlassesScreenRotPanel(arFit, THREE, group, stepDeg) {
     group.quaternion.identity();
   });
   wrap.appendChild(reset);
-  arFit.appendChild(wrap);
+  layerHost.appendChild(wrap);
   return () => {
     try {
       wrap.remove();
@@ -2580,6 +2588,13 @@ function injectGlobalStyles(root, primaryOverride) {
     .omafit-ar-shell .omafit-ar-mindar-host canvas {
       background: transparent !important;
       background-color: transparent !important;
+    }
+    /* Controlo de rotação GLB: irmão de .omafit-ar-fit, fora de overflow:hidden do vídeo. */
+    .omafit-ar-shell .omafit-ar-glasses-screen-rot,
+    [data-omafit="glasses-screen-rot"] {
+      z-index: 50 !important;
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
     }
     /* NAO sobrepor width/height/top/left do video ou canvas do MindAR.    */
     /* A biblioteca calcula em _resize() posicoes em pixels para fazer       */
@@ -5318,7 +5333,7 @@ async function runArSession({
       }
       if (showTripoDbg && tripOffsetGroup) {
         removeTripoDebugPanel = installOmafitGlassesTripoDebugPanel(
-          arFit,
+          arWrap,
           THREE,
           tripOffsetGroup,
           tripDegY,
@@ -5333,7 +5348,7 @@ async function runArSession({
     try {
       if (glassesUserRotGroup) {
         removeGlassesScreenRotPanel = installOmafitGlassesScreenRotPanel(
-          arFit,
+          arWrap,
           THREE,
           glassesUserRotGroup,
           screenRotStepDeg,

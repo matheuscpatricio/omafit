@@ -132,7 +132,8 @@ async function resolveTripoImageUrlBeforeFal(imageUrl: string): Promise<{
   prepared: boolean;
   rotDeg: 0 | 90 | 180 | 270;
 }> {
-  const rot = parseTripoInputRotDeg(env("FAL_TRIPO_INPUT_ROT_DEG", "0"));
+  /** Por defeito 180° (imagem “de cabeça para baixo” antes do Tripo). `0` desliga. */
+  const rot = parseTripoInputRotDeg(env("FAL_TRIPO_INPUT_ROT_DEG", "180"));
   if (rot === 0) {
     return { imageUrl, prepared: false, rotDeg: 0 };
   }

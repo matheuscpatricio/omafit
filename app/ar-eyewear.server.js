@@ -1333,8 +1333,8 @@ function falConfig() {
  * `orientation: align_image`. Campos extra (HD, face_limit, auto_size, …) só entram
  * se as envs correspondentes estiverem definidas (ver comentários no código).
  *
- * Imagem de entrada: rotação opcional antes do FAL (`FAL_TRIPO_INPUT_ROT_DEG`) +
- * upload para `fal.storage` — ver `resolveTripoImageUrlBeforeFal`.
+ * Imagem de entrada: rotação antes do FAL (`FAL_TRIPO_INPUT_ROT_DEG`, por defeito **180**)
+ * + upload para `fal.storage` — ver `resolveTripoImageUrlBeforeFal`.
  * @see https://fal.ai/models/tripo3d/tripo/v2.5/image-to-3d/api
  * @param {string} imageUrl
  */
@@ -1399,9 +1399,15 @@ function parseTripoInputRotDeg(raw) {
  * Se `FAL_TRIPO_INPUT_ROT_DEG` for 90/180/270, descarrega a imagem, aplica EXIF
  * (`sharp().rotate()`), roda o ângulo extra e envia JPEG para `fal.storage`.
  * Caso contrário devolve o URL original (sem custo extra).
+ *
+ * Por defeito a imagem é **sempre** rodada 180° antes do FAL (`FAL_TRIPO_INPUT_ROT_DEG`
+ * vazio → 180). Define `FAL_TRIPO_INPUT_ROT_DEG=0` para não rodar nem re‑upload.
  */
 async function resolveTripoImageUrlBeforeFal(imageUrl) {
-  const rot = parseTripoInputRotDeg(process.env.FAL_TRIPO_INPUT_ROT_DEG);
+  const raw = process.env.FAL_TRIPO_INPUT_ROT_DEG;
+  const s =
+    raw == null || String(raw).trim() === "" ? "180" : String(raw).trim();
+  const rot = parseTripoInputRotDeg(s);
   if (rot === 0) {
     return { imageUrl, prepared: false, rotDeg: 0 };
   }

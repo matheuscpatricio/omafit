@@ -67,6 +67,57 @@ function extractGlbUrl(payload: unknown): string | null {
   return null;
 }
 
+/**
+ * Tripo v2.5 — qualidade / fidelidade (mesmas envs que `app/ar-eyewear.server.js`).
+ * @see https://fal.ai/models/tripo3d/tripo/v2.5/image-to-3d/api
+ */
+function buildTripoV25ImageTo3dInput(imageUrl: string): Record<string, unknown> {
+  const input: Record<string, unknown> = { image_url: imageUrl };
+
+  const orient = env("FAL_TRIPO_ORIENTATION", "align_image").toLowerCase();
+  if (orient && orient !== "omit") {
+    if (orient === "default" || orient === "align_image") {
+      input.orientation = orient;
+    }
+  }
+
+  const tex = env("FAL_TRIPO_TEXTURE", "HD").toLowerCase();
+  if (tex === "hd") input.texture = "HD";
+  else if (tex === "standard") input.texture = "standard";
+  else if (tex === "no") input.texture = "no";
+
+  const pbrRaw = env("FAL_TRIPO_PBR", "1").toLowerCase();
+  input.pbr = !/^(0|false|no|off)$/.test(pbrRaw);
+
+  const tAlign = env("FAL_TRIPO_TEXTURE_ALIGNMENT", "original_image").toLowerCase();
+  if (tAlign && tAlign !== "omit") {
+    if (tAlign === "original_image" || tAlign === "geometry") {
+      input.texture_alignment = tAlign;
+    }
+  }
+
+  const flRaw = env("FAL_TRIPO_FACE_LIMIT", "").trim().toLowerCase();
+  if (flRaw && !/^(0|omit|adaptive|auto)$/.test(flRaw)) {
+    const n = parseInt(flRaw, 10);
+    if (Number.isFinite(n) && n >= 4_000 && n <= 2_000_000) {
+      input.face_limit = n;
+    }
+  } else if (!flRaw) {
+    input.face_limit = 120_000;
+  }
+
+  const autoRaw = env("FAL_TRIPO_AUTO_SIZE", "1").toLowerCase();
+  input.auto_size = !/^(0|false|no|off)$/.test(autoRaw);
+
+  const seed = env("FAL_TRIPO_SEED", "").trim();
+  if (seed && /^\d+$/.test(seed)) input.seed = parseInt(seed, 10);
+
+  const tSeed = env("FAL_TRIPO_TEXTURE_SEED", "").trim();
+  if (tSeed && /^\d+$/.test(tSeed)) input.texture_seed = parseInt(tSeed, 10);
+
+  return input;
+}
+
 async function callFalAndGetGlbUrl(imageUrl: string) {
   const falKey = env("FAL_API_KEY");
   if (!falKey) throw new Error("FAL_API_KEY não configurada na Edge Function");
@@ -79,10 +130,12 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
   const pollIntervalMs = Math.max(500, pollSeconds * 1000);
   const logs: string[] = [];
 
+  const falInput = buildTripoV25ImageTo3dInput(imageUrl);
+
   let result: { data?: unknown; requestId?: string };
   try {
     result = await fal.subscribe(modelId, {
-      input: { image_url: imageUrl },
+      input: falInput,
       logs: true,
       pollInterval: pollIntervalMs,
       timeout: clientTimeoutMs,

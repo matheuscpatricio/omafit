@@ -1328,6 +1328,65 @@ function falConfig() {
   };
 }
 
+/**
+ * Input Tripo v2.5 image-to-3d orientado a máxima qualidade / fidelidade à foto.
+ * Variáveis (todas opcionais): FAL_TRIPO_ORIENTATION, FAL_TRIPO_TEXTURE,
+ * FAL_TRIPO_PBR, FAL_TRIPO_TEXTURE_ALIGNMENT, FAL_TRIPO_FACE_LIMIT, FAL_TRIPO_AUTO_SIZE,
+ * FAL_TRIPO_SEED, FAL_TRIPO_TEXTURE_SEED.
+ * @see https://fal.ai/models/tripo3d/tripo/v2.5/image-to-3d/api
+ * @param {string} imageUrl
+ */
+function buildFalTripoV25ImageTo3dInput(imageUrl) {
+  /** @type {Record<string, string | number | boolean>} */
+  const input = { image_url: imageUrl };
+
+  const orient = (process.env.FAL_TRIPO_ORIENTATION || "align_image").trim().toLowerCase();
+  if (orient && orient !== "omit") {
+    if (orient === "default" || orient === "align_image") {
+      input.orientation = orient;
+    }
+  }
+
+  const tex = (process.env.FAL_TRIPO_TEXTURE || "HD").trim().toLowerCase();
+  if (tex === "hd") input.texture = "HD";
+  else if (tex === "standard") input.texture = "standard";
+  else if (tex === "no") input.texture = "no";
+
+  const pbrRaw = String(process.env.FAL_TRIPO_PBR ?? "1").trim().toLowerCase();
+  input.pbr = !/^(0|false|no|off)$/.test(pbrRaw);
+
+  const tAlign = (process.env.FAL_TRIPO_TEXTURE_ALIGNMENT || "original_image")
+    .trim()
+    .toLowerCase();
+  if (tAlign && tAlign !== "omit") {
+    if (tAlign === "original_image" || tAlign === "geometry") {
+      input.texture_alignment = tAlign;
+    }
+  }
+
+  const flRaw = String(process.env.FAL_TRIPO_FACE_LIMIT || "").trim().toLowerCase();
+  if (flRaw && !/^(0|omit|adaptive|auto)$/.test(flRaw)) {
+    const n = parseInt(flRaw, 10);
+    if (Number.isFinite(n) && n >= 4_000 && n <= 2_000_000) {
+      input.face_limit = n;
+    }
+  } else if (!flRaw) {
+    /** Sem env: limite alto para malha mais densa (ajustável / desligável com FAL_TRIPO_FACE_LIMIT=adaptive). */
+    input.face_limit = 120_000;
+  }
+
+  const autoRaw = String(process.env.FAL_TRIPO_AUTO_SIZE ?? "1").trim().toLowerCase();
+  input.auto_size = !/^(0|false|no|off)$/.test(autoRaw);
+
+  const seed = String(process.env.FAL_TRIPO_SEED || "").trim();
+  if (seed && /^\d+$/.test(seed)) input.seed = parseInt(seed, 10);
+
+  const tSeed = String(process.env.FAL_TRIPO_TEXTURE_SEED || "").trim();
+  if (tSeed && /^\d+$/.test(tSeed)) input.texture_seed = parseInt(tSeed, 10);
+
+  return input;
+}
+
 function* walkStrings(node) {
   if (typeof node === "string") {
     yield node;
@@ -1394,11 +1453,21 @@ export async function generateGlbDraftViaFal({
   );
   const pollIntervalMs = Math.max(500, (Number(pollSeconds) || 4) * 1000);
 
+  const falTripoInput = buildFalTripoV25ImageTo3dInput(imageUrl);
+  try {
+    console.log("[ar-eyewear] FAL Tripo input (sem image_url):", {
+      ...falTripoInput,
+      image_url: "(redacted)",
+    });
+  } catch {
+    /* ignore */
+  }
+
   const logLines = [];
   let result;
   try {
     result = await fal.subscribe(model, {
-      input: { image_url: imageUrl },
+      input: falTripoInput,
       logs: true,
       pollInterval: pollIntervalMs,
       timeout: clientTimeoutMs,

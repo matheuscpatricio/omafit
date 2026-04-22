@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bbox-anatomic1p1-aspect-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-cheek-basis-internal-corrector-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -237,7 +237,7 @@ const OMAFIT_FACE_ONE_EURO_GLASSES_MIN_CUTOFF = 0.56;
 const OMAFIT_FACE_ONE_EURO_GLASSES_BETA = 0.0072;
 const OMAFIT_FACE_ONE_EURO_GLASSES_D_CUTOFF = 0.96;
 /** Largura da armação = `factor` × distância métrica 234–454 (bochechas). Override: `data-ar-glasses-anatomic-width-factor`. */
-const OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR = 1.1;
+const OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR = 1.05;
 /** EMA só na largura bochecha (estabilidade da escala anatómica). */
 const OMAFIT_FACE_CHEEK_WIDTH_SMOOTH = 0.18;
 /** Modelo Image Segmenter (multiclasse: cabelo, pele, roupa, …) — mesmo runtime WASM que HandLandmarker. */
@@ -1460,6 +1460,71 @@ function buildGlassesFaceBasisMatrix(THREE, lm, smoother, outMat, reuse) {
   yAxis.crossVectors(zAxis, xAxis).normalize();
   outMat.makeBasis(xAxis, yAxis, zAxis);
   outMat.setPosition(O);
+  return true;
+}
+
+/**
+ * Base ortonormal no **espaço mundo** (alinhada à malha facial MindAR):
+ * - **X**: bochecha esquerda − direita (454 − 234), horizontal do rosto.
+ * - **Y_raw**: testa − queixo (10 − 152), vertical.
+ * - **Z**: X × Y_raw (frente); **Y** re-ortogonalizado com Z × X.
+ *
+ * Com `mirrorSelfieX` (vídeo frontal espelhado), nega-se a componente X dos
+ * pontos métricos antes de formar os vectores, para alinhar ao Three.js.
+ *
+ * @param {any} THREE
+ * @param {Array<[number,number,number]>} lm
+ * @param {{ get(i: number): any } | null} smoother
+ * @param {any} faceMatrixWorld `matrixWorld` da `faceMeshes[0]` (suavizada no widget)
+ * @param {boolean} mirrorSelfieX
+ * @param {any} outRotMat `Matrix4` só rotação (translation 0)
+ * @param {{ p234:any,p454:any,p10:any,p152:any,vx:any,yRaw:any,vz:any,vy:any }} reuse
+ * @returns {boolean}
+ */
+function buildGlassesCheekOrthogonalBasisWorld(
+  THREE,
+  lm,
+  smoother,
+  faceMatrixWorld,
+  mirrorSelfieX,
+  outRotMat,
+  reuse,
+) {
+  const gp = (idx, out) => {
+    const p = smoother ? smoother.get(idx) : null;
+    if (p) {
+      out.copy(p);
+      return out;
+    }
+    const a = lm ? lm[idx] : null;
+    if (!a) return null;
+    out.set(a[0], a[1], a[2]);
+    return out;
+  };
+  const p234 = gp(OMAFIT_FACE_LM_RIGHT_CHEEK, reuse.p234);
+  const p454 = gp(OMAFIT_FACE_LM_LEFT_CHEEK, reuse.p454);
+  const p10 = gp(OMAFIT_FACE_LM_FOREHEAD_TOP, reuse.p10);
+  const p152 = gp(OMAFIT_FACE_LM_CHIN, reuse.p152);
+  if (!p234 || !p454 || !p10 || !p152) return false;
+  const mx = mirrorSelfieX ? -1 : 1;
+  const p234x = p234.x * mx;
+  const p454x = p454.x * mx;
+  const p10x = p10.x * mx;
+  const p152x = p152.x * mx;
+  const vx = reuse.vx.set(p454x - p234x, p454.y - p234.y, p454.z - p234.z);
+  if (vx.lengthSq() < 1e-12) return false;
+  vx.normalize();
+  const yRaw = reuse.yRaw.set(p10x - p152x, p10.y - p152.y, p10.z - p152.z);
+  if (yRaw.lengthSq() < 1e-12) return false;
+  yRaw.normalize();
+  vx.transformDirection(faceMatrixWorld);
+  yRaw.transformDirection(faceMatrixWorld);
+  const vz = reuse.vz.copy(vx).cross(yRaw);
+  if (vz.lengthSq() < 1e-12) return false;
+  vz.normalize();
+  const vy = reuse.vy.copy(vz).cross(vx).normalize();
+  outRotMat.makeBasis(vx, vy, vz);
+  outRotMat.setPosition(0, 0, 0);
   return true;
 }
 
@@ -3319,6 +3384,12 @@ function fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost) {
           }
         }
       }
+      const cam2 = mindarThree?.camera;
+      if (cam2 && Math.abs(cam2.scale?.x ?? 1) > 1e-6 && Math.abs((cam2.scale?.x ?? 1) + 1) < 1e-6) {
+        console.warn(
+          "[omafit-ar] camera.scale.x ≈ -1: o espelho no mundo 3D desalinha landmarks vs GLB. Preferir espelho no vídeo (MindAR/CSS), não na câmara.",
+        );
+      }
     } catch {
       /* ignore */
     }
@@ -3953,7 +4024,7 @@ async function runArSession({
     /** Largura visível da armação ≈ factor × distância 234–454. Override: `data-ar-glasses-anatomic-width-factor`. */
     const glassesAnatomicWidthFactor = (() => {
       if (accessoryType !== "glasses") return 1;
-      const v = Number(String(cfgAttr("arGlassesAnatomicWidthFactor", "1.1")).trim());
+      const v = Number(String(cfgAttr("arGlassesAnatomicWidthFactor", "1.05")).trim());
       return Number.isFinite(v) && v > 0.2 ? v : OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR;
     })();
     const faceOccAheadLocalZ =
@@ -3961,6 +4032,18 @@ async function runArSession({
         ? (() => {
             const v = Number(String(cfgAttr("arFaceOccluderNoseAhead", "0.006")).trim());
             return Number.isFinite(v) && v > 0 ? v : 0;
+          })()
+        : 0;
+    /** Base ortogonal 234–454 / 10–152 em espaço mundo (via face mesh). */
+    const glassesCheekOrthogonalBasis =
+      accessoryType === "glasses" &&
+      !/^(0|off|false|no)$/i.test(String(cfgAttr("arGlassesCheekOrthogonalBasis", "1")).trim());
+    /** Offset Z extra (local do GLB) para “Z-fit” fino em relação ao nariz. */
+    const glassesZFitExtra =
+      accessoryType === "glasses"
+        ? (() => {
+            const v = Number(String(cfgAttr("arGlassesZFitExtra", "0")).trim());
+            return Number.isFinite(v) ? v : 0;
           })()
         : 0;
     const mindarDmRaw = cfgAttr("arMindarDisableMirror", "");
@@ -4586,6 +4669,19 @@ async function runArSession({
     }
 
     /**
+     * Grupo interno: mantém no filho `glasses` só translação de bbox + Z de colagem;
+     * rotações de export Tripo / bind MindAR ficam aqui (pivot limpo no mesh).
+     */
+    let internalCorrector = null;
+    if (accessoryType === "glasses") {
+      internalCorrector = new GroupCtor();
+      internalCorrector.name = "omafit-ar-internal-corrector";
+      internalCorrector.quaternion.copy(glasses.quaternion);
+      glasses.quaternion.identity();
+      glasses.rotation.set(0, 0, 0);
+    }
+
+    /**
      * Largura geométrica do GLB no eixo “larga da armação” (escala 1), para
      * `scale = anatomicFactor * dist(234,454) / wideDim * modelScaleMul`.
      */
@@ -4617,7 +4713,7 @@ async function runArSession({
     const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
     if (accessoryType === "glasses") {
-      glasses.position.z = glassesModelStickZ;
+      glasses.position.z = glassesModelStickZ + glassesZFitExtra;
     }
     console.log("[omafit-ar] face scale resolved", {
       maxDim,
@@ -4739,7 +4835,12 @@ async function runArSession({
     } else {
       calibRot.add(glassesAnatomy);
     }
-    glassesAnatomy.add(glasses);
+    if (accessoryType === "glasses" && internalCorrector) {
+      internalCorrector.add(glasses);
+      glassesAnatomy.add(internalCorrector);
+    } else {
+      glassesAnatomy.add(glasses);
+    }
 
     const wearPosition = new GroupCtor();
     wearPosition.position.set(wearPosM.x, wearPosM.y, wearPosM.z);
@@ -4771,6 +4872,9 @@ async function runArSession({
     }
     wearPosition.add(faceParentGroup);
     faceParentGroup.add(calibRot);
+    if (accessoryType === "glasses" && glassesCheekOrthogonalBasis) {
+      faceParentGroup.matrixAutoUpdate = false;
+    }
 
     anchor.group.add(wearPosition);
 
@@ -4857,6 +4961,23 @@ async function runArSession({
       glassesWideDimPreScale,
       modelScaleMul,
       glassesAnatomicWidthFactor,
+      glassesCheekOrthogonalBasis,
+      glassesZFitExtra,
+      cheekBasisWorldRot: new THREE.Matrix4(),
+      cheekBasisWearInv: new THREE.Matrix4(),
+      cheekBasisReuse: glassesCheekOrthogonalBasis
+        ? {
+            p234: new THREE.Vector3(),
+            p454: new THREE.Vector3(),
+            p10: new THREE.Vector3(),
+            p152: new THREE.Vector3(),
+            vx: new THREE.Vector3(),
+            yRaw: new THREE.Vector3(),
+            vz: new THREE.Vector3(),
+            vy: new THREE.Vector3(),
+          }
+        : null,
+      cheekBasisValid: false,
       faceOccAheadLocalZ,
       faceOccComposeScratch:
         accessoryType === "glasses" && faceOccluderMesh
@@ -4938,6 +5059,11 @@ async function runArSession({
           st.smoothInitialized = false;
           st.lmSmoother?.reset();
           st.smoothedCheekW = null;
+          st.cheekBasisValid = false;
+          if (st.glassesCheekOrthogonalBasis && faceParentGroup) {
+            faceParentGroup.matrix.identity();
+            faceParentGroup.matrixWorldNeedsUpdate = true;
+          }
           st.eyeNeutralWarmupSum = 0;
           st.eyeNeutralWarmupN = 0;
           st.eyeNeutralReady = false;
@@ -5064,11 +5190,39 @@ async function runArSession({
         }
         if (accessoryType === "glasses") {
           /**
-           * A translação da ponte fica no `anchor.group` (MindAR, landmark 168).
-           * `faceParentGroup` em (0,0,0) evita duplicar offsets que competem
-           * com o PnP e causam desvio lateral; colagem Z no próprio mesh.
+           * Orientação: base ortogonal (bochechas + testa–queixo) no espaço
+           * mundo da malha facial, convertida para local do `wearPosition`
+           * (ponte continua no `anchor` MindAR 168). Espelho selfie: inverte X
+           * métrico quando `disableFaceMirror` é falso.
            */
-          faceParentGroup.position.set(0, 0, 0);
+          if (st.glassesCheekOrthogonalBasis && st.cheekBasisReuse) {
+            const fm0 = mindarThree.faceMeshes[0];
+            if (fm0) {
+              fm0.updateMatrixWorld(true);
+              const ok = buildGlassesCheekOrthogonalBasisWorld(
+                THREE,
+                lm,
+                st.lmSmoother,
+                fm0.matrixWorld,
+                !disableFaceMirror,
+                st.cheekBasisWorldRot,
+                st.cheekBasisReuse,
+              );
+              if (ok) {
+                wearPosition.updateMatrixWorld(true);
+                st.cheekBasisWearInv.copy(wearPosition.matrixWorld).invert();
+                faceParentGroup.matrix.multiplyMatrices(st.cheekBasisWearInv, st.cheekBasisWorldRot);
+                faceParentGroup.matrixAutoUpdate = false;
+                st.cheekBasisValid = true;
+              }
+            }
+          } else {
+            faceParentGroup.matrixAutoUpdate = true;
+            faceParentGroup.position.set(0, 0, 0);
+            faceParentGroup.quaternion.identity();
+            faceParentGroup.scale.set(1, 1, 1);
+            faceParentGroup.rotation.set(0, 0, 0);
+          }
           const pR = st.lmSmoother?.get(OMAFIT_FACE_LM_RIGHT_CHEEK);
           const pL = st.lmSmoother?.get(OMAFIT_FACE_LM_LEFT_CHEEK);
           const cw =
@@ -5096,29 +5250,34 @@ async function runArSession({
               }
             }
           }
-          const eL = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
-          const eR = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
-          let atan;
-          if (eL && eR) {
-            atan = Math.atan2(eL.y - eR.y, eL.x - eR.x);
+          if (st.glassesCheekOrthogonalBasis) {
+            glassesAnatomy.rotation.y = anatomyYawRad;
+            glassesAnatomy.rotation.z = 0;
           } else {
-            const dx = lm[OMAFIT_FACE_LM_EYE_L_OUT][0] - lm[OMAFIT_FACE_LM_EYE_R_OUT][0];
-            const dy = lm[OMAFIT_FACE_LM_EYE_L_OUT][1] - lm[OMAFIT_FACE_LM_EYE_R_OUT][1];
-            atan = Math.atan2(dy, dx);
-          }
-          if (!st.eyeNeutralReady) {
-            st.eyeNeutralWarmupSum += atan;
-            st.eyeNeutralWarmupN += 1;
-            if (st.eyeNeutralWarmupN >= 28) {
-              st.eyeNeutralAtan = st.eyeNeutralWarmupSum / st.eyeNeutralWarmupN;
-              st.eyeNeutralReady = true;
+            const eL = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
+            const eR = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
+            let atan;
+            if (eL && eR) {
+              atan = Math.atan2(eL.y - eR.y, eL.x - eR.x);
+            } else {
+              const dx = lm[OMAFIT_FACE_LM_EYE_L_OUT][0] - lm[OMAFIT_FACE_LM_EYE_R_OUT][0];
+              const dy = lm[OMAFIT_FACE_LM_EYE_L_OUT][1] - lm[OMAFIT_FACE_LM_EYE_R_OUT][1];
+              atan = Math.atan2(dy, dx);
             }
+            if (!st.eyeNeutralReady) {
+              st.eyeNeutralWarmupSum += atan;
+              st.eyeNeutralWarmupN += 1;
+              if (st.eyeNeutralWarmupN >= 28) {
+                st.eyeNeutralAtan = st.eyeNeutralWarmupSum / st.eyeNeutralWarmupN;
+                st.eyeNeutralReady = true;
+              }
+            }
+            const neutral = st.eyeNeutralReady ? st.eyeNeutralAtan : atan;
+            const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.34, -0.065, 0.065);
+            st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.16);
+            glassesAnatomy.rotation.y = anatomyYawRad;
+            glassesAnatomy.rotation.z = st.eyeTiltSmoothed;
           }
-          const neutral = st.eyeNeutralReady ? st.eyeNeutralAtan : atan;
-          const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.34, -0.065, 0.065);
-          st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.16);
-          glassesAnatomy.rotation.y = anatomyYawRad;
-          glassesAnatomy.rotation.z = st.eyeTiltSmoothed;
         }
         if (accessoryType === "necklace" && st.necklaceSwing) {
           const a = lm[anchorIndex];

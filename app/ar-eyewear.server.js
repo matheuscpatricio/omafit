@@ -1514,7 +1514,20 @@ export async function generateGlbDraftViaFal({
 
   const prepared = await resolveTripoImageUrlBeforeFal(imageUrl);
   const falTripoInput = buildFalTripoV25ImageTo3dInput(prepared.imageUrl);
+  const envTripoOrient = process.env.FAL_TRIPO_ORIENTATION;
+  const envOrientLabel =
+    envTripoOrient == null || String(envTripoOrient).trim() === ""
+      ? "(não definida → código usa align_image)"
+      : String(envTripoOrient).trim();
+  /** Confirmação explícita: por defeito enviamos `orientation: align_image` (Tripo v2.5). */
+  const tripDiagLine = [
+    `fal_tripo_orientation_no_payload=${String(falTripoInput.orientation ?? "omitido")}`,
+    `env_FAL_TRIPO_ORIENTATION=${envOrientLabel}`,
+    `input_image_prep=${prepared.prepared ? "sim" : "não"} rot_deg=${prepared.rotDeg ?? 0}`,
+    `fal_model=${model}`,
+  ].join(" | ");
   try {
+    console.log("[ar-eyewear] FAL Tripo —", tripDiagLine);
     console.log("[ar-eyewear] FAL Tripo input (sem image_url):", {
       ...falTripoInput,
       image_url: "(redacted)",
@@ -1525,7 +1538,7 @@ export async function generateGlbDraftViaFal({
     /* ignore */
   }
 
-  const logLines = [];
+  const logLines = [tripDiagLine];
   let result;
   try {
     result = await fal.subscribe(model, {

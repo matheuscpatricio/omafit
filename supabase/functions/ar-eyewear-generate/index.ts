@@ -182,10 +182,22 @@ async function callFalAndGetGlbUrl(imageUrl: string): Promise<{
   fal.config({ credentials: falKey });
   const clientTimeoutMs = Math.min(Math.max(timeoutSeconds * 1000, 120_000), 3_600_000);
   const pollIntervalMs = Math.max(500, pollSeconds * 1000);
-  const logs: string[] = [];
 
   const prepared = await resolveTripoImageUrlBeforeFal(imageUrl);
   const falInput = buildTripoV25ImageTo3dInput(prepared.imageUrl);
+  const rawTripoOrientEnv = Deno.env.get("FAL_TRIPO_ORIENTATION");
+  const envTripoOrientLabel =
+    rawTripoOrientEnv == null || String(rawTripoOrientEnv).trim() === ""
+      ? "(não definida → código usa align_image)"
+      : String(rawTripoOrientEnv).trim();
+  const tripDiagLine = [
+    `fal_tripo_orientation_no_payload=${String(falInput.orientation ?? "omitido")}`,
+    `env_FAL_TRIPO_ORIENTATION=${envTripoOrientLabel}`,
+    `input_image_prep=${prepared.prepared ? "sim" : "não"} rot_deg=${prepared.rotDeg}`,
+    `fal_model=${modelId}`,
+  ].join(" | ");
+  console.log("[ar-eyewear-generate] FAL Tripo —", tripDiagLine);
+  const logs: string[] = [tripDiagLine];
 
   let result: { data?: unknown; requestId?: string };
   try {

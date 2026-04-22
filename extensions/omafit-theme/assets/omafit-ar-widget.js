@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-face-occlusion-stick-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_mindar-glasses-max-stability-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -205,14 +205,23 @@ const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-face-occlusion-stick-v1";
  */
 const OMAFIT_MINDAR_DEFAULT_FILTER_MIN_CF = 0.00052;
 const OMAFIT_MINDAR_DEFAULT_FILTER_BETA = 0.91;
-/** Defaults MindAR mais agressivos para óculos (menos jitter; custo: ~1–2 frames de lag). */
-const OMAFIT_MINDAR_GLASSES_FILTER_MIN_CF = 0.00035;
-const OMAFIT_MINDAR_GLASSES_FILTER_BETA = 0.92;
+/**
+ * Óculos: MindAR **o mais estável possível** (menos jitter na âncora 168 / malha 468).
+ * `filterMinCF` mais baixo = filtro One Euro interno mais forte (latência ~2–4 frames).
+ * Override: `data-ar-mindar-filter-min-cf` / `data-ar-mindar-filter-beta`.
+ */
+const OMAFIT_MINDAR_GLASSES_FILTER_MIN_CF = 0.00018;
+const OMAFIT_MINDAR_GLASSES_FILTER_BETA = 0.88;
 
 /** Suavização extra (pós One Euro do MindAR) — interpolação de matriz âncora/malha facial. */
 const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH = 0.2;
-/** Óculos: λ maior → segue mais de perto a âncora MindAR (mais “colado”); λ menor → mais estável. */
-const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_GLASSES = 0.18;
+/**
+ * Óculos: seguir de perto a matriz já filtrada pelo MindAR (sensação “colada” ao rosto).
+ * Equilibrado com `GLASSES_FILTER_MIN_CF` baixo para não duplicar lag excessivo.
+ */
+const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_GLASSES = 0.26;
+/** Colar: λ mais conservador que óculos (menos “colado” à malha; evita puxar o colar com o mesmo agressivo). */
+const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_NECKLACE = 0.18;
 /** EMA nos marcos 168/33/263/234/454 (ms) — legado; óculos usam One Euro (abaixo). */
 const OMAFIT_FACE_LANDMARK_EMA_TAU_MS = 68;
 /**
@@ -223,9 +232,13 @@ const OMAFIT_FACE_LANDMARK_EMA_TAU_MS = 68;
 const OMAFIT_FACE_ONE_EURO_MIN_CUTOFF = 0.85;
 const OMAFIT_FACE_ONE_EURO_BETA = 0.009;
 const OMAFIT_FACE_ONE_EURO_D_CUTOFF = 1.05;
-/** Clamp largura bochecha→escala X armação (rosto mais largo/narrow). */
-const OMAFIT_FACE_CHEEK_SCALE_MIN = 0.86;
-const OMAFIT_FACE_CHEEK_SCALE_MAX = 1.14;
+/** One Euro só no path **óculos** (168/33/263/bochechas/orelhas/testa/queixo) — mais suave que o colar. */
+const OMAFIT_FACE_ONE_EURO_GLASSES_MIN_CUTOFF = 0.56;
+const OMAFIT_FACE_ONE_EURO_GLASSES_BETA = 0.0072;
+const OMAFIT_FACE_ONE_EURO_GLASSES_D_CUTOFF = 0.96;
+/** Clamp largura bochecha→escala X armação (faixa mais estreita = menos “pulos” de escala). */
+const OMAFIT_FACE_CHEEK_SCALE_MIN = 0.87;
+const OMAFIT_FACE_CHEEK_SCALE_MAX = 1.13;
 /** Modelo Image Segmenter (multiclasse: cabelo, pele, roupa, …) — mesmo runtime WASM que HandLandmarker. */
 const OMAFIT_IMAGE_SEG_SELFIE_MULTICLASS_URL =
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
@@ -3171,11 +3184,14 @@ async function startMindARFaceWithReliableCamera(mindarThree) {
   }
   const orig = md.getUserMedia.bind(md);
   let patchActive = true;
-  /** Pedido extra de resolução/frameRate: landmarks mais estáveis (mais próximo do nível “filtro Instagram”). */
+  /**
+   * Resolução / fps ideais — mais pixels = landmarks MediaPipe mais estáveis
+   * (com fallback em cascata se o dispositivo não suportar).
+   */
   const faceVideoIdeal = {
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-    frameRate: { ideal: 30 },
+    width: { ideal: 1920, min: 480 },
+    height: { ideal: 1080, min: 480 },
+    frameRate: { ideal: 30, min: 12 },
   };
   md.getUserMedia = function (constraints) {
     if (!patchActive) return orig(constraints);
@@ -4007,6 +4023,18 @@ async function runArSession({
      * Mantemos vídeo DOM atrás do canvas com limpeza transparente (ver loop).
      */
     fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
+    /** Máx. nitidez do canvas WebGL dentro do que o GPU aguenta (MindAR já criou o renderer). */
+    if (accessoryType === "glasses") {
+      try {
+        const r = mindarThree.renderer;
+        if (r?.setPixelRatio) {
+          const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+          r.setPixelRatio(Math.min(dpr, 2.25));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     /**
      * Face Mesh (468) MindAR: máscara só depth (`colorWrite:false`, `depthWrite:true`)
@@ -4240,9 +4268,9 @@ async function runArSession({
       cfgAttr("arCanonicalFixYxz", "0, 0, 0"),
       0, 0, 0,
     );
-    /** Z ligeiramente negativo aproxima a armação da pele (âncora ~largura da cara). Override: `data-ar-mindar-wear-position`. */
+    /** Z negativo aproxima a armação da pele (unidades MindAR ~largura da cara). Override: `data-ar-mindar-wear-position`. */
     const wearPosM = parseXyzMeters(
-      cfgAttr("arMindarWearPosition", accessoryType === "glasses" ? "0 0 -0.016" : ""),
+      cfgAttr("arMindarWearPosition", accessoryType === "glasses" ? "0 0 -0.022" : ""),
       0,
       0,
       0,
@@ -4633,9 +4661,9 @@ async function runArSession({
               OMAFIT_FACE_LM_FOREHEAD_TOP,
               OMAFIT_FACE_LM_CHIN,
             ],
-            OMAFIT_FACE_ONE_EURO_MIN_CUTOFF,
-            OMAFIT_FACE_ONE_EURO_BETA,
-            OMAFIT_FACE_ONE_EURO_D_CUTOFF,
+            OMAFIT_FACE_ONE_EURO_GLASSES_MIN_CUTOFF,
+            OMAFIT_FACE_ONE_EURO_GLASSES_BETA,
+            OMAFIT_FACE_ONE_EURO_GLASSES_D_CUTOFF,
           )
         : accessoryType === "necklace"
           ? createFaceLandmarkOneEuroSmoother(
@@ -4652,9 +4680,11 @@ async function runArSession({
             )
           : null;
     const faceMatrixExtraLambda =
-      accessoryType === "glasses" || accessoryType === "necklace"
+      accessoryType === "glasses"
         ? OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_GLASSES
-        : OMAFIT_FACE_MATRIX_EXTRA_SMOOTH;
+        : accessoryType === "necklace"
+          ? OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_NECKLACE
+          : OMAFIT_FACE_MATRIX_EXTRA_SMOOTH;
 
     /**
      * Buffers pré-alocados usados em cada frame para construir a matriz de
@@ -4877,14 +4907,14 @@ async function runArSession({
           if (!st.eyeNeutralReady) {
             st.eyeNeutralWarmupSum += atan;
             st.eyeNeutralWarmupN += 1;
-            if (st.eyeNeutralWarmupN >= 20) {
+            if (st.eyeNeutralWarmupN >= 28) {
               st.eyeNeutralAtan = st.eyeNeutralWarmupSum / st.eyeNeutralWarmupN;
               st.eyeNeutralReady = true;
             }
           }
           const neutral = st.eyeNeutralReady ? st.eyeNeutralAtan : atan;
-          const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.4, -0.08, 0.08);
-          st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.2);
+          const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.34, -0.065, 0.065);
+          st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.16);
           glassesAnatomy.rotation.y = anatomyYawRad;
           glassesAnatomy.rotation.z = st.eyeTiltSmoothed;
         }

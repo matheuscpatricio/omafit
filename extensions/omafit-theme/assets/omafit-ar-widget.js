@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-canonical-quat-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-offset-sliders-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -514,142 +514,183 @@ function installOmafitGlassesTripoDebugPanel(layerHost, THREE, offsetGroup, y0, 
 }
 
 /**
- * Botões +/− para rodar o GLB em eixos **locais** (rotateX/Y/Z incremental).
- * O grupo fica *acima* de `glassesAnatomy` para não conflitar com
- * `glassesAnatomy.rotation.z` (inclinação do olhar).
+ * Painel flutuante com **6 sliders** (rotX, rotY, rotZ em graus + posX, posY,
+ * posZ em metros) que actualizam directamente o objecto `glassesOffset`. O
+ * *loop de render* lê `glassesOffset` e aplica:
+ *   `offsetGroup.rotation.set(rotX, rotY, rotZ)`
+ *   `offsetGroup.position.set(posX, posY, posZ)`
  *
- * @param {HTMLElement} layerHost `arWrap` (não `arFit`) — fora de `overflow:hidden`
- *    do feed MindAR, para o painel ser visível e tocável no mobile.
+ * Valores iniciais = snapshot do `offsetGroup` no momento da criação do painel
+ * (o auto-orient determinístico já está aplicado). Cada movimento de slider
+ * loga os valores na consola; o botão "Copiar" copia para o clipboard num
+ * formato pronto a colar no código.
+ *
+ * @param {HTMLElement} layerHost `arWrap` (irmão de `arFit`, fora de `overflow:hidden`).
+ * @param {any} THREE
+ * @param {{ rotX: number, rotY: number, rotZ: number, posX: number, posY: number, posZ: number }} glassesOffset
+ *   mutável; rot em radianos, pos em metros.
  * @returns {() => void} cleanup
  */
-function installOmafitGlassesScreenRotPanel(layerHost, THREE, group, stepDeg) {
-  if (!layerHost || !group) return () => {};
-  const step = THREE.MathUtils.degToRad(
-    Math.max(0.25, Math.min(90, Number(stepDeg) || 5)),
-  );
+function installOmafitGlassesOffsetPanel(layerHost, THREE, glassesOffset) {
+  if (!layerHost || !glassesOffset) return () => {};
   const wrap = document.createElement("div");
-  wrap.setAttribute("data-omafit", "glasses-screen-rot");
+  wrap.setAttribute("data-omafit", "glasses-offset");
   wrap.className = "omafit-ar-glasses-screen-rot";
   Object.assign(wrap.style, {
     position: "absolute",
     right: "max(8px, env(safe-area-inset-right, 0px))",
     bottom: "max(8px, calc(8px + env(safe-area-inset-bottom, 0px)))",
     zIndex: "50",
-    maxWidth: "min(220px, 92vw)",
+    width: "min(260px, 92vw)",
+    maxHeight: "calc(100% - 16px)",
+    overflowY: "auto",
     padding: "10px 12px",
     background: "rgba(0,0,0,0.88)",
     color: "#eee",
     fontFamily: "system-ui,sans-serif",
-    fontSize: "12px",
+    fontSize: "11px",
     lineHeight: "1.35",
     borderRadius: "10px",
     boxShadow: "0 4px 16px rgba(0,0,0,0.55)",
     pointerEvents: "auto",
     touchAction: "manipulation",
   });
+
   const title = document.createElement("div");
-  title.textContent = "Girar óculos";
-  title.style.fontWeight = "600";
-  title.style.marginBottom = "6px";
+  title.textContent = "Ajustar óculos (offsetGroup)";
+  Object.assign(title.style, { fontWeight: "600", marginBottom: "4px", fontSize: "12px" });
   wrap.appendChild(title);
+
   const hint = document.createElement("div");
-  hint.textContent = `±${Number(stepDeg) || 5}° por toque — ajuste fino sobre a orientação automática.`;
-  hint.style.opacity = "0.75";
-  hint.style.fontSize = "10px";
-  hint.style.marginBottom = "8px";
+  hint.textContent = "rot em graus · pos em metros";
+  Object.assign(hint.style, { opacity: "0.7", fontSize: "10px", marginBottom: "8px" });
   wrap.appendChild(hint);
 
-  const btn = (t) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = t;
-    b.setAttribute("aria-label", t === "−" || t === "-" ? "diminuir" : "aumentar");
-    Object.assign(b.style, {
-      minWidth: "40px",
-      minHeight: "40px",
-      padding: "0",
-      cursor: "pointer",
-      fontSize: "16px",
-      lineHeight: "1",
-      borderRadius: "8px",
-      border: "1px solid #666",
-      background: "#333",
-      color: "#fff",
-      flex: "1",
-      WebkitTapHighlightColor: "transparent",
-    });
-    return b;
+  /** Log ritmado para não inundar a consola quando o dedo arrasta o slider. */
+  let lastLogTs = 0;
+  const logOffset = (source) => {
+    const now = performance.now();
+    if (now - lastLogTs < 80) return;
+    lastLogTs = now;
+    const toDeg = (r) => (r * 180) / Math.PI;
+    const snap = {
+      rotX: glassesOffset.rotX,
+      rotY: glassesOffset.rotY,
+      rotZ: glassesOffset.rotZ,
+      posX: glassesOffset.posX,
+      posY: glassesOffset.posY,
+      posZ: glassesOffset.posZ,
+    };
+    console.log(
+      `%c[omafit-ar] glassesOffset (${source})`,
+      "color:#0cf;font-weight:bold;",
+      {
+        rot_deg: {
+          x: toDeg(snap.rotX).toFixed(1),
+          y: toDeg(snap.rotY).toFixed(1),
+          z: toDeg(snap.rotZ).toFixed(1),
+        },
+        pos_m: {
+          x: snap.posX.toFixed(4),
+          y: snap.posY.toFixed(4),
+          z: snap.posZ.toFixed(4),
+        },
+        raw: snap,
+      },
+    );
   };
-  const addAxis = (label, onMinus, onPlus) => {
+  try {
+    window.__omafitGlassesOffset = glassesOffset;
+    window.__omafitLogGlassesOffset = () => logOffset("manual");
+  } catch {
+    /* ignore */
+  }
+
+  /**
+   * @param {string} label
+   * @param {"rotX"|"rotY"|"rotZ"|"posX"|"posY"|"posZ"} key
+   * @param {number} min
+   * @param {number} max
+   * @param {number} step
+   * @param {(r:number)=>number} [reader] extrai valor para UI (ex.: rad→deg)
+   * @param {(ui:number)=>number} [writer] converte valor UI → glassesOffset
+   * @param {number} [digits]
+   */
+  const addSlider = (label, key, min, max, step, reader, writer, digits = 2) => {
     const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
-    row.style.gap = "6px";
-    row.style.marginBottom = "4px";
-    const L = document.createElement("span");
-    L.textContent = label;
-    L.style.minWidth = "14px";
-    L.style.fontWeight = "500";
-    const bM = btn("−");
-    const bP = btn("+");
-    bM.addEventListener("click", (e) => {
-      e.preventDefault();
-      onMinus();
+    Object.assign(row.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      marginBottom: "4px",
     });
-    bP.addEventListener("click", (e) => {
-      e.preventDefault();
-      onPlus();
+    const lab = document.createElement("span");
+    lab.textContent = label;
+    Object.assign(lab.style, {
+      minWidth: "34px",
+      fontWeight: "500",
+      fontSize: "11px",
     });
-    row.append(L, bM, bP);
+    const rd = reader || ((v) => v);
+    const wr = writer || ((v) => v);
+    const inp = document.createElement("input");
+    inp.type = "range";
+    inp.min = String(min);
+    inp.max = String(max);
+    inp.step = String(step);
+    inp.value = String(rd(glassesOffset[key]).toFixed(digits));
+    Object.assign(inp.style, { flex: "1", minWidth: "0" });
+    const num = document.createElement("input");
+    num.type = "number";
+    num.min = String(min);
+    num.max = String(max);
+    num.step = String(step);
+    num.value = inp.value;
+    Object.assign(num.style, {
+      width: "56px",
+      fontSize: "10px",
+      padding: "2px 4px",
+      borderRadius: "4px",
+      border: "1px solid #555",
+      background: "#222",
+      color: "#fff",
+    });
+
+    const apply = (uiVal, source) => {
+      const v = Number(uiVal);
+      if (!Number.isFinite(v)) return;
+      glassesOffset[key] = wr(v);
+      inp.value = String(v);
+      num.value = String(v);
+      logOffset(`${key}:${source}`);
+    };
+    inp.addEventListener("input", () => apply(inp.value, "slider"));
+    num.addEventListener("change", () => apply(num.value, "number"));
+    row.append(lab, inp, num);
     wrap.appendChild(row);
   };
-  addAxis("X", () => group.rotateX(-step), () => group.rotateX(step));
-  addAxis("Y", () => group.rotateY(-step), () => group.rotateY(step));
-  addAxis("Z", () => group.rotateZ(-step), () => group.rotateZ(step));
 
-  const quickRow = document.createElement("div");
-  quickRow.style.display = "flex";
-  quickRow.style.gap = "6px";
-  quickRow.style.marginTop = "6px";
-  /** Atalhos 180°/90° — recuperam rapidamente se o auto-orient ficar ao contrário. */
-  const quickBtn = (label, axis, deg) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = label;
-    Object.assign(b.style, {
-      flex: "1",
-      padding: "6px 4px",
-      cursor: "pointer",
-      fontSize: "10px",
-      borderRadius: "6px",
-      border: "1px solid #666",
-      background: "#2a2a2a",
-      color: "#fff",
-      WebkitTapHighlightColor: "transparent",
-    });
-    b.addEventListener("click", (e) => {
-      e.preventDefault();
-      const r = (deg * Math.PI) / 180;
-      if (axis === "x") group.rotateX(r);
-      else if (axis === "y") group.rotateY(r);
-      else if (axis === "z") group.rotateZ(r);
-    });
-    return b;
-  };
-  quickRow.append(
-    quickBtn("Y 180°", "y", 180),
-    quickBtn("X 180°", "x", 180),
-    quickBtn("Z 180°", "z", 180),
-  );
-  wrap.appendChild(quickRow);
+  const radToDeg = (r) => (r * 180) / Math.PI;
+  const degToRad = (d) => (d * Math.PI) / 180;
+  addSlider("rotX°", "rotX", -180, 180, 1, radToDeg, degToRad, 1);
+  addSlider("rotY°", "rotY", -180, 180, 1, radToDeg, degToRad, 1);
+  addSlider("rotZ°", "rotZ", -180, 180, 1, radToDeg, degToRad, 1);
+  const divider = document.createElement("div");
+  Object.assign(divider.style, {
+    height: "1px",
+    background: "rgba(255,255,255,0.15)",
+    margin: "6px 0",
+  });
+  wrap.appendChild(divider);
+  addSlider("posX m", "posX", -0.5, 0.5, 0.001, null, null, 3);
+  addSlider("posY m", "posY", -0.5, 0.5, 0.001, null, null, 3);
+  addSlider("posZ m", "posZ", -0.5, 0.5, 0.001, null, null, 3);
 
-  const reset = document.createElement("button");
-  reset.type = "button";
-  reset.textContent = "Redefinir (volta ao automático)";
-  Object.assign(reset.style, {
-    marginTop: "6px",
-    width: "100%",
-    padding: "8px",
+  const btnRow = document.createElement("div");
+  Object.assign(btnRow.style, { display: "flex", gap: "6px", marginTop: "6px" });
+  const btnBase = {
+    flex: "1",
+    padding: "8px 4px",
     cursor: "pointer",
     fontSize: "11px",
     borderRadius: "6px",
@@ -657,17 +698,67 @@ function installOmafitGlassesScreenRotPanel(layerHost, THREE, group, stepDeg) {
     background: "#2a2a2a",
     color: "#fff",
     WebkitTapHighlightColor: "transparent",
-  });
-  reset.addEventListener("click", (e) => {
+  };
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.textContent = "Zerar";
+  Object.assign(resetBtn.style, btnBase);
+  resetBtn.addEventListener("click", (e) => {
     e.preventDefault();
-    group.rotation.set(0, 0, 0);
-    group.quaternion.identity();
+    glassesOffset.rotX = 0;
+    glassesOffset.rotY = 0;
+    glassesOffset.rotZ = 0;
+    glassesOffset.posX = 0;
+    glassesOffset.posY = 0;
+    glassesOffset.posZ = 0;
+    const ranges = wrap.querySelectorAll("input");
+    for (const el of ranges) {
+      if (el.type === "range" || el.type === "number") el.value = "0";
+    }
+    logOffset("reset");
   });
-  wrap.appendChild(reset);
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.textContent = "Copiar valores";
+  Object.assign(copyBtn.style, btnBase, { background: "#0a5d9e" });
+  copyBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const snapRaw = JSON.stringify(glassesOffset, null, 2);
+    const snapDeg = {
+      rotX_deg: +radToDeg(glassesOffset.rotX).toFixed(2),
+      rotY_deg: +radToDeg(glassesOffset.rotY).toFixed(2),
+      rotZ_deg: +radToDeg(glassesOffset.rotZ).toFixed(2),
+      posX: +glassesOffset.posX.toFixed(4),
+      posY: +glassesOffset.posY.toFixed(4),
+      posZ: +glassesOffset.posZ.toFixed(4),
+    };
+    console.log(
+      "%c[omafit-ar] glassesOffset (copiar)",
+      "color:#0cf;font-weight:bold;",
+      "\n// Radianos (colar directo em `const glassesOffset = ...`):\n",
+      snapRaw,
+      "\n// Graus (só informativo):\n",
+      JSON.stringify(snapDeg, null, 2),
+    );
+    try {
+      void navigator.clipboard.writeText(snapRaw);
+      copyBtn.textContent = "Copiado!";
+      setTimeout(() => {
+        copyBtn.textContent = "Copiar valores";
+      }, 1500);
+    } catch {
+      /* ignore */
+    }
+  });
+  btnRow.append(resetBtn, copyBtn);
+  wrap.appendChild(btnRow);
   layerHost.appendChild(wrap);
+  logOffset("init");
   return () => {
     try {
       wrap.remove();
+      delete window.__omafitGlassesOffset;
+      delete window.__omafitLogGlassesOffset;
     } catch {
       /* ignore */
     }
@@ -4184,10 +4275,6 @@ async function runArSession({
     } catch {
       /* ignore */
     }
-    const screenRotStepDeg = Math.max(
-      0.5,
-      Math.min(90, Number(String(cfgAttr("arGlassesScreenRotStepDeg", "5")).trim()) || 5),
-    );
 
     /**
      * Eixo da “largura” do óculos no plano transversal: MindAR aplica
@@ -4410,26 +4497,42 @@ async function runArSession({
      */
     /** @type {InstanceType<typeof GroupCtor> | null} */
     let tripOffsetGroup = null;
+    /**
+     * Estado mutável lido no loop de render; também exposto no painel de
+     * sliders. Inicialmente converte o quat canônico (ou o fallback em
+     * graus) para Euler **XYZ** — a mesma ordem que `rotation.set(x,y,z)`
+     * usa por defeito. Assim os sliders abrem já na orientação correcta.
+     * @type {{rotX:number, rotY:number, rotZ:number, posX:number, posY:number, posZ:number}|null}
+     */
+    let glassesOffset = null;
     if (useTripoOffsetContainer && accessoryType === "glasses") {
       tripOffsetGroup = new GroupCtor();
       tripOffsetGroup.name = "omafit-ar-tripto-offset";
+      tripOffsetGroup.rotation.order = "XYZ";
+      let initialQuat = null;
       if (tripCanonicalQuat) {
-        tripOffsetGroup.quaternion.copy(tripCanonicalQuat);
-        tripOffsetGroup.updateMatrix();
+        initialQuat = tripCanonicalQuat.clone();
       } else {
         /** Fallback: utilizador forçou graus ou PCA com baixa confiança → Y=-90°, X=180°. */
         const fy = tripOffUseAuto ? -90 : tripDegY;
         const fx = tripOffUseAuto ? 180 : tripDegX;
         const fz = tripOffUseAuto ? 0 : tripDegZ;
-        omafitApplyGlassesTripoOffsetContainer(THREE, tripOffsetGroup, fy, fx, fz);
+        const tmp = new GroupCtor();
+        omafitApplyGlassesTripoOffsetContainer(THREE, tmp, fy, fx, fz);
+        initialQuat = tmp.quaternion.clone();
       }
-    }
-    /** Entre offset/calib e anatomia — rotação manual (UI) sem colidir com `glassesAnatomy.rotation.z`. */
-    /** @type {InstanceType<typeof GroupCtor> | null} */
-    let glassesUserRotGroup = null;
-    if (useGlassesScreenRot) {
-      glassesUserRotGroup = new GroupCtor();
-      glassesUserRotGroup.name = "omafit-ar-glasses-screen-rot";
+      const eul = new THREE.Euler().setFromQuaternion(initialQuat, "XYZ");
+      glassesOffset = {
+        rotX: eul.x,
+        rotY: eul.y,
+        rotZ: eul.z,
+        posX: 0,
+        posY: 0,
+        posZ: 0,
+      };
+      tripOffsetGroup.rotation.set(glassesOffset.rotX, glassesOffset.rotY, glassesOffset.rotZ);
+      tripOffsetGroup.position.set(glassesOffset.posX, glassesOffset.posY, glassesOffset.posZ);
+      tripOffsetGroup.updateMatrix();
     }
     /** @type {THREE.Group | null} */
     let necklaceSwingGroup = null;
@@ -4443,15 +4546,7 @@ async function runArSession({
       necklaceSwingGroup.add(necklaceShadowParts.mesh);
     } else if (tripOffsetGroup) {
       calibRot.add(tripOffsetGroup);
-      if (glassesUserRotGroup) {
-        tripOffsetGroup.add(glassesUserRotGroup);
-        glassesUserRotGroup.add(glassesAnatomy);
-      } else {
-        tripOffsetGroup.add(glassesAnatomy);
-      }
-    } else if (glassesUserRotGroup) {
-      calibRot.add(glassesUserRotGroup);
-      glassesUserRotGroup.add(glassesAnatomy);
+      tripOffsetGroup.add(glassesAnatomy);
     } else {
       calibRot.add(glassesAnatomy);
     }
@@ -5366,6 +5461,24 @@ async function runArSession({
       } catch {
         /* ignore */
       }
+      /**
+       * Aplicar `glassesOffset` ao `tripOffsetGroup` a cada frame — garante que
+       * qualquer mudança de slider (UI) ou mutação externa (ex.:
+       * `window.__omafitGlassesOffset`) é reflectida, e sobrevive a outros
+       * escritores eventuais sobre o grupo.
+       */
+      if (tripOffsetGroup && glassesOffset) {
+        tripOffsetGroup.rotation.set(
+          glassesOffset.rotX,
+          glassesOffset.rotY,
+          glassesOffset.rotZ,
+        );
+        tripOffsetGroup.position.set(
+          glassesOffset.posX,
+          glassesOffset.posY,
+          glassesOffset.posZ,
+        );
+      }
       try {
         const vid = mindarHost?.querySelector?.("video");
         if (vid && faceArEnhancementState?.hairSegmenter) {
@@ -5439,12 +5552,11 @@ async function runArSession({
     }
 
     try {
-      if (glassesUserRotGroup) {
-        removeGlassesScreenRotPanel = installOmafitGlassesScreenRotPanel(
+      if (useGlassesScreenRot && glassesOffset) {
+        removeGlassesScreenRotPanel = installOmafitGlassesOffsetPanel(
           arWrap,
           THREE,
-          glassesUserRotGroup,
-          screenRotStepDeg,
+          glassesOffset,
         );
       }
     } catch (e) {

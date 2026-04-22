@@ -4,6 +4,7 @@
  * invokeArEyewearGenerate corre no Node quando a chave existe.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { Buffer } from "node:buffer";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { fal } from "npm:@fal-ai/client@1.9.5";
 import { canonicalizeArEyewearGlbBuffer } from "../../../shared/ar-eyewear-glb-canonicalize.mjs";
@@ -68,7 +69,7 @@ function extractGlbUrl(payload: unknown): string | null {
 }
 
 /**
- * Tripo v2.5 — qualidade / fidelidade (mesmas envs que `app/ar-eyewear.server.js`).
+ * Tripo v2.5 — payload mínimo (rápido). Mesma lógica que `app/ar-eyewear.server.js`.
  * @see https://fal.ai/models/tripo3d/tripo/v2.5/image-to-3d/api
  */
 function buildTripoV25ImageTo3dInput(imageUrl: string): Record<string, unknown> {
@@ -81,19 +82,19 @@ function buildTripoV25ImageTo3dInput(imageUrl: string): Record<string, unknown> 
     }
   }
 
-  const tex = env("FAL_TRIPO_TEXTURE", "HD").toLowerCase();
+  const tex = env("FAL_TRIPO_TEXTURE", "").toLowerCase();
   if (tex === "hd") input.texture = "HD";
   else if (tex === "standard") input.texture = "standard";
   else if (tex === "no") input.texture = "no";
 
-  const pbrRaw = env("FAL_TRIPO_PBR", "1").toLowerCase();
-  input.pbr = !/^(0|false|no|off)$/.test(pbrRaw);
+  const pbrE = env("FAL_TRIPO_PBR", "");
+  if (pbrE !== "") {
+    input.pbr = !/^(0|false|no|off)$/i.test(pbrE.trim());
+  }
 
-  const tAlign = env("FAL_TRIPO_TEXTURE_ALIGNMENT", "original_image").toLowerCase();
-  if (tAlign && tAlign !== "omit") {
-    if (tAlign === "original_image" || tAlign === "geometry") {
-      input.texture_alignment = tAlign;
-    }
+  const tAlign = env("FAL_TRIPO_TEXTURE_ALIGNMENT", "").toLowerCase();
+  if (tAlign === "original_image" || tAlign === "geometry") {
+    input.texture_alignment = tAlign;
   }
 
   const flRaw = env("FAL_TRIPO_FACE_LIMIT", "").trim().toLowerCase();
@@ -102,12 +103,12 @@ function buildTripoV25ImageTo3dInput(imageUrl: string): Record<string, unknown> 
     if (Number.isFinite(n) && n >= 4_000 && n <= 2_000_000) {
       input.face_limit = n;
     }
-  } else if (!flRaw) {
-    input.face_limit = 120_000;
   }
 
-  const autoRaw = env("FAL_TRIPO_AUTO_SIZE", "1").toLowerCase();
-  input.auto_size = !/^(0|false|no|off)$/.test(autoRaw);
+  const autoE = env("FAL_TRIPO_AUTO_SIZE", "");
+  if (autoE !== "") {
+    input.auto_size = !/^(0|false|no|off)$/i.test(autoE.trim());
+  }
 
   const seed = env("FAL_TRIPO_SEED", "").trim();
   if (seed && /^\d+$/.test(seed)) input.seed = parseInt(seed, 10);
@@ -116,6 +117,45 @@ function buildTripoV25ImageTo3dInput(imageUrl: string): Record<string, unknown> 
   if (tSeed && /^\d+$/.test(tSeed)) input.texture_seed = parseInt(tSeed, 10);
 
   return input;
+}
+
+function parseTripoInputRotDeg(raw: string): 0 | 90 | 180 | 270 {
+  const n = parseInt(String(raw ?? "0").trim(), 10);
+  if (!Number.isFinite(n)) return 0;
+  const m = ((n % 360) + 360) % 360;
+  if (m === 90 || m === 180 || m === 270) return m;
+  return 0;
+}
+
+async function resolveTripoImageUrlBeforeFal(imageUrl: string): Promise<{
+  imageUrl: string;
+  prepared: boolean;
+  rotDeg: 0 | 90 | 180 | 270;
+}> {
+  const rot = parseTripoInputRotDeg(env("FAL_TRIPO_INPUT_ROT_DEG", "0"));
+  if (rot === 0) {
+    return { imageUrl, prepared: false, rotDeg: 0 };
+  }
+
+  const res = await fetch(imageUrl);
+  if (!res.ok) {
+    throw new Error(`Tripo input: fetch da imagem falhou (${res.status})`);
+  }
+  const sharpMod = await import("npm:sharp@0.33.5");
+  const sharp = sharpMod.default;
+  const buf = Buffer.from(new Uint8Array(await res.arrayBuffer()));
+  let pipeline = sharp(buf, { failOn: "none" }).rotate();
+  if (rot) {
+    pipeline = pipeline.rotate(rot);
+  }
+  const jpegBuf = await pipeline.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+  const file = new File([jpegBuf], "omafit-tripo-input.jpg", { type: "image/jpeg" });
+  const uploadedUrl = await fal.storage.upload(file);
+  const out = String(uploadedUrl || "").trim();
+  if (!out) {
+    throw new Error("Tripo input: fal.storage.upload não devolveu URL");
+  }
+  return { imageUrl: out, prepared: true, rotDeg: rot };
 }
 
 async function callFalAndGetGlbUrl(imageUrl: string) {
@@ -130,7 +170,8 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
   const pollIntervalMs = Math.max(500, pollSeconds * 1000);
   const logs: string[] = [];
 
-  const falInput = buildTripoV25ImageTo3dInput(imageUrl);
+  const prepared = await resolveTripoImageUrlBeforeFal(imageUrl);
+  const falInput = buildTripoV25ImageTo3dInput(prepared.imageUrl);
 
   let result: { data?: unknown; requestId?: string };
   try {

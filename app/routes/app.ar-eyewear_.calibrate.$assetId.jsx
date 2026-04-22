@@ -47,7 +47,10 @@ import {
 } from "../ar-eyewear.server.js";
 import { useAppI18n } from "../contexts/AppI18n";
 import { getShopDomain } from "../utils/getShopDomain";
-import { omafitApplyGlassesTripoOffsetContainer } from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
+import {
+  computeGlassesCanonicalOffsetQuat,
+  omafitApplyGlassesTripoOffsetContainer,
+} from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
 
 function tryResignIfPrivate(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -1077,9 +1080,9 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               root.scale.setScalar(baseScale);
 
               /**
-               * Óculos: mesmo pipeline que o widget — contentor Tripo
-               * (`omafitApplyGlassesTripoOffsetContainer`: Y-90° X 180° Z 0, eixos mundo),
-               * mesh centrado, sem rotação no root.
+               * Óculos: mesmo pipeline que o widget — contentor com
+               * quaternion canônico determinístico (PCA + rim heuristic).
+               * Se a confiança for baixa, fallback: Y-90° X 180° Z 0.
                */
               if (accessoryType === "glasses") {
                 root.rotation.set(0, 0, 0);
@@ -1087,7 +1090,27 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                 root.updateMatrixWorld(true);
                 const tripOff = new THREE.Group();
                 tripOff.name = "omafit-ar-tripto-offset";
-                omafitApplyGlassesTripoOffsetContainer(THREE, tripOff, -90, 180, 0);
+                let canon = null;
+                try {
+                  canon = computeGlassesCanonicalOffsetQuat(THREE, root);
+                } catch (err) {
+                  console.warn("[omafit-calibrate] canonical quat falhou:", err?.message || err);
+                }
+                if (canon && canon.quat) {
+                  tripOff.quaternion.copy(canon.quat);
+                  tripOff.updateMatrix();
+                  console.log("[omafit-calibrate] canonical offset quat (auto, determinístico)", {
+                    widthAxis: canon.detected?.widthAxisIdx,
+                    heightAxis: canon.detected?.heightAxisIdx,
+                    depthAxis: canon.detected?.depthAxisIdx,
+                    depthFrontSign: canon.detected?.depthFrontSign,
+                    rimHeightSign: canon.rimHeightSign,
+                    confidence: canon.detected?.confidence,
+                  });
+                } else {
+                  omafitApplyGlassesTripoOffsetContainer(THREE, tripOff, -90, 180, 0);
+                  console.warn("[omafit-calibrate] canonical confiança baixa — fallback Y-90 X180");
+                }
                 tripOff.add(root);
                 s.tripoOffsetGroup = tripOff;
                 calibRot.add(tripOff);

@@ -281,6 +281,51 @@ export function applyGlassesAutoBind(THREE, glasses) {
 }
 
 /**
+ * Devolve um **quaternion de offset** a aplicar no *grupo contentor* do
+ * GLB de óculos (o mesh fica intacto). Depois de aplicado, o óculos
+ * fica na orientação canônica:
+ *   - +X mundo = largura (bochecha esquerda → direita)
+ *   - +Y mundo = topo da armação
+ *   - +Z mundo = frente das lentes (aponta para fora do rosto)
+ *
+ * A âncora MindAR facial (landmark 168/152) já entrega +Z a apontar
+ * para fora do rosto (para a câmara no modo selfie), logo este
+ * alinhamento coincide com o que a câmara "vê".
+ *
+ * Processo (determinístico, sem graus fixos):
+ *   1. Amostra os vértices em *mundo* (modelo centrado na origem pelo
+ *      chamador).
+ *   2. Identifica o eixo de largura (maior bbox).
+ *   3. Identifica o eixo de profundidade: o centróide desloca-se para o
+ *      lado **das lentes** (mais vértices concentrados no aro frontal)
+ *      ou para o lado das hastes (mais vértices distribuídos). Usamos
+ *      o `depthFrontSign` calculado em `detectGlassesAxes`.
+ *   4. Altura = terceiro eixo. Sinal vem da heurística rim-top
+ *      (a faixa superior do aro é mais larga em X que a inferior).
+ *   5. Constrói matriz de basis e extrai quaternion.
+ *
+ * Quando a confiança é baixa (modelos simétricos demais), devolve
+ * `null` e o chamador aplica fallback (p.ex. rotação fixa Y=-90, X=180).
+ *
+ * @param {any} THREE
+ * @param {any} glasses GLB root (centrado na origem, sem rotação)
+ * @returns {{ quat: any, detected: GlassesAxesDetect, signs: object, rimHeightSign: 1|-1 } | null}
+ */
+export function computeGlassesCanonicalOffsetQuat(THREE, glasses) {
+  const detected = detectGlassesAxes(THREE, glasses);
+  if (!detected) return null;
+  if (detected.confidence.width < 0.4) return null;
+  const hSign = detectGlassesRimHeuristic(
+    THREE,
+    glasses,
+    detected.widthAxisIdx,
+    detected.heightAxisIdx,
+  );
+  const { quat, ...signs } = computeGlassesAutoBindQuat(THREE, detected, hSign);
+  return { quat, detected, signs, rimHeightSign: hSign };
+}
+
+/**
  * @typedef {{
  *  widthAxisIdx: 0|1|2,
  *  heightAxisIdx: 0|1|2,

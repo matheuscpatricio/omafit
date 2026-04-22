@@ -1,5 +1,6 @@
 import {
   applyGlassesAutoBind,
+  computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
 } from "./omafit-glasses-orient.js";
 /**
@@ -194,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-screen-rot-v2";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-canonical-quat-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -547,12 +548,12 @@ function installOmafitGlassesScreenRotPanel(layerHost, THREE, group, stepDeg) {
     touchAction: "manipulation",
   });
   const title = document.createElement("div");
-  title.textContent = "Girar óculos (local)";
+  title.textContent = "Girar óculos";
   title.style.fontWeight = "600";
   title.style.marginBottom = "6px";
   wrap.appendChild(title);
   const hint = document.createElement("div");
-  hint.textContent = `±${Number(stepDeg) || 5}° por toque (eixos X, Y, Z do modelo).`;
+  hint.textContent = `±${Number(stepDeg) || 5}° por toque — ajuste fino sobre a orientação automática.`;
   hint.style.opacity = "0.75";
   hint.style.fontSize = "10px";
   hint.style.marginBottom = "8px";
@@ -605,19 +606,57 @@ function installOmafitGlassesScreenRotPanel(layerHost, THREE, group, stepDeg) {
   addAxis("X", () => group.rotateX(-step), () => group.rotateX(step));
   addAxis("Y", () => group.rotateY(-step), () => group.rotateY(step));
   addAxis("Z", () => group.rotateZ(-step), () => group.rotateZ(step));
+
+  const quickRow = document.createElement("div");
+  quickRow.style.display = "flex";
+  quickRow.style.gap = "6px";
+  quickRow.style.marginTop = "6px";
+  /** Atalhos 180°/90° — recuperam rapidamente se o auto-orient ficar ao contrário. */
+  const quickBtn = (label, axis, deg) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    Object.assign(b.style, {
+      flex: "1",
+      padding: "6px 4px",
+      cursor: "pointer",
+      fontSize: "10px",
+      borderRadius: "6px",
+      border: "1px solid #666",
+      background: "#2a2a2a",
+      color: "#fff",
+      WebkitTapHighlightColor: "transparent",
+    });
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      const r = (deg * Math.PI) / 180;
+      if (axis === "x") group.rotateX(r);
+      else if (axis === "y") group.rotateY(r);
+      else if (axis === "z") group.rotateZ(r);
+    });
+    return b;
+  };
+  quickRow.append(
+    quickBtn("Y 180°", "y", 180),
+    quickBtn("X 180°", "x", 180),
+    quickBtn("Z 180°", "z", 180),
+  );
+  wrap.appendChild(quickRow);
+
   const reset = document.createElement("button");
   reset.type = "button";
-  reset.textContent = "Redefinir rotação";
+  reset.textContent = "Redefinir (volta ao automático)";
   Object.assign(reset.style, {
     marginTop: "6px",
     width: "100%",
-    padding: "6px",
+    padding: "8px",
     cursor: "pointer",
     fontSize: "11px",
     borderRadius: "6px",
     border: "1px solid #555",
     background: "#2a2a2a",
     color: "#fff",
+    WebkitTapHighlightColor: "transparent",
   });
   reset.addEventListener("click", (e) => {
     e.preventDefault();
@@ -4108,21 +4147,28 @@ async function runArSession({
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
     /**
-     * Contentor Tripo: rotação fixa num `offsetGroup` (filho de `calibRot`),
-     * NÃO no mesh — `anchor.group` + `wearPosition` + `faceParent` seguem a
-     * face; só o grupo de offset aplica a neutralização da exportação Tripo.
-     * Desligar: `data-ar-glasses-tripto-offset-container="0"`.
+     * Contentor de orientação: quando activo (default para óculos), o GLB
+     * entra num `offsetGroup` que aplica um **quaternion canônico**
+     * determinístico (PCA + heurística rim) para mapear os eixos do
+     * GLB → referencial da âncora MindAR (largura=X, topo=+Y, lentes=+Z).
+     *
+     * Override manual (em graus, eixos mundo Y→X→Z): `arGlassesTripoOffsetWorldDeg`
+     * — ex.: `"-90,180,0"`. Quando presente e diferente do sentinel
+     * `auto`, ignora o cálculo automático.
+     *
+     * Desligar o contentor por completo: `data-ar-glasses-tripto-offset-container="0"`.
      */
     const useTripoOffsetContainer =
       accessoryType === "glasses" &&
       !/^(0|off|false|no)$/.test(
         String(cfgAttr("arGlassesTripoOffsetContainer", "1")).trim().toLowerCase(),
       );
-    const tripOffStr = String(cfgAttr("arGlassesTripoOffsetWorldDeg", "-90,180,0"));
-    const tripOffParts = tripOffStr.split(",").map((s) => parseFloat(String(s).trim()));
-    const tripDegY = Number.isFinite(tripOffParts[0]) ? tripOffParts[0] : -90;
-    const tripDegX = Number.isFinite(tripOffParts[1]) ? tripOffParts[1] : 180;
-    const tripDegZ = Number.isFinite(tripOffParts[2]) ? tripOffParts[2] : 0;
+    const tripOffRaw = String(cfgAttr("arGlassesTripoOffsetWorldDeg", "auto")).trim().toLowerCase();
+    const tripOffUseAuto = tripOffRaw === "" || tripOffRaw === "auto";
+    const tripOffParts = tripOffRaw.split(",").map((s) => parseFloat(String(s).trim()));
+    const tripDegY = tripOffUseAuto || !Number.isFinite(tripOffParts[0]) ? 0 : tripOffParts[0];
+    const tripDegX = tripOffUseAuto || !Number.isFinite(tripOffParts[1]) ? 0 : tripOffParts[1];
+    const tripDegZ = tripOffUseAuto || !Number.isFinite(tripOffParts[2]) ? 0 : tripOffParts[2];
 
     /** Botões +/− no ecrã: `data-ar-glasses-screen-rot="0"` desliga. Query: `?omafit_ar_glasses_screen_rot=0|1`. */
     const screenRotAttr = String(cfgAttr("arGlassesScreenRot", "1")).trim().toLowerCase();
@@ -4150,17 +4196,52 @@ async function runArSession({
      * recalculamos a decisão pós-bind (não a bbox pré-rotatória).
      */
     let glassesFaceWideAxisX = sz.x >= sz.z;
+    /**
+     * Quaternion canônico calculado pelo `computeGlassesCanonicalOffsetQuat`
+     * (mapeia eixos locais do GLB → eixos da âncora MindAR de forma
+     * determinística). Aplicado mais abaixo ao `tripOffsetGroup` quando
+     * `useTripoOffsetContainer` está activo e o utilizador não forçou
+     * rotações manuais em graus.
+     */
+    let tripCanonicalQuat = null;
+    let tripCanonicalDetected = null;
 
     if (accessoryType === "glasses" && useTripoOffsetContainer) {
       glasses.rotation.set(0, 0, 0);
       glasses.quaternion.identity();
       glasses.updateMatrix();
+      glasses.updateMatrixWorld(true);
       const szC = new THREE.Vector3();
       new THREE.Box3().setFromObject(glasses).getSize(szC);
       glassesFaceWideAxisX = szC.x >= szC.z;
-      console.log("[omafit-ar] glasses Tripo offset container (sem bind no mesh; rota no offsetGroup)", {
-        arGlassesTripoOffsetWorldDeg: { y: tripDegY, x: tripDegX, z: tripDegZ },
-      });
+      if (tripOffUseAuto) {
+        try {
+          const canon = computeGlassesCanonicalOffsetQuat(THREE, glasses);
+          if (canon && canon.quat) {
+            tripCanonicalQuat = canon.quat;
+            tripCanonicalDetected = canon.detected;
+            console.log("[omafit-ar] glasses canonical offset quat (auto, determinístico)", {
+              widthAxis: canon.detected?.widthAxisIdx,
+              heightAxis: canon.detected?.heightAxisIdx,
+              depthAxis: canon.detected?.depthAxisIdx,
+              depthFrontSign: canon.detected?.depthFrontSign,
+              rimHeightSign: canon.rimHeightSign,
+              widthSign: canon.signs?.widthSign,
+              flippedWidthForRotation: canon.signs?.flippedWidthForRotation,
+              confidence: canon.detected?.confidence,
+              sizeBbox: { x: szC.x, y: szC.y, z: szC.z },
+            });
+          } else {
+            console.warn("[omafit-ar] canonical quat: confiança baixa — fallback Y-90 X180");
+          }
+        } catch (e) {
+          console.warn("[omafit-ar] canonical quat falhou:", e?.message || e);
+        }
+      } else {
+        console.log("[omafit-ar] glasses Tripo offset container (manual em graus)", {
+          arGlassesTripoOffsetWorldDeg: { y: tripDegY, x: tripDegX, z: tripDegZ },
+        });
+      }
     } else if (accessoryType === "glasses") {
       const rawBind = String(cfgAttr("arGlassesMindarBindFix", "") || "").trim();
       const rb = rawBind.toLowerCase();
@@ -4323,13 +4404,25 @@ async function runArSession({
     /** Pai lógico sob `wearPosition` — a matriz de tracking continua em `anchor.group`. */
     const faceParentGroup = new GroupCtor();
     faceParentGroup.name = "omafit-ar-face-parent";
-    /** Só óculos com `useTripoOffsetContainer`: rotação fixa export Tripo. */
+    /**
+     * Só óculos com `useTripoOffsetContainer`: orientação canônica (auto
+     * PCA) ou rotação fixa (override manual em graus).
+     */
     /** @type {InstanceType<typeof GroupCtor> | null} */
     let tripOffsetGroup = null;
     if (useTripoOffsetContainer && accessoryType === "glasses") {
       tripOffsetGroup = new GroupCtor();
       tripOffsetGroup.name = "omafit-ar-tripto-offset";
-      omafitApplyGlassesTripoOffsetContainer(THREE, tripOffsetGroup, tripDegY, tripDegX, tripDegZ);
+      if (tripCanonicalQuat) {
+        tripOffsetGroup.quaternion.copy(tripCanonicalQuat);
+        tripOffsetGroup.updateMatrix();
+      } else {
+        /** Fallback: utilizador forçou graus ou PCA com baixa confiança → Y=-90°, X=180°. */
+        const fy = tripOffUseAuto ? -90 : tripDegY;
+        const fx = tripOffUseAuto ? 180 : tripDegX;
+        const fz = tripOffUseAuto ? 0 : tripDegZ;
+        omafitApplyGlassesTripoOffsetContainer(THREE, tripOffsetGroup, fy, fx, fz);
+      }
     }
     /** Entre offset/calib e anatomia — rotação manual (UI) sem colidir com `glassesAnatomy.rotation.z`. */
     /** @type {InstanceType<typeof GroupCtor> | null} */

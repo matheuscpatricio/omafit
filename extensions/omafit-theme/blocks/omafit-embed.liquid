@@ -170,8 +170,9 @@
     {% endcomment %}
     {% comment %}
       Regra da calibração no runtime:
-      1) Rotação base (sem metafield): data-ar-canonical-fix-yxz = "0, -180, -90"
-         (cima/baixo 0°, esquerda/direita -180°, inclinação lateral -90°).
+      1) Sem metafield: canonical = "0, 0, 0" — o alinhamento eixo MindAR/glTF
+         fica no JS (`omafit-ar-widget.js`: bind automático por forma da bbox
+         pós-bake; ver `data-ar-glasses-mindar-bind-fix` para override).
       2) Com metafield omafit.ar_calibration, sobrepomos os campos guardados.
       3) data-ar-mindar-wear-position só quando há metafield (ajustes finos).
 
@@ -314,12 +315,6 @@
       if ar_type_guess == 'watch' or ar_type_guess == 'bracelet'
         assign ar_preferred_camera = 'environment'
       endif
-
-      unless cal_present
-        if ar_type_guess == 'glasses'
-          assign cal_fix_yxz = '0, -180, -90'
-        endif
-      endunless
     -%}
     <div
       id="omafit-ar-root"

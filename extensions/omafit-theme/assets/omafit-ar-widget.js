@@ -21,7 +21,7 @@
  * 2) Pipeline simples ("filtro do Instagram") — idêntica ao preview do admin:
  *      anchor.group (MindAR landmark 168)
  *        → wearPosition (offset XYZ em unidades de face: wearX/Y/Z)
- *          → calibRot (Euler YXZ do data-ar-canonical-fix-yxz, defaults 0,0,0)
+ *          → calibRot (data-ar-canonical-fix-yxz; típico 0,0,0 sem metafield)
  *            → glasses (GLB centrado (bbox→origem) e escalado para ~1 unidade de face).
  *
  *    Motivo desta simplificação (Abr/2026):
@@ -63,6 +63,12 @@
  *    (O `0.085` antigo produzia óculos com ~1cm num rosto de 14 — invisível.)
  *
  * 5) GLB tem qualquer orientação — o lojista calibra na ferramenta visual do admin.
+ *
+ * Oclusão WebAR (Three.js): máscara facial só depth — `MeshBasicMaterial` com
+ * `colorWrite: false`, `depthWrite: true`, renderOrder abaixo do GLB; ver
+ * https://threejs.org/docs/#api/en/materials/Material.depthWrite e guias
+ * MindAR (malha 468 + âncora). `frustumCulled = false` nos oclusores dinâmicos
+ * evita culling com bbox desactualizada após deformação.
  */
 const ESM_THREE_VER = "0.150.1";
 const ESM_SH = "https://esm.sh";
@@ -184,7 +190,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-default-cal-liquid-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bbox-bind-warmup-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -290,6 +296,29 @@ const Z_SHELL = 2147483640;
  * O callback `onDone({ baked, skipped })` recebe contadores para debug.
  */
 /**
+ * Bbox **após** `bakeGLBTransforms` + centragem: alinha ao critério de
+ * `ar-eyewear-glb-canonicalize.mjs` (largura X dominante, Y fino, Z profundidade).
+ * Nesses GLBs a frente das lentes já está ~paralela a +Z (âncora MindAR); o
+ * bind clássico Rx(-90) (“+Y glTF → +Z”) **inverte** o modelo (efeito “de
+ * cabeça pra baixo” / rotação errada).
+ *
+ * @param {{ x: number, y: number, z: number }} sz
+ */
+function omafitGlassesBboxLooksZForwardEyewear(sz) {
+  if (!sz) return false;
+  const x = Number(sz.x);
+  const y = Number(sz.y);
+  const z = Number(sz.z);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+  const minXZ = Math.min(x, z);
+  if (minXZ < 1e-9) return false;
+  if (y > minXZ * 0.52) return false;
+  if (x < z * 0.72) return false;
+  if (z < y * 1.12) return false;
+  return true;
+}
+
+/**
  * MindAR `getLandmarkMatrix` usa o mesmo `faceMatrix` que a malha facial
  * canónica: o eixo “para fora do rosto / câmara” alinha com **+Z local** da
  * âncora. Muitos GLB (Tripo, Meshy, export Blender Y-up) modelam a frente das
@@ -300,8 +329,8 @@ const Z_SHELL = 2147483640;
  *
  * Override: `data-ar-glasses-mindar-bind-fix="rx,ry,rz"` em graus (ex.
  * `-90,0,0`). Use `none` / `0` para desligar. Vazio + calib ~0 no DOM → auto
- * (-90,0,180). Na loja, óculos sem metafield usam
- * `data-ar-canonical-fix-yxz="0, -180, -90"` (Liquid) — bind auto não corre.
+ * via `omafitGlassesBboxLooksZForwardEyewear(sz)` (sem bind se já +Z) ou
+ * (-90,0,180) para glTF típico (+Y frente).
  */
 function omafitApplyGlassesMindarBindFix(THREE, glasses, bindRxDeg, bindRyDeg, bindRzDeg) {
   if (!glasses || !THREE) return;
@@ -3718,11 +3747,15 @@ async function runArSession({
           Math.abs(calRotDeg.y) +
           Math.abs(calRotDeg.z);
         if (sumCal < 1e-6) {
-          applyBind = true;
-          /** glTF +Y frente → âncora +Z; 180 Z corrige inversão lateral típica. */
-          bx = -90;
-          by = 0;
-          bz = 180;
+          if (omafitGlassesBboxLooksZForwardEyewear(sz)) {
+            applyBind = false;
+          } else {
+            applyBind = true;
+            /** glTF +Y frente → âncora +Z; 180 Z corrige inversão lateral típica. */
+            bx = -90;
+            by = 0;
+            bz = 180;
+          }
         }
       } else if (!/^(0|none|off|false|identity)$/.test(rb)) {
         const p = parseEulerDegComponents(rawBind, 0, 0, 0);
@@ -3742,6 +3775,16 @@ async function runArSession({
           rz: bz,
           mode: rawBind || "auto",
         });
+      } else if ((!rb || rb === "auto") && accessoryType === "glasses") {
+        const sumCal =
+          Math.abs(calRotDeg.x) +
+          Math.abs(calRotDeg.y) +
+          Math.abs(calRotDeg.z);
+        if (sumCal < 1e-6 && omafitGlassesBboxLooksZForwardEyewear(sz)) {
+          console.log("[omafit-ar] glasses MindAR bind skipped (bbox looks Z-forward)", {
+            sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
+          });
+        }
       }
     }
 
@@ -3913,7 +3956,10 @@ async function runArSession({
       smoothFaceMats: [],
       smoothInitialized: false,
       cheekRefWidth: null,
-      eyeNeutralAtan: null,
+      eyeNeutralAtan: 0,
+      eyeNeutralWarmupSum: 0,
+      eyeNeutralWarmupN: 0,
+      eyeNeutralReady: false,
       eyeTiltSmoothed: 0,
       facePmremRT: null,
       templeDepthGeom,
@@ -3958,6 +4004,11 @@ async function runArSession({
         if (!payload.hasFace) {
           st.smoothInitialized = false;
           st.lmSmoother?.reset();
+          st.eyeNeutralWarmupSum = 0;
+          st.eyeNeutralWarmupN = 0;
+          st.eyeNeutralReady = false;
+          st.eyeNeutralAtan = 0;
+          st.eyeTiltSmoothed = 0;
           if (st.necklaceSwing?.swingGroup) {
             st.necklaceSwing.vel.set(0, 0, 0);
             st.necklaceSwing.eVel.set(0, 0, 0);
@@ -4020,8 +4071,16 @@ async function runArSession({
             const dy = lm[OMAFIT_FACE_LM_EYE_L_OUT][1] - lm[OMAFIT_FACE_LM_EYE_R_OUT][1];
             atan = Math.atan2(dy, dx);
           }
-          if (st.eyeNeutralAtan === null) st.eyeNeutralAtan = atan;
-          const rawTilt = THREE.MathUtils.clamp((atan - st.eyeNeutralAtan) * 0.52, -0.1, 0.1);
+          if (!st.eyeNeutralReady) {
+            st.eyeNeutralWarmupSum += atan;
+            st.eyeNeutralWarmupN += 1;
+            if (st.eyeNeutralWarmupN >= 12) {
+              st.eyeNeutralAtan = st.eyeNeutralWarmupSum / st.eyeNeutralWarmupN;
+              st.eyeNeutralReady = true;
+            }
+          }
+          const neutral = st.eyeNeutralReady ? st.eyeNeutralAtan : atan;
+          const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.52, -0.1, 0.1);
           st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.26);
           glassesAnatomy.rotation.z = st.eyeTiltSmoothed;
         }

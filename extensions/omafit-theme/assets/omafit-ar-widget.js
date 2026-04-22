@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bridge168-bbox-occluder-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bbox-anatomic1p1-aspect-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -236,11 +236,10 @@ const OMAFIT_FACE_ONE_EURO_D_CUTOFF = 1.05;
 const OMAFIT_FACE_ONE_EURO_GLASSES_MIN_CUTOFF = 0.56;
 const OMAFIT_FACE_ONE_EURO_GLASSES_BETA = 0.0072;
 const OMAFIT_FACE_ONE_EURO_GLASSES_D_CUTOFF = 0.96;
-/** Clamp largura bochecha (234–454)→escala: faixa alargada para zoom físico na câmara. */
-const OMAFIT_FACE_CHEEK_SCALE_MIN = 0.74;
-const OMAFIT_FACE_CHEEK_SCALE_MAX = 1.36;
-/** EMA da largura bochecha antes do ratio `cw/ref` (menos “tremor” de escala). */
-const OMAFIT_FACE_CHEEK_WIDTH_SMOOTH = 0.14;
+/** Largura da armação = `factor` × distância métrica 234–454 (bochechas). Override: `data-ar-glasses-anatomic-width-factor`. */
+const OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR = 1.1;
+/** EMA só na largura bochecha (estabilidade da escala anatómica). */
+const OMAFIT_FACE_CHEEK_WIDTH_SMOOTH = 0.18;
 /** Modelo Image Segmenter (multiclasse: cabelo, pele, roupa, …) — mesmo runtime WASM que HandLandmarker. */
 const OMAFIT_IMAGE_SEG_SELFIE_MULTICLASS_URL =
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
@@ -3299,6 +3298,30 @@ function fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost) {
       video.style.pointerEvents = "none";
       void video.play?.().catch?.(() => {});
     }
+    /**
+     * MindAR + MediaPipe usam o vídeo intrínseco; se `camera.aspect` ≠
+     * `videoWidth/videoHeight`, o PnP/landmarks deixam de coincidir com o
+     * frustum Three.js → desvio lateral aparente. O espelho da selfie é
+     * tratado na **imagem** (MindAR `disableFaceMirror` / CSS no vídeo), não
+     * com `camera.scale.x = -1` (isso inverteria X no mundo 3D e quebraria o
+     * alinhamento com métricas do face mesh).
+     */
+    try {
+      const cam = mindarThree?.camera;
+      const v = mindarHost?.querySelector?.("video");
+      if (cam && v && v.videoWidth > 0 && v.videoHeight > 0) {
+        const aspect = v.videoWidth / v.videoHeight;
+        if (Number.isFinite(aspect) && aspect > 0) {
+          const prev = cam.aspect;
+          if (!Number.isFinite(prev) || Math.abs(prev - aspect) > 1e-4) {
+            cam.aspect = aspect;
+            if (typeof cam.updateProjectionMatrix === "function") cam.updateProjectionMatrix();
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     const canvases = mindarHost?.querySelectorAll?.("canvas") || [];
     for (let i = 0; i < canvases.length; i++) {
       const c = canvases[i];
@@ -3919,13 +3942,20 @@ async function runArSession({
     const glassesBboxRecenterPostBind =
       accessoryType === "glasses" &&
       !/^(0|off|false|no)$/i.test(String(cfgAttr("arGlassesBboxRecenterPostBind", "1")).trim());
-    const glassesBridgePushZ =
+    /** Z **local do mesh** (negativo = empurra contra o rosto / âncora). Range típico −0.01…−0.05. */
+    const glassesModelStickZ =
       accessoryType === "glasses"
         ? (() => {
-            const v = Number(String(cfgAttr("arGlassesBridgePushZ", "0.014")).trim());
-            return Number.isFinite(v) ? v : 0.014;
+            const v = Number(String(cfgAttr("arGlassesModelStickZ", "-0.032")).trim());
+            return Number.isFinite(v) ? v : -0.032;
           })()
         : 0;
+    /** Largura visível da armação ≈ factor × distância 234–454. Override: `data-ar-glasses-anatomic-width-factor`. */
+    const glassesAnatomicWidthFactor = (() => {
+      if (accessoryType !== "glasses") return 1;
+      const v = Number(String(cfgAttr("arGlassesAnatomicWidthFactor", "1.1")).trim());
+      return Number.isFinite(v) && v > 0.2 ? v : OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR;
+    })();
     const faceOccAheadLocalZ =
       accessoryType === "glasses"
         ? (() => {
@@ -4247,6 +4277,20 @@ async function runArSession({
     });
 
     /**
+     * Centralização absoluta do pivot **logo após o load** (antes de bake):
+     * `position.sub(center)` — NÃO usar `pos += pos - center` (equivale a
+     * `2*pos - center` e **não** zera o desvio).
+     */
+    if (accessoryType === "glasses") {
+      glasses.updateMatrixWorld(true);
+      const boxLoad = new THREE.Box3().setFromObject(glasses);
+      if (!(typeof boxLoad.isEmpty === "function" && boxLoad.isEmpty())) {
+        const cLoad = boxLoad.getCenter(new THREE.Vector3());
+        glasses.position.sub(cLoad);
+      }
+    }
+
+    /**
      * Pipeline simples ("filtro do Instagram"): idêntica ao preview do admin.
      * Hierarquia mínima: anchor.group → wearPosition → calibRot → GLB.
      *   - calibRot:     rotação YXZ da calibração (defaults 0,0,0)
@@ -4331,9 +4375,8 @@ async function runArSession({
       0, 0, 0,
     );
     /**
-     * Wear em unidades de âncora; profundidade “colada” + empurro para a câmara
-     * ficam em `arGlassesBridgePushZ` na `faceParentGroup` (por frame).
-     * Override: `data-ar-mindar-wear-position`.
+     * Wear em unidades de âncora. Colagem em profundidade: `arGlassesModelStickZ`
+     * no eixo Z **local do GLB** (negativo). Override: `data-ar-mindar-wear-position`.
      */
     const wearPosM = parseXyzMeters(
       cfgAttr("arMindarWearPosition", accessoryType === "glasses" ? "0 0 0" : ""),
@@ -4542,6 +4585,21 @@ async function runArSession({
       glassesFaceWideAxisX = szPivot.x >= szPivot.z;
     }
 
+    /**
+     * Largura geométrica do GLB no eixo “larga da armação” (escala 1), para
+     * `scale = anatomicFactor * dist(234,454) / wideDim * modelScaleMul`.
+     */
+    let glassesWideDimPreScale = null;
+    if (accessoryType === "glasses") {
+      glasses.updateMatrixWorld(true);
+      const szW = new THREE.Vector3();
+      new THREE.Box3().setFromObject(glasses).getSize(szW);
+      glassesWideDimPreScale = Math.max(
+        glassesFaceWideAxisX ? szW.x : szW.z,
+        1e-6,
+      );
+    }
+
     /** Colar: separar corrente vs pingente para escala radial (k,1,k) sem esticar o pingente. */
     let necklacePartition = null;
     if (accessoryType === "necklace") {
@@ -4558,6 +4616,9 @@ async function runArSession({
      *    `src/face-target/controller.js:getLandmarkMatrix` (`fm[i]*s`). */
     const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
+    if (accessoryType === "glasses") {
+      glasses.position.z = glassesModelStickZ;
+    }
     console.log("[omafit-ar] face scale resolved", {
       maxDim,
       modelScaleMul,
@@ -4567,6 +4628,9 @@ async function runArSession({
       anchorIndex,
       disableFaceMirror,
       sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
+      glassesWideDimPreScale,
+      glassesAnatomicWidthFactor,
+      glassesModelStickZ,
     });
 
     /** 4) Hierarquia (óculos com contentor Tripo):
@@ -4790,7 +4854,9 @@ async function runArSession({
       smoothInitialized: false,
       cheekRefWidth: null,
       smoothedCheekW: null,
-      glassesBridgePushZ,
+      glassesWideDimPreScale,
+      modelScaleMul,
+      glassesAnatomicWidthFactor,
       faceOccAheadLocalZ,
       faceOccComposeScratch:
         accessoryType === "glasses" && faceOccluderMesh
@@ -4997,20 +5063,12 @@ async function runArSession({
           }
         }
         if (accessoryType === "glasses") {
-          {
-            const pushZ = st.glassesBridgePushZ || 0;
-            const lm168 = lm[OMAFIT_FACE_LM_NOSE_BRIDGE];
-            const nbSm = st.lmSmoother?.get(OMAFIT_FACE_LM_NOSE_BRIDGE);
-            if (nbSm && lm168 && anchorIndex === OMAFIT_FACE_LM_NOSE_BRIDGE) {
-              faceParentGroup.position.set(
-                nbSm.x - lm168[0],
-                nbSm.y - lm168[1],
-                nbSm.z - lm168[2] + pushZ,
-              );
-            } else {
-              faceParentGroup.position.set(0, 0, pushZ);
-            }
-          }
+          /**
+           * A translação da ponte fica no `anchor.group` (MindAR, landmark 168).
+           * `faceParentGroup` em (0,0,0) evita duplicar offsets que competem
+           * com o PnP e causam desvio lateral; colagem Z no próprio mesh.
+           */
+          faceParentGroup.position.set(0, 0, 0);
           const pR = st.lmSmoother?.get(OMAFIT_FACE_LM_RIGHT_CHEEK);
           const pL = st.lmSmoother?.get(OMAFIT_FACE_LM_LEFT_CHEEK);
           const cw =
@@ -5018,7 +5076,6 @@ async function runArSession({
               ? pR.distanceTo(pL)
               : omafitFaceLandmarkDist3(lm, OMAFIT_FACE_LM_RIGHT_CHEEK, OMAFIT_FACE_LM_LEFT_CHEEK);
           if (Number.isFinite(cw) && cw > 1e-5) {
-            if (st.cheekRefWidth === null) st.cheekRefWidth = cw;
             if (!(typeof st.smoothedCheekW === "number") || !Number.isFinite(st.smoothedCheekW)) {
               st.smoothedCheekW = cw;
             } else {
@@ -5029,15 +5086,14 @@ async function runArSession({
               );
             }
             const cwUse = st.smoothedCheekW;
-            const mul = THREE.MathUtils.clamp(
-              cwUse / st.cheekRefWidth,
-              OMAFIT_FACE_CHEEK_SCALE_MIN,
-              OMAFIT_FACE_CHEEK_SCALE_MAX,
-            );
-            if (glassesFaceWideAxisX) {
-              glasses.scale.set(mul * baseUnitScale, baseUnitScale, baseUnitScale);
-            } else {
-              glasses.scale.set(baseUnitScale, baseUnitScale, mul * baseUnitScale);
+            const wideDim = st.glassesWideDimPreScale;
+            const factor = st.glassesAnatomicWidthFactor || OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR;
+            const mulScale = st.modelScaleMul || 1;
+            if (typeof wideDim === "number" && wideDim > 1e-6) {
+              const s = ((factor * cwUse) / wideDim) * mulScale;
+              if (Number.isFinite(s) && s > 1e-8) {
+                glasses.scale.setScalar(s);
+              }
             }
           }
           const eL = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);

@@ -37,8 +37,10 @@
  *      (range alargado ±0.15 → ±2.1cm) para descer os óculos do landmark 168
  *      (ponte do nariz, tipicamente acima dos olhos) até à linha dos olhos.
  *
- *    Sem heurísticas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`, `poseInvert`).
- *    A calibração do lojista é a única fonte de verdade para a orientação.
+ *    Sem heurísticas antigas (`glbWideAlign`, sign-fix, `ipdSnap`, `mirrorX`,
+ *    `poseInvert`). Orientação: `calibRot` + correcção opcional MindAR/glTF
+ *    (`omafitApplyGlassesMindarBindFix` quando cal=0,0,0 — ver
+ *    `data-ar-glasses-mindar-bind-fix`).
  *
  *    Nota sobre MindAR / MediaPipe:
  *      - Quando `flipFace=true` (default selfie), a MindAR inverte o frame ANTES da detecção
@@ -182,7 +184,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-21_necklace-pose-occlusion-swing-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_face-depth-occluder-frustum-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -287,6 +289,40 @@ const Z_SHELL = 2147483640;
  *
  * O callback `onDone({ baked, skipped })` recebe contadores para debug.
  */
+/**
+ * MindAR `getLandmarkMatrix` usa o mesmo `faceMatrix` que a malha facial
+ * canónica: o eixo “para fora do rosto / câmara” alinha com **+Z local** da
+ * âncora. Muitos GLB (Tripo, Meshy, export Blender Y-up) modelam a frente das
+ * lentes ao longo de **+Y**. Com calibração 0,0,0 isso aparece como óculos
+ * de lado ou invertidos. Esta correcção aplica rotações em **eixos mundo**
+ * (Y→X→Z, igual ao `calibRot` do admin) **só** na malha `glasses`, antes do
+ * lojista afinar `arCanonicalFixYxz`.
+ *
+ * Override: `data-ar-glasses-mindar-bind-fix="rx,ry,rz"` em graus (ex.
+ * `-90,0,0`). Use `none` / `0` para desligar. Vazio + calib 0,0,0 → auto
+ * (-90,0,180) documentado em changelog.
+ */
+function omafitApplyGlassesMindarBindFix(THREE, glasses, bindRxDeg, bindRyDeg, bindRzDeg) {
+  if (!glasses || !THREE) return;
+  const rx = Number(bindRxDeg) || 0;
+  const ry = Number(bindRyDeg) || 0;
+  const rz = Number(bindRzDeg) || 0;
+  if (Math.abs(rx) < 1e-6 && Math.abs(ry) < 1e-6 && Math.abs(rz) < 1e-6) return;
+  const rad = (d) => (d * Math.PI) / 180;
+  glasses.rotation.set(0, 0, 0);
+  glasses.quaternion.identity();
+  const ax = new THREE.Vector3(1, 0, 0);
+  const ay = new THREE.Vector3(0, 1, 0);
+  const az = new THREE.Vector3(0, 0, 1);
+  const ryr = rad(ry);
+  const rxr = rad(rx);
+  const rzr = rad(rz);
+  if (ryr) glasses.rotateOnWorldAxis(ay, ryr);
+  if (rxr) glasses.rotateOnWorldAxis(ax, rxr);
+  if (rzr) glasses.rotateOnWorldAxis(az, rzr);
+  glasses.updateMatrix();
+}
+
 function bakeGLBTransforms(THREE, root, onDone) {
   if (!root || typeof root.traverse !== "function") return;
   root.updateMatrixWorld(true);
@@ -1469,9 +1505,32 @@ function setHandArMeshRenderOrder(root, order) {
 }
 
 /**
- * Relógio: separa meshes de correia vs mostrador e agrupa a correia num único
- * `Group` com pivô no plano radial (eixo do antebraço = +Z local pós-fit).
- * Escala não-uniforme (sx, 1, sz) com sx=sz evita encolher espessura (Y).
+ * === ISOLAMENTO BIOMÉTRICO RELÓGIO: PULSEIRA vs MOSTRADOR (v11.7) ===
+ *
+ * Relógio é composto por dois blocos distintos:
+ *   1. Pulseira (strap/band/lug/buckle): contrai/expande em X e Z para
+ *      abraçar o pulso real (espessura Y = 1.0 preservada).
+ *   2. Mostrador / Case / Dial / Crystal / Crown: DEVE manter escala 1.0
+ *      em XYZ em metros-mundo. O utilizador percebe o mostrador a encolher
+ *      como "brinquedo" num pulso fino — corrigimos isolando-o num grupo
+ *      com pivô no EIXO do braço (0,0,0 após fit centering) e aplicando
+ *      `1/adaptMul` para cancelar a contração adaptativa global.
+ *
+ * Pivô do caseDial em (0,0,0):
+ *   Com `caseDial.scale = 1/adaptMul` e `glbRoot.scale = su × adaptMul`,
+ *   a multiplicação dá size_world = mesh_local × 1/adaptMul × adaptMul × su
+ *                                 = mesh_local × su
+ *   Para POSIÇÃO: mesh_pos_world = (mesh_local_pos × 1/adaptMul) × (su × adaptMul)
+ *                                = mesh_local_pos × su
+ *   → Mostrador em METROS-MUNDO é invariante a adaptMul (tamanho E posição
+ *   ficam iguais ao design original). Aceita-se pequeno gap visual em pulsos
+ *   finos em troca da preservação do mostrador — exactamente o spec.
+ *
+ * Pivô da pulseira em (centro da correia, z=0): contração radial uniforme
+ * "de fora para dentro", preservando centro de massa visual.
+ *
+ * Devolve `{ strap, caseDial, strapCount, caseCount }`. Qualquer grupo pode
+ * ser `null` (GLB sem meshes identificáveis por essa heurística).
  */
 function setupWatchStrapBiometricGroup(THREE, glbScene, fitSize, localRingR, debug) {
   const caseRe =
@@ -1481,6 +1540,7 @@ function setupWatchStrapBiometricGroup(THREE, glbScene, fitSize, localRingR, deb
   const ringR = Math.max(Number(localRingR) || 0, 1e-6);
   const maxSz = Math.max(fitSize.x, fitSize.y, fitSize.z, 1e-9);
   const strapMeshes = [];
+  const caseMeshes = [];
   glbScene.updateMatrixWorld(true);
   glbScene.traverse((o) => {
     if (!o.isMesh || !o.geometry) return;
@@ -1489,47 +1549,83 @@ function setupWatchStrapBiometricGroup(THREE, glbScene, fitSize, localRingR, deb
       strapMeshes.push(o);
       return;
     }
-    if (caseRe.test(nm) && !strapRe.test(nm)) return;
+    if (caseRe.test(nm) && !strapRe.test(nm)) {
+      caseMeshes.push(o);
+      return;
+    }
     const box = new THREE.Box3().setFromObject(o);
     const c = new THREE.Vector3();
     box.getCenter(c);
     glbScene.worldToLocal(c);
     const radial = Math.hypot(c.x, c.y);
     const lateralX = Math.abs(c.x);
-    if (radial >= ringR * 0.66 || lateralX > maxSz * 0.11) strapMeshes.push(o);
+    /** Heurística geométrica para GLBs sem naming explícito.
+     *  Regra conservadora (não quebrar comportamento anterior):
+     *    • Mesh longe do eixo (≥ 66% ringR) OU muito lateral (> 11% bbox): PULSEIRA.
+     *    • Demais meshes NÃO classificadas ficam sem grupo (atribuídas à cena
+     *      geral, continuam a receber apenas `adaptMul` global). Só metemos
+     *      um mesh no `caseGroup` quando o nome o identifica claramente —
+     *      evitar falsos positivos (ex. uma "lug" sem nome a ser tratada
+     *      como mostrador faria a lug crescer em pulsos finos). */
+    if (radial >= ringR * 0.66 || lateralX > maxSz * 0.11) {
+      strapMeshes.push(o);
+    }
   });
-  if (strapMeshes.length === 0) {
+  if (strapMeshes.length === 0 && caseMeshes.length === 0) {
     if (debug) {
-      console.debug("[omafit-ar] strap biometric: sem meshes de correia (heurística+nomes).");
+      console.debug(
+        "[omafit-ar] watch biometric: sem meshes (heurística+nomes).",
+      );
     }
     return null;
   }
-  const pivot = new THREE.Vector3();
-  for (const m of strapMeshes) {
-    const box = new THREE.Box3().setFromObject(m);
-    const c = new THREE.Vector3();
-    box.getCenter(c);
-    glbScene.worldToLocal(c);
-    pivot.add(c);
+  let strapGroup = null;
+  if (strapMeshes.length > 0) {
+    const pivot = new THREE.Vector3();
+    for (const m of strapMeshes) {
+      const box = new THREE.Box3().setFromObject(m);
+      const c = new THREE.Vector3();
+      box.getCenter(c);
+      glbScene.worldToLocal(c);
+      pivot.add(c);
+    }
+    pivot.multiplyScalar(1 / strapMeshes.length);
+    /** Pivô no plano perpendicular ao eixo do braço (+Z): centro médio da correia, z→0. */
+    pivot.z = 0;
+    strapGroup = new THREE.Group();
+    strapGroup.name = "omafit_strap_biometric_radial";
+    strapGroup.position.copy(pivot);
+    glbScene.add(strapGroup);
+    for (const m of strapMeshes) {
+      strapGroup.attach(m);
+    }
   }
-  pivot.multiplyScalar(1 / strapMeshes.length);
-  /** Pivô no plano perpendicular ao eixo do braço (+Z): centro médio da correia, z→0. */
-  pivot.z = 0;
-  const strapGroup = new THREE.Group();
-  strapGroup.name = "omafit_strap_biometric_radial";
-  strapGroup.position.copy(pivot);
-  glbScene.add(strapGroup);
-  for (const m of strapMeshes) {
-    strapGroup.attach(m);
+  let caseGroup = null;
+  if (caseMeshes.length > 0) {
+    caseGroup = new THREE.Group();
+    caseGroup.name = "omafit_case_dial_rigid";
+    /** Pivô no eixo do braço (0,0,0 após fit centering). Mantém mostrador
+     *  invariante a adaptMul: size E position em metros-mundo ficam iguais
+     *  ao design original quando caseGroup.scale = 1/adaptMul. */
+    caseGroup.position.set(0, 0, 0);
+    glbScene.add(caseGroup);
+    for (const m of caseMeshes) {
+      caseGroup.attach(m);
+    }
   }
   if (debug) {
-    console.log("[omafit-ar] strap biometric group", {
+    console.log("[omafit-ar] watch biometric groups", {
       strapMeshCount: strapMeshes.length,
-      pivot: pivot.toArray(),
+      caseMeshCount: caseMeshes.length,
       ringR_mm: (ringR * 1000).toFixed(1),
     });
   }
-  return strapGroup;
+  return {
+    strap: strapGroup,
+    caseDial: caseGroup,
+    strapCount: strapMeshes.length,
+    caseCount: caseMeshes.length,
+  };
 }
 
 /**
@@ -3388,6 +3484,9 @@ async function runArSession({
           faceOccluderMesh.material = createOmafitFaceDepthOccluderMaterial(THREE);
           faceOccluderMesh.visible = true;
           faceOccluderMesh.renderOrder = -80;
+          // MindAR FaceGeometry atualiza vértices sem recalcular boundingSphere — com
+          // frustumCulled=true a malha pode ser culled incorrectamente e falhar oclusão.
+          faceOccluderMesh.frustumCulled = false;
           mindarThree.scene.add(faceOccluderMesh);
         } catch (e) {
           console.warn("[omafit-ar] face depth occluder:", e?.message || e);
@@ -3407,6 +3506,8 @@ async function runArSession({
           templeOccR.name = "omafit-ar-temple-depth-R";
           templeOccL.renderOrder = -79;
           templeOccR.renderOrder = -79;
+          templeOccL.frustumCulled = false;
+          templeOccR.frustumCulled = false;
           faceOccluderMesh.add(templeOccL);
           faceOccluderMesh.add(templeOccR);
         } catch (e) {
@@ -3420,6 +3521,7 @@ async function runArSession({
           neckOccluderMesh = new THREE.Mesh(ng, createOmafitFaceDepthOccluderMaterial(THREE));
           neckOccluderMesh.name = "omafit-ar-neck-depth-occluder";
           neckOccluderMesh.renderOrder = -77;
+          neckOccluderMesh.frustumCulled = false;
           anchor.group.add(neckOccluderMesh);
         } catch (e) {
           console.warn("[omafit-ar] neck depth occluder:", e?.message || e);
@@ -3543,9 +3645,10 @@ async function runArSession({
      *    mesh ao próprio geometry (clonado para não mutar o cache do GLTF
      *    se for reutilizado) e depois resetar todas as transformações
      *    locais para identity. O resultado: cada mesh está no frame do
-     *    MUNDO, com +X=direita, +Y=cima, +Z=frente das lentes, e a
-     *    Euler YXZ do `calibRot` sempre corresponde aos eixos visuais
-     *    esperados (rz = roll puro, ry = yaw puro, rx = pitch puro).
+     *    MUNDO. O eixo “frente das lentes” no ficheiro pode ser +Y (glTF
+     *    típico); `omafitApplyGlassesMindarBindFix` alinha com a âncora MindAR
+     *    (+Z para a câmara). A Euler do `calibRot` continua a ser pitch/yaw/roll
+     *    em eixos mundo (ver preview admin).
      *
      *    Skinned meshes e morph targets não são bakeáveis deste modo
      *    (destruir-se-ia a correspondência com o esqueleto). Saltamos
@@ -3586,6 +3689,61 @@ async function runArSession({
     }
     glasses.position.sub(center);
 
+    /** Calibração do lojista (metafield / data-attrs). Lida antes do bind
+     *  MindAR para saber se cal=0,0,0 e podemos aplicar correcção de eixo. */
+    const calRotDeg = parseEulerDegComponents(
+      cfgAttr("arCanonicalFixYxz", "0, 0, 0"),
+      0, 0, 0,
+    );
+    const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
+
+    /**
+     * Eixo da “largura” do óculos na bbox pós-bake: MindAR escala a largura
+     * da cara ao longo do maior de X ou Z no plano transversal. Escalar só X
+     * quando a armação está alongada em Z distorce (parece rotação errada).
+     */
+    const glassesFaceWideAxisX = sz.x >= sz.z;
+
+    if (accessoryType === "glasses") {
+      const rawBind = String(cfgAttr("arGlassesMindarBindFix", "") || "").trim();
+      const rb = rawBind.toLowerCase();
+      let bx = 0;
+      let by = 0;
+      let bz = 0;
+      let applyBind = false;
+      if (!rb || rb === "auto") {
+        const sumCal =
+          Math.abs(calRotDeg.x) +
+          Math.abs(calRotDeg.y) +
+          Math.abs(calRotDeg.z);
+        if (sumCal < 1e-6) {
+          applyBind = true;
+          /** glTF +Y frente → âncora +Z; 180 Z corrige inversão lateral típica. */
+          bx = -90;
+          by = 0;
+          bz = 180;
+        }
+      } else if (!/^(0|none|off|false|identity)$/.test(rb)) {
+        const p = parseEulerDegComponents(rawBind, 0, 0, 0);
+        bx = p.x;
+        by = p.y;
+        bz = p.z;
+        applyBind =
+          Math.abs(bx) > 1e-6 ||
+          Math.abs(by) > 1e-6 ||
+          Math.abs(bz) > 1e-6;
+      }
+      if (applyBind) {
+        omafitApplyGlassesMindarBindFix(THREE, glasses, bx, by, bz);
+        console.log("[omafit-ar] glasses MindAR bind fix (°)", {
+          rx: bx,
+          ry: by,
+          rz: bz,
+          mode: rawBind || "auto",
+        });
+      }
+    }
+
     /** Colar: separar corrente vs pingente para escala radial (k,1,k) sem esticar o pingente. */
     let necklacePartition = null;
     if (accessoryType === "necklace") {
@@ -3595,17 +3753,6 @@ async function runArSession({
         console.warn("[omafit-ar] necklace GLB partition:", e?.message || e);
       }
     }
-
-    /** 2) Calibração do lojista (fallback para produtos sem metafield: 0,0,0,
-     *    i.e. GLB na orientação nativa do autor). O lojista calibra visualmente
-     *    na ferramenta do admin — não há heurística "default correcto" que
-     *    funcione para todos os GLBs, porque cada autor exporta em convenções
-     *    diferentes. */
-    const calRotDeg = parseEulerDegComponents(
-      cfgAttr("arCanonicalFixYxz", "0, 0, 0"),
-      0, 0, 0,
-    );
-    const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
     /** 4) Escala base — óculos com ~1× a largura da cara (depois da multiplicação do
      *    `anchor.group.matrix` por `faceScale` ≈ largura da cara em cm).
@@ -3856,7 +4003,11 @@ async function runArSession({
               OMAFIT_FACE_CHEEK_SCALE_MIN,
               OMAFIT_FACE_CHEEK_SCALE_MAX,
             );
-            glasses.scale.set(mul * baseUnitScale, baseUnitScale, baseUnitScale);
+            if (glassesFaceWideAxisX) {
+              glasses.scale.set(mul * baseUnitScale, baseUnitScale, baseUnitScale);
+            } else {
+              glasses.scale.set(baseUnitScale, baseUnitScale, mul * baseUnitScale);
+            }
           }
           const eL = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
           const eR = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
@@ -3947,7 +4098,14 @@ async function runArSession({
               lm[OMAFIT_FACE_LM_NOSE_BRIDGE][1],
               lm[OMAFIT_FACE_LM_NOSE_BRIDGE][2],
             );
-          const chinY = cy;
+          const chLm =
+            st.lmSmoother?.get(OMAFIT_FACE_LM_CHIN) ||
+            new THREE.Vector3(
+              lm[OMAFIT_FACE_LM_CHIN][0],
+              lm[OMAFIT_FACE_LM_CHIN][1],
+              lm[OMAFIT_FACE_LM_CHIN][2],
+            );
+          const chinY = chLm.y;
           const pitchMeas = nb.y - chinY;
           if (st.necklaceSwing.headPitchNeutral === null) st.necklaceSwing.headPitchNeutral = pitchMeas;
           const headPitchDelta = pitchMeas - st.necklaceSwing.headPitchNeutral;
@@ -5328,7 +5486,15 @@ async function runHandArSession({
   /** Sinaliza se o relógio foi geometricamente dobrado à volta dum cilindro
    *  (GLB plano detectado). Usado só para logging. */
   let didBendWatch = false;
-  /** Grupo só da correia (escala sx=sz lerped); null se não houver meshes classificadas. */
+  /**
+   * Grupos biométricos do relógio (v11.7):
+   *   `.strap`    — correia/lugs/buckle: escala (k, 1, k) que contrai XZ.
+   *   `.caseDial` — mostrador/case/crystal: escala (1/adaptMul)³ que cancela
+   *                 o encolhimento global do `adaptMul` → mostrador fica
+   *                 RÍGIDO em metros-mundo (tamanho E posição do design).
+   * `null` se `setupWatchStrapBiometricGroup` não conseguir isolar nenhuma
+   * mesh por nomes/heurística (fallback: comportamento antigo via vertex deform).
+   */
   let watchStrapRadial = null;
   /** Malha única: deformação por vértice (alternativa ao grupo correia). */
   let watchVertexDeform = null;
@@ -5957,13 +6123,42 @@ async function runHandArSession({
       glbRoot.scale.setScalar(baseScale * userMul * adaptMul);
 
       /**
+       * === MOSTRADOR / CASE RÍGIDO EM PULSOS FINOS (v11.7) ===
+       *
+       * Em pulsos finos (18–22 mm vs 26 mm default), `adaptMul` ≈ 0.70–0.85
+       * encolhe TODO o GLB. Isto é desejável para a correia (abraça o pulso)
+       * mas DESASTROSO para o mostrador — um dial de 40 mm passa a parecer
+       * um relógio de criança (28 mm). Solução: grupo `caseDial` com pivô
+       * no eixo do braço (0,0,0) e escala `1/adaptMul` — `glbRoot.scale ×
+       * caseDial.scale = su × adaptMul × (1/adaptMul) = su`. Mostrador fica
+       * RÍGIDO em metros-mundo, posição e dimensão idênticas ao design
+       * original, independentemente do pulso. A correia continua a contrair.
+       *
+       * Nota: em GLB single-mesh (sem grupos), o `watchVertexDeform` já
+       * preserva o núcleo do mostrador via peso `wDial` na deformação
+       * vertex-based, portanto não precisa de correcção separada.
+       */
+      if (accessoryType === "watch" && watchStrapRadial?.caseDial) {
+        const invAdapt =
+          Number.isFinite(adaptMul) && adaptMul > 1e-4 ? 1 / adaptMul : 1;
+        watchStrapRadial.caseDial.scale.setScalar(invAdapt);
+      }
+
+      /**
        * === Correia relógio / pulseira elos: escala biométrica radial (k em sx,sz) ===
        * Bangle: só adaptMul global acima; elos: grupo ou vértices com espessura preservada.
+       *
+       * v11.7: targetK deriva AMBOS de (a) ratio anatómico knuckle-span e
+       * (b) alvo em espaço-mundo `(wristR + gap) / (innerR_default_world)`.
+       * Usamos o MÍNIMO dos dois — quem pede mais contração vence. Isto
+       * resolve o caso "flutuando" onde o ratio knuckle-span era suave (~0.88)
+       * mas o pulso real era tão fino que só a fórmula espaço-mundo conseguia
+       * produzir contração suficiente (~0.70).
        */
       if (
         localInnerR > 1e-6 &&
         ((accessoryType === "watch" &&
-          (watchStrapRadial || watchVertexDeform)) ||
+          (watchStrapRadial?.strap || watchVertexDeform)) ||
           (accessoryType === "bracelet" &&
             !braceletIsBangle &&
             (braceletLinkRadial || braceletVertexDeform)))
@@ -5971,23 +6166,36 @@ async function runHandArSession({
         const su = baseScale * userMul * adaptMul;
         const spanRatio =
           handKnuckleSpan / Math.max(1e-6, OMAFIT_BASE_KNUCKLE_SPAN_M);
-        let targetK = THREE.MathUtils.clamp(
+        /** Prior anatómico: span knuckles tem correlação ~0.9 com largura pulso. */
+        const kFromSpan = THREE.MathUtils.clamp(
           spanRatio * 0.88 + 0.12,
-          0.72,
-          1,
+          0.55,
+          1.02,
         );
+        /**
+         * Alvo em espaço-mundo: a superfície INTERNA da correia (após `su` +
+         * `k`) deve ficar a `smoothWristRadius + 0.25 × gap` do eixo do braço.
+         * Com `adaptMul` já aplicado, este ratio é ~1 em pulsos médios e
+         * cai < 1 só se `smoothWristR` for ainda menor que o default −
+         * nesse caso forçamos mais contração (pulso muito fino onde o
+         * próprio `adaptMul` já atingiu o limite inferior do tracker).
+         */
         const gapM =
           accessoryType === "bracelet"
             ? OMAFIT_BRACELET_WRIST_GAP_M
             : OMAFIT_WATCH_WRIST_GAP_M;
         const rTarget = smoothWristRadius + gapM * 0.25;
-        const kFloor = rTarget / Math.max(1e-6, localInnerR * su * 0.985);
+        const kFromWorld =
+          rTarget / Math.max(1e-6, localInnerR * su * 0.985);
+        /** kFloor protege contra clipping (correia NÃO pode entrar dentro do occluder). */
+        const kFloor = kFromWorld;
+        let targetK = Math.min(kFromSpan, 1);
         targetK = THREE.MathUtils.clamp(targetK, kFloor, 1);
         const aStr =
           1 - Math.exp(-clampDt / OMAFIT_WATCH_STRAP_BIOMETRIC_TAU_MS);
         smoothedStrapK = THREE.MathUtils.lerp(smoothedStrapK, targetK, aStr);
-        if (watchStrapRadial) {
-          watchStrapRadial.scale.set(smoothedStrapK, 1, smoothedStrapK);
+        if (watchStrapRadial?.strap) {
+          watchStrapRadial.strap.scale.set(smoothedStrapK, 1, smoothedStrapK);
         }
         if (watchVertexDeform) {
           applyWatchSingleMeshStrapVertexDeform(
@@ -6031,7 +6239,11 @@ async function runHandArSession({
       const adaptMul =
         (smoothWristRadius + gapOffset) /
         (OMAFIT_DEFAULT_WRIST_R_M + gapOffset);
-      console.debug("[omafit-ar] hand anchor v11.4", {
+      const caseRigidK =
+        accessoryType === "watch" && watchStrapRadial?.caseDial
+          ? 1 / Math.max(1e-4, adaptMul)
+          : null;
+      console.debug("[omafit-ar] hand anchor v11.7", {
         hand: handLabel || "?",
         handScore: (lastHandScore || 0).toFixed(2),
         anchor: "w0 (wrist)",
@@ -6059,12 +6271,17 @@ async function runHandArSession({
         zDist: zDist.toFixed(3),
         Yz: tmpY.z.toFixed(3),
         strapBiometricK:
-          watchStrapRadial ||
+          watchStrapRadial?.strap ||
           watchVertexDeform ||
           braceletLinkRadial ||
           braceletVertexDeform
             ? smoothedStrapK.toFixed(4)
             : null,
+        /** Escala inversa aplicada ao mostrador (deve ficar ≈ 1/adaptScale).
+         *  Null significa: GLB não tem grupo `caseDial` identificável — o
+         *  mostrador encolhe com adaptMul (fallback v11.6 para GLBs sem
+         *  naming convention ou para single-mesh com vertex deform). */
+        caseRigidK: caseRigidK != null ? caseRigidK.toFixed(3) : null,
         strapVertexDeform: Boolean(watchVertexDeform),
         braceletBangle: accessoryType === "bracelet" ? braceletIsBangle : null,
         braceletSlide_mm:
@@ -6153,8 +6370,11 @@ async function runHandArSession({
         smoothInitialized = false;
         smoothOccluderInitialized = false;
         smoothedStrapK = 1;
-        if (watchStrapRadial) {
-          watchStrapRadial.scale.set(1, 1, 1);
+        if (watchStrapRadial?.strap) {
+          watchStrapRadial.strap.scale.set(1, 1, 1);
+        }
+        if (watchStrapRadial?.caseDial) {
+          watchStrapRadial.caseDial.scale.setScalar(1);
         }
         if (watchVertexDeform) {
           applyWatchSingleMeshStrapVertexDeform(THREE, watchVertexDeform, 1);

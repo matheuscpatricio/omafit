@@ -190,7 +190,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bbox-bind-warmup-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-bind-ry180-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -296,41 +296,26 @@ const Z_SHELL = 2147483640;
  * O callback `onDone({ baked, skipped })` recebe contadores para debug.
  */
 /**
- * Bbox **após** `bakeGLBTransforms` + centragem: alinha ao critério de
- * `ar-eyewear-glb-canonicalize.mjs` (largura X dominante, Y fino, Z profundidade).
- * Nesses GLBs a frente das lentes já está ~paralela a +Z (âncora MindAR); o
- * bind clássico Rx(-90) (“+Y glTF → +Z”) **inverte** o modelo (efeito “de
- * cabeça pra baixo” / rotação errada).
- *
- * @param {{ x: number, y: number, z: number }} sz
- */
-function omafitGlassesBboxLooksZForwardEyewear(sz) {
-  if (!sz) return false;
-  const x = Number(sz.x);
-  const y = Number(sz.y);
-  const z = Number(sz.z);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
-  const minXZ = Math.min(x, z);
-  if (minXZ < 1e-9) return false;
-  if (y > minXZ * 0.52) return false;
-  if (x < z * 0.72) return false;
-  if (z < y * 1.12) return false;
-  return true;
-}
-
-/**
  * MindAR `getLandmarkMatrix` usa o mesmo `faceMatrix` que a malha facial
  * canónica: o eixo “para fora do rosto / câmara” alinha com **+Z local** da
- * âncora. Muitos GLB (Tripo, Meshy, export Blender Y-up) modelam a frente das
- * lentes ao longo de **+Y**. Com calibração 0,0,0 isso aparece como óculos
- * de lado ou invertidos. Esta correcção aplica rotações em **eixos mundo**
- * (Y→X→Z, igual ao `calibRot` do admin) **só** na malha `glasses`, antes do
- * lojista afinar `arCanonicalFixYxz`.
+ * âncora (espaço Three.js após `diag(1,-1,-1)·[R|t]` aplicado ao `rvec`
+ * OpenCV — ver `mind-ar@1.2.5/controller`). `+Y` âncora = cima do rosto.
  *
- * Override: `data-ar-glasses-mindar-bind-fix="rx,ry,rz"` em graus (ex.
- * `-90,0,0`). Use `none` / `0` para desligar. Vazio + calib ~0 no DOM → auto
- * via `omafitGlassesBboxLooksZForwardEyewear(sz)` (sem bind se já +Z) ou
- * (-90,0,180) para glTF típico (+Y frente).
+ * **GLB canonicalizado Omafit** (`workers/ar-eyewear-tripo/postprocess.py`
+ *  + `shared/ar-eyewear-glb-canonicalize.mjs`): `+X` largura (hastes),
+ *  `+Y` topo do aro, `+Z` **atrás** da cabeça (temple tips em +Z).
+ *
+ * ⇒ a **frente das lentes está em `-Z` GLB**. Para alinhar com âncora
+ *    (`+Z` = para fora do rosto / para a câmara) precisamos de **`Ry(180)`**
+ *    (inverte +X e +Z; óculos simétricos em X ⇒ sem artefacto visível).
+ *
+ * Binds legacy (como `Rx(-90)+Rz(180)`) compõem para uma rotação em torno
+ * de `(0, 1, 1)/√2`, que deixa o aro a apontar para a câmara e as pontas
+ * das hastes apontadas para o tecto — reportado como “virado pra direita
+ * e de cabeça pra baixo”.
+ *
+ * Override: `data-ar-glasses-mindar-bind-fix="rx,ry,rz"` em graus.
+ * Use `none` / `0` para desligar. Vazio / `auto` + calib ~0 → `Ry(180)`.
  */
 function omafitApplyGlassesMindarBindFix(THREE, glasses, bindRxDeg, bindRyDeg, bindRzDeg) {
   if (!glasses || !THREE) return;
@@ -3747,15 +3732,16 @@ async function runArSession({
           Math.abs(calRotDeg.y) +
           Math.abs(calRotDeg.z);
         if (sumCal < 1e-6) {
-          if (omafitGlassesBboxLooksZForwardEyewear(sz)) {
-            applyBind = false;
-          } else {
-            applyBind = true;
-            /** glTF +Y frente → âncora +Z; 180 Z corrige inversão lateral típica. */
-            bx = -90;
-            by = 0;
-            bz = 180;
-          }
+          /**
+           * GLB canonical Omafit: `+Z` = atrás da cabeça (pontas das hastes).
+           * Âncora MindAR: `+Z` = para fora do rosto (para a câmara).
+           * `Ry(180)` inverte X e Z → frente das lentes (`-Z` GLB) para `+Z`
+           * âncora, X simétrico (hastes iguais). Ver comentário acima.
+           */
+          applyBind = true;
+          bx = 0;
+          by = 180;
+          bz = 0;
         }
       } else if (!/^(0|none|off|false|identity)$/.test(rb)) {
         const p = parseEulerDegComponents(rawBind, 0, 0, 0);
@@ -3774,17 +3760,8 @@ async function runArSession({
           ry: by,
           rz: bz,
           mode: rawBind || "auto",
+          sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
         });
-      } else if ((!rb || rb === "auto") && accessoryType === "glasses") {
-        const sumCal =
-          Math.abs(calRotDeg.x) +
-          Math.abs(calRotDeg.y) +
-          Math.abs(calRotDeg.z);
-        if (sumCal < 1e-6 && omafitGlassesBboxLooksZForwardEyewear(sz)) {
-          console.log("[omafit-ar] glasses MindAR bind skipped (bbox looks Z-forward)", {
-            sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
-          });
-        }
       }
     }
 

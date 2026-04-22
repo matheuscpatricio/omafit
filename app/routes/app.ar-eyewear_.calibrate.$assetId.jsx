@@ -1069,6 +1069,36 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                 baseScale = PREVIEW_WORLD_MAX_DIM_FACE / Math.max(maxDim, 1e-4);
               }
               root.scale.setScalar(baseScale);
+
+              /**
+               * Bind canonical Omafit → âncora MindAR (óculos).
+               *
+               * O pipeline `workers/ar-eyewear-tripo/postprocess.py` +
+               * `shared/ar-eyewear-glb-canonicalize.mjs` coloca:
+               *   +X = largura (hastes), +Y = cima, +Z = ATRÁS (pontas das
+               *   hastes em +Z, frente das lentes em -Z).
+               *
+               * A câmara deste preview olha -Z (sentada em +Z) e no widget
+               * AR o MindAR entrega a âncora no espaço Three em que +Z =
+               * "para fora do rosto / para a câmara". Em ambos os contextos
+               * precisamos virar o GLB 180° em Y para que a frente das
+               * lentes aponte para a câmara (sem isto o lojista calibra
+               * vendo a TRASEIRA do óculos e os valores deixam de bater
+               * com o AR — era esta a raiz do reporte "virado pra direita
+               * / de cabeça pra baixo" no live).
+               *
+               * Óculos são simétricos em X, portanto inverter X (efeito
+               * colateral de Ry(180)) é invisível. Este bind é **sempre**
+               * aplicado em auto; se o lojista precisar doutra orientação
+               * base, pode compensar com os sliders de rotação.
+               */
+              if (accessoryType === "glasses") {
+                root.rotation.set(0, 0, 0);
+                root.quaternion.identity();
+                root.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI);
+                root.updateMatrixWorld(true);
+              }
+
               s.model = root;
               s.size = size.clone().multiplyScalar(baseScale);
               s.baseScale = baseScale;

@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-offset-sliders-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-face-occlusion-stick-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -211,8 +211,8 @@ const OMAFIT_MINDAR_GLASSES_FILTER_BETA = 0.92;
 
 /** Suavização extra (pós One Euro do MindAR) — interpolação de matriz âncora/malha facial. */
 const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH = 0.2;
-/** Óculos: lambda menor → menos correção por frame → âncora + malha 468 mais estáveis. */
-const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_GLASSES = 0.12;
+/** Óculos: λ maior → segue mais de perto a âncora MindAR (mais “colado”); λ menor → mais estável. */
+const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH_GLASSES = 0.18;
 /** EMA nos marcos 168/33/263/234/454 (ms) — legado; óculos usam One Euro (abaixo). */
 const OMAFIT_FACE_LANDMARK_EMA_TAU_MS = 68;
 /**
@@ -1433,8 +1433,9 @@ function omafitPlaceTempleDepthOccluder(THREE, mesh, noseLm, earLm) {
   dx /= len;
   dy /= len;
   dz /= len;
-  const push = 0.58;
-  mesh.position.set(ex + dx * push, ey + dy * 0.1, ez + dz * push);
+  /** Mais próximo do contorno temporal → melhor oclusão depth com a pele. */
+  const push = 0.48;
+  mesh.position.set(ex + dx * push, ey + dy * 0.06, ez + dz * push);
   const dir = new THREE.Vector3(dx, dy, dz);
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
 }
@@ -1449,6 +1450,10 @@ function createOmafitFaceDepthOccluderMaterial(THREE) {
   m.colorWrite = false;
   m.depthWrite = true;
   m.depthTest = true;
+  /** Reduz z-fighting com lentes/hastes quando o GLB encosta na malha 468. */
+  m.polygonOffset = true;
+  m.polygonOffsetFactor = 1;
+  m.polygonOffsetUnits = 1;
   return m;
 }
 
@@ -4235,7 +4240,17 @@ async function runArSession({
       cfgAttr("arCanonicalFixYxz", "0, 0, 0"),
       0, 0, 0,
     );
-    const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
+    /** Z ligeiramente negativo aproxima a armação da pele (âncora ~largura da cara). Override: `data-ar-mindar-wear-position`. */
+    const wearPosM = parseXyzMeters(
+      cfgAttr("arMindarWearPosition", accessoryType === "glasses" ? "0 0 -0.016" : ""),
+      0,
+      0,
+      0,
+    );
+    const anatomyYawDeg = Number(String(cfgAttr("arGlassesAnatomyYawDeg", "0")).trim());
+    const anatomyYawRad = Number.isFinite(anatomyYawDeg)
+      ? (anatomyYawDeg * Math.PI) / 180
+      : 0;
 
     /**
      * Contentor de orientação: quando activo (default para óculos), o GLB
@@ -4488,6 +4503,9 @@ async function runArSession({
     const glassesAnatomy = new GroupCtor();
     glassesAnatomy.name =
       accessoryType === "necklace" ? "omafit-ar-necklace-anatomy" : "omafit-ar-glasses-anatomy";
+    if (accessoryType === "glasses") {
+      glassesAnatomy.rotation.order = "YXZ";
+    }
     /** Pai lógico sob `wearPosition` — a matriz de tracking continua em `anchor.group`. */
     const faceParentGroup = new GroupCtor();
     faceParentGroup.name = "omafit-ar-face-parent";
@@ -4859,14 +4877,15 @@ async function runArSession({
           if (!st.eyeNeutralReady) {
             st.eyeNeutralWarmupSum += atan;
             st.eyeNeutralWarmupN += 1;
-            if (st.eyeNeutralWarmupN >= 12) {
+            if (st.eyeNeutralWarmupN >= 20) {
               st.eyeNeutralAtan = st.eyeNeutralWarmupSum / st.eyeNeutralWarmupN;
               st.eyeNeutralReady = true;
             }
           }
           const neutral = st.eyeNeutralReady ? st.eyeNeutralAtan : atan;
-          const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.52, -0.1, 0.1);
-          st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.26);
+          const rawTilt = THREE.MathUtils.clamp((atan - neutral) * 0.4, -0.08, 0.08);
+          st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.2);
+          glassesAnatomy.rotation.y = anatomyYawRad;
           glassesAnatomy.rotation.z = st.eyeTiltSmoothed;
         }
         if (accessoryType === "necklace" && st.necklaceSwing) {

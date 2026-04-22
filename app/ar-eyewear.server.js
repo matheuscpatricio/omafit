@@ -1432,6 +1432,20 @@ async function resolveTripoImageUrlBeforeFal(imageUrl) {
   return { imageUrl: out, prepared: true, rotDeg: rot };
 }
 
+/**
+ * A `canonicalizeArEyewearGlbBuffer` reorienta o GLB só pela **malha** (bbox / heurísticas),
+ * sem saber da foto — pode “anular” o efeito de rodar a imagem antes do Tripo.
+ * Modo **auto** (padrão): se a imagem foi preparada (`sharp` + fal.storage), **não**
+ * canonicalizar, para o GLB reflectir melhor o output do Tripo com essa entrada.
+ * `always` = sempre canonicalizar; `never` = nunca.
+ */
+function shouldCanonicalizeTripoGlb(inputImagePrepared) {
+  const mode = String(process.env.FAL_TRIPO_CANONICALIZE || "auto").trim().toLowerCase();
+  if (/^(never|0|false|no|off)$/.test(mode)) return false;
+  if (/^(always|1|true|yes|on|force)$/.test(mode)) return true;
+  return !inputImagePrepared;
+}
+
 function* walkStrings(node) {
   if (typeof node === "string") {
     yield node;
@@ -1554,11 +1568,19 @@ export async function generateGlbDraftViaFal({
   if (glbBuf.length < 1000) {
     throw new Error("GLB retornado pela FAL parece inválido (muito pequeno)");
   }
-  // Igual ao worker (`postprocess.py` após FAL): normaliza eixos para o provador AR (largura X, fino Y).
-  try {
-    glbBuf = await canonicalizeArEyewearGlbBuffer(glbBuf);
-  } catch (e) {
-    console.warn("[ar-eyewear] canonicalize GLB (FAL) ignorado:", e?.message || e);
+  const runCanon = shouldCanonicalizeTripoGlb(prepared.prepared);
+  if (!runCanon) {
+    console.log(
+      "[ar-eyewear] GLB canonicalize omitido (FAL_TRIPO_CANONICALIZE=auto e imagem de entrada preparada). " +
+        "Use FAL_TRIPO_CANONICALIZE=always para forçar.",
+    );
+  } else {
+    // Igual ao worker (`postprocess.py` após FAL): normaliza eixos para o provador AR (largura X, fino Y).
+    try {
+      glbBuf = Buffer.from(await canonicalizeArEyewearGlbBuffer(glbBuf));
+    } catch (e) {
+      console.warn("[ar-eyewear] canonicalize GLB (FAL) ignorado:", e?.message || e);
+    }
   }
   const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
   const uploaded = await storageUpload("ar-eyewear-glb", storagePath, glbBuf, "model/gltf-binary");

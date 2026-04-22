@@ -159,7 +159,20 @@ async function resolveTripoImageUrlBeforeFal(imageUrl: string): Promise<{
   return { imageUrl: out, prepared: true, rotDeg: rot };
 }
 
-async function callFalAndGetGlbUrl(imageUrl: string) {
+/** Ver `shouldCanonicalizeTripoGlb` em `app/ar-eyewear.server.js`. */
+function shouldCanonicalizeTripoGlb(inputImagePrepared: boolean): boolean {
+  const mode = env("FAL_TRIPO_CANONICALIZE", "auto").toLowerCase();
+  if (/^(never|0|false|no|off)$/.test(mode)) return false;
+  if (/^(always|1|true|yes|on|force)$/.test(mode)) return true;
+  return !inputImagePrepared;
+}
+
+async function callFalAndGetGlbUrl(imageUrl: string): Promise<{
+  requestId: string;
+  glbUrl: string;
+  logs: string[];
+  inputImagePrepared: boolean;
+}> {
   const falKey = env("FAL_API_KEY");
   if (!falKey) throw new Error("FAL_API_KEY não configurada na Edge Function");
   const modelId = env("FAL_MODEL_ID", "tripo3d/tripo/v2.5/image-to-3d").replace(/^\/+|\/+$/g, "");
@@ -207,7 +220,7 @@ async function callFalAndGetGlbUrl(imageUrl: string) {
   const requestId = String(result?.requestId || "").trim();
   if (!requestId) throw new Error("FAL sem requestId no resultado do cliente");
 
-  return { requestId, glbUrl, logs };
+  return { requestId, glbUrl, logs, inputImagePrepared: prepared.prepared };
 }
 
 Deno.serve(async (req: Request) => {
@@ -248,16 +261,23 @@ Deno.serve(async (req: Request) => {
       })
       .eq("id", assetId);
 
-    const { requestId, glbUrl, logs } = await callFalAndGetGlbUrl(imageUrl);
+    const { requestId, glbUrl, logs, inputImagePrepared } = await callFalAndGetGlbUrl(imageUrl);
 
     const glbRes = await fetch(glbUrl);
     if (!glbRes.ok) throw new Error(`Download GLB FAL falhou: ${glbRes.status}`);
     let glbBytes = new Uint8Array(await glbRes.arrayBuffer());
     if (glbBytes.byteLength < 1000) throw new Error("GLB FAL inválido (muito pequeno)");
-    try {
-      glbBytes = await canonicalizeArEyewearGlbBuffer(glbBytes);
-    } catch (canonErr) {
-      console.warn("[ar-eyewear-generate] canonicalize GLB ignorado:", String((canonErr as Error)?.message || canonErr));
+    const runCanon = shouldCanonicalizeTripoGlb(inputImagePrepared);
+    if (!runCanon) {
+      console.log(
+        "[ar-eyewear-generate] GLB canonicalize omitido (FAL_TRIPO_CANONICALIZE=auto e imagem preparada). Use always para forçar.",
+      );
+    } else {
+      try {
+        glbBytes = await canonicalizeArEyewearGlbBuffer(glbBytes);
+      } catch (canonErr) {
+        console.warn("[ar-eyewear-generate] canonicalize GLB ignorado:", String((canonErr as Error)?.message || canonErr));
+      }
     }
 
     const path = `${String(row.shop_domain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;

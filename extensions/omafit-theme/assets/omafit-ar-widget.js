@@ -1,3 +1,4 @@
+import { applyGlassesAutoBind } from "./omafit-glasses-orient.js";
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
  * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js).
@@ -190,7 +191,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-face-basis-5lm-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-orient-js-asset-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -382,6 +383,8 @@ function normalizeGlassesModel(THREE, glasses, opts) {
   const maxDim = Math.max(sizeBbox.x, sizeBbox.y, sizeBbox.z, 1e-6);
   return { sizeBbox, maxDim };
 }
+
+/** @see `omafit-glasses-orient.js` (detecção de eixos, rim top/bottom, quaternion de bind) */
 
 function bakeGLBTransforms(THREE, root, onDone) {
   if (!root || typeof root.traverse !== "function") return;
@@ -3829,15 +3832,22 @@ async function runArSession({
     const wearPosM = parseXyzMeters(cfgAttr("arMindarWearPosition", ""), 0, 0, 0);
 
     /**
-     * Eixo da “largura” do óculos na bbox pós-bake: MindAR escala a largura
-     * da cara ao longo do maior de X ou Z no plano transversal. Escalar só X
-     * quando a armação está alongada em Z distorce (parece rotação errada).
+     * Eixo da “largura” do óculos no plano transversal: MindAR aplica
+     * escala bochecha→largura no maior de X local vs Z local. A heurística
+     * de profundidade (`omafit-glasses-orient.js`) roda a seguir, logo
+     * recalculamos a decisão pós-bind (não a bbox pré-rotatória).
      */
-    const glassesFaceWideAxisX = sz.x >= sz.z;
+    let glassesFaceWideAxisX = sz.x >= sz.z;
 
     if (accessoryType === "glasses") {
       const rawBind = String(cfgAttr("arGlassesMindarBindFix", "") || "").trim();
       const rb = rawBind.toLowerCase();
+      const autoAttr = String(
+        cfgAttr("arGlassesAutoDepthAxis", "1"),
+      ).trim().toLowerCase();
+      const useAutoDepthAxis = !/^(0|off|false|no|legacy|ry180|manual)$/.test(
+        autoAttr,
+      );
       let bx = 0;
       let by = 0;
       let bz = 0;
@@ -3848,16 +3858,53 @@ async function runArSession({
           Math.abs(calRotDeg.y) +
           Math.abs(calRotDeg.z);
         if (sumCal < 1e-6) {
-          /**
-           * GLB canonical Omafit: `+Z` = atrás da cabeça (pontas das hastes).
-           * Âncora MindAR: `+Z` = para fora do rosto (para a câmara).
-           * `Ry(180)` inverte X e Z → frente das lentes (`-Z` GLB) para `+Z`
-           * âncora, X simétrico (hastes iguais). Ver comentário acima.
-           */
-          applyBind = true;
-          bx = 0;
-          by = 180;
-          bz = 0;
+          let auto = null;
+          if (useAutoDepthAxis) {
+            try {
+              auto = applyGlassesAutoBind(THREE, glasses);
+            } catch (e) {
+              console.warn("[omafit-ar] glasses auto depth-axis falhou", e?.message || e);
+            }
+          }
+          if (auto) {
+            const { signs } = auto;
+            const szPost = new THREE.Vector3();
+            new THREE.Box3().setFromObject(glasses).getSize(szPost);
+            glassesFaceWideAxisX = szPost.x >= szPost.z;
+            console.log("[omafit-ar] glasses auto depth-axis bind", {
+              widthAxis: auto.detected?.widthAxisIdx,
+              heightAxis: auto.detected?.heightAxisIdx,
+              depthAxis: auto.detected?.depthAxisIdx,
+              depthFrontSign: auto.detected?.depthFrontSign,
+              rimHeightSign: auto.rimHeightSign,
+              widthSign: signs?.widthSign,
+              flippedWidthForRotation: signs?.flippedWidthForRotation,
+              confidence: auto.detected?.confidence,
+              sizeBboxPre: { x: sz.x, y: sz.y, z: sz.z },
+              sizeBboxPost: { x: szPost.x, y: szPost.y, z: szPost.z },
+            });
+          } else {
+            /**
+             * GLB Omafit canonical: frente lentes -Z, hastes +Z. Fallback
+             * quando a auto heurística rejeita (malha demasiado simétrica) ou
+             * está desligada: `Ry(180)`.
+             */
+            applyBind = true;
+            bx = 0;
+            by = 180;
+            bz = 0;
+            omafitApplyGlassesMindarBindFix(THREE, glasses, bx, by, bz);
+            const szPost = new THREE.Vector3();
+            new THREE.Box3().setFromObject(glasses).getSize(szPost);
+            glassesFaceWideAxisX = szPost.x >= szPost.z;
+            console.log("[omafit-ar] glasses MindAR bind fix fallback Ry(180) (°)", {
+              rx: bx,
+              ry: by,
+              rz: bz,
+              autoDepth: useAutoDepthAxis,
+              sizeBbox: { x: szPost.x, y: szPost.y, z: szPost.z },
+            });
+          }
         }
       } else if (!/^(0|none|off|false|identity)$/.test(rb)) {
         const p = parseEulerDegComponents(rawBind, 0, 0, 0);
@@ -3868,16 +3915,18 @@ async function runArSession({
           Math.abs(bx) > 1e-6 ||
           Math.abs(by) > 1e-6 ||
           Math.abs(bz) > 1e-6;
-      }
-      if (applyBind) {
-        omafitApplyGlassesMindarBindFix(THREE, glasses, bx, by, bz);
-        console.log("[omafit-ar] glasses MindAR bind fix (°)", {
-          rx: bx,
-          ry: by,
-          rz: bz,
-          mode: rawBind || "auto",
-          sizeBbox: { x: sz.x, y: sz.y, z: sz.z },
-        });
+        if (applyBind) {
+          omafitApplyGlassesMindarBindFix(THREE, glasses, bx, by, bz);
+          const szP = new THREE.Vector3();
+          new THREE.Box3().setFromObject(glasses).getSize(szP);
+          glassesFaceWideAxisX = szP.x >= szP.z;
+          console.log("[omafit-ar] glasses MindAR bind fix (°)", {
+            rx: bx,
+            ry: by,
+            rz: bz,
+            mode: rawBind,
+          });
+        }
       }
     }
 

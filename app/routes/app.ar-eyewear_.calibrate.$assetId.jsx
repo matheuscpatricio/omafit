@@ -47,6 +47,7 @@ import {
 } from "../ar-eyewear.server.js";
 import { useAppI18n } from "../contexts/AppI18n";
 import { getShopDomain } from "../utils/getShopDomain";
+import { applyGlassesAutoBind } from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
 
 function tryResignIfPrivate(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -1071,32 +1072,33 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               root.scale.setScalar(baseScale);
 
               /**
-               * Bind canonical Omafit → âncora MindAR (óculos).
-               *
-               * O pipeline `workers/ar-eyewear-tripo/postprocess.py` +
-               * `shared/ar-eyewear-glb-canonicalize.mjs` coloca:
-               *   +X = largura (hastes), +Y = cima, +Z = ATRÁS (pontas das
-               *   hastes em +Z, frente das lentes em -Z).
-               *
-               * A câmara deste preview olha -Z (sentada em +Z) e no widget
-               * AR o MindAR entrega a âncora no espaço Three em que +Z =
-               * "para fora do rosto / para a câmara". Em ambos os contextos
-               * precisamos virar o GLB 180° em Y para que a frente das
-               * lentes aponte para a câmara (sem isto o lojista calibra
-               * vendo a TRASEIRA do óculos e os valores deixam de bater
-               * com o AR — era esta a raiz do reporte "virado pra direita
-               * / de cabeça pra baixo" no live).
-               *
-               * Óculos são simétricos em X, portanto inverter X (efeito
-               * colateral de Ry(180)) é invisível. Este bind é **sempre**
-               * aplicado em auto; se o lojista precisar doutra orientação
-               * base, pode compensar com os sliders de rotação.
+               * Bind óculos → mesmo referencial que `omafit-ar-widget.js`:
+               * heurística em `omafit-glasses-orient.js` (eixos largura /
+               * profundidade / altura + sinal frente-trás + rim top/bottom).
+               * Fallback: `Ry(180)` (GLB canonical Omafit: lentes -Z, hastes +Z).
                */
               if (accessoryType === "glasses") {
                 root.rotation.set(0, 0, 0);
                 root.quaternion.identity();
-                root.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI);
+                let auto = null;
+                try {
+                  auto = applyGlassesAutoBind(THREE, root);
+                } catch (e) {
+                  console.warn("[omafit-calibrate] applyGlassesAutoBind:", e?.message || e);
+                }
+                if (!auto) {
+                  root.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI);
+                }
                 root.updateMatrixWorld(true);
+                if (auto) {
+                  console.log("[omafit-calibrate] glasses auto depth-axis", {
+                    widthAxis: auto.detected?.widthAxisIdx,
+                    heightAxis: auto.detected?.heightAxisIdx,
+                    depthAxis: auto.detected?.depthAxisIdx,
+                    rimHeightSign: auto.rimHeightSign,
+                    confidence: auto.detected?.confidence,
+                  });
+                }
               }
 
               s.model = root;

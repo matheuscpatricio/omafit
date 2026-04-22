@@ -314,6 +314,12 @@
       if ar_type_guess == 'watch' or ar_type_guess == 'bracelet'
         assign ar_preferred_camera = 'environment'
       endif
+
+      unless cal_present
+        if ar_type_guess == 'glasses'
+          assign cal_fix_yxz = '0, -180, -90'
+        endif
+      endunless
     -%}
     <div
       id="omafit-ar-root"

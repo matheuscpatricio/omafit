@@ -184,7 +184,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_face-depth-occluder-frustum-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-default-cal-liquid-v1";
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -299,8 +299,9 @@ const Z_SHELL = 2147483640;
  * lojista afinar `arCanonicalFixYxz`.
  *
  * Override: `data-ar-glasses-mindar-bind-fix="rx,ry,rz"` em graus (ex.
- * `-90,0,0`). Use `none` / `0` para desligar. Vazio + calib 0,0,0 → auto
- * (-90,0,180) documentado em changelog.
+ * `-90,0,0`). Use `none` / `0` para desligar. Vazio + calib ~0 no DOM → auto
+ * (-90,0,180). Na loja, óculos sem metafield usam
+ * `data-ar-canonical-fix-yxz="0, -180, -90"` (Liquid) — bind auto não corre.
  */
 function omafitApplyGlassesMindarBindFix(THREE, glasses, bindRxDeg, bindRyDeg, bindRzDeg) {
   if (!glasses || !THREE) return;

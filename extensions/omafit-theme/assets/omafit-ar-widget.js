@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_banuba-class-projection-anchor-ao-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_webcam63-ndc-wear-lock-v1";
 
 /** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
 const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
@@ -1767,6 +1767,113 @@ function omafitUpdatePrincipalShiftFromLm168(
   const lim = 0.07;
   lp.x = THREE.MathUtils.clamp(lp.x, -lim, lim);
   lp.y = THREE.MathUtils.clamp(lp.y, -lim, lim);
+}
+
+/**
+ * Raio da câmara no espaço mundo a partir de NDC (x,y) — `unproject` near/far.
+ */
+function omafitRayFromNdc(THREE, camera, ndcX, ndcY, outOrigin, outDir) {
+  camera.updateMatrixWorld(true);
+  outOrigin.set(ndcX, ndcY, -1).unproject(camera);
+  const farP = new THREE.Vector3(ndcX, ndcY, 1).unproject(camera);
+  outDir.copy(farP).sub(outOrigin).normalize();
+}
+
+/**
+ * Converte erro NDC (alvo − centro óculos) em transladação **mundo** no plano
+ * da câmara à profundidade do centro do GLB; factor “lente” `pos.x *= (1+dist*k)`
+ * em NDC horizontal; espelho selfie inverte X.
+ */
+function omafitWorldDeltaFromNdcScreenError(
+  THREE,
+  camera,
+  errNdcX,
+  errNdcY,
+  depthDist,
+  lensDistortK,
+  mirrorSelfie,
+  out,
+  right,
+  up,
+) {
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const halfH = depthDist * Math.tan(fovRad * 0.5);
+  const halfW = halfH * Math.max(0.05, camera.aspect);
+  let ex = errNdcX;
+  const distNdc = Math.min(1.35, Math.hypot(errNdcX, errNdcY));
+  ex *= 1 + distNdc * (Number(lensDistortK) || 0);
+  if (mirrorSelfie) ex = -ex;
+  right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  up.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+  out.set(0, 0, 0).addScaledVector(right, ex * halfW).addScaledVector(up, errNdcY * halfH);
+  return out;
+}
+
+/**
+ * Bloqueio de pixel: centro do GLB ↔ landmark 168 em NDC (`project` / blend
+ * com MediaPipe normalizado). Devolve delta **local da âncora** para somar a `wearPosition`.
+ */
+function omafitComputeGlassesWearNdcLockLocalDelta(
+  THREE,
+  camera,
+  anchorGroup,
+  glasses,
+  estimateResult,
+  /** @type {{ w168: any, ndc168: any, ndcGl: any, worldD: any, localD: any, qA: any, qInv: any, box: any, center: any, right: any, up: any, lensK: number, mirrorSelfie: boolean }} s */
+  s,
+  ndcBlendFromMp,
+) {
+  if (!THREE || !camera || !anchorGroup || !glasses || !s) return null;
+  camera.updateMatrixWorld(true);
+  anchorGroup.updateMatrixWorld(true);
+  glasses.updateMatrixWorld(true);
+  s.w168.set(0, 0, 0).applyMatrix4(anchorGroup.matrixWorld);
+  s.box.setFromObject(glasses);
+  s.box.getCenter(s.center);
+  s.ndc168.copy(s.w168).project(camera);
+  s.ndcGl.copy(s.center).project(camera);
+  let errX = s.ndc168.x - s.ndcGl.x;
+  let errY = s.ndc168.y - s.ndcGl.y;
+  const mp = omafitPickNormalizedLandmark168(estimateResult);
+  if (mp && ndcBlendFromMp > 1e-6) {
+    const ndcMp = omafitMediaPipeNormalizedToNdcXY(mp);
+    errX = (1 - ndcBlendFromMp) * errX + ndcBlendFromMp * (ndcMp.x - s.ndcGl.x);
+    errY = (1 - ndcBlendFromMp) * errY + ndcBlendFromMp * (ndcMp.y - s.ndcGl.y);
+  }
+  const depthDist = camera.position.distanceTo(s.center);
+  omafitWorldDeltaFromNdcScreenError(
+    THREE,
+    camera,
+    errX,
+    errY,
+    depthDist,
+    s.lensK,
+    s.mirrorSelfie,
+    s.worldD,
+    s.right,
+    s.up,
+  );
+  anchorGroup.getWorldQuaternion(s.qA);
+  s.qInv.copy(s.qA).invert();
+  s.localD.copy(s.worldD).applyQuaternion(s.qInv);
+  return s.localD;
+}
+
+/**
+ * Modo debug: alinhar centro da bbox do GLB ao mundo do landmark 168 (esfera).
+ */
+function omafitForceGlassesBboxCenterToWorldPoint(THREE, glasses, worldTarget, scratch) {
+  if (!THREE || !glasses || !worldTarget || !scratch) return;
+  glasses.updateMatrixWorld(true);
+  scratch.box.setFromObject(glasses);
+  scratch.box.getCenter(scratch.center);
+  scratch.worldD.subVectors(worldTarget, scratch.center);
+  const par = glasses.parent;
+  if (!par) return;
+  par.updateMatrixWorld(true);
+  scratch.tmp.copy(scratch.worldD);
+  par.worldToLocal(scratch.tmp);
+  glasses.position.addScaledVector(scratch.tmp, 0.62);
 }
 
 /**
@@ -3568,8 +3675,8 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
   const camera = mindarThree.camera;
   const video = mindarHost?.querySelector?.("video");
   if (!renderer || !camera) return false;
-  const vw = Math.max(0, video?.videoWidth | 0);
-  const vh = Math.max(0, video?.videoHeight | 0);
+  const vw = Math.max(0, Number(video?.videoWidth) || 0);
+  const vh = Math.max(0, Number(video?.videoHeight) || 0);
   const strict = opts?.strictVideoCanvasPixelMatch !== false;
   /**
    * O MindAR repõe `camera` / `renderer` no loop interno — este sync tem de
@@ -3597,9 +3704,10 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
         : 9 / 16;
   if (!Number.isFinite(aspect) || aspect <= 0) aspect = 9 / 16;
   camera.aspect = aspect;
-  let fov = Number(opts?.fovDeg);
+  const fovLocked63 = opts?.lockWebcamFov63 === true;
+  let fov = fovLocked63 ? 63 : Number(opts?.fovDeg);
   if (!Number.isFinite(fov)) fov = OMAFIT_FACE_CAMERA_FOV_DEFAULT;
-  fov = THREE.MathUtils.clamp(fov, 35, 95);
+  if (!fovLocked63) fov = THREE.MathUtils.clamp(fov, 35, 95);
   camera.fov = fov;
   const useGl =
     opts?.useOpenGlStyleProjection !== false &&
@@ -4415,6 +4523,9 @@ async function runArSession({
     const faceProjectionOpts = {
       fovDeg: faceCameraFovDeg,
       strictVideoCanvasPixelMatch: faceProjectionStrict,
+      lockWebcamFov63:
+        accessoryType === "glasses" &&
+        !/^(0|false|off|no)$/i.test(String(cfgAttr("arFaceLockWebcamFov63", "1")).trim()),
       useOpenGlStyleProjection: !/^(0|false|off|no)$/i.test(
         String(cfgAttr("arFaceOpenGlProjectionMatrix", "1")).trim(),
       ),
@@ -4435,6 +4546,19 @@ async function runArSession({
       const v = Number(String(cfgAttr("arGlassesCavityAoIntensity", "0.22")).trim());
       return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 0.55) : 0.22;
     })();
+    const glassesNdcScreenLock =
+      accessoryType === "glasses" &&
+      !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesNdcScreenLock", "1")).trim());
+    const glassesNdcBlendFromMp = (() => {
+      const v = Number(String(cfgAttr("arGlassesNdcBlendFromMp", "0.5")).trim());
+      return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 1) : 0.5;
+    })();
+    const glassesLensDistortK = (() => {
+      const v = Number(String(cfgAttr("arGlassesLensDistortK", "0.072")).trim());
+      return Number.isFinite(v) ? v : 0.072;
+    })();
+    const glassesNegateWearOffsetX =
+      /^(1|true|on|yes)$/i.test(String(cfgAttr("arGlassesNegateWearOffsetX", "")).trim());
 
     let lm168DebugSphereQuery = false;
     try {
@@ -4449,6 +4573,11 @@ async function runArSession({
       anchorIndex === OMAFIT_FACE_LM_NOSE_BRIDGE &&
       (lm168DebugSphereQuery ||
         /^(1|true|on|yes)$/i.test(String(cfgAttr("arLandmark168DebugSphere", "")).trim()));
+    const glassesForceBboxAlign168 =
+      accessoryType === "glasses" &&
+      (lm168DebugSphereEnabled ||
+        /^(1|true|on|yes)$/i.test(String(cfgAttr("arGlassesDebugForceBboxAlign168", "")).trim()));
+    const glassesNdcScratchNeeded = glassesNdcScreenLock || glassesForceBboxAlign168;
 
     const fMinStr = String(cfgAttr("arMindarFilterMinCf", "")).trim();
     const fBetaStr = String(cfgAttr("arMindarFilterBeta", "")).trim();
@@ -5128,8 +5257,14 @@ async function runArSession({
      *    `src/face-target/controller.js:getLandmarkMatrix` (`fm[i]*s`). */
     const baseUnitScale = (1 / maxDim) * modelScaleMul;
     glasses.scale.setScalar(baseUnitScale);
+    /** Posição local base do GLB (Z colagem) — reposta no modo debug de alinhamento ao 168. */
+    const glassesBaseLocalPos =
+      accessoryType === "glasses"
+        ? new THREE.Vector3(glasses.position.x, glasses.position.y, glasses.position.z)
+        : null;
     if (accessoryType === "glasses") {
       glasses.position.z = glassesModelStickZ + glassesZFitExtra;
+      glassesBaseLocalPos.set(glasses.position.x, glasses.position.y, glasses.position.z);
     }
     console.log("[omafit-ar] face scale resolved", {
       maxDim,
@@ -5416,7 +5551,33 @@ async function runArSession({
     faceArEnhancementState = {
       faceProjectionOpts,
       projectionSyncLogged: false,
+      glassesNdcScreenLock,
+      glassesNdcBlendFromMp,
+      glassesLensDistortK,
+      glassesNegateWearOffsetX,
+      glassesForceBboxAlign168,
+      glassesBaseLocalPos: glassesBaseLocalPos ? glassesBaseLocalPos.clone() : null,
       glassesContactRig,
+      ndcWearLock:
+        glassesNdcScratchNeeded
+          ? {
+              sm: new THREE.Vector3(),
+              w168: new THREE.Vector3(),
+              ndc168: new THREE.Vector3(),
+              ndcGl: new THREE.Vector3(),
+              worldD: new THREE.Vector3(),
+              localD: new THREE.Vector3(),
+              qA: new THREE.Quaternion(),
+              qInv: new THREE.Quaternion(),
+              box: new THREE.Box3(),
+              center: new THREE.Vector3(),
+              right: new THREE.Vector3(),
+              up: new THREE.Vector3(),
+              tmp: new THREE.Vector3(),
+              lensK: glassesLensDistortK,
+              mirrorSelfie: !disableFaceMirror,
+            }
+          : null,
       principalAlignScratch:
         accessoryType === "glasses" && faceProjectionOpts.principalAlign168
           ? new THREE.Vector3()
@@ -5600,6 +5761,7 @@ async function runArSession({
             st.anchorEuroQuatState.tPrev = null;
             st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
           }
+          if (st.ndcWearLock?.sm) st.ndcWearLock.sm.set(0, 0, 0);
           runProjectionSync();
           return;
         }
@@ -5863,6 +6025,43 @@ async function runArSession({
             st.eyeTiltSmoothed = THREE.MathUtils.lerp(st.eyeTiltSmoothed, rawTilt, 0.16);
             glassesAnatomy.rotation.y = anatomyYawRad;
             glassesAnatomy.rotation.z = st.eyeTiltSmoothed;
+          }
+          /**
+           * Sincronização definitiva câmara↔vídeo + bloqueio NDC: centro da bbox
+           * do GLB alinhado ao 168 em espaço de ecrã (project + erro NDC → mundo).
+           */
+          if (st.glassesNdcScreenLock && st.ndcWearLock && mindarThree?.camera) {
+            st.ndcWearLock.lensK = st.glassesLensDistortK;
+            st.ndcWearLock.mirrorSelfie = !disableFaceMirror;
+            const ld = omafitComputeGlassesWearNdcLockLocalDelta(
+              THREE,
+              mindarThree.camera,
+              anchor.group,
+              glasses,
+              est,
+              st.ndcWearLock,
+              st.glassesNdcBlendFromMp,
+            );
+            if (ld) {
+              const blend = 0.38;
+              st.ndcWearLock.sm.lerp(ld, blend);
+              let ox = st.ndcWearLock.sm.x;
+              const oy = st.ndcWearLock.sm.y;
+              const oz = st.ndcWearLock.sm.z;
+              if (st.glassesNegateWearOffsetX) ox = -ox;
+              wearPosition.position.set(wearPosM.x + ox, wearPosM.y + oy, wearPosM.z + oz);
+            }
+          }
+          if (
+            st.glassesForceBboxAlign168 &&
+            lm168DebugMesh &&
+            st.glassesBaseLocalPos &&
+            st.ndcWearLock
+          ) {
+            glasses.position.copy(st.glassesBaseLocalPos);
+            anchor.group.updateMatrixWorld(true);
+            st.ndcWearLock.w168.set(0, 0, 0).applyMatrix4(anchor.group.matrixWorld);
+            omafitForceGlassesBboxCenterToWorldPoint(THREE, glasses, st.ndcWearLock.w168, st.ndcWearLock);
           }
         }
         if (accessoryType === "necklace" && st.necklaceSwing) {

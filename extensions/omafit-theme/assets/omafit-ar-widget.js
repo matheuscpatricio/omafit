@@ -174,6 +174,23 @@ const OMAFIT_HAND_POS_PRETAU_MS = 52;
 const OMAFIT_HAND_AXIS_TAU_MS = 90;
 
 /**
+ * v12.0: EMA fixa na âncora da mão (pedido produto — “peso” físico).
+ * Posição α=0.15, rotação SLERP t=0.10 (substitui tau exponencial neste path).
+ */
+const OMAFIT_HAND_EMA_POS_ALPHA = 0.15;
+const OMAFIT_HAND_EMA_ROT_ALPHA = 0.1;
+/** Quanto da rotação axial (normal 0–5–17 vs base) entra no quaternion final. */
+const OMAFIT_HAND_WRIST_ROLL_GAIN = 0.72;
+/**
+ * Raio efectivo do cilindro oclusor = scale × raio biométrico do pulso.
+ * Valor < 1: ligeiramente mais estreito que a estimativa da pulseira — corta só
+ * a metade posterior do GLB “fechado” sem comer o dorso (padrão tipo Banuba).
+ */
+const OMAFIT_HAND_OCCLUDER_RADIUS_SCALE = 0.93;
+/** Tau (ms) para a referência de span 5–17 descer quando a mão afasta (só EMA a descida). */
+const OMAFIT_HAND_KNUCKLE_SPAN_REF_TAU_MS = 420;
+
+/**
  * Threshold angular (rad) acima do qual uma nova target quaternion é tratada
  * como "flip espúrio" (erro de handedness ou landmark outlier) em vez de
  * rotação real. 150° = 2.618 rad.
@@ -195,7 +212,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_webcam63-ndc-wear-lock-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_hand-anchor-v12-wrist-roll";
 
 /** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
 const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
@@ -7776,6 +7793,14 @@ async function runHandArSession({
   const wristTriA = new THREE.Vector3();
   const wristTriB = new THREE.Vector3();
   const palmTriN = new THREE.Vector3();
+  /** Eixo punho → média(1,17) e scratch para evitar `new Vector3` no hot path. */
+  const handMidThumbPinky = new THREE.Vector3();
+  const handZForearm = new THREE.Vector3();
+  const handToMcpScratch = new THREE.Vector3();
+  const handToMcpRawScratch = new THREE.Vector3();
+  const handW0to1Scratch = new THREE.Vector3();
+  const handNAltScratch = new THREE.Vector3();
+  const handRollQuat = new THREE.Quaternion();
 
   /** Estado suavizado (EMA) dos eixos/posição — aproxima o filtro OneEuro do MindAR. */
   const smX = new THREE.Vector3();
@@ -7801,6 +7826,12 @@ async function runHandArSession({
   let smoothWristRadius = OMAFIT_ARM_OCCLUDER_RADIUS_M;
   let smoothForearmLength = OMAFIT_ARM_OCCLUDER_LENGTH_M;
   let smoothOccluderInitialized = false;
+  /**
+   * Referência lenta do span 5–17 (m): sobe rápido quando a mão aproxima,
+   * desce devagar quando afasta — `handKnuckleSpan / ref` encolhe o GLB em
+   * perspectiva sem “pulsar” frame a frame.
+   */
+  let handKnuckleSpanRef = 0;
 
   let running = true;
   let lastHandTimestamp = -1;
@@ -7880,85 +7911,77 @@ async function runHandArSession({
     const w5 = unprojectLandmark(lms[5], zDist);
     const w9 = unprojectLandmark(lms[9], zDist);
     const w17 = unprojectLandmark(lms[17], zDist);
+    const clampDt = Math.max(8, Math.min(80, Number.isFinite(dtMs) ? dtMs : 16));
 
     /**
-     * === BASE ORTONORMAL DO PULSO (v11.1) ===
+     * === BASE ORTONORMAL (v12.0) — ancoragem dupla + roll palmar ===
      *
-     *   X = mindinho (17) → índice (5)         largura do pulso
-     *   Y = normal do plano palmar/dorsal       (cross de toMcp com X)
-     *   Z = X × Y                               ao longo do antebraço
+     * Z (eixo longitudinal): punho (0) → média dos landmarks 1 (CMC polegar)
+     * e 17 (base mindinho). Segue a inclinação punso/mão melhor que só 0→9.
      *
-     * LATERALIDADE: `Y = toMcp × X` dá a normal DORSAL apenas quando X
-     * está no sentido anatómico da mão direita. Numa mão ESQUERDA, a
-     * ordem invert-se e Y passa a apontar PALMAR → flip de X corrige.
+     * X: vector 5→17 sem componente ao longo de Z (largura na prega).
+     * Y: Z × X; no relógio mistura-se a normal do plano 0–5–17 (dorso/palma).
      *
-     * === POR QUE NÃO HÁ MAIS O FALLBACK "tmpY.z < −0.05" ===
-     *
-     * A versão anterior tinha um fallback que forçava `tmpY.z > 0`
-     * (dorso sempre virado à câmara). Matematicamente correcto em
-     * poses normais, mas NEFASTO quando o utilizador roda o antebraço:
-     *
-     *   • A rodar para mostrar a palma → tmpY passa a apontar para
-     *     −Z (dorso vira-se PARA LONGE da câmara, correcto anatomicamente).
-     *   • O fallback dispara e FAZ FLIP de 180° → o relógio "salta"
-     *     para o outro lado do pulso e fica sempre virado à câmara.
-     *   • O utilizador vê descontinuidade em vez de rotação suave e
-     *     nunca consegue ver a lateral/traseira do GLB.
-     *
-     * Removido: o MediaPipe Hand Landmarker moderno dá lateralidade
-     * com >99 % de fiabilidade, tornando o fallback mais prejudicial
-     * do que útil. Agora o GLB gira naturalmente com o braço — rodas
-     * o pulso, vês a lateral do relógio/pulseira como se fosse real.
+     * Roll axial: após `makeBasis`, aplica-se rotação extra em torno de Z
+     * local com ângulo atan2(n·X, n·Y) a partir da normal do triângulo 0–5–17,
+     * para o mostrador não ficar “colado” quando a palma roda (pronação).
      */
-    tmpX.subVectors(w5, w17).normalize();
-    /**
-     * Eixo do antebraço: punho→MCP médio com pequena componente do vector
-     * punho→CMC polegar (lm 1) para estabilizar quando o MCP oscila — base
-     * relacionada com o triângulo 0–5–17 via produtos vectoriais abaixo.
-     */
-    const toMcp = new THREE.Vector3().subVectors(w9, w0);
-    const toThumbCmc = new THREE.Vector3().subVectors(w1, w0);
-    toMcp.lerp(toThumbCmc, 0.2).normalize();
-    if (handLabel === "Left") tmpX.negate();
-    tmpY.crossVectors(toMcp, tmpX).normalize();
-    /**
-     * === RELÓGIO: refinamento dorso vs palma (v11.4) ===
-     *
-     * `toMcp × X` segue bem o antebraço, mas em algumas poses o vector
-     * punho→MCP-médio oscila e o eixo Y (normal palmar/dorsal) deixa de
-     * separar tão bem a "face" do relógio (dorso) do lado da palma.
-     *
-     * A normal do triângulo (w5−w0) × (w17−w0) é aproximadamente perpendicular
-     * ao plano da prega do pulso — mais estável para distinguir lado de cima
-     * (dorso, mostrador) vs lado de baixo (palma, fecho). Misturamos ~52 %
-     * desta normal com o Y clássico e projectamos de volta no plano ⊥ a X
-     * para manter base ortonormal.
-     */
-    if (accessoryType === "watch") {
-      wristTriA.subVectors(w5, w0);
-      wristTriB.subVectors(w17, w0);
-      palmTriN.copy(wristTriA).cross(wristTriB);
-      const triLen = palmTriN.length();
-      if (triLen > 1e-7) {
-        palmTriN.multiplyScalar(1 / triLen);
-        const eThumb = new THREE.Vector3().subVectors(w1, w0);
-        const nAlt = new THREE.Vector3().copy(eThumb).cross(wristTriA);
-        if (nAlt.lengthSq() > 1e-12) {
-          nAlt.normalize();
-          if (nAlt.dot(palmTriN) < 0) nAlt.negate();
-          palmTriN.lerp(nAlt, 0.22).normalize();
-        }
-        if (palmTriN.dot(tmpY) < 0) palmTriN.negate();
-        tmpY.lerp(palmTriN, 0.52).normalize();
-        tmpY.addScaledVector(tmpX, -tmpY.dot(tmpX));
-        const yLen = tmpY.length();
-        if (yLen > 1e-7) tmpY.multiplyScalar(1 / yLen);
-      }
+    handMidThumbPinky.addVectors(w1, w17).multiplyScalar(0.5);
+    handZForearm.subVectors(handMidThumbPinky, w0);
+    if (handZForearm.lengthSq() < 1e-10) {
+      handToMcpScratch.subVectors(w9, w0);
+      handW0to1Scratch.subVectors(w1, w0);
+      handZForearm.copy(handToMcpScratch).lerp(handW0to1Scratch, 0.2);
     }
-    tmpZ.crossVectors(tmpX, tmpY).normalize();
+    if (handZForearm.lengthSq() < 1e-10) {
+      handZForearm.set(0, 0.71, -0.71);
+    } else {
+      handZForearm.normalize();
+    }
 
-    const toMcpRaw = new THREE.Vector3().subVectors(w9, w0);
-    const w0to1 = new THREE.Vector3().subVectors(w1, w0);
+    wristTriA.subVectors(w5, w0);
+    wristTriB.subVectors(w17, w0);
+    palmTriN.copy(wristTriA).cross(wristTriB);
+    const triLenPalm = palmTriN.length();
+    if (triLenPalm > 1e-7) {
+      palmTriN.multiplyScalar(1 / triLenPalm);
+    } else {
+      palmTriN.set(0, 1, 0);
+    }
+
+    tmpX.subVectors(w5, w17);
+    tmpX.addScaledVector(handZForearm, -tmpX.dot(handZForearm));
+    if (tmpX.lengthSq() < 1e-10) {
+      tmpX.crossVectors(wristTriA, handZForearm);
+    }
+    if (tmpX.lengthSq() < 1e-10) {
+      tmpX.set(1, 0, 0);
+    }
+    tmpX.normalize();
+    if (handLabel === "Left") tmpX.negate();
+    tmpY.crossVectors(handZForearm, tmpX).normalize();
+
+    if (accessoryType === "watch" && triLenPalm > 1e-7) {
+      handNAltScratch.subVectors(w1, w0).cross(wristTriA);
+      if (handNAltScratch.lengthSq() > 1e-12) {
+        handNAltScratch.normalize();
+        if (handNAltScratch.dot(palmTriN) < 0) handNAltScratch.negate();
+        palmTriN.lerp(handNAltScratch, 0.22).normalize();
+      }
+      if (palmTriN.dot(tmpY) < 0) palmTriN.negate();
+      tmpY.lerp(palmTriN, 0.52).normalize();
+      tmpY.addScaledVector(handZForearm, -tmpY.dot(handZForearm));
+      const yLenBlend = tmpY.length();
+      if (yLenBlend > 1e-7) tmpY.multiplyScalar(1 / yLenBlend);
+    }
+
+    tmpZ.copy(handZForearm);
+    tmpX.crossVectors(tmpY, tmpZ).normalize();
+    if (handLabel === "Left") tmpX.negate();
+    tmpY.crossVectors(tmpZ, tmpX).normalize();
+
+    const toMcpRaw = handToMcpRawScratch.subVectors(w9, w0);
+    const w0to1 = handW0to1Scratch.subVectors(w1, w0);
 
     /**
      * Posição: directamente no landmark do pulso (w0). Antes usava-se 30 %
@@ -7974,10 +7997,12 @@ async function runHandArSession({
     tmpPos.copy(w0).addScaledVector(tmpY, 0.006);
     if (accessoryType === "bracelet") {
       if (toMcpRaw.lengthSq() > 1e-12) {
-        tmpPos.addScaledVector(toMcpRaw.clone().normalize(), 0.012);
+        handToMcpScratch.copy(toMcpRaw).normalize();
+        tmpPos.addScaledVector(handToMcpScratch, 0.012);
       }
       if (w0to1.lengthSq() > 1e-12) {
-        tmpPos.addScaledVector(w0to1.clone().normalize(), 0.0065);
+        handNAltScratch.copy(w0to1).normalize();
+        tmpPos.addScaledVector(handNAltScratch, 0.0065);
       }
     }
 
@@ -8010,22 +8035,25 @@ async function runHandArSession({
      * thumb horizontal) é seguida de forma geodésica, MAS sem saltos
      * súbitos de 180° quando o MediaPipe se engana momentaneamente.
      *
-     * Posição continua com EMA linear (mais estável para translação).
+     * Posição: EMA fixa α=0.15 (v12.0). Rotação: SLERP t=0.10.
      */
-    const clampDt = Math.max(8, Math.min(80, Number.isFinite(dtMs) ? dtMs : 16));
     basisMat.makeBasis(tmpX, tmpY, tmpZ);
     tmpQuat.setFromRotationMatrix(basisMat);
+    const palmNx = palmTriN.dot(tmpX);
+    const palmNy = palmTriN.dot(tmpY);
+    const wristRoll = Math.atan2(palmNx, palmNy);
+    handRollQuat.setFromAxisAngle(
+      handZForearm,
+      wristRoll * OMAFIT_HAND_WRIST_ROLL_GAIN,
+    );
+    tmpQuat.premultiply(handRollQuat);
     if (!smoothInitialized) {
       smoothedQuat.copy(tmpQuat);
       prePos.copy(tmpPos);
       smPos.copy(tmpPos);
       smoothInitialized = true;
     } else {
-      const aPre = 1 - Math.exp(-clampDt / OMAFIT_HAND_POS_PRETAU_MS);
-      const aPos = 1 - Math.exp(-clampDt / OMAFIT_HAND_POS_TAU_MS);
-      const aAxis = 1 - Math.exp(-clampDt / OMAFIT_HAND_AXIS_TAU_MS);
-      prePos.lerp(tmpPos, aPre);
-      smPos.lerp(prePos, aPos);
+      smPos.lerp(tmpPos, OMAFIT_HAND_EMA_POS_ALPHA);
       /**
        * Anti-flip guard: medir ângulo entre smoothedQuat e tmpQuat.
        * dot < 0 significa que estão no hemisfério oposto da esfera 4D
@@ -8048,7 +8076,7 @@ async function runHandArSession({
           });
         }
       } else {
-        smoothedQuat.slerp(tmpQuat, aAxis);
+        smoothedQuat.slerp(tmpQuat, OMAFIT_HAND_EMA_ROT_ALPHA);
       }
     }
 
@@ -8123,6 +8151,20 @@ async function runHandArSession({
      * EMA lento (tau = 800 ms) para não pulsar com o jitter dos landmarks.
      */
     const handKnuckleSpan = w5.distanceTo(w17);
+    const aSpanRef =
+      1 - Math.exp(-clampDt / OMAFIT_HAND_KNUCKLE_SPAN_REF_TAU_MS);
+    if (handKnuckleSpanRef <= 1e-8) {
+      handKnuckleSpanRef = handKnuckleSpan;
+    } else if (handKnuckleSpan > handKnuckleSpanRef) {
+      handKnuckleSpanRef = handKnuckleSpan;
+    } else {
+      handKnuckleSpanRef += (handKnuckleSpan - handKnuckleSpanRef) * aSpanRef;
+    }
+    const perspMul = THREE.MathUtils.clamp(
+      handKnuckleSpan / Math.max(0.034, handKnuckleSpanRef),
+      0.76,
+      1.03,
+    );
     /**
      * === ESTIMATIVA ANTROPOMÉTRICA DO RAIO DO PULSO (v11.4) ===
      *
@@ -8175,29 +8217,24 @@ async function runHandArSession({
       smoothForearmLength += (forearmLengthRaw - smoothForearmLength) * aOcc;
     }
     /**
-     * Scale do cilindro + elipse na secção do pulso (v11.6).
+     * Scale do cilindro + elipse na secção do pulso (v12.0).
      *
-     * Raio base: smoothWristR + buffer (subestimação do tracker + pele vs osso).
-     * v11.6: buffer **6 mm** (era 4 mm) — cobre melhor a circunferência real
-     * quando a câmara está em perspectiva ou o braço está rodado.
+     * Raio base: `smoothWristR × OMAFIT_HAND_OCCLUDER_RADIUS_SCALE` (ligeiramente
+     * inferior ao pulso estimado) — corta só a metade posterior de correias
+     * “fechadas”; o dorso do GLB mantém-se visível.
      *
-     * Elipse (não só círculo): após `armOccluder.quaternion`, o eixo local X do
-     * cilindro alinha com **anchor X** (largura punho, ulnar–radial) e o eixo
-     * local Z com **anchor Y** (normal palmar/dorso). O antebraço/pulso é mais
-     * largo nesses dois eixos do que um círculo com o mesmo raio médio; dois
-     * factores ≥1 cobrem a elipse anatómica sem expandir o comprimento (Y do
-     * cilindro = eixo do braço).
-     *
-     * `polygonOffset` no material mantém a face dorsal do GLB por cima do
-     * depth do occluder quando tangente; só a metade “para dentro” do braço
-     * é cortada.
+     * Elipse: após `armOccluder.quaternion`, o eixo local X do cilindro alinha
+     * com **anchor X** (ulnar–radial) e o Z local com **anchor Y** (palmar–dorsal).
+     * `polygonOffset` no material reduz Z-fighting com o mostrador.
      */
-    const OMAFIT_OCCLUDER_WRIST_BUFFER_M = 0.006;
     /** Ligeiramente maior ao longo da largura do punho (knuckle span). */
     const OMAFIT_OCCLUDER_ELLIPSE_ULNAR_RADIAL = 1.1;
     /** Ligeiramente maior na espessura palmar–dorsal (vista de perfil). */
     const OMAFIT_OCCLUDER_ELLIPSE_PALMAR_DORSAL = 1.12;
-    const occluderR = smoothWristRadius + OMAFIT_OCCLUDER_WRIST_BUFFER_M;
+    const occluderR = Math.max(
+      0.011,
+      smoothWristRadius * OMAFIT_HAND_OCCLUDER_RADIUS_SCALE,
+    );
     const radiusScale = occluderR / OMAFIT_ARM_OCCLUDER_RADIUS_M;
     const lengthScale = smoothForearmLength / OMAFIT_ARM_OCCLUDER_LENGTH_M;
     armOccluder.scale.set(
@@ -8248,7 +8285,7 @@ async function runHandArSession({
         Number.isFinite(Number(userScale)) && Number(userScale) > 0
           ? Number(userScale)
           : 1;
-      glbRoot.scale.setScalar(baseScale * userMul * adaptMul);
+      glbRoot.scale.setScalar(baseScale * userMul * adaptMul * perspMul);
 
       /**
        * === MOSTRADOR / CASE RÍGIDO EM PULSOS FINOS (v11.7) ===
@@ -8267,8 +8304,9 @@ async function runHandArSession({
        * vertex-based, portanto não precisa de correcção separada.
        */
       if (accessoryType === "watch" && watchStrapRadial?.caseDial) {
+        const worldScale = adaptMul * perspMul;
         const invAdapt =
-          Number.isFinite(adaptMul) && adaptMul > 1e-4 ? 1 / adaptMul : 1;
+          Number.isFinite(worldScale) && worldScale > 1e-4 ? 1 / worldScale : 1;
         watchStrapRadial.caseDial.scale.setScalar(invAdapt);
       }
 
@@ -8291,7 +8329,7 @@ async function runHandArSession({
             !braceletIsBangle &&
             (braceletLinkRadial || braceletVertexDeform)))
       ) {
-        const su = baseScale * userMul * adaptMul;
+        const su = baseScale * userMul * adaptMul * perspMul;
         const spanRatio =
           handKnuckleSpan / Math.max(1e-6, OMAFIT_BASE_KNUCKLE_SPAN_M);
         /** Prior anatómico: span knuckles tem correlação ~0.9 com largura pulso. */
@@ -8369,21 +8407,20 @@ async function runHandArSession({
         (OMAFIT_DEFAULT_WRIST_R_M + gapOffset);
       const caseRigidK =
         accessoryType === "watch" && watchStrapRadial?.caseDial
-          ? 1 / Math.max(1e-4, adaptMul)
+          ? 1 / Math.max(1e-4, adaptMul * perspMul)
           : null;
-      console.debug("[omafit-ar] hand anchor v11.7", {
+      console.debug("[omafit-ar] hand anchor v12.0", {
         hand: handLabel || "?",
         handScore: (lastHandScore || 0).toFixed(2),
-        anchor: "w0 (wrist)",
+        anchor: "eixo 0→média(1,17) + roll 0–5–17",
         /** Raw knuckle span (medida bruta MediaPipe landmarks 5-17). */
         knuckleSpan_mm: (handKnuckleSpan * 1000).toFixed(1),
+        knuckleSpanRef_mm: (handKnuckleSpanRef * 1000).toFixed(1),
+        perspMul: perspMul.toFixed(3),
         /** wristR DEPOIS de aplicar ratio 0.34 + clamp [18, 42] mm. */
         wristR_mm: (smoothWristRadius * 1000).toFixed(1),
-        /** Occluder raio (= wristR + 4 mm buffer). */
-        occluderR_mm: (
-          (smoothWristRadius + OMAFIT_OCCLUDER_WRIST_BUFFER_M) *
-          1000
-        ).toFixed(1),
+        /** Raio efectivo do cilindro oclusor (escala × raio biométrico). */
+        occluderR_mm: (occluderR * 1000).toFixed(1),
         forearmL_cm: (smoothForearmLength * 100).toFixed(1),
         bent: didBendWatch,
         /** Raio INTERNO do GLB (superfície que toca a pele em unidades GLB). */
@@ -8497,6 +8534,7 @@ async function runHandArSession({
         contactShadow.visible = false;
         smoothInitialized = false;
         smoothOccluderInitialized = false;
+        handKnuckleSpanRef = 0;
         smoothedStrapK = 1;
         if (watchStrapRadial?.strap) {
           watchStrapRadial.strap.scale.set(1, 1, 1);

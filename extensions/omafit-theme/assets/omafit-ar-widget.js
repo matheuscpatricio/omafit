@@ -195,7 +195,10 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glasses-cheek-basis-internal-corrector-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_lm168-debug-sphere-v1";
+
+/** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
+const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
 
 /**
  * MindAR face `Controller` (hiukim/mind-ar-js) usa One Euro em cada landmark.
@@ -3277,6 +3280,69 @@ function buildInfoModal({
  *
  * @see https://github.com/hiukim/mind-ar-js/issues/370
  */
+/**
+ * Converte landmark MediaPipe **normalizado** (x,y ∈ [0,1], z relativo) para NDC
+ * Three.js no plano near (−1…1). Útil para `Raycaster` / depuração; o path
+ * MindAR deste widget usa `metricLandmarks` 3D + PnP — não substituir a
+ * âncora por `unproject` sem calibrar distância à câmara.
+ */
+function omafitMediaPipeNormalizedToNdcXY(lm) {
+  const x = (lm.x - 0.5) * 2;
+  const y = -(lm.y - 0.5) * 2;
+  return { x, y };
+}
+
+/**
+ * Raio no espaço mundo a partir de um marco 2D normalizado (experimental).
+ * `depthNdc` tipicamente em ]0,1[ (near→far em clip space antes do project).
+ */
+function omafitUnprojectMediaPipeNormalizedLandmark(THREE, camera, lm, depthNdc, target) {
+  const { x: ndcX, y: ndcY } = omafitMediaPipeNormalizedToNdcXY(lm);
+  target.set(ndcX, ndcY, depthNdc).unproject(camera);
+  return target;
+}
+
+/**
+ * Sincroniza projeção: canvas WebGL e `<video>` com as **mesmas** dimensões
+ * intrínsecas (px), `camera.aspect` e FOV — corrige desvio lateral nas bordas
+ * quando o frustum não coincide com a lente / frame do vídeo.
+ *
+ * @param {any} THREE
+ * @param {any} mindarThree
+ * @param {HTMLElement | null} mindarHost
+ * @param {{ fovDeg?: number, strictVideoCanvasPixelMatch?: boolean }} [opts]
+ */
+function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
+  if (!THREE || !mindarThree) return;
+  const renderer = mindarThree.renderer;
+  const camera = mindarThree.camera;
+  const video = mindarHost?.querySelector?.("video");
+  if (!renderer || !camera || !video) return;
+  const vw = video.videoWidth | 0;
+  const vh = video.videoHeight | 0;
+  if (vw < 2 || vh < 2) return;
+  const strict = opts?.strictVideoCanvasPixelMatch !== false;
+  if (strict && typeof renderer.setSize === "function") {
+    renderer.setSize(vw, vh, true);
+    video.style.width = `${vw}px`;
+    video.style.height = `${vh}px`;
+    const dom = renderer.domElement;
+    if (dom) {
+      dom.style.width = `${vw}px`;
+      dom.style.height = `${vh}px`;
+    }
+  }
+  const aspect = vw / vh;
+  if (Number.isFinite(aspect) && aspect > 0) {
+    camera.aspect = aspect;
+  }
+  let fov = Number(opts?.fovDeg);
+  if (!Number.isFinite(fov)) fov = OMAFIT_FACE_CAMERA_FOV_DEFAULT;
+  fov = THREE.MathUtils.clamp(fov, 35, 95);
+  camera.fov = fov;
+  if (typeof camera.updateProjectionMatrix === "function") camera.updateProjectionMatrix();
+}
+
 async function startMindARFaceWithReliableCamera(mindarThree) {
   const md = navigator.mediaDevices;
   if (!md || typeof md.getUserMedia !== "function") {
@@ -3340,7 +3406,7 @@ async function startMindARFaceWithReliableCamera(mindarThree) {
  * com preto opaco — o GLB continua visível, mas o feed da câmara desaparece.
  * Reforça também estilos do vídeo/canvas contra regras agressivas do tema.
  */
-function fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost) {
+function fixMindARFaceVideoBehindCanvas(THREE, mindarThree, mindarHost, projectionOpts) {
   try {
     const { scene, renderer, cssRenderer } = mindarThree || {};
     if (scene && "background" in scene) scene.background = null;
@@ -3364,25 +3430,12 @@ function fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost) {
       void video.play?.().catch?.(() => {});
     }
     /**
-     * MindAR + MediaPipe usam o vídeo intrínseco; se `camera.aspect` ≠
-     * `videoWidth/videoHeight`, o PnP/landmarks deixam de coincidir com o
-     * frustum Three.js → desvio lateral aparente. O espelho da selfie é
-     * tratado na **imagem** (MindAR `disableFaceMirror` / CSS no vídeo), não
-     * com `camera.scale.x = -1` (isso inverteria X no mundo 3D e quebraria o
-     * alinhamento com métricas do face mesh).
+     * Canvas + vídeo com as mesmas dimensões intrínsecas, `camera.aspect` e
+     * FOV alinhado à webcam — ver `omafitSyncMindARFaceProjection`.
      */
     try {
-      const cam = mindarThree?.camera;
-      const v = mindarHost?.querySelector?.("video");
-      if (cam && v && v.videoWidth > 0 && v.videoHeight > 0) {
-        const aspect = v.videoWidth / v.videoHeight;
-        if (Number.isFinite(aspect) && aspect > 0) {
-          const prev = cam.aspect;
-          if (!Number.isFinite(prev) || Math.abs(prev - aspect) > 1e-4) {
-            cam.aspect = aspect;
-            if (typeof cam.updateProjectionMatrix === "function") cam.updateProjectionMatrix();
-          }
-        }
+      if (THREE) {
+        omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, projectionOpts);
       }
       const cam2 = mindarThree?.camera;
       if (cam2 && Math.abs(cam2.scale?.x ?? 1) > 1e-6 && Math.abs((cam2.scale?.x ?? 1) + 1) < 1e-6) {
@@ -4061,6 +4114,40 @@ async function runArSession({
       disableFaceMirror = true;
     }
 
+    const faceCameraFovDeg = (() => {
+      const v = Number(String(cfgAttr("arFaceCameraFovDeg", "63")).trim());
+      return Number.isFinite(v) ? v : OMAFIT_FACE_CAMERA_FOV_DEFAULT;
+    })();
+    const faceProjectionStrict = !/^(0|false|off|no)$/i.test(
+      String(cfgAttr("arFaceProjectionStrict", "1")).trim(),
+    );
+    const faceSceneMatrixWorldEveryFrame = !/^(0|false|off|no)$/i.test(
+      String(cfgAttr("arFaceSceneMatrixWorldEveryFrame", "1")).trim(),
+    );
+    const faceProjectionMirrorNegateModelX = String(
+      cfgAttr("arFaceProjectionMirrorNegateModelX", "auto"),
+    )
+      .trim()
+      .toLowerCase();
+    const faceProjectionOpts = {
+      fovDeg: faceCameraFovDeg,
+      strictVideoCanvasPixelMatch: faceProjectionStrict,
+    };
+
+    let lm168DebugSphereQuery = false;
+    try {
+      lm168DebugSphereQuery =
+        new URLSearchParams(window.location?.search || "").get("omafit_ar_lm168") === "1";
+    } catch {
+      lm168DebugSphereQuery = false;
+    }
+    /** Esfera vermelha na origem da âncora 168: diagnóstico GLB vs projeção. */
+    const lm168DebugSphereEnabled =
+      accessoryType === "glasses" &&
+      anchorIndex === OMAFIT_FACE_LM_NOSE_BRIDGE &&
+      (lm168DebugSphereQuery ||
+        /^(1|true|on|yes)$/i.test(String(cfgAttr("arLandmark168DebugSphere", "")).trim()));
+
     const fMinStr = String(cfgAttr("arMindarFilterMinCf", "")).trim();
     const fBetaStr = String(cfgAttr("arMindarFilterBeta", "")).trim();
     const fMinParsed = fMinStr.length > 0 ? Number(fMinStr) : NaN;
@@ -4150,7 +4237,9 @@ async function runArSession({
         console.warn("[omafit-ar] mindarThree._resize falhou", e?.message || e);
       }
       try {
-        if (mindarThree) fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
+        if (mindarThree) {
+          fixMindARFaceVideoBehindCanvas(THREE, mindarThree, mindarHost, faceProjectionOpts);
+        }
       } catch {
         /* ignore */
       }
@@ -4197,7 +4286,7 @@ async function runArSession({
      * MindAR e opacity 0 no elemento video pode quebrar faceMesh/detect (drawImage).
      * Mantemos vídeo DOM atrás do canvas com limpeza transparente (ver loop).
      */
-    fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
+    fixMindARFaceVideoBehindCanvas(THREE, mindarThree, mindarHost, faceProjectionOpts);
     /** Máx. nitidez do canvas WebGL dentro do que o GPU aguenta (MindAR já criou o renderer). */
     if (accessoryType === "glasses") {
       try {
@@ -4776,6 +4865,9 @@ async function runArSession({
     /** Pai lógico sob `wearPosition` — a matriz de tracking continua em `anchor.group`. */
     const faceParentGroup = new GroupCtor();
     faceParentGroup.name = "omafit-ar-face-parent";
+    /** Correcção opcional de espelho CSS no eixo X (sem tocar na `PerspectiveCamera`). */
+    const projectionMirrorFix = new GroupCtor();
+    projectionMirrorFix.name = "omafit-ar-projection-mirror-fix";
     /**
      * Só óculos com `useTripoOffsetContainer`: orientação canônica (auto
      * PCA) ou rotação fixa (override manual em graus).
@@ -4867,16 +4959,46 @@ async function runArSession({
         /* noop */
       }
       wearPosition.scale.set(flipSceneX ? -1 : 1, 1, 1);
+      const mnx = faceProjectionMirrorNegateModelX;
+      let negModelX = false;
+      if (mnx === "1" || mnx === "true" || mnx === "yes") negModelX = true;
+      else if (mnx === "0" || mnx === "false" || mnx === "no") negModelX = false;
+      else negModelX = !disableFaceMirror;
+      if (negModelX && !flipSceneX) projectionMirrorFix.scale.set(-1, 1, 1);
+      else projectionMirrorFix.scale.set(1, 1, 1);
     } catch {
       wearPosition.scale.set(1, 1, 1);
+      projectionMirrorFix.scale.set(1, 1, 1);
     }
-    wearPosition.add(faceParentGroup);
+    wearPosition.add(projectionMirrorFix);
+    projectionMirrorFix.add(faceParentGroup);
     faceParentGroup.add(calibRot);
     if (accessoryType === "glasses" && glassesCheekOrthogonalBasis) {
       faceParentGroup.matrixAutoUpdate = false;
     }
 
     anchor.group.add(wearPosition);
+
+    /** Esfera no landmark 168 (origem local do `anchor.group`). Se coincidir com o nariz e o GLB não, o erro é do modelo. */
+    let lm168DebugMesh = null;
+    if (lm168DebugSphereEnabled) {
+      const r = 0.011;
+      const geo = new THREE.SphereGeometry(r, 10, 8);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        depthTest: true,
+        depthWrite: true,
+      });
+      lm168DebugMesh = new THREE.Mesh(geo, mat);
+      lm168DebugMesh.name = "omafit-ar-lm168-debug-sphere";
+      lm168DebugMesh.frustumCulled = false;
+      lm168DebugMesh.renderOrder = 999;
+      lm168DebugMesh.position.set(0, 0, 0);
+      anchor.group.add(lm168DebugMesh);
+      console.log(
+        "[omafit-ar] debug: esfera vermelha no landmark 168 (âncora). data-ar-landmark-168-debug-sphere=1 ou ?omafit_ar_lm168=1",
+      );
+    }
 
     /** Uniforms partilhados: máscara de cabelo (multiclasse) + espelho UV para alinhar ao vídeo selfie. */
     const hairUniformsFaceAr =
@@ -4978,6 +5100,8 @@ async function runArSession({
           }
         : null,
       cheekBasisValid: false,
+      sceneMatrixWorldEveryFrame: faceSceneMatrixWorldEveryFrame,
+      lm168DebugMesh,
       faceOccAheadLocalZ,
       faceOccComposeScratch:
         accessoryType === "glasses" && faceOccluderMesh
@@ -5403,6 +5527,13 @@ async function runArSession({
           omafitPlaceTempleDepthOccluder(THREE, st.templeOccL, nose, lmEarL);
           omafitPlaceTempleDepthOccluder(THREE, st.templeOccR, nose, lmEarR);
         }
+        if (st.sceneMatrixWorldEveryFrame && mindarThree?.scene) {
+          try {
+            mindarThree.scene.updateMatrixWorld(true);
+          } catch {
+            /* ignore */
+          }
+        }
       };
     }
 
@@ -5427,6 +5558,19 @@ async function runArSession({
       }
       try {
         if (st?.templeOccL?.material) st.templeOccL.material.dispose();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const dbg = st?.lm168DebugMesh;
+        if (dbg) {
+          dbg.parent?.remove(dbg);
+          dbg.geometry?.dispose?.();
+          const mats = Array.isArray(dbg.material) ? dbg.material : [dbg.material];
+          for (const mm of mats) {
+            if (mm?.dispose) mm.dispose();
+          }
+        }
       } catch {
         /* ignore */
       }
@@ -5924,7 +6068,7 @@ async function runArSession({
       }
       renderer.render(scene, camera);
     });
-    fixMindARFaceVideoBehindCanvas(mindarThree, mindarHost);
+    fixMindARFaceVideoBehindCanvas(THREE, mindarThree, mindarHost, faceProjectionOpts);
 
     loading.style.display = "none";
 

@@ -1,6 +1,6 @@
 /**
- * Normaliza orientação do GLB (óculos): largura em X, espessura em Y, profundidade em Z —
- * alinhado a `workers/ar-eyewear-tripo/postprocess.py` e ao fluxo Node (`generateGlbDraftViaFal`).
+ * Normaliza orientação do GLB (óculos): **Y-up**, **Z-forward** (profundidade),
+ * largura em X — alinhado a `workers/ar-eyewear-tripo/postprocess.py` e ao fluxo Node.
  *
  * Usado pela app Shopify (Node) e pela Edge Function `ar-eyewear-generate` (Deno).
  * Entrada: Buffer | Uint8Array | ArrayBuffer. Saída: Uint8Array (cópia segura).
@@ -73,6 +73,57 @@ function buildCandidatesDeg() {
     }
   }
   return out;
+}
+
+/** Centroide de um conjunto de pontos [x,y,z]. */
+function centroidPoints(pts) {
+  if (!pts.length) return null;
+  let sx = 0;
+  let sy = 0;
+  let sz = 0;
+  for (const p of pts) {
+    sx += p[0];
+    sy += p[1];
+    sz += p[2];
+  }
+  const n = pts.length;
+  return [sx / n, sy / n, sz / n];
+}
+
+/**
+ * Pivot na **ponte nasal** (meio entre clusters da frente esq/dir), ignorando
+ * o pivot original do Tripo — em espaço `rot` (centrado + melhor Euler).
+ */
+function estimateNasalBridgePivotInRotSpace(rot) {
+  if (!rot || rot.length < 40) return null;
+  let sMinX = Infinity;
+  let sMaxX = -Infinity;
+  let sMinY = Infinity;
+  let sMaxY = -Infinity;
+  let sMinZ = Infinity;
+  let sMaxZ = -Infinity;
+  for (const q of rot) {
+    if (q[0] < sMinX) sMinX = q[0];
+    if (q[0] > sMaxX) sMaxX = q[0];
+    if (q[1] < sMinY) sMinY = q[1];
+    if (q[1] > sMaxY) sMaxY = q[1];
+    if (q[2] < sMinZ) sMinZ = q[2];
+    if (q[2] > sMaxZ) sMaxZ = q[2];
+  }
+  const spanZ = sMaxZ - sMinZ;
+  const spanX = sMaxX - sMinX;
+  if (spanZ < 1e-6 || spanX < 1e-6) return null;
+  const zFront = sMinZ + spanZ * 0.26;
+  const front = rot.filter((p) => p[2] <= zFront + spanZ * 0.22);
+  if (front.length < 24) return null;
+  const midX = (sMinX + sMaxX) * 0.5;
+  const left = front.filter((p) => p[0] < midX - 1e-7);
+  const right = front.filter((p) => p[0] > midX + 1e-7);
+  if (left.length < 10 || right.length < 10) return null;
+  const cL = centroidPoints(left);
+  const cR = centroidPoints(right);
+  if (!cL || !cR) return null;
+  return [(cL[0] + cR[0]) * 0.5, (cL[1] + cR[1]) * 0.5, (cL[2] + cR[2]) * 0.5];
 }
 
 function collectWorldPositions(scene) {
@@ -183,8 +234,14 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
   //   (b) temple tips at outer |X| extend toward +Z (behind face)
   let signFlipY = false;
   let signFlipZ = false;
+  /** Offset extra em espaço rot (pré sinal fino) para pôr a ponte na origem. */
+  let bridgeBiasRot = null;
+  let rotMaxExtent = 0;
   {
     const rot = centered.map((p) => applyEulerXYZDegrees(p, best[0], best[1], best[2]));
+    for (const q of rot) {
+      rotMaxExtent = Math.max(rotMaxExtent, Math.hypot(q[0], q[1], q[2]));
+    }
     let sMinX = Infinity, sMaxX = -Infinity;
     let sMinY = Infinity, sMaxY = -Infinity;
     let sMinZ = Infinity, sMaxZ = -Infinity;
@@ -227,6 +284,7 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
         if (mez < -sHD * 0.12) signFlipZ = true;
       }
     }
+    bridgeBiasRot = estimateNasalBridgePivotInRotSpace(rot);
   }
 
   const [rxDeg, ryDeg, rzDeg] = best;
@@ -251,6 +309,16 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
     c0[2] * c[0] + c1[2] * c[1] + c2[2] * c[2],
   ];
   const tvec = [-rtc[0], -rtc[1], -rtc[2]];
+  if (bridgeBiasRot && rotMaxExtent > 1e-6) {
+    const bx = bridgeBiasRot[0];
+    const by = bridgeBiasRot[1];
+    const bz = bridgeBiasRot[2];
+    if (Math.hypot(bx, by, bz) < rotMaxExtent * 0.62) {
+      tvec[0] -= c0[0] * bx + c1[0] * by + c2[0] * bz;
+      tvec[1] -= c0[1] * bx + c1[1] * by + c2[1] * bz;
+      tvec[2] -= c0[2] * bx + c1[2] * by + c2[2] * bz;
+    }
+  }
 
   const mat = [
     c0[0],

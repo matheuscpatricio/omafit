@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_face-projection-every-frame-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_banuba-class-projection-anchor-ao-v1";
 
 /** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
 const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
@@ -213,8 +213,8 @@ const OMAFIT_MINDAR_DEFAULT_FILTER_BETA = 0.91;
  * `filterMinCF` mais baixo = filtro One Euro interno mais forte (latência ~2–4 frames).
  * Override: `data-ar-mindar-filter-min-cf` / `data-ar-mindar-filter-beta`.
  */
-const OMAFIT_MINDAR_GLASSES_FILTER_MIN_CF = 0.00018;
-const OMAFIT_MINDAR_GLASSES_FILTER_BETA = 0.88;
+const OMAFIT_MINDAR_GLASSES_FILTER_MIN_CF = 0.00011;
+const OMAFIT_MINDAR_GLASSES_FILTER_BETA = 0.94;
 
 /** Suavização extra (pós One Euro do MindAR) — interpolação de matriz âncora/malha facial. */
 const OMAFIT_FACE_MATRIX_EXTRA_SMOOTH = 0.2;
@@ -236,9 +236,14 @@ const OMAFIT_FACE_ONE_EURO_MIN_CUTOFF = 0.85;
 const OMAFIT_FACE_ONE_EURO_BETA = 0.009;
 const OMAFIT_FACE_ONE_EURO_D_CUTOFF = 1.05;
 /** One Euro só no path **óculos** (168/33/263/bochechas/orelhas/testa/queixo) — mais suave que o colar. */
-const OMAFIT_FACE_ONE_EURO_GLASSES_MIN_CUTOFF = 0.56;
-const OMAFIT_FACE_ONE_EURO_GLASSES_BETA = 0.0072;
-const OMAFIT_FACE_ONE_EURO_GLASSES_D_CUTOFF = 0.96;
+/** minCutoff mais baixo = mais “colado” em repouso; beta mais alto = reacção a movimento rápido. */
+const OMAFIT_FACE_ONE_EURO_GLASSES_MIN_CUTOFF = 0.36;
+const OMAFIT_FACE_ONE_EURO_GLASSES_BETA = 0.035;
+const OMAFIT_FACE_ONE_EURO_GLASSES_D_CUTOFF = 0.98;
+/** One Euro na descomposição posição+quaternion da âncora 168 (pós MindAR). */
+const OMAFIT_GLASSES_ANCHOR_ONE_EURO_MIN_CUTOFF = 0.24;
+const OMAFIT_GLASSES_ANCHOR_ONE_EURO_BETA = 0.052;
+const OMAFIT_GLASSES_ANCHOR_ONE_EURO_D_CUTOFF = 1.02;
 /** Largura da armação = `factor` × distância métrica 234–454 (bochechas). Override: `data-ar-glasses-anatomic-width-factor`. */
 const OMAFIT_GLASSES_ANATOMIC_WIDTH_FACTOR = 1.05;
 /** EMA só na largura bochecha (estabilidade da escala anatómica). */
@@ -1706,6 +1711,248 @@ function createFaceLandmarkOneEuroSmoother(THREE, indices, minCutoff, beta, dCut
       return states[i]?.xPrev ? vecs[i] : null;
     },
   };
+}
+
+/**
+ * Tenta obter o landmark 168 em coordenadas **normalizadas** (x,y∈[0,1]) do
+ * runtime MindAR, quando exposto no `estimateResult` (varia por versão).
+ */
+function omafitPickNormalizedLandmark168(estimateResult) {
+  if (!estimateResult || typeof estimateResult !== "object") return null;
+  const candidates = [
+    estimateResult.faceLandmarks,
+    estimateResult.landmarks,
+    estimateResult.face?.landmarks,
+    estimateResult.normalizedLandmarks,
+    estimateResult.canonicalLandmarks,
+  ];
+  for (const arr of candidates) {
+    if (!Array.isArray(arr)) continue;
+    const p = arr[OMAFIT_FACE_LM_NOSE_BRIDGE];
+    if (!p) continue;
+    if (typeof p.x === "number" && typeof p.y === "number") return p;
+    if (Array.isArray(p) && typeof p[0] === "number") {
+      return { x: p[0], y: p[1], z: typeof p[2] === "number" ? p[2] : 0 };
+    }
+  }
+  return null;
+}
+
+/**
+ * Alinha o ponto principal da projeção ao 168: erro em NDC (baixa frequência)
+ * para `makePerspective` assimétrico — “screen-to-world” via frustum offset.
+ */
+function omafitUpdatePrincipalShiftFromLm168(
+  THREE,
+  camera,
+  anchorGroup,
+  estimateResult,
+  /** @type {{ x: number, y: number }} */ lp,
+  mirrorVideoX,
+  scratch,
+) {
+  if (!THREE || !camera || !anchorGroup || !lp || !scratch) return;
+  const lm = omafitPickNormalizedLandmark168(estimateResult);
+  if (!lm) return;
+  anchorGroup.updateMatrixWorld(true);
+  scratch.set(0, 0, 0).applyMatrix4(anchorGroup.matrixWorld);
+  scratch.project(camera);
+  const tgt = omafitMediaPipeNormalizedToNdcXY(lm);
+  let ex = tgt.x - scratch.x;
+  let ey = tgt.y - scratch.y;
+  if (mirrorVideoX) ex = -ex;
+  const a = 0.24;
+  lp.x = lp.x * (1 - a) + ex * a;
+  lp.y = lp.y * (1 - a) + ey * a;
+  const lim = 0.07;
+  lp.x = THREE.MathUtils.clamp(lp.x, -lim, lim);
+  lp.y = THREE.MathUtils.clamp(lp.y, -lim, lim);
+}
+
+/**
+ * Matriz de projeção OpenGL-style a partir de FOV vertical + aspect + offsets
+ * NDC (ponto principal descentrado). Mantém `camera.near` / `camera.far`.
+ */
+function omafitApplyOpenGlPerspectiveFromVideoIntrinsics(THREE, camera, fovDeg, aspect, shiftXNdc, shiftYNdc) {
+  if (!THREE || !camera) return;
+  const near = Math.max(1e-4, Number(camera.near) || 0.01);
+  const far = Math.max(near * 2, Number(camera.far) || 1000);
+  const fovRad = (THREE.MathUtils.clamp(fovDeg, 35, 95) * Math.PI) / 180;
+  const t = near * Math.tan(fovRad * 0.5);
+  const b = -t;
+  const r = t * Math.max(0.2, aspect);
+  const l = -r;
+  const w = r - l;
+  const h = t - b;
+  const sx = THREE.MathUtils.clamp(shiftXNdc || 0, -0.09, 0.09);
+  const sy = THREE.MathUtils.clamp(shiftYNdc || 0, -0.09, 0.09);
+  const dx = sx * 0.5 * w;
+  const dy = sy * 0.5 * h;
+  const mat = new THREE.Matrix4().makePerspective(l + dx, r + dx, t - dy, b - dy, near, far);
+  camera.projectionMatrix.copy(mat);
+  camera.projectionMatrixInverse.copy(mat).invert();
+}
+
+/**
+ * Log SO(3): `qRel` unitário, caminho mais curto (w ≥ 0). Escreve `outV` (tangent).
+ */
+function omafitQuaternionRelativeLog(THREE, qFrom, qTo, outV, qScratch) {
+  qScratch.copy(qFrom).invert().multiply(qTo);
+  if (qScratch.w < 0) qScratch.set(-qScratch.x, -qScratch.y, -qScratch.z, -qScratch.w);
+  const { x, y, z, w } = qScratch;
+  const sinh = Math.hypot(x, y, z);
+  const half = Math.atan2(sinh, w);
+  const th = 2 * half;
+  if (th < 1e-7) {
+    outV.set(2 * x, 2 * y, 2 * z);
+    return;
+  }
+  const k = th / Math.max(sinh, 1e-9);
+  outV.set(x * k, y * k, z * k);
+}
+
+/** Exponencial em S³ a partir de vector tangent (axis * angle). */
+function omafitExpVec3ToQuaternion(THREE, vx, vy, vz, outQ) {
+  const th = Math.hypot(vx, vy, vz);
+  if (th < 1e-8) {
+    outQ.identity();
+    return;
+  }
+  const h = th * 0.5;
+  const s = Math.sin(h) / th;
+  outQ.set(vx * s, vy * s, vz * s, Math.cos(h));
+}
+
+/**
+ * One Euro no manifold de rotações: filtra o log de (qPrev⁻¹ × qRaw) e recompõe.
+ * @param {{ qPrev: any | null, tPrev: number | null, logState: { xPrev: number[] | null, tPrev: number | null, dxPrev: number[] }, qScratch: any, qStep: any, vMeas: any }} state
+ */
+function omafitOneEuroFilterQuaternion(THREE, qRaw, tSec, state, minCutoff, beta, dCutoff) {
+  if (!state.qPrev) {
+    state.qPrev = qRaw.clone();
+    state.tPrev = tSec;
+    state.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
+    return state.qPrev;
+  }
+  const te = Math.max(1e-6, tSec - state.tPrev);
+  state.tPrev = tSec;
+  const v = state.vMeas || new THREE.Vector3();
+  omafitQuaternionRelativeLog(THREE, state.qPrev, qRaw, v, state.qScratch);
+  const vf = omafitOneEuroFilterVec3(
+    [v.x, v.y, v.z],
+    tSec,
+    state.logState,
+    minCutoff,
+    beta,
+    dCutoff,
+  );
+  omafitExpVec3ToQuaternion(THREE, vf[0], vf[1], vf[2], state.qStep);
+  state.qPrev.multiply(state.qStep).normalize();
+  return state.qPrev;
+}
+
+/** Decal radial + planos suaves sob ponte / têmporas (sem EffectComposer). */
+function omafitCreateGlassesContactShadowRig(THREE, glassesAnatomy) {
+  if (!THREE || !glassesAnatomy) return null;
+  const g = new THREE.Group();
+  g.name = "omafit-ar-glasses-contact-ao-rig";
+  g.renderOrder = -2;
+  const cvs =
+    typeof document !== "undefined" ? document.createElement("canvas") : null;
+  let tex = null;
+  if (cvs) {
+    cvs.width = 64;
+    cvs.height = 64;
+    const ctx = cvs.getContext("2d");
+    if (ctx) {
+      const grd = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+      grd.addColorStop(0, "rgba(18,14,22,0.38)");
+      grd.addColorStop(0.45, "rgba(18,14,22,0.14)");
+      grd.addColorStop(1, "rgba(18,14,22,0)");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, 64, 64);
+    }
+    tex = new THREE.CanvasTexture(cvs);
+    tex.needsUpdate = true;
+  }
+  const sharedMat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.MultiplyBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
+  });
+  /** Frente das lentes canonical Omafit ≈ −Z local; sombra assenta na face (+Z). */
+  const bridge = new THREE.Mesh(new THREE.PlaneGeometry(0.072, 0.036), sharedMat);
+  bridge.rotation.x = -Math.PI / 2;
+  bridge.position.set(0, -0.012, 0.014);
+  const tL = new THREE.Mesh(new THREE.PlaneGeometry(0.034, 0.092), sharedMat);
+  tL.rotation.y = Math.PI * 0.22;
+  tL.rotation.x = -Math.PI / 2;
+  tL.position.set(-0.086, -0.006, 0.01);
+  const tR = new THREE.Mesh(new THREE.PlaneGeometry(0.034, 0.092), sharedMat);
+  tR.rotation.y = -Math.PI * 0.22;
+  tR.rotation.x = -Math.PI / 2;
+  tR.position.set(0.086, -0.006, 0.01);
+  g.add(bridge, tL, tR);
+  glassesAnatomy.add(g);
+  return g;
+}
+
+function omafitDisposeGlassesContactRig(rig) {
+  if (!rig) return;
+  const seenMat = new Set();
+  try {
+    rig.traverse((o) => {
+      if (!o.isMesh) return;
+      o.geometry?.dispose?.();
+    });
+    rig.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = o.material;
+      if (!m || seenMat.has(m)) return;
+      seenMat.add(m);
+      if (m.map?.dispose) m.map.dispose();
+      m.dispose?.();
+    });
+    rig.parent?.remove(rig);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Escurecimento local tipo “cavity AO” em `MeshStandardMaterial` / físico
+ * (sem RenderPass — Web mobile). Patch idempotente via `userData`.
+ */
+function omafitPatchGlassesMaterialsLocalCavityAo(THREE, root, intensity) {
+  if (!THREE || !root || !(intensity > 0)) return;
+  const inj = `float omafitNdV=abs(dot(normalize(normal),normalize(-vViewPosition)));
+float omafitCav=smoothstep(0.22,0.94,1.0-omafitNdV);
+float omafitTmp=(1.0-smoothstep(0.05,0.14,abs(position.x)))*smoothstep(-0.02,0.06,position.z);
+diffuseColor.rgb*=mix(1.0,${1 - intensity},0.55*omafitCav+0.35*omafitTmp);`;
+  root.traverse((ch) => {
+    if (!ch.isMesh) return;
+    const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+    for (const mat of mats) {
+      if (!mat || mat.userData?.omafitCavityPatched) continue;
+      if (!("roughness" in mat) || typeof mat.onBeforeCompile !== "function") continue;
+      mat.userData = mat.userData || {};
+      mat.userData.omafitCavityPatched = true;
+      mat.onBeforeCompile = (shader) => {
+        if (shader.fragmentShader.includes("omafitNdV")) return;
+        const needle = "#include <output_fragment>";
+        if (shader.fragmentShader.includes(needle)) {
+          shader.fragmentShader = shader.fragmentShader.replace(needle, `${inj}\n${needle}`);
+        }
+      };
+      mat.needsUpdate = true;
+    }
+  });
 }
 
 /** Hastes / braços laterais do GLB (não lentes nem aro frontal). */
@@ -3354,7 +3601,18 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
   if (!Number.isFinite(fov)) fov = OMAFIT_FACE_CAMERA_FOV_DEFAULT;
   fov = THREE.MathUtils.clamp(fov, 35, 95);
   camera.fov = fov;
-  if (typeof camera.updateProjectionMatrix === "function") camera.updateProjectionMatrix();
+  const useGl =
+    opts?.useOpenGlStyleProjection !== false &&
+    typeof THREE.Matrix4 === "function" &&
+    camera.projectionMatrix &&
+    typeof camera.projectionMatrix.copy === "function";
+  if (useGl) {
+    const sx = opts?.principalShiftNdcLp?.x ?? 0;
+    const sy = opts?.principalShiftNdcLp?.y ?? 0;
+    omafitApplyOpenGlPerspectiveFromVideoIntrinsics(THREE, camera, fov, aspect, sx, sy);
+  } else if (typeof camera.updateProjectionMatrix === "function") {
+    camera.updateProjectionMatrix();
+  }
   return true;
 }
 
@@ -4157,7 +4415,26 @@ async function runArSession({
     const faceProjectionOpts = {
       fovDeg: faceCameraFovDeg,
       strictVideoCanvasPixelMatch: faceProjectionStrict,
+      useOpenGlStyleProjection: !/^(0|false|off|no)$/i.test(
+        String(cfgAttr("arFaceOpenGlProjectionMatrix", "1")).trim(),
+      ),
+      principalShiftNdcLp: { x: 0, y: 0 },
+      principalAlign168:
+        accessoryType === "glasses" &&
+        !/^(0|false|off|no)$/i.test(String(cfgAttr("arFacePrincipalAlign168", "1")).trim()),
     };
+    const glassesAnchorSmoothMode = String(
+      cfgAttr("arGlassesAnchorSmooth", accessoryType === "glasses" ? "one-euro" : "damp"),
+    )
+      .trim()
+      .toLowerCase();
+    const glassesAnchorOneEuro =
+      accessoryType === "glasses" && glassesAnchorSmoothMode !== "damp";
+    const glassesCavityAoIntensity = (() => {
+      if (accessoryType !== "glasses") return 0;
+      const v = Number(String(cfgAttr("arGlassesCavityAoIntensity", "0.22")).trim());
+      return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 0.55) : 0.22;
+    })();
 
     let lm168DebugSphereQuery = false;
     try {
@@ -4490,6 +4767,13 @@ async function runArSession({
         mat.needsUpdate = true;
       }
     });
+    if (accessoryType === "glasses" && glassesCavityAoIntensity > 0) {
+      try {
+        omafitPatchGlassesMaterialsLocalCavityAo(THREE, glasses, glassesCavityAoIntensity);
+      } catch (e) {
+        console.warn("[omafit-ar] cavity AO patch:", e?.message || e);
+      }
+    }
 
     /**
      * Centralização absoluta do pivot **logo após o load** (antes de bake):
@@ -5022,6 +5306,19 @@ async function runArSession({
 
     anchor.group.add(wearPosition);
 
+    /** Sombras de contacto suaves (ponte / têmporas) — sem composer WebGL. */
+    let glassesContactRig = null;
+    if (
+      accessoryType === "glasses" &&
+      !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesContactShadowRig", "1")).trim())
+    ) {
+      try {
+        glassesContactRig = omafitCreateGlassesContactShadowRig(THREE, glassesAnatomy);
+      } catch (e) {
+        console.warn("[omafit-ar] contact shadow rig:", e?.message || e);
+      }
+    }
+
     /** Esfera no landmark 168 (origem local do `anchor.group`). Se coincidir com o nariz e o GLB não, o erro é do modelo. */
     let lm168DebugMesh = null;
     if (lm168DebugSphereEnabled) {
@@ -5119,6 +5416,28 @@ async function runArSession({
     faceArEnhancementState = {
       faceProjectionOpts,
       projectionSyncLogged: false,
+      glassesContactRig,
+      principalAlignScratch:
+        accessoryType === "glasses" && faceProjectionOpts.principalAlign168
+          ? new THREE.Vector3()
+          : null,
+      anchorSmoothOneEuro: glassesAnchorOneEuro,
+      anchorEuroPosState: glassesAnchorOneEuro
+        ? { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] }
+        : null,
+      anchorEuroQuatState: glassesAnchorOneEuro
+        ? {
+            qPrev: null,
+            tPrev: null,
+            logState: { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] },
+            qScratch: new THREE.Quaternion(),
+            qStep: new THREE.Quaternion(),
+            vMeas: new THREE.Vector3(),
+          }
+        : null,
+      anchorDec: glassesAnchorOneEuro
+        ? { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() }
+        : null,
       faceControllerPrev: null,
       smoothAnchorMat: new THREE.Matrix4(),
       smoothFaceMats: [],
@@ -5224,11 +5543,8 @@ async function runArSession({
       st.faceControllerPrev = mindarThree.controller.onUpdate;
       mindarThree.controller.onUpdate = (payload) => {
         st.faceControllerPrev(payload);
-        /**
-         * MindAR repõe câmara/renderer no loop interno — reaplicar FOV/aspect
-         * (e canvas=vídeo em modo strict) **após** o update nativo.
-         */
-        if (st.faceProjectionOpts) {
+        const runProjectionSync = () => {
+          if (!st.faceProjectionOpts) return;
           try {
             omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, st.faceProjectionOpts);
             if (!st.projectionSyncLogged) {
@@ -5239,6 +5555,7 @@ async function runArSession({
               console.log("[omafit-ar] projeção activa (cada frame)", OMAFIT_AR_WIDGET_BUILD, {
                 fov: cam?.fov,
                 aspect: cam?.aspect,
+                principalNdc: st.faceProjectionOpts.principalShiftNdcLp,
                 video: v ? { w: v.videoWidth, h: v.videoHeight } : null,
                 canvas: dom ? { w: dom.width, h: dom.height } : null,
               });
@@ -5246,8 +5563,12 @@ async function runArSession({
           } catch {
             /* ignore */
           }
-        }
+        };
         if (!payload.hasFace) {
+          if (st.faceProjectionOpts?.principalShiftNdcLp) {
+            st.faceProjectionOpts.principalShiftNdcLp.x *= 0.88;
+            st.faceProjectionOpts.principalShiftNdcLp.y *= 0.88;
+          }
           st.smoothInitialized = false;
           st.lmSmoother?.reset();
           st.smoothedCheekW = null;
@@ -5269,13 +5590,43 @@ async function runArSession({
             st.necklaceSwing.swingGroup.position.set(0, 0, 0);
             st.necklaceSwing.swingGroup.rotation.set(0, 0, 0);
           }
+          if (st.anchorEuroPosState) {
+            st.anchorEuroPosState.xPrev = null;
+            st.anchorEuroPosState.tPrev = null;
+            st.anchorEuroPosState.dxPrev = [0, 0, 0];
+          }
+          if (st.anchorEuroQuatState) {
+            st.anchorEuroQuatState.qPrev = null;
+            st.anchorEuroQuatState.tPrev = null;
+            st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
+          }
+          runProjectionSync();
           return;
         }
         const est = payload.estimateResult;
-        const lm = est.metricLandmarks;
-        if (!lm) return;
+        const lm = est?.metricLandmarks;
+        if (!lm) {
+          runProjectionSync();
+          return;
+        }
         const nowMs = performance.now();
         st.lmSmoother?.sample(lm, nowMs);
+        if (
+          accessoryType === "glasses" &&
+          st.faceProjectionOpts?.principalAlign168 &&
+          st.principalAlignScratch
+        ) {
+          omafitUpdatePrincipalShiftFromLm168(
+            THREE,
+            mindarThree.camera,
+            anchor.group,
+            est,
+            st.faceProjectionOpts.principalShiftNdcLp,
+            !disableFaceMirror,
+            st.principalAlignScratch,
+          );
+        }
+        runProjectionSync();
 
         /**
          * Óculos: verificação de qualidade da **base canonical** derivada
@@ -5335,6 +5686,16 @@ async function runArSession({
         }
 
         if (!st.smoothInitialized) {
+          if (st.anchorEuroPosState) {
+            st.anchorEuroPosState.xPrev = null;
+            st.anchorEuroPosState.tPrev = null;
+            st.anchorEuroPosState.dxPrev = [0, 0, 0];
+          }
+          if (st.anchorEuroQuatState) {
+            st.anchorEuroQuatState.qPrev = null;
+            st.anchorEuroQuatState.tPrev = null;
+            st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
+          }
           st.smoothAnchorMat.copy(anchor.group.matrix);
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
             const fm = mindarThree.faceMeshes[fi];
@@ -5357,8 +5718,41 @@ async function runArSession({
           }
           st.smoothInitialized = true;
         } else {
-          omafitDampMatrix4(THREE, st.smoothAnchorMat, anchor.group.matrix, faceMatrixExtraLambda);
-          anchor.group.matrix.copy(st.smoothAnchorMat);
+          if (
+            st.anchorSmoothOneEuro &&
+            st.anchorEuroPosState &&
+            st.anchorEuroQuatState &&
+            st.anchorDec
+          ) {
+            anchor.group.matrix.decompose(st.anchorDec.p, st.anchorDec.q, st.anchorDec.s);
+            const tSec = nowMs * 0.001;
+            const pF = omafitOneEuroFilterVec3(
+              [st.anchorDec.p.x, st.anchorDec.p.y, st.anchorDec.p.z],
+              tSec,
+              st.anchorEuroPosState,
+              OMAFIT_GLASSES_ANCHOR_ONE_EURO_MIN_CUTOFF,
+              OMAFIT_GLASSES_ANCHOR_ONE_EURO_BETA,
+              OMAFIT_GLASSES_ANCHOR_ONE_EURO_D_CUTOFF,
+            );
+            omafitOneEuroFilterQuaternion(
+              THREE,
+              st.anchorDec.q,
+              tSec,
+              st.anchorEuroQuatState,
+              OMAFIT_GLASSES_ANCHOR_ONE_EURO_MIN_CUTOFF,
+              OMAFIT_GLASSES_ANCHOR_ONE_EURO_BETA,
+              OMAFIT_GLASSES_ANCHOR_ONE_EURO_D_CUTOFF,
+            );
+            st.smoothAnchorMat.compose(
+              st.anchorDec.p.set(pF[0], pF[1], pF[2]),
+              st.anchorEuroQuatState.qPrev,
+              st.anchorDec.s,
+            );
+            anchor.group.matrix.copy(st.smoothAnchorMat);
+          } else {
+            omafitDampMatrix4(THREE, st.smoothAnchorMat, anchor.group.matrix, faceMatrixExtraLambda);
+            anchor.group.matrix.copy(st.smoothAnchorMat);
+          }
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
             const fm = mindarThree.faceMeshes[fi];
             if (!st.smoothFaceMats[fi]) st.smoothFaceMats[fi] = new THREE.Matrix4();
@@ -5673,6 +6067,11 @@ async function runArSession({
       try {
         const ph = st?.hairUniforms?.uOmafitHairMask?.value;
         if (ph && ph !== st?.hairMaskTexture && ph.dispose) ph.dispose();
+      } catch {
+        /* ignore */
+      }
+      try {
+        omafitDisposeGlassesContactRig(st?.glassesContactRig);
       } catch {
         /* ignore */
       }

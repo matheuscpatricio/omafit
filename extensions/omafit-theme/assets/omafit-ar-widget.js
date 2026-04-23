@@ -195,7 +195,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_lm168-debug-sphere-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_face-projection-every-frame-v1";
 
 /** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
 const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
@@ -3312,35 +3312,50 @@ function omafitUnprojectMediaPipeNormalizedLandmark(THREE, camera, lm, depthNdc,
  * @param {HTMLElement | null} mindarHost
  * @param {{ fovDeg?: number, strictVideoCanvasPixelMatch?: boolean }} [opts]
  */
+/**
+ * @returns {boolean} true se `camera` foi actualizada (sempre que existir câmara).
+ */
 function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
-  if (!THREE || !mindarThree) return;
+  if (!THREE || !mindarThree) return false;
   const renderer = mindarThree.renderer;
   const camera = mindarThree.camera;
   const video = mindarHost?.querySelector?.("video");
-  if (!renderer || !camera || !video) return;
-  const vw = video.videoWidth | 0;
-  const vh = video.videoHeight | 0;
-  if (vw < 2 || vh < 2) return;
+  if (!renderer || !camera) return false;
+  const vw = Math.max(0, video?.videoWidth | 0);
+  const vh = Math.max(0, video?.videoHeight | 0);
   const strict = opts?.strictVideoCanvasPixelMatch !== false;
-  if (strict && typeof renderer.setSize === "function") {
+  /**
+   * O MindAR repõe `camera` / `renderer` no loop interno — este sync tem de
+   * correr **em cada frame** (`controller.onUpdate`), não só no `resize`.
+   * Sem `videoWidth` ainda (antes de `loadedmetadata`), aplicamos só FOV/aspect
+   * de recurso para o efeito ser visível logo.
+   */
+  if (vw >= 2 && vh >= 2 && strict && typeof renderer.setSize === "function") {
     renderer.setSize(vw, vh, true);
-    video.style.width = `${vw}px`;
-    video.style.height = `${vh}px`;
+    if (video) {
+      video.style.width = `${vw}px`;
+      video.style.height = `${vh}px`;
+    }
     const dom = renderer.domElement;
     if (dom) {
       dom.style.width = `${vw}px`;
       dom.style.height = `${vh}px`;
     }
   }
-  const aspect = vw / vh;
-  if (Number.isFinite(aspect) && aspect > 0) {
-    camera.aspect = aspect;
-  }
+  let aspect =
+    vw >= 2 && vh >= 2
+      ? vw / vh
+      : Number.isFinite(camera.aspect) && camera.aspect > 0
+        ? camera.aspect
+        : 9 / 16;
+  if (!Number.isFinite(aspect) || aspect <= 0) aspect = 9 / 16;
+  camera.aspect = aspect;
   let fov = Number(opts?.fovDeg);
   if (!Number.isFinite(fov)) fov = OMAFIT_FACE_CAMERA_FOV_DEFAULT;
   fov = THREE.MathUtils.clamp(fov, 35, 95);
   camera.fov = fov;
   if (typeof camera.updateProjectionMatrix === "function") camera.updateProjectionMatrix();
+  return true;
 }
 
 async function startMindARFaceWithReliableCamera(mindarThree) {
@@ -3745,6 +3760,8 @@ async function runArSession({
   let removeOrientationListeners = null;
   /** Timeouts de `_resize` tardio (layout do modal / safe-area) — limpar no cleanup. */
   let lateMindarResizeTimerIds = [];
+  /** `loadedmetadata` no `<video>` — voltar a sincronizar canvas/câmara. */
+  let faceProjectionVideoCleanup = null;
   /** Remover painel de debug Tripo (sliders) ao fechar o modal. */
   let removeTripoDebugPanel = null;
   /** Remover botões de rotação no ecrã (óculos). */
@@ -3760,6 +3777,14 @@ async function runArSession({
     if (arResizeObserver) {
       arResizeObserver.disconnect();
       arResizeObserver = null;
+    }
+    if (typeof faceProjectionVideoCleanup === "function") {
+      try {
+        faceProjectionVideoCleanup();
+      } catch {
+        /* ignore */
+      }
+      faceProjectionVideoCleanup = null;
     }
     if (mindarThree) {
       try {
@@ -4281,6 +4306,24 @@ async function runArSession({
     }
 
     await startMindARFaceWithReliableCamera(mindarThree);
+    {
+      const vMeta = mindarHost?.querySelector?.("video");
+      if (vMeta) {
+        const onVideoProjectionDims = () => {
+          triggerMindarResize();
+        };
+        vMeta.addEventListener("loadedmetadata", onVideoProjectionDims);
+        vMeta.addEventListener("loadeddata", onVideoProjectionDims);
+        faceProjectionVideoCleanup = () => {
+          try {
+            vMeta.removeEventListener("loadedmetadata", onVideoProjectionDims);
+            vMeta.removeEventListener("loadeddata", onVideoProjectionDims);
+          } catch {
+            /* ignore */
+          }
+        };
+      }
+    }
     /**
      * Não usar `scene.background` + VideoTexture: isso altera o pipeline WebGL do
      * MindAR e opacity 0 no elemento video pode quebrar faceMesh/detect (drawImage).
@@ -5074,6 +5117,8 @@ async function runArSession({
         glassesFaceBasisAttr === "no");
 
     faceArEnhancementState = {
+      faceProjectionOpts,
+      projectionSyncLogged: false,
       faceControllerPrev: null,
       smoothAnchorMat: new THREE.Matrix4(),
       smoothFaceMats: [],
@@ -5179,6 +5224,29 @@ async function runArSession({
       st.faceControllerPrev = mindarThree.controller.onUpdate;
       mindarThree.controller.onUpdate = (payload) => {
         st.faceControllerPrev(payload);
+        /**
+         * MindAR repõe câmara/renderer no loop interno — reaplicar FOV/aspect
+         * (e canvas=vídeo em modo strict) **após** o update nativo.
+         */
+        if (st.faceProjectionOpts) {
+          try {
+            omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, st.faceProjectionOpts);
+            if (!st.projectionSyncLogged) {
+              st.projectionSyncLogged = true;
+              const cam = mindarThree.camera;
+              const v = mindarHost?.querySelector?.("video");
+              const dom = mindarThree.renderer?.domElement;
+              console.log("[omafit-ar] projeção activa (cada frame)", OMAFIT_AR_WIDGET_BUILD, {
+                fov: cam?.fov,
+                aspect: cam?.aspect,
+                video: v ? { w: v.videoWidth, h: v.videoHeight } : null,
+                canvas: dom ? { w: dom.width, h: dom.height } : null,
+              });
+            }
+          } catch {
+            /* ignore */
+          }
+        }
         if (!payload.hasFace) {
           st.smoothInitialized = false;
           st.lmSmoother?.reset();

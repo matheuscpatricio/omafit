@@ -212,7 +212,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_hand-anchor-v12-wrist-roll";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_hand-biometric-expand-proximity";
 
 /** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
 const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
@@ -7050,6 +7050,35 @@ async function runHandArSession({
   });
   mindarHost.appendChild(canvas);
 
+  const proximityHint = document.createElement("div");
+  proximityHint.setAttribute("aria-live", "polite");
+  proximityHint.setAttribute("data-omafit-ar-hand-proximity", "1");
+  Object.assign(proximityHint.style, {
+    position: "absolute",
+    left: "50%",
+    bottom: "14px",
+    transform: "translateX(-50%)",
+    zIndex: "6",
+    maxWidth: "min(340px, 92vw)",
+    padding: "9px 16px",
+    borderRadius: "12px",
+    fontSize: "13px",
+    lineHeight: "1.4",
+    textAlign: "center",
+    fontFamily:
+      'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    color: "rgba(255,255,255,0.96)",
+    background: "rgba(16,16,24,0.78)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+    pointerEvents: "none",
+    opacity: "0",
+    transition: "opacity 0.4s ease",
+    boxShadow: "0 2px 14px rgba(0,0,0,0.28)",
+  });
+  proximityHint.textContent = "Aproxime seu pulso para um ajuste perfeito";
+  mindarHost.appendChild(proximityHint);
+
   const renderer = new THREE.WebGLRenderer({
     canvas,
     alpha: true,
@@ -7343,6 +7372,41 @@ async function runHandArSession({
   const OMAFIT_BRACELET_WRIST_GAP_M = 0.0025;
   const OMAFIT_WATCH_WRIST_GAP_M = 0.001;
   /**
+   * Largura “segura” punho: distância MCP5–MCP17 × padding antes do ratio
+   * antropométrico (folga 25–30 % pedida por produto).
+   */
+  const OMAFIT_BRACELET_WRIST_WIDTH_PADDING = 1.28;
+  /**
+   * Ocupação vertical da mão em coord. normalizadas [0,1]: ≥ 0,4 → perto
+   * (mais precisão); abaixo disso → suavização extra + possível aviso de proximidade.
+   */
+  const OMAFIT_HAND_SCREEN_CLOSE_FRAC = 0.4;
+  /**
+   * Expansão biométrica vs distância normalizada MCP5–MCP17 (finos → 1,25, largos → 1,45).
+   */
+  const OMAFIT_BRACELET_EXPAND_THIN = 1.25;
+  const OMAFIT_BRACELET_EXPAND_WIDE = 1.45;
+  const OMAFIT_BRACELET_SPAN_NORM_LO = 0.056;
+  const OMAFIT_BRACELET_SPAN_NORM_HI = 0.108;
+  /** Pulso “largo”: +10 % só no eixo X (largura) vs profundidade. */
+  const OMAFIT_BRACELET_WIDE_SCREEN_N = 0.095;
+  const OMAFIT_BRACELET_WIDE_M = 0.086;
+  const OMAFIT_BRACELET_WIDE_LAT_BOOST = 1.1;
+  /**
+   * Elipse no plano do anel (XY local; eixo Z = braço após `fitWristGlb`):
+   * X = largura ulnar–radial; Y = “profundidade” palmar–dorsal (pedido XZ no
+   * texto do produto → aqui X e Y); Z = espessura ao longo do braço — só
+   * `suBase` (sem W) para não deformar o perfil da peça no eixo do braço.
+   */
+  const OMAFIT_BRACELET_ELLIPSE_X = 1.09;
+  const OMAFIT_BRACELET_ELLIPSE_DEPTH = 0.93;
+  /**
+   * Raio do cilindro oclusor (mundo) = factor × raio interno estimado da
+   * pulseira em mundo — ligeiramente menor que a cavidade interna para o
+   * depth cortar antes do inner mesh (menos Z-fighting / atravessar).
+   */
+  const OMAFIT_BRACELET_OCCLUDER_VS_INNER = 0.95;
+  /**
    * Ratio knuckle-span → raio do pulso (landmarks 5–17). Pulseira usa valor
    * mais alto que relógio: feedback persistente de pulseira sub-dimensionada
    * mesmo com 0.34 único em v11.3.
@@ -7603,13 +7667,33 @@ async function runHandArSession({
     const center = new THREE.Vector3();
     bbox.getCenter(center);
     glbScene.position.sub(center);
+    /**
+     * Pulseira: segunda passagem `setFromObject` + recentrar — pivots GLB
+     * assimétricos (fecho, charms) deixam o anel deslocado do centro do bbox
+     * na primeira iteração; o landmark 0 da âncora deve coincidir com o eixo
+     * médio do anel no plano XY (eixo Z = braço após `fit`).
+     */
+    if (accessoryType === "bracelet") {
+      glbScene.updateMatrixWorld(true);
+      bbox.setFromObject(glbScene);
+      bbox.getCenter(center);
+      if (center.lengthSq() > 1e-14) {
+        glbScene.position.sub(center);
+      }
+      glbScene.updateMatrixWorld(true);
+      bbox.setFromObject(glbScene);
+      bbox.getSize(size);
+    }
+    const sortedOut = [size.x, size.y, size.z].sort((a, b) => a - b);
+    const medianDimOut = sortedOut[1] || medianDim;
+    const maxDimOut = sortedOut[2] || maxDim;
 
     return {
       baseScale: calcBaseScale,
       size,
       bbox,
-      maxDim,
-      medianDim,
+      maxDim: maxDimOut,
+      medianDim: medianDimOut,
       localRingR,
       localInnerR,
       didBend,
@@ -7832,6 +7916,10 @@ async function runHandArSession({
    * perspectiva sem “pulsar” frame a frame.
    */
   let handKnuckleSpanRef = 0;
+  /** Jitter span 5–17 (m) + histerese para aviso “aproxime o pulso”. */
+  let prevKnuckleSpan3d = 0;
+  let knuckleJitterEma = 0;
+  let proximityHintStable = 0;
 
   let running = true;
   let lastHandTimestamp = -1;
@@ -7897,6 +7985,31 @@ async function runHandArSession({
      * com tamanho aparente (L · focal / Z). Resolvendo: Z = L · focal / span.
      */
     const wristN = lms[0];
+    const lm5n = lms[5];
+    const lm17n = lms[17];
+    const dBaseNx = (lm17n.x - lm5n.x) * videoAspect();
+    const dBaseNy = lm17n.y - lm5n.y;
+    const distanciaBaseNorm = Math.hypot(dBaseNx, dBaseNy);
+    let mnHy = 1;
+    let mxHy = 0;
+    for (let hi = 0; hi < lms.length; hi++) {
+      const yy = lms[hi].y;
+      if (yy < mnHy) mnHy = yy;
+      if (yy > mxHy) mxHy = yy;
+    }
+    const proporcaTela = Math.max(0, mxHy - mnHy);
+    const closeEnoughHand = proporcaTela >= OMAFIT_HAND_SCREEN_CLOSE_FRAC;
+    const tWristExpand = THREE.MathUtils.clamp(
+      (distanciaBaseNorm - OMAFIT_BRACELET_SPAN_NORM_LO) /
+        Math.max(1e-5, OMAFIT_BRACELET_SPAN_NORM_HI - OMAFIT_BRACELET_SPAN_NORM_LO),
+      0,
+      1,
+    );
+    const wristExpandMul = THREE.MathUtils.lerp(
+      OMAFIT_BRACELET_EXPAND_THIN,
+      OMAFIT_BRACELET_EXPAND_WIDE,
+      tWristExpand,
+    );
     const middleMcpN = lms[9] || lms[5];
     const dx = (middleMcpN.x - wristN.x) * videoAspect();
     const dy = middleMcpN.y - wristN.y;
@@ -8053,7 +8166,10 @@ async function runHandArSession({
       smPos.copy(tmpPos);
       smoothInitialized = true;
     } else {
-      smPos.lerp(tmpPos, OMAFIT_HAND_EMA_POS_ALPHA);
+      const posAlpha = closeEnoughHand
+        ? OMAFIT_HAND_EMA_POS_ALPHA
+        : OMAFIT_HAND_EMA_POS_ALPHA * 0.48;
+      smPos.lerp(tmpPos, posAlpha);
       /**
        * Anti-flip guard: medir ângulo entre smoothedQuat e tmpQuat.
        * dot < 0 significa que estão no hemisfério oposto da esfera 4D
@@ -8076,7 +8192,10 @@ async function runHandArSession({
           });
         }
       } else {
-        smoothedQuat.slerp(tmpQuat, OMAFIT_HAND_EMA_ROT_ALPHA);
+        const rotAlpha = closeEnoughHand
+          ? OMAFIT_HAND_EMA_ROT_ALPHA
+          : OMAFIT_HAND_EMA_ROT_ALPHA * 0.55;
+        smoothedQuat.slerp(tmpQuat, rotAlpha);
       }
     }
 
@@ -8151,6 +8270,14 @@ async function runHandArSession({
      * EMA lento (tau = 800 ms) para não pulsar com o jitter dos landmarks.
      */
     const handKnuckleSpan = w5.distanceTo(w17);
+    const isWideWrist =
+      distanciaBaseNorm >= OMAFIT_BRACELET_WIDE_SCREEN_N ||
+      handKnuckleSpan >= OMAFIT_BRACELET_WIDE_M;
+    const wideLatBoost = isWideWrist ? OMAFIT_BRACELET_WIDE_LAT_BOOST : 1;
+    const braceletRingGeomMean = Math.sqrt(
+      Math.max(1e-6, wristExpandMul * OMAFIT_BRACELET_ELLIPSE_X * wideLatBoost) *
+        Math.max(1e-6, wristExpandMul * OMAFIT_BRACELET_ELLIPSE_DEPTH),
+    );
     const aSpanRef =
       1 - Math.exp(-clampDt / OMAFIT_HAND_KNUCKLE_SPAN_REF_TAU_MS);
     if (handKnuckleSpanRef <= 1e-8) {
@@ -8191,9 +8318,13 @@ async function runHandArSession({
       accessoryType === "bracelet"
         ? OMAFIT_BRACELET_KNUCKLE_TO_WRIST_R
         : OMAFIT_WATCH_KNUCKLE_TO_WRIST_R;
+    const effectiveKnuckleSpan =
+      accessoryType === "bracelet"
+        ? handKnuckleSpan * OMAFIT_BRACELET_WRIST_WIDTH_PADDING
+        : handKnuckleSpan;
     const wristRadiusRaw = Math.max(
       0.018,
-      Math.min(0.042, handKnuckleSpan * knuckleToWristRatio),
+      Math.min(0.045, effectiveKnuckleSpan * knuckleToWristRatio),
     );
     /**
      * Comprimento do antebraço (para occluder): ratio ≈ 3.2 × knuckleSpan
@@ -8213,28 +8344,54 @@ async function runHandArSession({
     } else {
       const clampDtOcc = Math.max(8, Math.min(80, Number.isFinite(dtMs) ? dtMs : 16));
       const aOcc = 1 - Math.exp(-clampDtOcc / 800);
-      smoothWristRadius += (wristRadiusRaw - smoothWristRadius) * aOcc;
-      smoothForearmLength += (forearmLengthRaw - smoothForearmLength) * aOcc;
+      const aOccHand = closeEnoughHand ? aOcc : aOcc * 0.42;
+      smoothWristRadius += (wristRadiusRaw - smoothWristRadius) * aOccHand;
+      smoothForearmLength += (forearmLengthRaw - smoothForearmLength) * aOccHand;
     }
     /**
-     * Scale do cilindro + elipse na secção do pulso (v12.0).
+     * Scale do cilindro + elipse na secção do pulso.
      *
-     * Raio base: `smoothWristR × OMAFIT_HAND_OCCLUDER_RADIUS_SCALE` (ligeiramente
-     * inferior ao pulso estimado) — corta só a metade posterior de correias
-     * “fechadas”; o dorso do GLB mantém-se visível.
+     * Pulseira: raio base = 0,95 × raio interno da joia em mundo (alinhado a
+     * `localInnerR` × escala activa, com média geométrica da elipse X/Y).
+     * Relógio: mantém `smoothWristR × OMAFIT_HAND_OCCLUDER_RADIUS_SCALE`.
      *
-     * Elipse: após `armOccluder.quaternion`, o eixo local X do cilindro alinha
-     * com **anchor X** (ulnar–radial) e o Z local com **anchor Y** (palmar–dorsal).
-     * `polygonOffset` no material reduz Z-fighting com o mostrador.
+     * Elipse do cilindro: após `armOccluder.quaternion`, eixo local X ≈ anchor X
+     * (ulnar–radial) e Z local ≈ anchor Y (palmar–dorsal).
      */
     /** Ligeiramente maior ao longo da largura do punho (knuckle span). */
     const OMAFIT_OCCLUDER_ELLIPSE_ULNAR_RADIAL = 1.1;
     /** Ligeiramente maior na espessura palmar–dorsal (vista de perfil). */
     const OMAFIT_OCCLUDER_ELLIPSE_PALMAR_DORSAL = 1.12;
-    const occluderR = Math.max(
-      0.011,
-      smoothWristRadius * OMAFIT_HAND_OCCLUDER_RADIUS_SCALE,
-    );
+    const gapOc =
+      accessoryType === "bracelet"
+        ? OMAFIT_BRACELET_WRIST_GAP_M
+        : OMAFIT_WATCH_WRIST_GAP_M;
+    const targetInnerROc = smoothWristRadius + gapOc;
+    const defaultTargetROc = OMAFIT_DEFAULT_WRIST_R_M + gapOc;
+    const adaptMulOc = targetInnerROc / defaultTargetROc;
+    const userMulOc =
+      Number.isFinite(Number(userScale)) && Number(userScale) > 0
+        ? Number(userScale)
+        : 1;
+    let occluderR;
+    if (accessoryType === "bracelet" && localInnerR > 1e-6) {
+      const innerWorldR =
+        localInnerR *
+        baseScale *
+        userMulOc *
+        adaptMulOc *
+        perspMul *
+        braceletRingGeomMean;
+      occluderR = Math.max(
+        0.0105,
+        innerWorldR * OMAFIT_BRACELET_OCCLUDER_VS_INNER,
+      );
+    } else {
+      occluderR = Math.max(
+        0.011,
+        smoothWristRadius * OMAFIT_HAND_OCCLUDER_RADIUS_SCALE,
+      );
+    }
     const radiusScale = occluderR / OMAFIT_ARM_OCCLUDER_RADIUS_M;
     const lengthScale = smoothForearmLength / OMAFIT_ARM_OCCLUDER_LENGTH_M;
     armOccluder.scale.set(
@@ -8285,7 +8442,18 @@ async function runHandArSession({
         Number.isFinite(Number(userScale)) && Number(userScale) > 0
           ? Number(userScale)
           : 1;
-      glbRoot.scale.setScalar(baseScale * userMul * adaptMul * perspMul);
+      const suBase = baseScale * userMul * adaptMul * perspMul;
+      const Wb = wristExpandMul;
+      if (accessoryType === "bracelet") {
+        /** X/Y = plano do anel (largura + profundidade); Z = braço (só suBase). */
+        glbRoot.scale.set(
+          suBase * Wb * OMAFIT_BRACELET_ELLIPSE_X * wideLatBoost,
+          suBase * Wb * OMAFIT_BRACELET_ELLIPSE_DEPTH,
+          suBase,
+        );
+      } else {
+        glbRoot.scale.setScalar(suBase * Wb);
+      }
 
       /**
        * === MOSTRADOR / CASE RÍGIDO EM PULSOS FINOS (v11.7) ===
@@ -8304,7 +8472,7 @@ async function runHandArSession({
        * vertex-based, portanto não precisa de correcção separada.
        */
       if (accessoryType === "watch" && watchStrapRadial?.caseDial) {
-        const worldScale = adaptMul * perspMul;
+        const worldScale = adaptMul * perspMul * wristExpandMul;
         const invAdapt =
           Number.isFinite(worldScale) && worldScale > 1e-4 ? 1 / worldScale : 1;
         watchStrapRadial.caseDial.scale.setScalar(invAdapt);
@@ -8329,7 +8497,12 @@ async function runHandArSession({
             !braceletIsBangle &&
             (braceletLinkRadial || braceletVertexDeform)))
       ) {
-        const su = baseScale * userMul * adaptMul * perspMul;
+        const su =
+          baseScale *
+          userMul *
+          adaptMul *
+          perspMul *
+          (accessoryType === "bracelet" ? braceletRingGeomMean : wristExpandMul);
         const spanRatio =
           handKnuckleSpan / Math.max(1e-6, OMAFIT_BASE_KNUCKLE_SPAN_M);
         /** Prior anatómico: span knuckles tem correlação ~0.9 com largura pulso. */
@@ -8393,6 +8566,25 @@ async function runHandArSession({
       }
     }
 
+    try {
+      const jitterInst =
+        prevKnuckleSpan3d > 1e-8
+          ? Math.abs(handKnuckleSpan - prevKnuckleSpan3d)
+          : 0;
+      prevKnuckleSpan3d = handKnuckleSpan;
+      knuckleJitterEma = knuckleJitterEma * 0.88 + jitterInst * 0.12;
+      const trembling = knuckleJitterEma > 0.0035;
+      const farHand = proporcaTela < OMAFIT_HAND_SCREEN_CLOSE_FRAC;
+      if (farHand && trembling) {
+        proximityHintStable = Math.min(36, proximityHintStable + 1);
+      } else {
+        proximityHintStable = Math.max(0, proximityHintStable - 2);
+      }
+      proximityHint.style.opacity = proximityHintStable >= 8 ? "1" : "0";
+    } catch {
+      /* ignore */
+    }
+
     if (debug) {
       const userMul =
         Number.isFinite(Number(userScale)) && Number(userScale) > 0
@@ -8407,9 +8599,9 @@ async function runHandArSession({
         (OMAFIT_DEFAULT_WRIST_R_M + gapOffset);
       const caseRigidK =
         accessoryType === "watch" && watchStrapRadial?.caseDial
-          ? 1 / Math.max(1e-4, adaptMul * perspMul)
+          ? 1 / Math.max(1e-4, adaptMul * perspMul * wristExpandMul)
           : null;
-      console.debug("[omafit-ar] hand anchor v12.0", {
+      console.debug("[omafit-ar] hand anchor v12.1", {
         hand: handLabel || "?",
         handScore: (lastHandScore || 0).toFixed(2),
         anchor: "eixo 0→média(1,17) + roll 0–5–17",
@@ -8454,6 +8646,11 @@ async function runHandArSession({
             ? (braceletSlideLag * 1000).toFixed(1)
             : null,
         knuckleSpanRatio: (handKnuckleSpan / OMAFIT_BASE_KNUCKLE_SPAN_M).toFixed(3),
+        distanciaBaseNorm: distanciaBaseNorm.toFixed(4),
+        proporcaTela: proporcaTela.toFixed(3),
+        closeEnoughHand,
+        wristExpandMul: wristExpandMul.toFixed(3),
+        wideWrist: isWideWrist,
       });
     }
   }
@@ -8535,6 +8732,14 @@ async function runHandArSession({
         smoothInitialized = false;
         smoothOccluderInitialized = false;
         handKnuckleSpanRef = 0;
+        prevKnuckleSpan3d = 0;
+        knuckleJitterEma = 0;
+        proximityHintStable = 0;
+        try {
+          proximityHint.style.opacity = "0";
+        } catch {
+          /* ignore */
+        }
         smoothedStrapK = 1;
         if (watchStrapRadial?.strap) {
           watchStrapRadial.strap.scale.set(1, 1, 1);
@@ -8620,7 +8825,18 @@ async function runHandArSession({
         if (Number.isFinite(Number(cal.wearY))) wearPosition.position.y = Number(cal.wearY);
         if (Number.isFinite(Number(cal.wearZ))) wearPosition.position.z = Number(cal.wearZ);
         if (Number.isFinite(Number(cal.scale)) && Number(cal.scale) > 0) {
-          glbRoot.scale.setScalar(baseScale * Number(cal.scale));
+          const cu = baseScale * Number(cal.scale);
+          const Wcal =
+            (OMAFIT_BRACELET_EXPAND_THIN + OMAFIT_BRACELET_EXPAND_WIDE) / 2;
+          if (accessoryType === "bracelet") {
+            glbRoot.scale.set(
+              cu * Wcal * OMAFIT_BRACELET_ELLIPSE_X,
+              cu * Wcal * OMAFIT_BRACELET_ELLIPSE_DEPTH,
+              cu,
+            );
+          } else {
+            glbRoot.scale.setScalar(cu * Wcal);
+          }
         }
       }
       if (nextUrl && typeof nextUrl === "string") {
@@ -8740,6 +8956,11 @@ async function runHandArSession({
     }
     try {
       if (video?.parentNode) video.parentNode.removeChild(video);
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (proximityHint?.parentNode) proximityHint.parentNode.removeChild(proximityHint);
     } catch {
       /* ignore */
     }

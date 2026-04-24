@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_eyewear-query-force-abs-glb";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glb-query-fallback-render-fix";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -1052,7 +1052,7 @@ function isOmafitEyewearArForcedFromQuery() {
 
 /**
  * `GLTFLoader` no Netlify resolve URLs relativas (`/cdn/shop/...`) contra o **origin do iframe**
- * → 404. Metafields por vezes guardam só o path; `//…` e `https://…` mantêm-se.
+ * → 404. Só reescrevemos paths típicos da CDN Shopify; outros `/…` mantêm-se (p.ex. proxy próprio).
  */
 function omafitAbsolutizeGlbUrlMaybe(raw) {
   const u = String(raw || "").trim();
@@ -1060,6 +1060,10 @@ function omafitAbsolutizeGlbUrlMaybe(raw) {
   if (/^https?:\/\//i.test(u)) return u;
   if (u.startsWith("//")) return `https:${u}`;
   if (u.startsWith("/")) {
+    const shopifyPath =
+      /^\/(cdn\/shop|s\/files|files\/)/i.test(u) ||
+      /^\/\d+\/\d+\/files\//i.test(u);
+    if (!shopifyPath) return u;
     try {
       return new URL(u, "https://cdn.shopify.com").href;
     } catch {
@@ -1067,6 +1071,64 @@ function omafitAbsolutizeGlbUrlMaybe(raw) {
     }
   }
   return u;
+}
+
+/**
+ * `#omafit-ar-root` pode falhar intermitentemente no iframe React; a query `arGlbUrl`
+ * (enviada pelo tema) serve de fallback antes de desistir do arranque.
+ */
+function omafitReadGlbUrlFromRootOrQuery() {
+  try {
+    const r = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    let u = r ? (r.dataset.glbUrl || r.getAttribute("data-glb-url") || "").trim() : "";
+    if (!u && typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search || "");
+      const raw = q.get("arGlbUrl") || q.get("ar_glb_url");
+      if (raw && String(raw).trim()) {
+        u = String(raw).trim();
+        try {
+          u = decodeURIComponent(u);
+        } catch {
+          /* manter u */
+        }
+      }
+    }
+    return omafitAbsolutizeGlbUrlMaybe(u);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * GLBs com `opacity` ~0, `transparent` sem necessidade, ou materiais especiais podem
+ * renderizar “invisíveis” no pipeline AR lite (sem PMREM / transmissão completa).
+ */
+function omafitEnsureGlassesMeshesRenderable(THREE, root) {
+  if (!root || typeof root.traverse !== "function") return;
+  root.traverse((child) => {
+    if (!child || !child.isMesh) return;
+    child.visible = true;
+    child.frustumCulled = false;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      if ("visible" in mat) mat.visible = true;
+      if ("opacity" in mat) {
+        const o = Number(mat.opacity);
+        if (!Number.isFinite(o) || o < 0.02) {
+          mat.opacity = 1;
+          mat.transparent = false;
+        }
+      }
+      if (mat.transparent && "opacity" in mat && Number(mat.opacity) >= 0.98) {
+        mat.transparent = false;
+      }
+      if ("depthWrite" in mat && mat.depthWrite === false && !mat.transparent) {
+        mat.depthWrite = true;
+      }
+      mat.needsUpdate = true;
+    }
+  });
 }
 
 /**
@@ -5299,7 +5361,8 @@ async function runArSession({
         : "";
       return { u, v };
     })();
-    const sessionGlbUrl = omafitAbsolutizeGlbUrlMaybe(fromDom.u || glbUrl);
+    const sessionGlbUrl =
+      omafitReadGlbUrlFromRootOrQuery() || omafitAbsolutizeGlbUrlMaybe(String(glbUrl || "").trim());
     const glbVersion =
       fromDom.v ||
       String(arCfg?.dataset?.arGlbVersion || arCfg?.getAttribute?.("data-ar-glb-version") || "").trim();
@@ -5317,7 +5380,18 @@ async function runArSession({
       /* ignore */
     }
     const gltf = await new Promise((resolve, reject) => {
-      loader.load(glbLoadUrl, resolve, undefined, reject);
+      loader.load(
+        glbLoadUrl,
+        resolve,
+        undefined,
+        (err) => {
+          console.error("[omafit-ar] GLTFLoader falhou", OMAFIT_AR_WIDGET_BUILD, {
+            url: glbLoadUrl,
+            message: err?.message || String(err),
+          });
+          reject(err);
+        },
+      );
     });
     const glasses = gltf.scene;
     try {
@@ -5384,6 +5458,13 @@ async function runArSession({
         mat.needsUpdate = true;
       }
     });
+    if (accessoryType === "glasses") {
+      try {
+        omafitEnsureGlassesMeshesRenderable(THREE, glasses);
+      } catch (e) {
+        console.warn("[omafit-ar] ensure meshes renderable:", e?.message || e);
+      }
+    }
     if (accessoryType === "glasses" && glassesCavityAoIntensity > 0) {
       try {
         omafitPatchGlassesMaterialsLocalCavityAo(THREE, glasses, glassesCavityAoIntensity);
@@ -9769,12 +9850,7 @@ async function main() {
   const root = document.getElementById("omafit-ar-root");
   if (!root) return;
 
-  let glbUrl = (
-    root.dataset.glbUrl ||
-    root.getAttribute("data-glb-url") ||
-    ""
-  ).trim();
-  glbUrl = omafitAbsolutizeGlbUrlMaybe(glbUrl);
+  let glbUrl = omafitReadGlbUrlFromRootOrQuery();
   const glbVer = String(
     root.dataset.arGlbVersion || root.getAttribute("data-ar-glb-version") || "",
   ).trim();
@@ -10152,9 +10228,7 @@ function bootOmafitArWidget() {
   const maxRaf = 720;
   function tick() {
     const root = document.getElementById("omafit-ar-root");
-    const glb = root
-      ? (root.dataset.glbUrl || root.getAttribute("data-glb-url") || "").trim()
-      : "";
+    const glb = omafitReadGlbUrlFromRootOrQuery();
     if (root && glb) {
       // #region agent log
       let h = "";

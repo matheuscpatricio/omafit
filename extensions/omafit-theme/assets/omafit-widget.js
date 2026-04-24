@@ -1890,6 +1890,7 @@
           passAttr('arGlassesManualCalibOffset', 'data-ar-glasses-manual-calib-offset');
           passAttr('arGlassesManualCalibScale', 'data-ar-glasses-manual-calib-scale');
           passAttr('arGlassesManualCalibUi', 'data-ar-glasses-manual-calib-ui');
+          passAttr('arGlassesPivotRotDeg', 'data-ar-glasses-pivot-rot-deg');
           passAttr('arOmafitCalibration', 'data-ar-omafit-calibration');
         }
       } catch (e) {

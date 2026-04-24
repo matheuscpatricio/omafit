@@ -4,6 +4,18 @@ import {
   omafitApplyGlassesTripoOffsetContainer,
 } from "./omafit-glasses-orient.js";
 import { omafitRecenterObject3Bbox } from "./omafit-glb-bbox-center.js";
+import {
+  createOmafitBraceletWristPlacementState,
+  omafitBraceletWristAlignStep,
+  omafitBraceletWristMetricsStep,
+  omafitBraceletWristScaleWearStep,
+  resetOmafitBraceletWristPlacementState,
+} from "./omafit-bracelet-wrist-placement.js";
+import {
+  createMindarGlassesPivotSmoother,
+  mindarGlassesPivotSmootherStep,
+  resetMindarGlassesPivotSmoother,
+} from "./omafit-mindar-glasses-pivot-rig.js";
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
  * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js).
@@ -28,9 +40,11 @@ import { omafitRecenterObject3Bbox } from "./omafit-glb-bbox-center.js";
  *      anchor.group (MindAR landmark 168)
  *        → wearPosition (offset XYZ em unidades de face: wearX/Y/Z)
  *          → calibRot (data-ar-canonical-fix-yxz; típico 0,0,0 sem metafield)
- *            → … → glassesFineShift (estático; `data-ar-glasses-local-fine-xyz`)
- *            → glassesLiveAdjust (tempo real; `window.__omafitGlassesManualCalib`)
- *            → glasses (escala anatómica no mesh × `scaleMultiplier` no grupo).
+ *            → … → glassesPivot (offsets/rotação/escala locais; não no anchor)
+ *            → glasses (bbox centrada no pivot; escala anatómica no mesh).
+ *
+ *    Árvore mínima de referência (snippet / `omafit-mindar-glasses-pivot-rig.js`):
+ *      anchor.group → glassesPivot → modelo (Box3 + calib local + lerp/slerp opcional).
  *
  *    Motivo desta simplificação (Abr/2026):
  *      A versão anterior tinha um `centerOffset` com `y = -bridgeY * sz.y * baseUnitScale`.
@@ -159,10 +173,9 @@ const OMAFIT_METAL_ENV_MAP_INTENSITY = 1.5;
 const OMAFIT_BRACELET_SLIDE_TAU_FAST_MS = 88;
 const OMAFIT_BRACELET_SLIDE_TAU_LAG_MS = 265;
 /**
- * Referências para escala **por eixo** da pulseira (m): espessura palmar–dorsal
- * estimada pela altura do triângulo 0–5–17; alcance punho→MCP médio.
+ * Referência (m) do segmento punho (LM0) → MCP médio (LM9) em adulto (~9,4 cm).
+ * Usada na escala Y (espessura ao longo do dorso) e no factor de alcance em Z.
  */
-const OMAFIT_BRACELET_REF_WRIST_THICK_M = 0.026;
 const OMAFIT_BRACELET_REF_FOREARM_REACH_M = 0.094;
 /** Deslocamento em −Y local da âncora (em direcção à palma) para encostar ao pulso. */
 const OMAFIT_BRACELET_SKIN_SINK_TARGET_M = 0.0031;
@@ -227,7 +240,25 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_bracelet-biometric-fit";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-variant-cart-zfix";
+
+/**
+ * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
+ * `glassesPivot` e usa `OMAFIT_GLASSES_PIVOT_TEST_OVERRIDES` (valores pedidos
+ * para teste no dispositivo). `rot*` em **graus** (Euler XYZ), como o resto
+ * do pipeline (`rotY = 180` ≡ π rad).
+ */
+const OMAFIT_GLASSES_PIVOT_DIRECT_TEST = true;
+const OMAFIT_GLASSES_PIVOT_TEST_OVERRIDES = {
+  offsetX: -0.015,
+  offsetY: -0.01,
+  offsetZ: -0.04,
+  rotX: 0,
+  rotY: 180,
+  /** 0,05 rad ≈ 2,866° */
+  rotZ: (0.05 * 180) / Math.PI,
+  scale: 1.1,
+};
 
 /** FOV vertical da `PerspectiveCamera` alinhado à webcam típica (laptop / telemóvel). */
 const OMAFIT_FACE_CAMERA_FOV_DEFAULT = 63;
@@ -568,18 +599,17 @@ function installOmafitGlassesTripoDebugPanel(layerHost, THREE, offsetGroup, y0, 
 }
 
 /**
- * Calibração manual em tempo real: transladação local (offsetX/Y/Z) +
- * `scaleMultiplier` multiplicativo sobre a escala anatómica já aplicada ao mesh.
+ * Calibração do `glassesPivot`: posição local, Euler XYZ (graus), escala multiplicativa.
  * Activa UI com `?omafit_ar_glasses_manual_calib=1` ou `data-ar-glasses-manual-calib-ui="1"`.
- * O mesmo objecto é exposto em `window.__omafitGlassesManualCalib` para consola.
+ * Expõe `window.__omafitGlassesPivotConfig` (alias `__omafitGlassesManualCalib`).
  * @param {HTMLElement} layerHost
- * @param {{ offsetX: number, offsetY: number, offsetZ: number, scaleMultiplier: number }} calib
+ * @param {{ offsetX: number, offsetY: number, offsetZ: number, rotX: number, rotY: number, rotZ: number, scale: number }} calib
  * @returns {() => void}
  */
 function installOmafitGlassesManualCalibPanel(layerHost, calib) {
   if (!layerHost || !calib) return () => {};
   const wrap = document.createElement("div");
-  wrap.setAttribute("data-omafit", "glasses-manual-calib");
+  wrap.setAttribute("data-omafit", "glasses-pivot-calib");
   Object.assign(wrap.style, {
     position: "absolute",
     left: "max(8px, env(safe-area-inset-left, 0px))",
@@ -598,7 +628,7 @@ function installOmafitGlassesManualCalibPanel(layerHost, calib) {
     touchAction: "manipulation",
   });
   const title = document.createElement("div");
-  title.textContent = "Calibração manual (local + escala)";
+  title.textContent = "glassesPivot (pos · rot ° · escala)";
   Object.assign(title.style, { fontWeight: "600", marginBottom: "6px" });
   wrap.appendChild(title);
 
@@ -643,7 +673,10 @@ function installOmafitGlassesManualCalibPanel(layerHost, calib) {
   wrap.appendChild(mkRange("offsetX (local)", "offsetX", -0.08, 0.08, 0.0005));
   wrap.appendChild(mkRange("offsetY (local)", "offsetY", -0.08, 0.08, 0.0005));
   wrap.appendChild(mkRange("offsetZ (local)", "offsetZ", -0.08, 0.08, 0.0005));
-  wrap.appendChild(mkRange("scaleMultiplier (×)", "scaleMultiplier", 0.5, 1.5, 0.002));
+  wrap.appendChild(mkRange("rotX (° Euler XYZ)", "rotX", -18, 18, 0.1));
+  wrap.appendChild(mkRange("rotY (°)", "rotY", -18, 18, 0.1));
+  wrap.appendChild(mkRange("rotZ (°)", "rotZ", -18, 18, 0.1));
+  wrap.appendChild(mkRange("scale (×)", "scale", 0.5, 1.5, 0.002));
 
   const btn = document.createElement("button");
   btn.type = "button";
@@ -663,12 +696,17 @@ function installOmafitGlassesManualCalibPanel(layerHost, calib) {
     const ox = calib.offsetX;
     const oy = calib.offsetY;
     const oz = calib.offsetZ;
-    const sm = calib.scaleMultiplier;
+    const sm = calib.scale;
+    const rx = calib.rotX;
+    const ry = calib.rotY;
+    const rz = calib.rotZ;
+    const a0 = `data-ar-glasses-local-fine-xyz="0 0 0"`;
     const a1 = `data-ar-glasses-manual-calib-offset="${ox} ${oy} ${oz}"`;
     const a2 = `data-ar-glasses-manual-calib-scale="${sm}"`;
-    console.log(`%c[omafit-ar] ${a1}\n${a2}`, "color:#0cf;font-weight:bold;");
+    const a3 = `data-ar-glasses-pivot-rot-deg="${rx}, ${ry}, ${rz}"`;
+    console.log(`%c[omafit-ar] ${a0}\n${a1}\n${a2}\n${a3}`, "color:#0cf;font-weight:bold;");
     try {
-      void navigator.clipboard.writeText(`${a1}\n${a2}`);
+      void navigator.clipboard.writeText(`${a0}\n${a1}\n${a2}\n${a3}`);
     } catch {
       /* ignore */
     }
@@ -3327,6 +3365,11 @@ function injectGlobalStyles(root, primaryOverride) {
       background: transparent !important;
       background-color: transparent !important;
     }
+    /* Miniaturas + carrinho: filho de arWrap (fora do overflow do vídeo), acima do WebGL. */
+    .omafit-ar-shell .omafit-ar-variant-cart-strip {
+      z-index: 120 !important;
+      pointer-events: auto !important;
+    }
     /* Controlo de rotação GLB: irmão de .omafit-ar-fit, fora de overflow:hidden do vídeo. */
     .omafit-ar-shell .omafit-ar-glasses-screen-rot,
     [data-omafit="glasses-screen-rot"] {
@@ -4075,12 +4118,15 @@ async function runArSession({
     /* noop */
   }
   let arBottomBar = null;
+  /** Barra “só carrinho” (uma variante) — filho de `arWrap`, não de `arFit`. */
+  let singleCartBar = null;
 
   const variantCalPayload = (v) =>
     v && typeof v.calibration === "object" && v.calibration !== null ? v.calibration : {};
 
   if (arVariants.length > 1) {
     arBottomBar = el("div", {
+      className: "omafit-ar-variant-cart-strip",
       style: {
         position: "absolute",
         bottom: "0",
@@ -4088,7 +4134,7 @@ async function runArSession({
         right: "0",
         background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
         padding: "10px 8px calc(8px + env(safe-area-inset-bottom, 0px))",
-        zIndex: "8",
+        zIndex: "120",
         display: "flex",
         flexDirection: "column",
         gap: "8px",
@@ -4203,9 +4249,9 @@ async function runArSession({
       }
     });
     arBottomBar.appendChild(cartBtn);
-    arFit.appendChild(arBottomBar);
   } else if (productId) {
-    const singleCartBar = el("div", {
+    singleCartBar = el("div", {
+      className: "omafit-ar-variant-cart-strip",
       style: {
         position: "absolute",
         bottom: "0",
@@ -4213,7 +4259,7 @@ async function runArSession({
         right: "0",
         background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
         padding: "10px 8px calc(8px + env(safe-area-inset-bottom, 0px))",
-        zIndex: "8",
+        zIndex: "120",
         pointerEvents: "auto",
       },
     });
@@ -4256,8 +4302,11 @@ async function runArSession({
       }
     });
     singleCartBar.appendChild(singleCartBtn);
-    arFit.appendChild(singleCartBar);
   }
+
+  /** Por cima do vídeo/WebGL (`arFit` tem overflow:hidden + host MindAR). */
+  if (arBottomBar) arWrap.appendChild(arBottomBar);
+  if (singleCartBar) arWrap.appendChild(singleCartBar);
 
   colContent.style.padding = "0";
   /**
@@ -4389,6 +4438,7 @@ async function runArSession({
       removeManualCalibPanel = null;
     }
     try {
+      delete window.__omafitGlassesPivotConfig;
       delete window.__omafitGlassesManualCalib;
     } catch {
       /* ignore */
@@ -4621,6 +4671,12 @@ async function runArSession({
         target.dataset.arGlassesManualCalibScale = String(
           Math.max(0.25, Math.min(4, msm)),
         );
+      }
+      const prx = num(cal.pivotRotX);
+      const pry = num(cal.pivotRotY);
+      const prz = num(cal.pivotRotZ);
+      if (prx !== null && pry !== null && prz !== null) {
+        target.dataset.arGlassesPivotRotDeg = `${prx}, ${pry}, ${prz}`;
       }
       if (bridgeY !== null) target.dataset.arBridgeYFactor = String(bridgeY);
       if (scale !== null && scale > 0) target.dataset.arMindarModelScale = String(scale);
@@ -5136,7 +5192,7 @@ async function runArSession({
     /**
      * Pipeline simples ("filtro do Instagram"): idêntica ao preview do admin.
      * Hierarquia mínima: anchor.group → wearPosition → calibRot → … → GLB
-     *   (óculos: `internalCorrector` → `glassesFineShift` → `glassesLiveAdjust` → `glasses`).
+     *   (óculos: `internalCorrector` → `glassesPivot` → `glasses`).
      *   - calibRot:     rotação YXZ da calibração (defaults 0,0,0)
      *   - wearPosition: offset em unidades de âncora (≈14cm/unit) via wearX/Y/Z
      *   - escala:       ~1× largura da cara × modelScaleMul
@@ -5252,16 +5308,45 @@ async function runArSession({
       Number.isFinite(glassesManualScaleRaw) && glassesManualScaleRaw > 0
         ? THREE.MathUtils.clamp(glassesManualScaleRaw, 0.25, 4)
         : 1;
-    /** Ajuste fino em tempo real; também `window.__omafitGlassesManualCalib` (path óculos). */
-    const glassesManualCalib =
+    const glassesPivotRotDeg = parseEulerDegComponents(
+      cfgAttr("arGlassesPivotRotDeg", "0, 0, 0"),
+      0,
+      0,
+      0,
+    );
+    /**
+     * Transformações **locais** do contentor `glassesPivot` (filho de
+     * `internalCorrector`); não se aplica offset no `anchor.group`.
+     * `offset*` inclui fine estático + manual calib; `rot*` em graus (Euler order XYZ);
+     * `scale` multiplica a escala anatómica já posta no mesh `glasses`.
+     */
+    const glassesPivotConfig =
       accessoryType === "glasses"
         ? {
-            offsetX: glassesManualCalibParsed.x,
-            offsetY: glassesManualCalibParsed.y,
-            offsetZ: glassesManualCalibParsed.z,
-            scaleMultiplier: glassesManualScaleMulInit,
+            offsetX: glassesLocalFineM.x + glassesManualCalibParsed.x,
+            offsetY: glassesLocalFineM.y + glassesManualCalibParsed.y,
+            offsetZ: glassesLocalFineM.z + glassesManualCalibParsed.z,
+            rotX: glassesPivotRotDeg.x,
+            rotY: glassesPivotRotDeg.y,
+            rotZ: glassesPivotRotDeg.z,
+            scale: glassesManualScaleMulInit,
           }
         : null;
+    if (glassesPivotConfig) {
+      Object.defineProperty(glassesPivotConfig, "scaleMultiplier", {
+        configurable: true,
+        get() {
+          return this.scale;
+        },
+        set(v) {
+          const n = Number(v);
+          this.scale = Number.isFinite(n) && n > 0 ? n : 1;
+        },
+      });
+    }
+    if (OMAFIT_GLASSES_PIVOT_DIRECT_TEST && glassesPivotConfig) {
+      Object.assign(glassesPivotConfig, OMAFIT_GLASSES_PIVOT_TEST_OVERRIDES);
+    }
     const anatomyYawDeg = Number(String(cfgAttr("arGlassesAnatomyYawDeg", "0")).trim());
     const anatomyYawRad = Number.isFinite(anatomyYawDeg)
       ? (anatomyYawDeg * Math.PI) / 180
@@ -5534,7 +5619,7 @@ async function runArSession({
     /** 4) Hierarquia (óculos com contentor Tripo):
      *   anchor.group → wearPosition → faceParent (âncora local identidade) →
      *   calibRot → [offsetGroup Tripo] → [screenRot local] → glassesAnatomy →
-     *   internalCorrector → glassesFineShift → glassesLiveAdjust → glasses
+     *   internalCorrector → glassesPivot → glasses
      *
      *     - Rastreio MediaPipe / MindAR: `anchor.group.matrix` (e descendentes).
      *     - `faceParent`: ponto lógico “pai da face” (não mexe no bind MindAR).
@@ -5641,30 +5726,51 @@ async function runArSession({
     } else {
       calibRot.add(glassesAnatomy);
     }
-    let glassesLiveAdjust = null;
+    let glassesPivot = null;
     if (accessoryType === "glasses" && internalCorrector) {
-      const glassesFineShift = new GroupCtor();
-      glassesFineShift.name = "omafit-ar-glasses-fine-shift";
-      glassesFineShift.position.set(glassesLocalFineM.x, glassesLocalFineM.y, glassesLocalFineM.z);
-      glassesLiveAdjust = new GroupCtor();
-      glassesLiveAdjust.name = "omafit-ar-glasses-live-adjust";
-      if (glassesManualCalib) {
-        glassesLiveAdjust.position.set(
-          glassesManualCalib.offsetX,
-          glassesManualCalib.offsetY,
-          glassesManualCalib.offsetZ,
+      glassesPivot = new GroupCtor();
+      glassesPivot.name = "omafit-ar-glasses-pivot";
+      glassesPivot.rotation.order = "XYZ";
+      if (glassesPivotConfig) {
+        const sc0 = Number(glassesPivotConfig.scale);
+        glassesPivot.scale.setScalar(
+          Number.isFinite(sc0) && sc0 > 0 ? THREE.MathUtils.clamp(sc0, 0.25, 4) : 1,
         );
-        const sm0 = glassesManualCalib.scaleMultiplier;
-        glassesLiveAdjust.scale.setScalar(
-          Number.isFinite(sm0) && sm0 > 0 ? THREE.MathUtils.clamp(sm0, 0.25, 4) : 1,
+        glassesPivot.position.set(
+          glassesPivotConfig.offsetX,
+          glassesPivotConfig.offsetY,
+          glassesPivotConfig.offsetZ,
+        );
+        glassesPivot.rotation.set(
+          rad(glassesPivotConfig.rotX),
+          rad(glassesPivotConfig.rotY),
+          rad(glassesPivotConfig.rotZ),
         );
       }
-      internalCorrector.add(glassesFineShift);
-      glassesFineShift.add(glassesLiveAdjust);
-      glassesLiveAdjust.add(glasses);
+      internalCorrector.add(glassesPivot);
+      glassesPivot.add(glasses);
       glassesAnatomy.add(internalCorrector);
     } else {
       glassesAnatomy.add(glasses);
+    }
+
+    /** Lerp/slerp leve no `glassesPivot` (opcional): `data-ar-glasses-pivot-smooth-ms="55"`. */
+    let glassesPivotSmoother = null;
+    let glassesPivotSmoothPrevMs = -1;
+    const glassesPivotSmoothTauMs = Number(
+      String(cfgAttr("arGlassesPivotSmoothMs", "0")).trim(),
+    );
+    if (
+      accessoryType === "glasses" &&
+      glassesPivot &&
+      Number.isFinite(glassesPivotSmoothTauMs) &&
+      glassesPivotSmoothTauMs > 0
+    ) {
+      glassesPivotSmoother = createMindarGlassesPivotSmoother(THREE, {
+        positionTauMs: glassesPivotSmoothTauMs,
+        rotationTauMs: glassesPivotSmoothTauMs * 1.08,
+        scaleTauMs: glassesPivotSmoothTauMs * 0.95,
+      });
     }
 
     const wearPosition = new GroupCtor();
@@ -5712,9 +5818,10 @@ async function runArSession({
 
     anchor.group.add(wearPosition);
 
-    if (glassesManualCalib) {
+    if (glassesPivotConfig) {
       try {
-        window.__omafitGlassesManualCalib = glassesManualCalib;
+        window.__omafitGlassesPivotConfig = glassesPivotConfig;
+        window.__omafitGlassesManualCalib = glassesPivotConfig;
       } catch {
         /* ignore */
       }
@@ -6041,6 +6148,10 @@ async function runArSession({
             st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
           }
           if (st.ndcWearLock?.sm) st.ndcWearLock.sm.set(0, 0, 0);
+          if (glassesPivotSmoother) {
+            resetMindarGlassesPivotSmoother(glassesPivotSmoother);
+            glassesPivotSmoothPrevMs = -1;
+          }
           runProjectionSync();
           return;
         }
@@ -6277,15 +6388,30 @@ async function runArSession({
               }
             }
           }
-          if (glassesLiveAdjust && glassesManualCalib) {
-            const sm = Number(glassesManualCalib.scaleMultiplier);
+          if (glassesPivot && glassesPivotConfig) {
+            const cfg = glassesPivotConfig;
+            const sm = Number(cfg.scale);
             const sc = Number.isFinite(sm) && sm > 0 ? THREE.MathUtils.clamp(sm, 0.25, 4) : 1;
-            glassesLiveAdjust.scale.setScalar(sc);
-            glassesLiveAdjust.position.set(
-              glassesManualCalib.offsetX,
-              glassesManualCalib.offsetY,
-              glassesManualCalib.offsetZ,
-            );
+            if (glassesPivotSmoother) {
+              const dtPv =
+                glassesPivotSmoothPrevMs >= 0
+                  ? Math.max(4, Math.min(100, nowMs - glassesPivotSmoothPrevMs))
+                  : 16;
+              glassesPivotSmoothPrevMs = nowMs;
+              mindarGlassesPivotSmootherStep(
+                THREE,
+                glassesPivotSmoother,
+                glassesPivot,
+                cfg,
+                sc,
+                dtPv,
+                rad,
+              );
+            } else {
+              glassesPivot.scale.setScalar(sc);
+              glassesPivot.position.set(cfg.offsetX, cfg.offsetY, cfg.offsetZ);
+              glassesPivot.rotation.set(rad(cfg.rotX), rad(cfg.rotY), rad(cfg.rotZ));
+            }
           }
           if (st.glassesCheekOrthogonalBasis) {
             glassesAnatomy.rotation.y = anatomyYawRad;
@@ -7034,14 +7160,24 @@ async function runArSession({
     window.__omafitArSwitchGlb = async (nextUrl, cal) => {
       try {
         if (cal && typeof cal === "object") applyOmafitCalibration(cal, arCfg);
-        const gmc = glassesManualCalib;
-        if (gmc && arCfg?.dataset) {
+        const gpc = glassesPivotConfig;
+        if (gpc && arCfg?.dataset && !OMAFIT_GLASSES_PIVOT_DIRECT_TEST) {
+          const fine = parseXyzMeters(arCfg.dataset.arGlassesLocalFineXyz || "0 0 0", 0, 0, 0);
           const po = parseXyzMeters(arCfg.dataset.arGlassesManualCalibOffset || "0 0 0", 0, 0, 0);
+          const pr = parseEulerDegComponents(
+            arCfg.dataset.arGlassesPivotRotDeg || "0, 0, 0",
+            0,
+            0,
+            0,
+          );
           const sr = Number(String(arCfg.dataset.arGlassesManualCalibScale ?? "1").trim());
-          gmc.offsetX = po.x;
-          gmc.offsetY = po.y;
-          gmc.offsetZ = po.z;
-          gmc.scaleMultiplier =
+          gpc.offsetX = fine.x + po.x;
+          gpc.offsetY = fine.y + po.y;
+          gpc.offsetZ = fine.z + po.z;
+          gpc.rotX = pr.x;
+          gpc.rotY = pr.y;
+          gpc.rotZ = pr.z;
+          gpc.scale =
             Number.isFinite(sr) && sr > 0 ? THREE.MathUtils.clamp(sr, 0.25, 4) : 1;
         }
         const nu = String(nextUrl || "").trim();
@@ -7119,8 +7255,8 @@ async function runArSession({
       ) {
         showManualCalibUi = true;
       }
-      if (showManualCalibUi && glassesManualCalib) {
-        removeManualCalibPanel = installOmafitGlassesManualCalibPanel(arWrap, glassesManualCalib);
+      if (showManualCalibUi && glassesPivotConfig) {
+        removeManualCalibPanel = installOmafitGlassesManualCalibPanel(arWrap, glassesPivotConfig);
       }
     } catch (e) {
       console.warn("[omafit-ar] manual calib UI:", e?.message || e);
@@ -7181,44 +7317,18 @@ async function runArSession({
 }
 
 /**
- * Métricas de pulso em espaço câmara (metros aprox.) para ajuste da pulseira.
- * Além da corda MCP5–MCP17, usa a corda 1–17 (base polegar–mindinho) e a
- * espessura ≈ altura do triângulo (punho, MCP índice, MCP mindinho).
- *
- * @param {any} THREE
- * @param {import("three").Vector3} w0 punho (LM 0)
- * @param {import("three").Vector3} w1 CMC polegar
- * @param {import("three").Vector3} w5 MCP índice
- * @param {import("three").Vector3} w9 MCP médio
- * @param {import("three").Vector3} w17 MCP mindinho
- * @param {{ e5: import("three").Vector3, e17: import("three").Vector3, cross: import("three").Vector3 }} scratch
- */
-function omafitComputeBraceletWristFitMetrics(THREE, w0, w1, w5, w9, w17, scratch) {
-  const widthLateral = w5.distanceTo(w17);
-  const widthRoot = w1.distanceTo(w17);
-  const widthEff = Math.max(widthLateral, widthRoot * 0.94);
-  scratch.e5.subVectors(w5, w0);
-  scratch.e17.subVectors(w17, w0);
-  scratch.cross.crossVectors(scratch.e5, scratch.e17);
-  const rawThick = scratch.cross.length() / Math.max(1e-5, widthLateral);
-  const thicknessM = THREE.MathUtils.clamp(rawThick, 0.011, 0.055);
-  const wristToMcp = w0.distanceTo(w9);
-  return { widthLateral, widthRoot, widthEff, thicknessM, wristToMcp };
-}
-
-/**
  * Sessão AR para acessórios de pulso (relógios, pulseiras) usando
  * MediaPipe Hand Landmarker + Three.js directamente (sem MindAR).
  *
- * Hierarquia Three.js igual à do face path:
- *   anchorGroup → wearPosition → calibRot → glbRoot
+ * Hierarquia Three.js igual à do face path (pulseira: grupo extra de alinhamento):
+ *   anchorGroup → wearPosition → calibRot → [braceletWristAlign] → glbRoot
  *
  * `anchorGroup` é re-orientado a cada frame a partir dos landmarks 0, 1, 5, 9
  * e 17 (punho, CMC polegar, MCP índice/mindinho, MCP médio): eixo do antebraço
  * (com blend estável), normal palmar/dorsal e produtos vectoriais no plano
- * 0–5–17. Para **pulseira**, mede-se também espessura (triângulo 0–5–17),
- * largura efectiva max(5–17, 1–17) e punho→MCP9 — escala não-uniforme X/Y/Z
- * e offset −Y suavizado para contacto visual. Estes pontos definem uma base
+ * 0–5–17. Para **pulseira**, largura MCP5–MCP17, segmento punho→MCP9 (elipse
+ * não circular: X/Z ~ largura, Y ~ espessura), offset −Y suavizado e rotação
+ * extra alinhada ao braço. Estes pontos definem uma base
  * ortonormada {X, Y, Z} consistente com a face path:
  *   - X = direcção pinky→index (largura do pulso, eixo lateral)
  *   - Y = normal do plano da mão (costas/palma, “para cima”)
@@ -7539,7 +7649,7 @@ async function runHandArSession({
 
   /**
    * Hierarquia espelha a face path para paridade com o preview do admin:
-   *   anchor → wearPosition → calibRot → glbRoot
+   *   anchor → wearPosition → calibRot → [pulseira: wristAlign] → glbRoot
    */
   const anchor = new THREE.Group();
   /** Matriz escrita em `updateAnchorFromHand` — não deixar o Three interpolar. */
@@ -7552,9 +7662,18 @@ async function runHandArSession({
   const calibRot = new THREE.Group();
   wearPosition.add(calibRot);
 
+  /** Só pulseira: rotação suave punho→MCP9 em espaço de `calibRot`. */
+  let braceletWristAlignGroup = null;
   const glbRoot = new THREE.Group();
   glbRoot.visible = false;
-  calibRot.add(glbRoot);
+  if (accessoryType === "bracelet") {
+    braceletWristAlignGroup = new THREE.Group();
+    braceletWristAlignGroup.name = "omafit-ar-bracelet-wrist-align";
+    calibRot.add(braceletWristAlignGroup);
+    braceletWristAlignGroup.add(glbRoot);
+  } else {
+    calibRot.add(glbRoot);
+  }
 
   /**
    * === OCCLUDER DO ANTEBRAÇO ===
@@ -7755,6 +7874,12 @@ async function runHandArSession({
   const OMAFIT_BRACELET_ELLIPSE_X = 1.09;
   /** Quase neutro: evita “apertar” a abertura no eixo palmar–dorsal. */
   const OMAFIT_BRACELET_ELLIPSE_DEPTH = 0.99;
+  /** Slerp do alinhamento punho→MCP9 em espaço de `calibRot` (ms). */
+  const OMAFIT_BRACELET_ALIGN_TAU_MS = 120;
+  /** Lerp da posição de wear (offset âncora) para a pulseira (ms). */
+  const OMAFIT_BRACELET_WEAR_LERP_MS = 155;
+  /** Limite de correção angular extra (rad) — evita saltos quando MCP9 oscila. */
+  const OMAFIT_BRACELET_ALIGN_MAX_RAD = 0.14;
   /**
    * Raio do cilindro oclusor (mundo) = factor × raio interno estimado da
    * pulseira em mundo — ligeiramente menor que a cavidade interna para o
@@ -8095,16 +8220,10 @@ async function runHandArSession({
   let braceletSlideFast = 0;
   let braceletSlideLag = 0;
   const braceletDv = new THREE.Vector3();
-  const braceletMetricScratch = {
-    e5: new THREE.Vector3(),
-    e17: new THREE.Vector3(),
-    cross: new THREE.Vector3(),
-  };
-  let smoothBraceletWidthEff = 0;
-  let smoothBraceletThick = 0;
-  let smoothBraceletReach = 0;
-  let smoothBraceletSink = 0;
-  let braceletBiometricInit = false;
+  const braceletPlaceState =
+    accessoryType === "bracelet"
+      ? createOmafitBraceletWristPlacementState(THREE)
+      : null;
   /** Escala radial suavizada [kFloor, 1] — mostrador permanece fora deste grupo. */
   let smoothedStrapK = 1;
   await new Promise((resolve, reject) => {
@@ -8395,38 +8514,21 @@ async function runHandArSession({
     const w17 = unprojectLandmark(lms[17], zDist);
     const clampDt = Math.max(8, Math.min(80, Number.isFinite(dtMs) ? dtMs : 16));
 
-    if (accessoryType === "bracelet") {
-      const bm = omafitComputeBraceletWristFitMetrics(
-        THREE,
+    if (accessoryType === "bracelet" && braceletPlaceState) {
+      omafitBraceletWristMetricsStep(THREE, braceletPlaceState, {
         w0,
-        w1,
         w5,
         w9,
         w17,
-        braceletMetricScratch,
-      );
-      if (!braceletBiometricInit) {
-        smoothBraceletWidthEff = bm.widthEff;
-        smoothBraceletThick = bm.thicknessM;
-        smoothBraceletReach = bm.wristToMcp;
-        smoothBraceletSink = 0;
-        braceletBiometricInit = true;
-      } else {
-        const am =
-          (1 - Math.exp(-clampDt / OMAFIT_BRACELET_METRICS_EMA_MS)) *
-          (closeEnoughHand ? 1 : 0.38);
-        smoothBraceletWidthEff += (bm.widthEff - smoothBraceletWidthEff) * am;
-        smoothBraceletThick += (bm.thicknessM - smoothBraceletThick) * am;
-        smoothBraceletReach += (bm.wristToMcp - smoothBraceletReach) * am;
-      }
-      const aSink =
-        (1 - Math.exp(-clampDt / OMAFIT_BRACELET_SINK_EMA_MS)) *
-        (closeEnoughHand ? 1 : 0.35);
-      smoothBraceletSink = THREE.MathUtils.lerp(
-        smoothBraceletSink,
-        OMAFIT_BRACELET_SKIN_SINK_TARGET_M,
-        aSink,
-      );
+        clampDt,
+        closeEnoughHand,
+        metricsTauMs: OMAFIT_BRACELET_METRICS_EMA_MS,
+        sinkTauMs: OMAFIT_BRACELET_SINK_EMA_MS,
+        sinkTargetM: OMAFIT_BRACELET_SKIN_SINK_TARGET_M,
+        refThick09M: OMAFIT_BRACELET_REF_FOREARM_REACH_M,
+        widthClamp: [0.042, 0.118],
+        thickClamp: [0.055, 0.142],
+      });
     }
 
     /**
@@ -8642,13 +8744,7 @@ async function runHandArSession({
     anchor.matrixWorldNeedsUpdate = true;
     anchor.updateMatrixWorld(true);
 
-    if (accessoryType === "bracelet") {
-      wearPosition.position.set(
-        wearXYZ.x,
-        wearXYZ.y - smoothBraceletSink,
-        wearXYZ.z + braceletSlideLag,
-      );
-    } else {
+    if (accessoryType !== "bracelet") {
       wearPosition.position.set(wearXYZ.x, wearXYZ.y, wearXYZ.z);
     }
     wearPosition.updateMatrixWorld(true);
@@ -8860,23 +8956,41 @@ async function runHandArSession({
           : 1;
       const suBase = baseScale * userMul * adaptMul * perspMul;
       const Wb = wristExpandMul;
-      if (accessoryType === "bracelet") {
-        const latR = smoothBraceletWidthEff / OMAFIT_BASE_KNUCKLE_SPAN_M;
-        const thickR = smoothBraceletThick / OMAFIT_BRACELET_REF_WRIST_THICK_M;
-        const reachR = smoothBraceletReach / OMAFIT_BRACELET_REF_FOREARM_REACH_M;
-        const mulX = THREE.MathUtils.clamp(latR, 0.9, 1.14);
-        const mulY = THREE.MathUtils.clamp(thickR, 0.91, 1.24);
-        const mulZ = THREE.MathUtils.clamp(
-          Math.pow(Math.max(0.86, reachR), OMAFIT_BRACELET_Z_SCALE_EXP),
-          0.965,
-          1.065,
-        );
-        /** X/Y/Z: elipse base + correção por largura efectiva, espessura 0–5–17 e alcance punho→MCP9. */
-        glbRoot.scale.set(
-          suBase * Wb * OMAFIT_BRACELET_ELLIPSE_X * wideLatBoost * mulX,
-          suBase * Wb * OMAFIT_BRACELET_ELLIPSE_DEPTH * mulY,
-          suBase * mulZ,
-        );
+      if (accessoryType === "bracelet" && braceletPlaceState) {
+        const sw = omafitBraceletWristScaleWearStep(THREE, braceletPlaceState, {
+          clampDt,
+          closeEnoughHand,
+          suBase,
+          Wb,
+          wideLatBoost,
+          ellipseX: OMAFIT_BRACELET_ELLIPSE_X,
+          ellipseDepth: OMAFIT_BRACELET_ELLIPSE_DEPTH,
+          refWidthM: OMAFIT_BASE_KNUCKLE_SPAN_M,
+          refThick09M: OMAFIT_BRACELET_REF_FOREARM_REACH_M,
+          refReachM: OMAFIT_BRACELET_REF_FOREARM_REACH_M,
+          mulXClamp: [0.9, 1.14],
+          mulYClamp: [0.91, 1.24],
+          mulZClamp: [0.965, 1.065],
+          zScaleExp: OMAFIT_BRACELET_Z_SCALE_EXP,
+          posLerpTauMs: OMAFIT_BRACELET_WEAR_LERP_MS,
+          wearBase: wearXYZ,
+          slideZ: braceletSlideLag,
+        });
+        glbRoot.scale.set(sw.sx, sw.sy, sw.sz);
+        wearPosition.position.set(sw.wearX, sw.wearY, sw.wearZ);
+        wearPosition.updateMatrixWorld(true);
+        if (braceletWristAlignGroup) {
+          omafitBraceletWristAlignStep(THREE, braceletPlaceState, {
+            calibRot,
+            alignGroup: braceletWristAlignGroup,
+            w0,
+            w9,
+            clampDt,
+            closeEnoughHand,
+            alignTauMs: OMAFIT_BRACELET_ALIGN_TAU_MS,
+            maxAlignRad: OMAFIT_BRACELET_ALIGN_MAX_RAD,
+          });
+        }
       } else {
         glbRoot.scale.setScalar(suBase * Wb);
       }
@@ -9186,6 +9300,12 @@ async function runHandArSession({
         braceletSlideFast = 0;
         braceletSlideLag = 0;
         braceletWristPrev = null;
+        if (braceletPlaceState) {
+          resetOmafitBraceletWristPlacementState(braceletPlaceState);
+        }
+        if (braceletWristAlignGroup) {
+          braceletWristAlignGroup.quaternion.identity();
+        }
         if (braceletLinkRadial) {
           braceletLinkRadial.scale.set(1, 1, 1);
         }

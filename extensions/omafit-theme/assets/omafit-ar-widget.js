@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-glb-visible-transmission-depth";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-camera-aspect-drawing-buffer";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -3893,10 +3893,12 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
     }
   }
   /**
-   * Com `strictVideoCanvasPixelMatch=false`, o MindAR dimensiona o buffer ao
-   * contentor (não à resolução intrínseca do vídeo). `camera.aspect` tem de
-   * seguir o **viewport WebGL** real; usar só `videoWidth/videoHeight` deixa
-   * o frustum desalinhado e o GLB pode ficar totalmente fora de vista.
+   * Com `strictVideoCanvasPixelMatch=false`, o MindAR faz `setSize(videoWidth,
+   * videoHeight)` — o **framebuffer** segue o vídeo. O canvas pode estar
+   * esticado no CSS (cover) com **aspecto de layout ≠ aspecto do buffer**;
+   * usar `clientWidth/clientHeight` quebra o frustum e o GLB pode sair
+   * inteiro do campo de visão. Prioridade: `canvas.width/height` (ou
+   * `getDrawingBufferSize`) → intrínsecos do vídeo → layout CSS → câmara.
    */
   let aspect = 9 / 16;
   if (strict) {
@@ -3904,10 +3906,10 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
     else if (Number.isFinite(camera.aspect) && camera.aspect > 0) aspect = camera.aspect;
   } else {
     const dom = renderer.domElement;
-    const cw = dom ? Math.max(0, dom.clientWidth || 0) : 0;
-    const ch = dom ? Math.max(0, dom.clientHeight || 0) : 0;
-    if (cw >= 2 && ch >= 2) {
-      aspect = cw / ch;
+    const bufW = dom ? Math.max(0, dom.width || 0) : 0;
+    const bufH = dom ? Math.max(0, dom.height || 0) : 0;
+    if (bufW >= 2 && bufH >= 2) {
+      aspect = bufW / bufH;
     } else if (typeof renderer.getDrawingBufferSize === "function") {
       if (!Lsync._bufAspect) Lsync._bufAspect = new THREE.Vector2();
       renderer.getDrawingBufferSize(Lsync._bufAspect);
@@ -3916,8 +3918,11 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
       else if (Number.isFinite(camera.aspect) && camera.aspect > 0) aspect = camera.aspect;
     } else if (vw >= 2 && vh >= 2) {
       aspect = vw / vh;
-    } else if (Number.isFinite(camera.aspect) && camera.aspect > 0) {
-      aspect = camera.aspect;
+    } else {
+      const cssW = dom ? Math.max(0, dom.clientWidth || 0) : 0;
+      const cssH = dom ? Math.max(0, dom.clientHeight || 0) : 0;
+      if (cssW >= 2 && cssH >= 2) aspect = cssW / cssH;
+      else if (Number.isFinite(camera.aspect) && camera.aspect > 0) aspect = camera.aspect;
     }
   }
   if (!Number.isFinite(aspect) || aspect <= 0) aspect = 9 / 16;

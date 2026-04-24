@@ -2,6 +2,7 @@
   "name": "omafit",
   "private": true,
   "scripts": {
+    "sync:netlify-widget-ar": "npm run sync:theme-ar --prefix ../omafit-widget",
     "build": "react-router build",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",

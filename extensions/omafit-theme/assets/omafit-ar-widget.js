@@ -240,15 +240,14 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-variant-cart-zfix";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-projection-aspect-nonstrict";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
- * `glassesPivot` e usa `OMAFIT_GLASSES_PIVOT_TEST_OVERRIDES` (valores pedidos
- * para teste no dispositivo). `rot*` em **graus** (Euler XYZ), como o resto
- * do pipeline (`rotY = 180` ≡ π rad).
+ * `glassesPivot` e usa `OMAFIT_GLASSES_PIVOT_TEST_OVERRIDES` — só para debug local.
+ * Em produção deve ser `false` senão o GLB pode ficar fora do sítio esperado.
  */
-const OMAFIT_GLASSES_PIVOT_DIRECT_TEST = true;
+const OMAFIT_GLASSES_PIVOT_DIRECT_TEST = false;
 const OMAFIT_GLASSES_PIVOT_TEST_OVERRIDES = {
   offsetX: -0.015,
   offsetY: -0.01,
@@ -3258,6 +3257,28 @@ function waitForOmafitWidgetAdminBranding(maxMs = 8000) {
         }
       );
     };
+    /**
+     * Iframe Netlify: a URL traz `arGlbUrl` mas pode existir `#omafit-widget-root`
+     * vazio (outro script, extensão, ou versão antiga). Sem este atalho o RAF
+     * espera `maxMs` e o ecrã fica em branco durante esse intervalo.
+     * (Duplicado de `hasArGlbUrlQueryParam` — essa função está declarada mais abaixo no ficheiro.)
+     */
+    let arGlbFromQuery = false;
+    try {
+      const q = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+      const v = q.get("arGlbUrl") || q.get("ar_glb_url");
+      arGlbFromQuery = Boolean(v && String(v).trim());
+    } catch {
+      arGlbFromQuery = false;
+    }
+    if (typeof window !== "undefined" && arGlbFromQuery) {
+      settle({
+        primary: "#810707",
+        linkText: "Experimentar virtualmente",
+        storeLogo: "",
+      });
+      return;
+    }
     if (typeof window !== "undefined") {
       window.addEventListener("omafit:widget-config", onEvt, { passive: true });
     }
@@ -3370,7 +3391,7 @@ function injectGlobalStyles(root, primaryOverride) {
       z-index: 120 !important;
       pointer-events: auto !important;
     }
-    /* Controlo de rotação GLB: irmão de .omafit-ar-fit, fora de overflow:hidden do vídeo. */
+    /* Controlo opcional de rotação GLB (só se data-ar-glasses-screen-rot=1). */
     .omafit-ar-shell .omafit-ar-glasses-screen-rot,
     [data-omafit="glasses-screen-rot"] {
       z-index: 50 !important;
@@ -3859,24 +3880,46 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
    * Sem `videoWidth` ainda (antes de `loadedmetadata`), aplicamos só FOV/aspect
    * de recurso para o efeito ser visível logo.
    */
+  const Lsync = omafitSyncMindARFaceProjection;
   if (vw >= 2 && vh >= 2 && strict && typeof renderer.setSize === "function") {
-    renderer.setSize(vw, vh, true);
-    if (video) {
-      video.style.width = `${vw}px`;
-      video.style.height = `${vh}px`;
-    }
-    const dom = renderer.domElement;
-    if (dom) {
-      dom.style.width = `${vw}px`;
-      dom.style.height = `${vh}px`;
+    /**
+     * Só redimensionar o buffer quando a resolução do stream muda — chamar
+     * `setSize` a 30–60 Hz recria estado WebGL e trava telemóveis fracos.
+     * `updateStyle=false`: o MindAR `_resize()` mantém o CSS do canvas.
+     */
+    if (!Lsync._buf || Lsync._buf.w !== vw || Lsync._buf.h !== vh) {
+      Lsync._buf = { w: vw, h: vh };
+      renderer.setSize(vw, vh, false);
     }
   }
-  let aspect =
-    vw >= 2 && vh >= 2
-      ? vw / vh
-      : Number.isFinite(camera.aspect) && camera.aspect > 0
-        ? camera.aspect
-        : 9 / 16;
+  /**
+   * Com `strictVideoCanvasPixelMatch=false`, o MindAR dimensiona o buffer ao
+   * contentor (não à resolução intrínseca do vídeo). `camera.aspect` tem de
+   * seguir o **viewport WebGL** real; usar só `videoWidth/videoHeight` deixa
+   * o frustum desalinhado e o GLB pode ficar totalmente fora de vista.
+   */
+  let aspect = 9 / 16;
+  if (strict) {
+    if (vw >= 2 && vh >= 2) aspect = vw / vh;
+    else if (Number.isFinite(camera.aspect) && camera.aspect > 0) aspect = camera.aspect;
+  } else {
+    const dom = renderer.domElement;
+    const cw = dom ? Math.max(0, dom.clientWidth || 0) : 0;
+    const ch = dom ? Math.max(0, dom.clientHeight || 0) : 0;
+    if (cw >= 2 && ch >= 2) {
+      aspect = cw / ch;
+    } else if (typeof renderer.getDrawingBufferSize === "function") {
+      if (!Lsync._bufAspect) Lsync._bufAspect = new THREE.Vector2();
+      renderer.getDrawingBufferSize(Lsync._bufAspect);
+      if (Lsync._bufAspect.y >= 2) aspect = Lsync._bufAspect.x / Lsync._bufAspect.y;
+      else if (vw >= 2 && vh >= 2) aspect = vw / vh;
+      else if (Number.isFinite(camera.aspect) && camera.aspect > 0) aspect = camera.aspect;
+    } else if (vw >= 2 && vh >= 2) {
+      aspect = vw / vh;
+    } else if (Number.isFinite(camera.aspect) && camera.aspect > 0) {
+      aspect = camera.aspect;
+    }
+  }
   if (!Number.isFinite(aspect) || aspect <= 0) aspect = 9 / 16;
   camera.aspect = aspect;
   const fovLocked63 = opts?.lockWebcamFov63 === true;
@@ -3911,9 +3954,10 @@ async function startMindARFaceWithReliableCamera(mindarThree) {
    * Resolução / fps ideais — mais pixels = landmarks MediaPipe mais estáveis
    * (com fallback em cascata se o dispositivo não suportar).
    */
+  /** Pedidos altos (1080p) saturam GPU + `setSize` — 720p chega para landmarks. */
   const faceVideoIdeal = {
-    width: { ideal: 1920, min: 480 },
-    height: { ideal: 1080, min: 480 },
+    width: { ideal: 1280, max: 1280, min: 480 },
+    height: { ideal: 720, max: 720, min: 360 },
     frameRate: { ideal: 30, min: 12 },
   };
   md.getUserMedia = function (constraints) {
@@ -4037,8 +4081,8 @@ async function runArSession({
       flex: "1 1 auto",
       display: "flex",
       flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
+      alignItems: "stretch",
+      justifyContent: "flex-start",
       minHeight: "min(520px, 62dvh)",
       width: "100%",
       boxSizing: "border-box",
@@ -4061,7 +4105,7 @@ async function runArSession({
   const arFit = el("div", {
     style: {
       position: "relative",
-      flex: "1 1 auto",
+      flex: "1 1 0",
       width: "100%",
       minHeight: "min(520px, 62dvh)",
       overflow: "hidden",
@@ -4175,7 +4219,7 @@ async function runArSession({
           border:
             String(v.id) === String(currentVariantId)
               ? `3px solid ${primaryColor}`
-              : "2px solid rgba(255,255,255,0.5)`,
+              : "2px solid rgba(255,255,255,0.5)",
           background: "#fff",
           cursor: "pointer",
           padding: "2px",
@@ -4780,11 +4824,12 @@ async function runArSession({
       const v = Number(String(cfgAttr("arFaceCameraFovDeg", "63")).trim());
       return Number.isFinite(v) ? v : OMAFIT_FACE_CAMERA_FOV_DEFAULT;
     })();
+    /** `1` = ajuste fino buffer↔stream (caro); por defeito o MindAR gere o renderer. */
     const faceProjectionStrict = !/^(0|false|off|no)$/i.test(
-      String(cfgAttr("arFaceProjectionStrict", "1")).trim(),
+      String(cfgAttr("arFaceProjectionStrict", "0")).trim(),
     );
     const faceSceneMatrixWorldEveryFrame = !/^(0|false|off|no)$/i.test(
-      String(cfgAttr("arFaceSceneMatrixWorldEveryFrame", "1")).trim(),
+      String(cfgAttr("arFaceSceneMatrixWorldEveryFrame", "0")).trim(),
     );
     const faceProjectionMirrorNegateModelX = String(
       cfgAttr("arFaceProjectionMirrorNegateModelX", "auto"),
@@ -4798,12 +4843,12 @@ async function runArSession({
         accessoryType === "glasses" &&
         !/^(0|false|off|no)$/i.test(String(cfgAttr("arFaceLockWebcamFov63", "1")).trim()),
       useOpenGlStyleProjection: !/^(0|false|off|no)$/i.test(
-        String(cfgAttr("arFaceOpenGlProjectionMatrix", "1")).trim(),
+        String(cfgAttr("arFaceOpenGlProjectionMatrix", "0")).trim(),
       ),
       principalShiftNdcLp: { x: 0, y: 0 },
       principalAlign168:
         accessoryType === "glasses" &&
-        !/^(0|false|off|no)$/i.test(String(cfgAttr("arFacePrincipalAlign168", "1")).trim()),
+        !/^(0|false|off|no)$/i.test(String(cfgAttr("arFacePrincipalAlign168", "0")).trim()),
     };
     const glassesAnchorSmoothMode = String(
       cfgAttr("arGlassesAnchorSmooth", accessoryType === "glasses" ? "one-euro" : "damp"),
@@ -4819,7 +4864,7 @@ async function runArSession({
     })();
     const glassesNdcScreenLock =
       accessoryType === "glasses" &&
-      !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesNdcScreenLock", "1")).trim());
+      !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesNdcScreenLock", "0")).trim());
     const glassesNdcBlendFromMp = (() => {
       const v = Number(String(cfgAttr("arGlassesNdcBlendFromMp", "0.5")).trim());
       return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 1) : 0.5;
@@ -5013,7 +5058,7 @@ async function runArSession({
         const r = mindarThree.renderer;
         if (r?.setPixelRatio) {
           const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-          r.setPixelRatio(Math.min(dpr, 2.25));
+          r.setPixelRatio(Math.min(dpr, 1.5));
         }
       } catch {
         /* ignore */
@@ -5376,10 +5421,13 @@ async function runArSession({
     const tripDegX = tripOffUseAuto || !Number.isFinite(tripOffParts[1]) ? 0 : tripOffParts[1];
     const tripDegZ = tripOffUseAuto || !Number.isFinite(tripOffParts[2]) ? 0 : tripOffParts[2];
 
-    /** Botões +/− no ecrã: `data-ar-glasses-screen-rot="0"` desliga. Query: `?omafit_ar_glasses_screen_rot=0|1`. */
-    const screenRotAttr = String(cfgAttr("arGlassesScreenRot", "1")).trim().toLowerCase();
+    /**
+     * Painel +/- de rotação no ecrã: **desligado por defeito** (`data-ar-glasses-screen-rot="1"` para ligar).
+     * Query: `?omafit_ar_glasses_screen_rot=0|1`.
+     */
+    const screenRotAttr = String(cfgAttr("arGlassesScreenRot", "0")).trim().toLowerCase();
     let useGlassesScreenRot =
-      accessoryType === "glasses" && !/^(0|off|false|no)$/.test(screenRotAttr);
+      accessoryType === "glasses" && /^(1|on|true|yes)$/.test(screenRotAttr);
     try {
       const q = new URLSearchParams(window.location?.search || "");
       const qv = (q.get("omafit_ar_glasses_screen_rot") || "").trim().toLowerCase();
@@ -6694,6 +6742,12 @@ async function runArSession({
 
     (async () => {
       try {
+        const pmremOn =
+          accessoryType === "necklace" ||
+          /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim());
+        if (!pmremOn) {
+          return;
+        }
         const dep = `deps=three@${ESM_THREE_VER}`;
         const pmremUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/utils/PMREMGenerator.js?${dep}`;
         const roomUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/environments/RoomEnvironment.js?${dep}`;
@@ -6793,7 +6847,7 @@ async function runArSession({
       ) {
         return;
       }
-      const hairAttr = String(cfgAttr("arFaceHairMask", "1")).trim().toLowerCase();
+      const hairAttr = String(cfgAttr("arFaceHairMask", "0")).trim().toLowerCase();
       if (/^(0|false|off|no)$/.test(hairAttr)) {
         faceArEnhancementState.hairUniforms.uOmafitHairThreshold.value = 2;
         return;
@@ -9710,6 +9764,7 @@ async function main() {
   });
   // #endregion
 
+  try {
   injectGlobalStyles(root, primaryColor);
   getOmafitArModuleBundle().catch(() => {});
 
@@ -9786,6 +9841,11 @@ async function main() {
   }
 
   ensureArRootDomObserver();
+  } catch (e) {
+    __omafitArMainStarted = false;
+    __omafitArLastRootSig = "";
+    console.error("[omafit-ar] main(): falha ao montar UI (modal ou estilos).", e);
+  }
 }
 
 function hasArGlbUrlQueryParam() {

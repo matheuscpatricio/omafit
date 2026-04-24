@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-glasses-face468-depth-opt-in";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-netlify-variant-cart-shop";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -1030,6 +1030,23 @@ function buildGlbLoaderUrl(baseUrl, version) {
   } catch {
     const sep = u.includes("?") ? "&" : "?";
     return `${u}${sep}omafit_ar_v=${encodeURIComponent(v)}`;
+  }
+}
+
+/**
+ * URL do Ajax Cart da Shopify. No tema é relativo (`/cart/add.js`); no iframe
+ * Netlify o origin é outro — precisa de `data-shop-domain` (ex. loja.myshopify.com).
+ */
+function omafitShopifyCartAddJsUrlFromArRoot() {
+  try {
+    const r = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const raw = String(r?.dataset?.shopDomain || r?.getAttribute?.("data-shop-domain") || "").trim();
+    if (!raw) return "/cart/add.js";
+    const host = raw.replace(/^https?:\/\//i, "").split("/")[0].trim();
+    if (!host) return "/cart/add.js";
+    return `https://${host}/cart/add.js`;
+  } catch {
+    return "/cart/add.js";
   }
 }
 
@@ -4191,7 +4208,27 @@ async function runArSession({
   arWrap.appendChild(arFit);
 
   // --- Variant bar + Add to Cart ---
-  const arVariants = Array.isArray(variants) ? variants.filter((v) => v && (v.glbUrl || glbUrl)) : [];
+  let arVariants = Array.isArray(variants) ? variants.filter((v) => v && (v.glbUrl || glbUrl)) : [];
+  /**
+   * Iframe Netlify: não há `window.__OMAFIT_AR_VARIANTS__` do Liquid. Com
+   * `data-variant-id` + `data-glb-url` sintetizamos uma variante para miniaturas
+   * (se `data-product-image`) e para o botão de carrinho.
+   */
+  try {
+    const r = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const vid = r ? String(r.dataset.variantId || r.getAttribute("data-variant-id") || "").trim() : "";
+    if (arVariants.length === 0 && vid && String(glbUrl || "").trim()) {
+      const pimg = r ? String(r.dataset.productImage || r.getAttribute("data-product-image") || "").trim() : "";
+      const ptitle = r ? String(r.dataset.productTitle || r.getAttribute("data-product-title") || "").trim() : "";
+      arVariants = [{ id: vid, title: ptitle || "Variant", imageUrl: pimg, glbUrl, calibration: null }];
+      console.log("[omafit-ar] variante sintética (Netlify / sem __OMAFIT_AR_VARIANTS__)", {
+        variantId: vid,
+        hasImage: Boolean(pimg),
+      });
+    }
+  } catch {
+    /* ignore */
+  }
   let currentVariantId = arVariants.length > 0 ? arVariants[0].id : null;
   let currentGlbUrl = arVariants.length > 0 ? (arVariants[0].glbUrl || glbUrl) : glbUrl;
   try {
@@ -4326,10 +4363,13 @@ async function runArSession({
       cartBtn.disabled = true;
       cartBtn.textContent = "…";
       try {
-        const res = await fetch("/cart/add.js", {
+        const cartUrl = omafitShopifyCartAddJsUrlFromArRoot();
+        const res = await fetch(cartUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ items: [{ id: Number(currentVariantId), quantity: 1 }] }),
+          mode: "cors",
+          credentials: "omit",
         });
         if (!res.ok) throw new Error(res.statusText);
         cartBtn.textContent = t.addedToCart || "Added!";
@@ -4340,7 +4380,7 @@ async function runArSession({
       }
     });
     arBottomBar.appendChild(cartBtn);
-  } else if (productId) {
+  } else if (productId || arVariants.length === 1) {
     singleCartBar = el("div", {
       className: "omafit-ar-variant-cart-strip",
       style: {
@@ -4379,10 +4419,13 @@ async function runArSession({
       singleCartBtn.disabled = true;
       singleCartBtn.textContent = "…";
       try {
-        const res = await fetch("/cart/add.js", {
+        const cartUrl = omafitShopifyCartAddJsUrlFromArRoot();
+        const res = await fetch(cartUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ items: [{ id: Number(vid), quantity: 1 }] }),
+          mode: "cors",
+          credentials: "omit",
         });
         if (!res.ok) throw new Error(res.statusText);
         singleCartBtn.textContent = t.addedToCart || "Added!";

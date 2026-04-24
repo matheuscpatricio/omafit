@@ -1866,6 +1866,17 @@
     var glbPass = getOmafitArGlbUrlFromDom();
     if (glbPass) {
       widgetUrl += '&arGlbUrl=' + encodeURIComponent(glbPass) + '&omafit_mode=eyewear_ar';
+      try {
+        var vSelAr =
+          currentVariantSelection &&
+          currentVariantSelection.selectedVariantId &&
+          String(currentVariantSelection.selectedVariantId).trim();
+        if (vSelAr) {
+          widgetUrl += '&variant=' + encodeURIComponent(vSelAr);
+        }
+      } catch (_eAr) {
+        /* non-blocking */
+      }
       /**
        * Propaga ao iframe Netlify todos os `data-ar-*` emitidos pelo Liquid —
        * sem eles o widget interno cai em `glasses` por default e mostra

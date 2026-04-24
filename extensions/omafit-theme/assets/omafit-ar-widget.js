@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-projection-mindar-getCameraParams";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-glasses-face468-depth-opt-in";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -5114,10 +5114,10 @@ async function runArSession({
     }
 
     /**
-     * Face Mesh (468) MindAR: máscara só depth (`colorWrite:false`, `depthWrite:true`)
-     * + caixas alongadas pré-auriculares (mesmo material). Selfie multiclasse (cabelo)
-     * descarta fragmentos das hastes do GLB onde há cabelo. Marcos 168/33/263/234/454
-     * passam por filtro One Euro antes de tilt e escala X.
+     * Malha facial 468 só depth: oclusão de hastes / nuca. No **relógio** (mão)
+     * este caminho nem existe — em óculos, a máscara + z-test pode esconder o
+     * GLB inteiro em vários GPUs. Por defeito **óculos não** criam esta malha;
+     * colar continua a usar. Opt-in óculos: `data-ar-glasses-face-depth-occluder="1"`.
      */
     let faceOccluderMesh = null;
     let templeDepthGeom = null;
@@ -5126,7 +5126,12 @@ async function runArSession({
     /** Cilindro só depth: base ~ombros / topo ~mandíbula (métrico face). */
     let neckOccluderMesh = null;
     let neckOccGeomState = null;
-    if (accessoryType === "glasses" || accessoryType === "necklace") {
+    const glassesFace468DepthOccluder =
+      accessoryType === "glasses" &&
+      !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesFaceDepthOccluder", "0")).trim());
+    const useFace468DepthOccluder =
+      accessoryType === "necklace" || glassesFace468DepthOccluder;
+    if (useFace468DepthOccluder) {
       if (typeof mindarThree.addFaceMesh === "function") {
         try {
           faceOccluderMesh = mindarThree.addFaceMesh();

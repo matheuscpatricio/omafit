@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-projection-aspect-nonstrict";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-glb-visible-transmission-depth";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -4013,6 +4013,13 @@ function fixMindARFaceVideoBehindCanvas(THREE, mindarThree, mindarHost, projecti
     if (renderer && typeof renderer.setClearColor === "function") {
       renderer.setClearColor(0x000000, 0);
     }
+    try {
+      if (THREE?.SRGBColorSpace !== undefined && renderer && "outputColorSpace" in renderer) {
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+      }
+    } catch {
+      /* ignore */
+    }
     const cssEl = cssRenderer?.domElement;
     if (cssEl) {
       cssEl.style.backgroundColor = "transparent";
@@ -4789,14 +4796,15 @@ async function runArSession({
     const faceOccAheadLocalZ =
       accessoryType === "glasses"
         ? (() => {
-            const v = Number(String(cfgAttr("arFaceOccluderNoseAhead", "0.006")).trim());
+            /** `0` por defeito: empurrar a máscara só-depth para a câmara pode fazer o z-test engolir o GLB inteiro. */
+            const v = Number(String(cfgAttr("arFaceOccluderNoseAhead", "0")).trim());
             return Number.isFinite(v) && v > 0 ? v : 0;
           })()
         : 0;
     /** Base ortogonal 234–454 / 10–152 em espaço mundo (via face mesh). */
     const glassesCheekOrthogonalBasis =
       accessoryType === "glasses" &&
-      !/^(0|off|false|no)$/i.test(String(cfgAttr("arGlassesCheekOrthogonalBasis", "1")).trim());
+      !/^(0|off|false|no)$/i.test(String(cfgAttr("arGlassesCheekOrthogonalBasis", "0")).trim());
     /** Offset Z extra (local do GLB) para “Z-fit” fino em relação ao nariz. */
     const glassesZFitExtra =
       accessoryType === "glasses"
@@ -5182,6 +5190,15 @@ async function runArSession({
       loader.load(glbLoadUrl, resolve, undefined, reject);
     });
     const glasses = gltf.scene;
+    try {
+      let meshN = 0;
+      glasses.traverse((o) => {
+        if (o && o.isMesh) meshN += 1;
+      });
+      console.log("[omafit-ar] GLB carregado", OMAFIT_AR_WIDGET_BUILD, { url: glbLoadUrl, meshes: meshN });
+    } catch {
+      /* ignore */
+    }
     if (!(glasses instanceof THREE.Object3D)) {
       console.warn(
         "[omafit-ar] gltf.scene não é instanceof THREE.Object3D deste bundle — verificar loader/CDN.",
@@ -5201,13 +5218,38 @@ async function runArSession({
       const mats = Array.isArray(child.material) ? child.material : [child.material];
       for (const mat of mats) {
         if (!mat) continue;
-        if (mat.map && THREE.sRGBEncoding !== undefined) mat.map.encoding = THREE.sRGBEncoding;
-        if (mat.emissiveMap && THREE.sRGBEncoding !== undefined) mat.emissiveMap.encoding = THREE.sRGBEncoding;
+        if (mat.map) {
+          if (THREE.SRGBColorSpace !== undefined && "colorSpace" in mat.map) {
+            mat.map.colorSpace = THREE.SRGBColorSpace;
+          } else if (THREE.sRGBEncoding !== undefined) mat.map.encoding = THREE.sRGBEncoding;
+        }
+        if (mat.emissiveMap) {
+          if (THREE.SRGBColorSpace !== undefined && "colorSpace" in mat.emissiveMap) {
+            mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+          } else if (THREE.sRGBEncoding !== undefined) mat.emissiveMap.encoding = THREE.sRGBEncoding;
+        }
         if (colorAttr && "vertexColors" in mat) mat.vertexColors = true;
         if ("metalness" in mat) mat.metalness = 0;
         if ("roughness" in mat) mat.roughness = 1;
         if ("envMapIntensity" in mat) mat.envMapIntensity = 0;
         if ("emissiveIntensity" in mat) mat.emissiveIntensity = 1;
+        /**
+         * KHR_materials_transmission: sem PMREM / pipeline de transmissão do renderer,
+         * o modelo pode renderizar como totalmente transparente no AR “lite”.
+         */
+        if ("transmission" in mat && Number(mat.transmission) > 0.02) {
+          mat.transmission = 0;
+          if ("thickness" in mat) mat.thickness = 0;
+        }
+        /**
+         * A malha facial MindAR (só depth, renderOrder baixo) pode ganhar o z-test
+         * sobre a ponte; polygonOffset negativo puxa o GLB ligeiramente para a câmara.
+         */
+        if ("polygonOffset" in mat) {
+          mat.polygonOffset = true;
+          mat.polygonOffsetFactor = -2;
+          mat.polygonOffsetUnits = -2;
+        }
         mat.toneMapped = false;
         mat.needsUpdate = true;
       }

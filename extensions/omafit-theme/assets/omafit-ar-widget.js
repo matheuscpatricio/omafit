@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-netlify-variant-cart-shop";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_eyewear-query-force-abs-glb";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -1031,6 +1031,42 @@ function buildGlbLoaderUrl(baseUrl, version) {
     const sep = u.includes("?") ? "&" : "?";
     return `${u}${sep}omafit_ar_v=${encodeURIComponent(v)}`;
   }
+}
+
+/**
+ * Iframe Netlify: `omafit-widget.js` envia `omafit_mode=eyewear_ar` ao abrir o provador de óculos.
+ * Sem isto, título/categoria na query podem classificar o produto como `watch` e o GLB
+ * segue o path da **mão** — o utilizador vê câmara frontal / face e “não aparece” o modelo.
+ */
+function isOmafitEyewearArForcedFromQuery() {
+  try {
+    const q = new URLSearchParams(typeof window !== "undefined" ? window.location.search || "" : "");
+    const mode = (q.get("omafit_mode") || "").toLowerCase().trim();
+    if (mode === "eyewear_ar" || mode === "ar_eyewear") return true;
+    const leg = (q.get("blockClothingTryon") || q.get("omafit_block_clothing") || "").toLowerCase();
+    return leg === "1" || leg === "true" || leg === "yes";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `GLTFLoader` no Netlify resolve URLs relativas (`/cdn/shop/...`) contra o **origin do iframe**
+ * → 404. Metafields por vezes guardam só o path; `//…` e `https://…` mantêm-se.
+ */
+function omafitAbsolutizeGlbUrlMaybe(raw) {
+  const u = String(raw || "").trim();
+  if (!u) return u;
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    try {
+      return new URL(u, "https://cdn.shopify.com").href;
+    } catch {
+      return u;
+    }
+  }
+  return u;
 }
 
 /**
@@ -4676,10 +4712,16 @@ async function runArSession({
         : "face";
     const liquidStackValid =
       trackingStackRaw === "hand" || trackingStackRaw === "face";
-    const trackingStack =
+    let trackingStack =
       liquidStackValid && accessoryTypeSource === "liquid-metafield"
         ? trackingStackRaw
         : inferredStack;
+
+    if (isOmafitEyewearArForcedFromQuery()) {
+      accessoryType = "glasses";
+      accessoryTypeSource = "query-eyewear_ar-forced";
+      trackingStack = "face";
+    }
 
     console.log("[omafit-ar] dispatcher snapshot", {
       build: OMAFIT_AR_WIDGET_BUILD,
@@ -5257,7 +5299,7 @@ async function runArSession({
         : "";
       return { u, v };
     })();
-    const sessionGlbUrl = fromDom.u || glbUrl;
+    const sessionGlbUrl = omafitAbsolutizeGlbUrlMaybe(fromDom.u || glbUrl);
     const glbVersion =
       fromDom.v ||
       String(arCfg?.dataset?.arGlbVersion || arCfg?.getAttribute?.("data-ar-glb-version") || "").trim();
@@ -8379,7 +8421,7 @@ async function runHandArSession({
   const glbLoader = new GLTFLoader();
   const versionHint =
     arCfg?.dataset?.arGlbVersion || arCfg?.getAttribute?.("data-ar-glb-version") || "";
-  const finalGlbUrl = buildGlbLoaderUrl(glbUrl, versionHint);
+  const finalGlbUrl = buildGlbLoaderUrl(omafitAbsolutizeGlbUrlMaybe(glbUrl), versionHint);
   let baseScale = 0.1;
   /** Raio local do anel/cilindro wrap (EIXO), em unidades GLB (pré-scale). */
   let localRingR = 0.025;
@@ -9727,11 +9769,12 @@ async function main() {
   const root = document.getElementById("omafit-ar-root");
   if (!root) return;
 
-  const glbUrl = (
+  let glbUrl = (
     root.dataset.glbUrl ||
     root.getAttribute("data-glb-url") ||
     ""
   ).trim();
+  glbUrl = omafitAbsolutizeGlbUrlMaybe(glbUrl);
   const glbVer = String(
     root.dataset.arGlbVersion || root.getAttribute("data-ar-glb-version") || "",
   ).trim();
@@ -9837,6 +9880,11 @@ async function main() {
   } else {
     accessoryType = "glasses";
     accessoryTypeSource = "default";
+  }
+
+  if (isOmafitEyewearArForcedFromQuery()) {
+    accessoryType = "glasses";
+    accessoryTypeSource = "query-eyewear_ar-forced";
   }
 
   /** Log prominente — aparece sempre (não só com ?omafit_ar_debug=1),

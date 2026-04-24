@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-camera-aspect-drawing-buffer";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-24_ar-projection-mindar-getCameraParams";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -3874,13 +3874,48 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
   const vw = Math.max(0, Number(video?.videoWidth) || 0);
   const vh = Math.max(0, Number(video?.videoHeight) || 0);
   const strict = opts?.strictVideoCanvasPixelMatch !== false;
+  const Lsync = omafitSyncMindARFaceProjection;
+  /**
+   * Modo não-estrito: o solvePnP / landmarks vêm do **mesmo** estimador que
+   * define `getCameraParams()` no MindAR. Forçar FOV/aspect “à mão” (p.ex.
+   * 63°) desalinha o frustum do GLB em relação à face → modelo fora de vista.
+   * Usamos fov/aspect/near/far do controller e `updateProjectionMatrix`.
+   */
+  if (!strict && !opts?.useOpenGlStyleProjection) {
+    const ctrl = mindarThree.controller;
+    if (ctrl && typeof ctrl.getCameraParams === "function") {
+      try {
+        const p = ctrl.getCameraParams();
+        if (
+          p &&
+          Number.isFinite(p.aspect) &&
+          p.aspect > 0 &&
+          Number.isFinite(p.fov) &&
+          p.fov > 0 &&
+          Number.isFinite(p.near) &&
+          Number.isFinite(p.far) &&
+          p.far > p.near
+        ) {
+          camera.aspect = p.aspect;
+          camera.fov = THREE.MathUtils.clamp(p.fov, 20, 120);
+          camera.near = p.near;
+          camera.far = p.far;
+          if (typeof camera.updateProjectionMatrix === "function") {
+            camera.updateProjectionMatrix();
+          }
+          return true;
+        }
+      } catch {
+        /* continuar para o sync legado */
+      }
+    }
+  }
   /**
    * O MindAR repõe `camera` / `renderer` no loop interno — este sync tem de
    * correr **em cada frame** (`controller.onUpdate`), não só no `resize`.
    * Sem `videoWidth` ainda (antes de `loadedmetadata`), aplicamos só FOV/aspect
    * de recurso para o efeito ser visível logo.
    */
-  const Lsync = omafitSyncMindARFaceProjection;
   if (vw >= 2 && vh >= 2 && strict && typeof renderer.setSize === "function") {
     /**
      * Só redimensionar o buffer quando a resolução do stream muda — chamar
@@ -4854,7 +4889,7 @@ async function runArSession({
       strictVideoCanvasPixelMatch: faceProjectionStrict,
       lockWebcamFov63:
         accessoryType === "glasses" &&
-        !/^(0|false|off|no)$/i.test(String(cfgAttr("arFaceLockWebcamFov63", "1")).trim()),
+        !/^(0|false|off|no)$/i.test(String(cfgAttr("arFaceLockWebcamFov63", "0")).trim()),
       useOpenGlStyleProjection: !/^(0|false|off|no)$/i.test(
         String(cfgAttr("arFaceOpenGlProjectionMatrix", "0")).trim(),
       ),
@@ -7219,6 +7254,13 @@ async function runArSession({
         const vid = mindarHost?.querySelector?.("video");
         if (vid && faceArEnhancementState?.hairSegmenter) {
           omafitFaceArUpdateHairCategoryMask(THREE, faceArEnhancementState, vid, performance.now());
+        }
+      } catch {
+        /* ignore */
+      }
+      try {
+        if (faceProjectionOpts) {
+          omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, faceProjectionOpts);
         }
       } catch {
         /* ignore */

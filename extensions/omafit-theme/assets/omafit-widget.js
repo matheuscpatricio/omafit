@@ -1886,6 +1886,10 @@
           passAttr('arTrackingStack', 'data-ar-tracking-stack');
           passAttr('arPreferredCamera', 'data-ar-preferred-camera');
           passAttr('arMindarAnchor', 'data-ar-mindar-anchor');
+          passAttr('arGlassesLocalFineXyz', 'data-ar-glasses-local-fine-xyz');
+          passAttr('arGlassesManualCalibOffset', 'data-ar-glasses-manual-calib-offset');
+          passAttr('arGlassesManualCalibScale', 'data-ar-glasses-manual-calib-scale');
+          passAttr('arGlassesManualCalibUi', 'data-ar-glasses-manual-calib-ui');
           passAttr('arOmafitCalibration', 'data-ar-omafit-calibration');
         }
       } catch (e) {

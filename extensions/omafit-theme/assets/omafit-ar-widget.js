@@ -240,7 +240,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_glb-query-fallback-render-fix";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_cart-strip-raised";
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -3506,6 +3506,12 @@ function injectGlobalStyles(root, primaryOverride) {
       z-index: 120 !important;
       pointer-events: auto !important;
     }
+    /* Botão carrinho mais alto e barra mais acima (evita barra gestual / canto inferior). */
+    .omafit-ar-shell .omafit-ar-variant-cart-strip .omafit-ar-cart-btn {
+      min-height: 52px;
+      padding: 16px 20px !important;
+      font-size: 1.05rem !important;
+    }
     /* Controlo opcional de rotação GLB (só se data-ar-glasses-screen-rot=1). */
     .omafit-ar-shell .omafit-ar-glasses-screen-rot,
     [data-omafit="glasses-screen-rot"] {
@@ -4355,11 +4361,11 @@ async function runArSession({
       className: "omafit-ar-variant-cart-strip",
       style: {
         position: "absolute",
-        bottom: "0",
+        bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
         left: "0",
         right: "0",
         background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
-        padding: "10px 8px calc(8px + env(safe-area-inset-bottom, 0px))",
+        padding: "12px 10px calc(10px + env(safe-area-inset-bottom, 0px))",
         zIndex: "120",
         display: "flex",
         flexDirection: "column",
@@ -4439,16 +4445,18 @@ async function runArSession({
 
     const cartBtn = el("button", {
       type: "button",
+      className: "omafit-ar-cart-btn",
       textContent: t.addToCart,
       style: {
         width: "100%",
-        padding: "12px 16px",
+        minHeight: "52px",
+        padding: "16px 20px",
         borderRadius: "8px",
         border: "none",
         background: primaryColor,
         color: "#fff",
         fontWeight: "600",
-        fontSize: "1rem",
+        fontSize: "1.05rem",
         cursor: "pointer",
         fontFamily: "inherit",
         transition: "filter 0.2s",
@@ -4483,27 +4491,29 @@ async function runArSession({
       className: "omafit-ar-variant-cart-strip",
       style: {
         position: "absolute",
-        bottom: "0",
+        bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
         left: "0",
         right: "0",
         background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
-        padding: "10px 8px calc(8px + env(safe-area-inset-bottom, 0px))",
+        padding: "12px 10px calc(10px + env(safe-area-inset-bottom, 0px))",
         zIndex: "120",
         pointerEvents: "auto",
       },
     });
     const singleCartBtn = el("button", {
       type: "button",
+      className: "omafit-ar-cart-btn",
       textContent: t.addToCart,
       style: {
         width: "100%",
-        padding: "12px 16px",
+        minHeight: "52px",
+        padding: "16px 20px",
         borderRadius: "8px",
         border: "none",
         background: primaryColor,
         color: "#fff",
         fontWeight: "600",
-        fontSize: "1rem",
+        fontSize: "1.05rem",
         cursor: "pointer",
         fontFamily: "inherit",
         transition: "filter 0.2s",

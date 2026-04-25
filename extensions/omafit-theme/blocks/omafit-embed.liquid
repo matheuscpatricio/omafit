@@ -74,7 +74,7 @@
   {% assign omafit_mf_cal = product.metafields.omafit.ar_calibration %}
   {% assign omafit_cal_json = '' %}
   {% if omafit_mf_cal != blank and omafit_mf_cal.value != blank %}
-    {% assign omafit_cal_json = omafit_mf_cal | json %}
+    {% assign omafit_cal_json = omafit_mf_cal.value | json %}
   {% endif %}
   <script>
     (function () {
@@ -102,7 +102,7 @@
         {% assign v_cal = v.metafields.omafit.ar_calibration %}
         {% assign v_cal_json = 'null' %}
         {% if v_cal != blank and v_cal.value != blank %}
-          {% assign v_cal_json = v_cal | json %}
+          {% assign v_cal_json = v_cal.value | json %}
         {% endif %}
         {% assign v_img = '' %}
         {% if v.featured_image %}
@@ -367,7 +367,7 @@
       data-ar-glasses-manual-calib-ui=""
       data-ar-glasses-pivot-rot-deg="0, 0, 0"
       data-ar-omafit-cal-source="{% if cal_present %}metafield:product{% else %}none{% endif %}"
-      data-ar-omafit-calibration="{{ cal_mf | json | escape }}"
+      data-ar-omafit-calibration="{% if cal_present %}{{ cal_hash | json | escape }}{% endif %}"
     ></div>
     {%- liquid
       assign ar_script_url = 'omafit-ar-widget.js' | asset_url

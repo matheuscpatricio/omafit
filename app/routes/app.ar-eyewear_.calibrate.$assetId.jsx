@@ -425,7 +425,7 @@ export default function ArEyewearCalibratePage() {
                   {data.accessoryType === "watch" || data.accessoryType === "bracelet" ? (
                     <HandSilhouette />
                   ) : (
-                    <FaceSilhouette />
+                  <FaceSilhouette />
                   )}
                   <PreviewModel
                     src={data.glbPreviewUrl}
@@ -459,7 +459,7 @@ export default function ArEyewearCalibratePage() {
                       {data.productTitle || data.asset.product_name || t("arEyewear.productUnknown")}
                     </Text>
                     <InlineStack gap="200" wrap>
-                      <Badge tone="info">{t(`arEyewear.status.${data.asset.status}`)}</Badge>
+                    <Badge tone="info">{t(`arEyewear.status.${data.asset.status}`)}</Badge>
                       <Badge tone="attention">
                         {t(`arEyewear.accessoryType.${data.accessoryType}`) ||
                           data.accessoryType}
@@ -1206,7 +1206,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
     applyCalibrationToState(stateRef.current, cal);
   }, [cal]);
 
-  return (
+    return (
     <div ref={hostRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
       {/*
         Overlay de status/erro — zIndex: 2 para garantir que fica ACIMA do
@@ -1259,12 +1259,12 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
         <div><span style={{ color: "#3cf06c", fontWeight: 700 }}>Y</span> verde — cima</div>
         <div><span style={{ color: "#4a9bff", fontWeight: 700 }}>Z</span> azul — frente</div>
       </div>
-    </div>
-  );
-}
+      </div>
+    );
+  }
 
 const legendStyle = {
-  position: "absolute",
+        position: "absolute",
   right: 10,
   bottom: 10,
   padding: "6px 10px",

@@ -8,6 +8,14 @@
  *   - `app/routes/app.ar-eyewear_.calibrate.$assetId.jsx` (preview admin)
  *
  * Extensão `.js` (não `.mjs`) — requisito do bundle de assets do tema Shopify.
+ *
+ * --- Export canónico (Blender / DCC) — reduzir correcções em código ---
+ * 1. Colocar o **Object Origin** na **ponte do nariz** (coincide com LM168 MindAR).
+ * 2. **Apply** Location / Rotation / Scale no root; exportar glTF com **rotação (0,0,0)**.
+ * 3. Convenção Omafit no espaço do root: **−Z** = frente das lentes (olhando para a câmara
+ *    em repouso), **+Y** = cima da armação, **+X** = lado direito do utilizador.
+ * 4. Na loja: `data-ar-glasses-canonical-blender-export="1"` no embed / `#omafit-ar-root` —
+ *    desliga Tripo, bind Ry(180) automático e o `position.sub(centro bbox)` no root.
  */
 
 /**

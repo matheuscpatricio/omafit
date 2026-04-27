@@ -1878,7 +1878,26 @@
 
     var glbPass = getOmafitArGlbUrlFromDom();
     if (glbPass) {
-      widgetUrl += '&arGlbUrl=' + encodeURIComponent(glbPass) + '&omafit_mode=eyewear_ar';
+      widgetUrl += '&arGlbUrl=' + encodeURIComponent(glbPass);
+      /**
+       * `omafit_mode=eyewear_ar` força face/óculos no iframe (corrige produtos óptica
+       * mal classificados como relógio). Para **watch/bracelet** ou stack **hand**, não
+       * enviar — senão sobrepõe `data-ar-accessory-type` e o provador mostra cópia/UI de óculos.
+       */
+      try {
+        var arRootMode = document.getElementById('omafit-ar-root');
+        var accMode = (arRootMode && arRootMode.getAttribute('data-ar-accessory-type')) || '';
+        accMode = String(accMode).trim().toLowerCase();
+        var stackMode = (arRootMode && arRootMode.getAttribute('data-ar-tracking-stack')) || '';
+        stackMode = String(stackMode).trim().toLowerCase();
+        var skipEyewearArMode =
+          accMode === 'watch' || accMode === 'bracelet' || stackMode === 'hand';
+        if (!skipEyewearArMode) {
+          widgetUrl += '&omafit_mode=eyewear_ar';
+        }
+      } catch (_skipMode) {
+        widgetUrl += '&omafit_mode=eyewear_ar';
+      }
       try {
         var vSelAr =
           currentVariantSelection &&
@@ -1915,6 +1934,12 @@
           passAttr('arGlassesManualCalibScale', 'data-ar-glasses-manual-calib-scale');
           passAttr('arGlassesManualCalibUi', 'data-ar-glasses-manual-calib-ui');
           passAttr('arGlassesPivotRotDeg', 'data-ar-glasses-pivot-rot-deg');
+          passAttr('arGlassesNoseAlignOffsetXM', 'data-ar-glasses-nose-align-offset-x-m');
+          passAttr('arGlassesModelCenterOffsetM', 'data-ar-glasses-model-center-offset-m');
+          passAttr('arGlassesEmpiricalAlignM', 'data-ar-glasses-empirical-align-m');
+          passAttr('arGlassesBaseOrientDeg', 'data-ar-glasses-base-orient-deg');
+          passAttr('arGlassesEyeMidpointAlign', 'data-ar-glasses-eye-midpoint-align');
+          passAttr('arGlassesEyeMidDebugVisual', 'data-ar-glasses-eye-mid-debug-visual');
           passAttr('arGlassesManualMindarRig', 'data-ar-glasses-manual-mindar-rig');
           passAttr('arOmafitCalibration', 'data-ar-omafit-calibration');
         }

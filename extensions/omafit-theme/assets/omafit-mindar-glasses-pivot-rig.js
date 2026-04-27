@@ -153,9 +153,9 @@ export function buildMinimalMindarGlassesHierarchy(THREE, anchorGroup, gltfScene
 
   const sc = Number(C.scale);
   pivot.scale.setScalar(Number.isFinite(sc) && sc > 0 ? sc : 1);
-  pivot.position.set(C.offsetX ?? 0, C.offsetY ?? 0, C.offsetZ ?? 0);
   pivot.rotation.order = "XYZ";
   pivot.rotation.set(C.rotX ?? 0, C.rotY ?? 0, C.rotZ ?? 0);
+  pivot.position.set(C.offsetX ?? 0, C.offsetY ?? 0, C.offsetZ ?? 0);
 
   anchorGroup.add(pivot);
   pivot.add(gltfScene);
@@ -237,6 +237,6 @@ export function mindarGlassesPivotSmootherStep(
   }
 
   pivot.scale.setScalar(st.scale);
-  pivot.position.copy(st.pos);
   pivot.quaternion.copy(st.quat);
+  pivot.position.copy(st.pos);
 }

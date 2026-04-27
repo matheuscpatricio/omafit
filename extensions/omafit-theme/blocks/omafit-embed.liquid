@@ -342,11 +342,17 @@
       data-ar-use-mp-matrix=""
       data-ar-accessory-type="{{ ar_type_guess }}"
       {%- comment -%}
-        Óculos: por defeito modo manual estável (sem Tripo/canonical + escala anatómica em conflito).
-        Opt-in ao pipeline antigo: activar "pipeline AR antigo" nas definições do bloco.
+        Óculos: pipeline só face mesh + tracking wrap (sem rig manual mid−168 por defeito).
+        Opt-in ao rig manual + offsets: activar "pipeline AR antigo" nas definições do bloco.
       {%- endcomment -%}
-      {%- if ar_type_guess == 'glasses' and block.settings.ar_glasses_legacy_auto_ar != true -%}
+      {%- if ar_type_guess == 'glasses' -%}
+      {%- if block.settings.ar_glasses_legacy_auto_ar == true -%}
       data-ar-glasses-manual-mindar-rig="1"
+      data-ar-glasses-manual-face-basis-offset-m="0 -0.02 -0.05"
+      data-ar-glasses-offset-final-m="0.1 0 0"
+      {%- else -%}
+      data-ar-glasses-manual-mindar-rig="0"
+      {%- endif -%}
       {%- endif -%}
       data-ar-tracking-stack="{{ ar_tracking_stack }}"
       data-ar-category-path="{{ ar_category_path | strip | escape }}"
@@ -367,7 +373,8 @@
       data-ar-mindar-filter-min-cf=""
       data-ar-mindar-filter-beta=""
       data-ar-bridge-y-factor="{{ cal_bridge_y }}"
-      data-ar-canonical-fix-yxz="{{ cal_fix_yxz }}"
+      {%- comment -%} Rotação rx/ry/rz da calibração não é aplicada no runtime AR (evitar acúmulo). {%- endcomment -%}
+      data-ar-canonical-fix-yxz="0, 0, 0"
       data-ar-glasses-local-fine-xyz=""
       data-ar-glasses-manual-calib-offset=""
       data-ar-glasses-manual-calib-scale=""

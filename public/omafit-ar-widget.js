@@ -1928,17 +1928,6 @@ function omafitHydrateArTelemetryDatasetFromSearchParams(arRootEl, widgetRootEl)
         const incoming = pickQuery(queryKeys);
         if (!incoming) continue;
         const cur = el.dataset[camel];
-        /**
-         * Iframe: query `arTrackingStack=hand` deve ganhar sobre tema desactualizado (`face`).
-         */
-        if (camel === "arTrackingStack") {
-          const inc = incoming.trim().toLowerCase();
-          const cu = cur !== undefined ? String(cur).trim().toLowerCase() : "";
-          if (inc === "hand" && cu === "face") {
-            el.dataset[camel] = incoming.trim();
-            continue;
-          }
-        }
         if (cur !== undefined && String(cur).trim() !== "") continue;
         el.dataset[camel] = incoming;
       }
@@ -3717,13 +3706,7 @@ function omafitApplyModelOpacityFactor(root, factor) {
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (let mi = 0; mi < mats.length; mi++) {
       const m = mats[mi];
-      if (!m || typeof m !== "object") continue;
-      if (!m.userData) m.userData = {};
-      if (!m.userData.omafitOpacityBaseStored) {
-        m.userData.omafitOpacityBaseStored = true;
-        m.userData.omafitOpacityBase = typeof m.opacity === "number" ? m.opacity : 1;
-        m.userData.omafitTransparentBase = m.transparent === true;
-      }
+      if (!m || !m.userData?.omafitOpacityBaseStored) continue;
       const base = Number(m.userData.omafitOpacityBase);
       const b = Number.isFinite(base) ? base : 1;
       const op = b * f;
@@ -6575,14 +6558,6 @@ async function runArSession({
         ? trackingStackRaw
         : inferredStack;
 
-    /**
-     * Metafields/tema antigos podem emitir `arTrackingStack=face` com `arAccessoryType=bracelet|watch`.
-     * Nesse caso MindAR+cara corria em vez de `runHandArSession` — tracking “preso” e GLB incoerente.
-     */
-    if (accessoryType === "watch" || accessoryType === "bracelet") {
-      trackingStack = "hand";
-    }
-
     if (isOmafitEyewearArForcedFromQuery()) {
       accessoryType = "glasses";
       accessoryTypeSource = "query-eyewear_ar-forced";
@@ -6611,24 +6586,7 @@ async function runArSession({
     });
 
     if (trackingStack === "hand") {
-      let bundleImportMs = Number(cfgAttrDispatch("arHandBundleImportTimeoutMs", ""));
-      if (!Number.isFinite(bundleImportMs) || bundleImportMs < 15000) bundleImportMs = 120000;
-      bundleImportMs = Math.min(300000, bundleImportMs);
-
-      let threeModHand;
-      let gltfModuleHand;
-      let visionMod;
-      try {
-        [threeModHand, gltfModuleHand, visionMod] = await omafitPromiseTimeoutRace(
-          getOmafitArHandModuleBundle(),
-          bundleImportMs,
-          "import hand AR (Three + GLTFLoader + @mediapipe/tasks-vision)",
-        );
-      } catch (eB) {
-        console.error("[omafit-ar] falha ao carregar bundle mão:", eB?.message || eB);
-        loading.textContent = t.errGeneric || t.errFace || "";
-        throw eB instanceof Error ? eB : new Error(String(eB));
-      }
+      const [threeModHand, gltfModuleHand, visionMod] = await getOmafitArHandModuleBundle();
       const THREEHand =
         threeModHand.default && typeof threeModHand.default.Group === "function"
           ? threeModHand.default
@@ -10457,27 +10415,6 @@ async function runArSession({
 }
 
 /**
- * `import()` remoto (tasks-vision), WASM MediaPipe ou GPU que nunca faz resolve —
- * sem timeout o utilizador fica eternamente em «A carregar tracking».
- *
- * @param {Promise<T>} promise
- * @param {number} ms
- * @param {string} label
- * @returns {Promise<T>}
- */
-function omafitPromiseTimeoutRace(promise, ms, label) {
-  const n = Math.max(1, Math.min(600000, Number(ms) || 90000));
-  return Promise.race([
-    promise,
-    new Promise((_, rej) => {
-      setTimeout(() => {
-        rej(new Error(`omafit-ar: ${label} (${n}ms)`));
-      }, n);
-    }),
-  ]);
-}
-
-/**
  * Sessão AR para acessórios de pulso (relógios, pulseiras) usando
  * MediaPipe Hand Landmarker + Three.js directamente (sem MindAR).
  *
@@ -10657,129 +10594,19 @@ async function runHandArSession({
 
   loading.textContent = t.loadingTracking || t.loading || "A carregar tracking...";
 
-  const visionExports = (() => {
-    const v = vision;
-    if (!v || typeof v !== "object") return null;
-    if (typeof v.FilesetResolver === "function" && typeof v.HandLandmarker === "function") {
-      return v;
-    }
-    const d = v.default;
-    if (
-      d &&
-      typeof d === "object" &&
-      typeof d.FilesetResolver === "function" &&
-      typeof d.HandLandmarker === "function"
-    ) {
-      return d;
-    }
-    return null;
-  })();
-  if (!visionExports) {
-    console.error("[omafit-ar] vision module inválido (tasks-vision):", vision);
-    loading.textContent = t.errGeneric || t.errFace || "AR indisponível.";
-    throw new Error(
-      "omafit-ar: MediaPipe tasks-vision sem FilesetResolver/HandLandmarker — verifique import/CDN.",
-    );
-  }
-  const { FilesetResolver, HandLandmarker } = visionExports;
-
-  /** WASM/jsDelivr/CSP: `forVisionTasks` pode pendurar indefinidamente sem isto. */
-  function omaMpRace(promise, ms, label) {
-    const n = Math.max(1, Number(ms) || 1);
-    return Promise.race([
-      promise,
-      new Promise((_, rej) => {
-        setTimeout(() => {
-          rej(new Error(`omafit-ar: ${label} (${n}ms)`));
-        }, n);
-      }),
-    ]);
-  }
-
-  let fsTimeoutMs = Number(cfgAttr("arHandFilesetTimeoutMs", ""));
-  if (!Number.isFinite(fsTimeoutMs) || fsTimeoutMs <= 0) fsTimeoutMs = 45000;
-  fsTimeoutMs = Math.min(120000, Math.max(8000, fsTimeoutMs));
-
-  let filesetResolver;
-  try {
-    filesetResolver = await omaMpRace(
-      FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE),
-      fsTimeoutMs,
-      "MediaPipe WASM (FilesetResolver)",
-    );
-    console.log("[omafit-ar] FilesetResolver OK");
-  } catch (eFs) {
-    console.error("[omafit-ar] FilesetResolver falhou:", eFs?.message || eFs);
-    loading.textContent = t.errGeneric || t.errFace || "AR indisponível.";
-    throw eFs instanceof Error ? eFs : new Error(String(eFs));
-  }
-
-  async function createHandLandmarker(delegate) {
-    return HandLandmarker.createFromOptions(filesetResolver, {
-      baseOptions: {
-        modelAssetPath: MEDIAPIPE_HAND_MODEL_URL,
-        delegate,
-      },
-      runningMode: "VIDEO",
-      numHands: 1,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-  }
-
-  /**
-   * Por defeito **CPU** — `GPU` bloqueia ou falha silenciosamente em WebView, Shopify app,
-   * Safari e muitos Android. Opt-in: `data-ar-hand-mp-delegate="gpu"`.
-   * `data-ar-hand-landmarker-timeout-ms`, `data-ar-hand-fileset-timeout-ms`,
-   * `data-ar-hand-pmrem-import-timeout-ms` (dynamic `import()` do IBL via esm.sh).
-   */
-  let handLandmarker;
-  const delegatePref = String(cfgAttr("arHandMpDelegate", "") || "").trim().toLowerCase();
-  const timeoutRaw = cfgAttr("arHandLandmarkerTimeoutMs", "");
-  let mpTimeoutMs = Number(timeoutRaw);
-  if (!Number.isFinite(mpTimeoutMs) || mpTimeoutMs <= 0) mpTimeoutMs = 24000;
-  mpTimeoutMs = Math.min(60000, Math.max(5000, mpTimeoutMs));
-
-  const cpuFirst = delegatePref !== "gpu";
-
-  async function createHandLandmarkerWithTimeout(delegate, label) {
-    const lmTo = Math.min(90000, Math.max(mpTimeoutMs, 15000));
-    return omaMpRace(createHandLandmarker(delegate), lmTo, label);
-  }
-
-  if (cpuFirst) {
-    console.log(
-      "[omafit-ar] HandLandmarker CPU (default; use data-ar-hand-mp-delegate=gpu for GPU first)",
-    );
-    handLandmarker = await createHandLandmarkerWithTimeout(
-      "CPU",
-      "HandLandmarker CPU",
-    );
-    console.log("[omafit-ar] HandLandmarker OK (CPU)");
-  } else {
-    try {
-      handLandmarker = await Promise.race([
-        createHandLandmarker("GPU"),
-        new Promise((_, rej) => {
-          setTimeout(() => {
-            rej(new Error("omafit-ar: HandLandmarker GPU timeout"));
-          }, mpTimeoutMs);
-        }),
-      ]);
-      console.log("[omafit-ar] HandLandmarker OK (GPU)");
-    } catch (eGpu) {
-      console.warn("[omafit-ar] HandLandmarker GPU falhou ou expirou:", eGpu?.message || eGpu);
-      loading.textContent = t.loadingTracking || t.loading || "A carregar tracking…";
-      handLandmarker = await createHandLandmarkerWithTimeout(
-        "CPU",
-        "HandLandmarker CPU fallback",
-      );
-      console.log("[omafit-ar] HandLandmarker OK (CPU fallback)");
-    }
-  }
-
-  loading.textContent = t.arLoading || t.loading || "A carregar modelo 3D…";
+  const { FilesetResolver, HandLandmarker } = vision;
+  const filesetResolver = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE);
+  const handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_HAND_MODEL_URL,
+      delegate: "GPU",
+    },
+    runningMode: "VIDEO",
+    numHands: 1,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
 
   const canvas = document.createElement("canvas");
   Object.assign(canvas.style, {
@@ -10911,22 +10738,10 @@ async function runHandArSession({
     const roomUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/environments/RoomEnvironment.js?${dep}`;
     const rgbeUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/RGBELoader.js?${dep}`;
     const hdrUrl = cfgAttr("arHandHdrEnvUrl", "").trim();
-    let pmremImpMs = Number(cfgAttr("arHandPmremImportTimeoutMs", ""));
-    if (!Number.isFinite(pmremImpMs) || pmremImpMs <= 0) pmremImpMs = 20000;
-    pmremImpMs = Math.min(45000, Math.max(6000, pmremImpMs));
-
-    const [{ PMREMGenerator }] = await omaMpRace(
-      import(pmremUrl),
-      pmremImpMs,
-      "PMREMGenerator import (esm)",
-    );
+    const [{ PMREMGenerator }] = await import(pmremUrl);
     const pmrem = new PMREMGenerator(renderer);
     if (hdrUrl) {
-      const { RGBELoader } = await omaMpRace(
-        import(rgbeUrl),
-        pmremImpMs,
-        "RGBELoader import (esm)",
-      );
+      const { RGBELoader } = await import(rgbeUrl);
       const hdrtx = await new Promise((resolve, reject) => {
         const loader = new RGBELoader();
         loader.load(hdrUrl, resolve, undefined, reject);
@@ -10937,11 +10752,7 @@ async function runHandArSession({
       handEnvPmremRT = pmrem.fromEquirectangular(hdrtx);
       scene.environment = handEnvPmremRT.texture;
     } else {
-      const { RoomEnvironment } = await omaMpRace(
-        import(roomUrl),
-        pmremImpMs,
-        "RoomEnvironment import (esm)",
-      );
+      const { RoomEnvironment } = await import(roomUrl);
       const envScene = new RoomEnvironment();
       handEnvPmremRT = pmrem.fromScene(envScene, 0.04);
       scene.environment = handEnvPmremRT.texture;
@@ -11599,6 +11410,19 @@ async function runHandArSession({
         }
         glbRoot.add(glbScene);
         upgradeHandArGlassMaterials(THREE, glbScene);
+        handMicroOpacityRoot = glbScene;
+        if (!handMicroUxDisabled) {
+          try {
+            omafitStoreMaterialOpacityBaseline(glbScene);
+            omafitApplyModelOpacityFactor(glbScene, 0);
+            handMicroUx.introStartMs = performance.now();
+            handMicroUx.introComplete = false;
+            handMicroUx.preparedOpacity = true;
+            handMicroUxWrap.scale.setScalar(0.9);
+          } catch {
+            /* ignore */
+          }
+        }
 
         const fitRes = fitWristGlb(glbScene, glbRoot, accessoryType, userScale);
         baseScale = fitRes.baseScale;
@@ -11662,21 +11486,7 @@ async function runHandArSession({
         }
         smoothedStrapK = 1;
         upgradeHandArMetalMaterials(THREE, glbScene);
-        omafitEnsureGlassesMeshesRenderable(THREE, glbScene);
         setHandArMeshRenderOrder(glbRoot, 1);
-        handMicroOpacityRoot = glbScene;
-        if (!handMicroUxDisabled) {
-          try {
-            omafitStoreMaterialOpacityBaseline(glbScene);
-            omafitApplyModelOpacityFactor(glbScene, 0);
-            handMicroUx.introStartMs = performance.now();
-            handMicroUx.introComplete = false;
-            handMicroUx.preparedOpacity = true;
-            handMicroUxWrap.scale.setScalar(0.9);
-          } catch {
-            /* ignore */
-          }
-        }
 
         console.log("[omafit-ar] hand GLB fit", {
           accessoryType,
@@ -12881,7 +12691,6 @@ async function runHandArSession({
               }
               smoothedStrapK = 1;
               upgradeHandArMetalMaterials(THREE, next);
-              omafitEnsureGlassesMeshesRenderable(THREE, next);
               setHandArMeshRenderOrder(glbRoot, 1);
               handMicroOpacityRoot = next;
               if (!handMicroUxDisabled) {

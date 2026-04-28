@@ -78,9 +78,10 @@ import {
  *    **mesh**; **escala da loja** (`cfg.scale`) + posição/rotação no `glassesPivot`.
  *    Em runtime MindAR:
  *      anchor.group → wearPosition → … → calibRot → [tripOffsetGroup] →
- *      glassesPivot → [micro-ux wrap] → **glassesModelWrap** → [**glassesTrackingWrap**] → glasses (GLB).
+ *      glassesPivot → [micro-ux wrap] → **glassesModelWrap** → [**glassesTrackingWrap**] →
+ *      [**glassesStaticBindWrap**] → glasses (GLB).
  *      Com **tracking wrap** (automático, sem manual MindAR / sem `glb-standardize`): pose facial
- *      só no wrap; o mesh mantém offsets correctivos do GLB (`position` estática). Em cada nó,
+ *      no wrap; bind eixo GLB no grupo estático; o mesh mantém offsets (`position`); em cada nó,
  *      preferir escrita **S → R → T** (`scale`, `quaternion`, `position`) antes de `updateMatrix`
  *      para alinhar à composição típica e evitar estados intermédios estranhos.
  *      Modo `data-ar-glasses-geometry-anchor="1"`: `glassesPivot` filho directo de
@@ -421,14 +422,20 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-22_ar-glasses-minimal-eye-ipd-pipeline";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-27_ar-glasses-landmark-basis-vto";
+
+try {
+  console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
+} catch {
+  /* ignore */
+}
 
 /**
  * Quando `true`, **não** cria malha facial 468 só-depth nem extensões temporais (óculos).
  * Serve para isolar problemas: óculos **dentro da cara** → provável Z; **invisível** → escala/rotação.
  * Manter `false` em produção.
  */
-const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = true;
+const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = false;
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -4215,8 +4222,8 @@ function upgradeHandArLuxuryJewelryMaterials(THREE, root) {
 /**
  * Heurística bangle (anel rígido): nome ou bbox quase isotrópico no plano do anel.
  */
-function detectBraceletBangle(glbScene) {
-  if (!glbScene) return false;
+function detectBraceletBangle(THREE, glbScene) {
+  if (!glbScene || !THREE) return false;
   let named = false;
   glbScene.traverse((o) => {
     const n = String(o.name || "").toLowerCase();
@@ -6147,8 +6154,8 @@ async function runArSession({
         bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
         left: "0",
         right: "0",
-        background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
-        padding: "12px 10px calc(10px + env(safe-area-inset-bottom, 0px))",
+        background: "transparent",
+        padding: "10px 10px max(8px, env(safe-area-inset-bottom, 0px))",
         zIndex: "120",
         display: "flex",
         flexDirection: "column",
@@ -6269,8 +6276,8 @@ async function runArSession({
         bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
         left: "0",
         right: "0",
-        background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
-        padding: "12px 10px calc(10px + env(safe-area-inset-bottom, 0px))",
+        background: "transparent",
+        padding: "10px 10px max(8px, env(safe-area-inset-bottom, 0px))",
         zIndex: "120",
         pointerEvents: "auto",
       },
@@ -6610,6 +6617,29 @@ async function runArSession({
       arDeviceProfile: arDeviceProfileSnapshot,
     });
 
+    try {
+      const qsDbg = typeof location !== "undefined" ? String(location.search || "") : "";
+      if (
+        accessoryType === "bracelet" &&
+        (/[?&]omafit_ar_bracelet_log=1\b/.test(qsDbg) ||
+          /[?&]omafit_ar_debug=1\b/.test(qsDbg))
+      ) {
+        let bundleImportMsLog = Number(cfgAttrDispatch("arHandBundleImportTimeoutMs", ""));
+        if (!Number.isFinite(bundleImportMsLog) || bundleImportMsLog < 15000) bundleImportMsLog = 120000;
+        bundleImportMsLog = Math.min(300000, bundleImportMsLog);
+        console.info("[omafit-ar][bracelet]", "dispatcher:resolved", {
+          trackingStack,
+          source: accessoryTypeSource,
+          liquidAccessoryType,
+          clientDetected,
+          glbUrlPreview: String(glbUrl || "").slice(0, 220),
+          bundleImportMs: bundleImportMsLog,
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+
     if (trackingStack === "hand") {
       let bundleImportMs = Number(cfgAttrDispatch("arHandBundleImportTimeoutMs", ""));
       if (!Number.isFinite(bundleImportMs) || bundleImportMs < 15000) bundleImportMs = 120000;
@@ -6624,7 +6654,36 @@ async function runArSession({
           bundleImportMs,
           "import hand AR (Three + GLTFLoader + @mediapipe/tasks-vision)",
         );
+        try {
+          const qsDbg = typeof location !== "undefined" ? String(location.search || "") : "";
+          if (
+            accessoryType === "bracelet" &&
+            (/[?&]omafit_ar_bracelet_log=1\b/.test(qsDbg) ||
+              /[?&]omafit_ar_debug=1\b/.test(qsDbg))
+          ) {
+            console.info("[omafit-ar][bracelet]", "dispatcher:hand_bundle_import_ok", {
+              bundleImportMs,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
       } catch (eB) {
+        try {
+          const qsDbg = typeof location !== "undefined" ? String(location.search || "") : "";
+          if (
+            accessoryType === "bracelet" &&
+            (/[?&]omafit_ar_bracelet_log=1\b/.test(qsDbg) ||
+              /[?&]omafit_ar_debug=1\b/.test(qsDbg))
+          ) {
+            console.info("[omafit-ar][bracelet]", "dispatcher:hand_bundle_import_fail", {
+              bundleImportMs,
+              message: eB?.message || String(eB),
+            });
+          }
+        } catch {
+          /* ignore */
+        }
         console.error("[omafit-ar] falha ao carregar bundle mão:", eB?.message || eB);
         loading.textContent = t.errGeneric || t.errFace || "";
         throw eB instanceof Error ? eB : new Error(String(eB));
@@ -7855,9 +7914,10 @@ async function runArSession({
         : null;
 
     /**
-     * Óculos automáticos **sem** Tripo/geometria/bochechas/standardize: só `faceMatrix` →
-     * `glassesTrackingWrap` + offsets estáticos no mesh. Ignora wear/calib loja, fine pivot,
-     * `arGlassesDepthForwardM` e bump Z frontal (`OMAFIT_GLASSES_FACE_LOCAL_FORWARD_M`).
+     * Óculos automáticos **sem** Tripo/geometria/bochechas/standardize: `faceMatrix` →
+     * `glassesTrackingWrap` (interpupilar + `arGlassesDepthForwardM` ao longo do +Z da face),
+     * bind glTF→MindAR no `glassesStaticBindWrap`, offsets no mesh. Ignora wear/calib loja
+     * e micro-pivot; sem bump legado `OMAFIT_GLASSES_FACE_LOCAL_FORWARD_M`.
      */
     const glassesSimpleFaceOnly =
       accessoryType === "glasses" &&
@@ -7870,7 +7930,12 @@ async function runArSession({
     const glassesLocalFineMEffective = glassesSimpleFaceOnly
       ? { x: 0, y: 0, z: 0 }
       : glassesLocalFineM;
-    const glassesDepthForwardMEffective = glassesSimpleFaceOnly ? 0 : glassesDepthForwardM;
+    /**
+     * Modo simples: o deslocamento interpupilar e o “colar” ao rosto vêm do
+     * `glassesTrackingWrap` (mid-olhos + eixo de profundidade da face), não de
+     * `wearPosition`. Mantemos `arGlassesDepthForwardM` (nariz → lentes) aqui.
+     */
+    const glassesDepthForwardMEffective = glassesDepthForwardM;
     const glassesFaceForwardLocalM = glassesSimpleFaceOnly ? 0 : OMAFIT_GLASSES_FACE_LOCAL_FORWARD_M;
 
     const glassesPivotConfigEffective =
@@ -8420,11 +8485,16 @@ async function runArSession({
       }
       const useGlassesTrackingWrap =
         accessoryType === "glasses" && !glassesManualMindarRig && !glassesGlbStandardize;
+      /** Pai do mesh: rotação de bind glTF→MindAR; o wrap de tracking aplica só a pose da face (não zera o bind a cada frame). */
+      let glassesStaticBindWrap = null;
       if (useGlassesTrackingWrap) {
         glassesTrackingWrap = new GroupCtor();
         glassesTrackingWrap.name = "omafit-ar-glasses-tracking-wrap";
         glassesModelWrap.add(glassesTrackingWrap);
-        glassesTrackingWrap.add(glasses);
+        glassesStaticBindWrap = new GroupCtor();
+        glassesStaticBindWrap.name = "omafit-ar-glasses-static-bind";
+        glassesTrackingWrap.add(glassesStaticBindWrap);
+        glassesStaticBindWrap.add(glasses);
       } else {
         glassesModelWrap.add(glasses);
       }
@@ -8452,6 +8522,14 @@ async function runArSession({
         !glassesGlbStandardize
       ) {
         omafitStripGlassesMeshRollYxz(THREE, glasses);
+      }
+      if (glassesStaticBindWrap) {
+        glasses.updateMatrix();
+        glassesStaticBindWrap.position.set(0, 0, 0);
+        glassesStaticBindWrap.scale.set(1, 1, 1);
+        glassesStaticBindWrap.quaternion.copy(glasses.quaternion);
+        glasses.quaternion.identity();
+        glasses.rotation.set(0, 0, 0);
       }
       /** Centro lógico no wrap: translação só no mesh `glasses` (GLB inalterado). Com **tracking wrap**, soma também offset empírico estático. */
       if (accessoryType === "glasses") {
@@ -8594,7 +8672,27 @@ async function runArSession({
       let negModelX = false;
       if (mnx === "1" || mnx === "true" || mnx === "yes") negModelX = true;
       else if (mnx === "0" || mnx === "false" || mnx === "no") negModelX = false;
-      else negModelX = !disableFaceMirror;
+      else if (accessoryType === "glasses") {
+        /**
+         * Por defeito **não** espelhar o ramo 3D em X com o selfie: o MindAR
+         * já alinha o frame; `scaleX=-1` no grupo do GLB + `faceMatrix` costuma
+         * deslocar a armação (ex.: “virada à esquerda”) após o alinhamento
+         * interpupilar. Opt-in: `data-ar-glasses-projection-mirror-model-x="1"`.
+         * Outros acessórios: mantém o `auto` ≈ !disableFaceMirror.
+         */
+        const gmx = String(cfgAttr("arGlassesProjectionMirrorModelX", "0"))
+          .trim()
+          .toLowerCase();
+        if (gmx === "1" || gmx === "true" || gmx === "on" || gmx === "yes") {
+          negModelX = true;
+        } else if (gmx === "0" || gmx === "false" || gmx === "off" || gmx === "no") {
+          negModelX = false;
+        } else {
+          negModelX = !disableFaceMirror;
+        }
+      } else {
+        negModelX = !disableFaceMirror;
+      }
       if (negModelX && !flipSceneX) projectionMirrorFix.scale.set(-1, 1, 1);
       else projectionMirrorFix.scale.set(1, 1, 1);
     } catch {
@@ -9329,13 +9427,32 @@ async function runArSession({
                     parentInv: new THREE.Matrix4(),
                     localMat: new THREE.Matrix4(),
                     basis: new THREE.Matrix4(),
+                    /** Base 168+olhos+testa+queixo (métrico), depois × `faceWorld` — alinhamento VTO standard. */
+                    lmBasisMetric: new THREE.Matrix4(),
+                    composedLmFace: new THREE.Matrix4(),
+                    landmarkBasisReuse: {
+                      tmp: new THREE.Vector3(),
+                      O: new THREE.Vector3(),
+                      eR: new THREE.Vector3(),
+                      eL: new THREE.Vector3(),
+                      fh: new THREE.Vector3(),
+                      ch: new THREE.Vector3(),
+                      x: new THREE.Vector3(),
+                      yRaw: new THREE.Vector3(),
+                      y: new THREE.Vector3(),
+                      z: new THREE.Vector3(),
+                    },
                     q: new THREE.Quaternion(),
                     eyeR: new THREE.Vector3(),
                     eyeL: new THREE.Vector3(),
                     faceForwardOff: new THREE.Vector3(),
+                    midMetric: new THREE.Vector3(),
+                    midW: new THREE.Vector3(),
+                    zFaceLocal: new THREE.Vector3(),
                   };
                 }
                 const fa = _omafitSimpleGlassesFaceAlignScratch;
+                const lmLoc = lm;
                 if (!fa.faceForwardOff) fa.faceForwardOff = new THREE.Vector3();
                 faceSrc.updateMatrixWorld(true);
                 faceAlignParent.updateMatrixWorld(true);
@@ -9366,12 +9483,92 @@ async function runArSession({
 
                 if (glassesTrackingWrap && st.glassesSimpleFaceOnly) {
                   /**
-                   * Sem rotação base no modelo: `glasses.rotation.set(0,0,0)` — Euler ≠ 0 inclina.
-                   * Quaternion da malha só no `glassesTrackingWrap` (faceQuat).
+                   * Rotação (VTO / referências comuns: Fittingbox, artigos try-on web):
+                   * base rígida a partir de **landmarks** 168+33+263+10+152 (eixos lente largura,
+                   * vertical, saída do rosto) em coord. métricas, depois `faceWorld` — coerente
+                   * com a âncora MindAR. **Não** usar só a rotação 3×3 da malha 468: a origem
+                   * do mesh facial não coincide com a ponte (168) e empurra o eixo.
+                   * Translação: ponto interpupilar em mundo → local do `glassesModelWrap`;
+                   * profundidade: eixo +Z do referencial composto, no espaço do pai.
+                   * O bind glTF→MindAR fica no `glassesStaticBindWrap`.
                    */
-                  fa.q.setFromRotationMatrix(fa.basis);
-                  glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
-                  glassesTrackingWrap.quaternion.copy(fa.q);
+                  const reuseLm =
+                    st.glassesBasisReuse && st.glassesBasisActive
+                      ? st.glassesBasisReuse
+                      : fa.landmarkBasisReuse;
+                  const okLmBasis = buildGlassesFaceBasisMatrix(
+                    THREE,
+                    lmLoc,
+                    st.lmSmoother,
+                    fa.lmBasisMetric,
+                    reuseLm,
+                  );
+                  if (okLmBasis) {
+                    fa.composedLmFace.multiplyMatrices(fa.faceWorld, fa.lmBasisMetric);
+                    glassesTrackingWrap.quaternion.setFromRotationMatrix(fa.composedLmFace);
+                  } else {
+                    fa.q.setFromRotationMatrix(fa.basis);
+                    glassesTrackingWrap.quaternion.copy(fa.q);
+                  }
+                  const okMid = (() => {
+                    if (!lmLoc) return false;
+                    const smR0 = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
+                    if (
+                      smR0 &&
+                      Number.isFinite(smR0.x) &&
+                      Number.isFinite(smR0.y) &&
+                      Number.isFinite(smR0.z)
+                    ) {
+                      fa.eyeR.set(smR0.x, smR0.y, smR0.z);
+                    } else {
+                      const raw = lmLoc[OMAFIT_FACE_LM_EYE_R_OUT];
+                      if (!raw) return false;
+                      if (typeof raw.length === "number" && raw.length >= 3) {
+                        fa.eyeR.set(raw[0], raw[1], raw[2]);
+                      } else if (typeof raw.x === "number") {
+                        fa.eyeR.set(raw.x, raw.y, Number.isFinite(raw.z) ? raw.z : 0);
+                      } else return false;
+                    }
+                    const smL0 = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
+                    if (
+                      smL0 &&
+                      Number.isFinite(smL0.x) &&
+                      Number.isFinite(smL0.y) &&
+                      Number.isFinite(smL0.z)
+                    ) {
+                      fa.eyeL.set(smL0.x, smL0.y, smL0.z);
+                    } else {
+                      const rawL = lmLoc[OMAFIT_FACE_LM_EYE_L_OUT];
+                      if (!rawL) return false;
+                      if (typeof rawL.length === "number" && rawL.length >= 3) {
+                        fa.eyeL.set(rawL[0], rawL[1], rawL[2]);
+                      } else if (typeof rawL.x === "number") {
+                        fa.eyeL.set(rawL.x, rawL.y, Number.isFinite(rawL.z) ? rawL.z : 0);
+                      } else return false;
+                    }
+                    fa.midMetric.addVectors(fa.eyeR, fa.eyeL).multiplyScalar(0.5);
+                    fa.midW.copy(fa.midMetric).applyMatrix4(fa.faceWorld);
+                    return true;
+                  })();
+                  if (okMid && st.glassesEyeMidpointAlign && faceAlignParent) {
+                    glassesTrackingWrap.position.copy(fa.midW);
+                    faceAlignParent.worldToLocal(glassesTrackingWrap.position);
+                    const ce = okLmBasis
+                      ? fa.composedLmFace.elements
+                      : fa.basis.elements;
+                    fa.zFaceLocal.set(ce[8], ce[9], ce[10]);
+                    if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
+                    fa.zFaceLocal.transformDirection(fa.parentInv);
+                    const df = Math.max(
+                      0,
+                      Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0,
+                    );
+                    if (df > 0) {
+                      glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
+                    }
+                  } else {
+                    glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
+                  }
                   glasses.rotation.order = "XYZ";
                   glasses.rotation.set(0, 0, 0);
                   try {
@@ -9411,7 +9608,6 @@ async function runArSession({
                   }
                 }
 
-                const lmLoc = lm;
                 if (lmLoc) {
                   const okR = (() => {
                     const sm = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
@@ -9747,11 +9943,11 @@ async function runArSession({
           return;
         }
         const dep = `deps=three@${ESM_THREE_VER}`;
-        const pmremUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/utils/PMREMGenerator.js?${dep}`;
         const roomUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/environments/RoomEnvironment.js?${dep}`;
         const rgbeUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/RGBELoader.js?${dep}`;
         const hdrUrl = cfgAttr("arHandHdrEnvUrl", "").trim();
-        const [{ PMREMGenerator }] = await import(pmremUrl);
+        const PMREMGenerator = THREE.PMREMGenerator;
+        if (typeof PMREMGenerator !== "function") return;
         const renderer = mindarThree.renderer;
         const scene = mindarThree.scene;
         if (!renderer || !scene) return;
@@ -10523,6 +10719,53 @@ async function runHandArSession({
     return String(fallback ?? "").trim();
   }
 
+  // #region agent log
+  function dbgBraceletAr(hypothesisId, location, message, data) {
+    if (accessoryType !== "bracelet") return;
+    const payload = {
+      sessionId: "49efff",
+      hypothesisId,
+      location,
+      message,
+      data: data && typeof data === "object" ? data : {},
+      timestamp: Date.now(),
+    };
+    try {
+      console.info("[omafitDbgBracelet]", payload.hypothesisId, payload.message, payload.data);
+    } catch {
+      /* ignore */
+    }
+    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  }
+  // #endregion
+
+  const qsHand =
+    typeof location !== "undefined" ? String(location.search || "") : "";
+  const braceletHandDiag =
+    accessoryType === "bracelet" &&
+    (/[?&]omafit_ar_bracelet_log=1\b/.test(qsHand) ||
+      /[?&]omafit_ar_debug=1\b/.test(qsHand));
+  function braceletHandLog(stage, payload) {
+    if (!braceletHandDiag) return;
+    try {
+      const lt =
+        loading && loading.textContent != null
+          ? String(loading.textContent).slice(0, 140)
+          : "";
+      console.info("[omafit-ar][bracelet]", stage, {
+        tMs: typeof performance !== "undefined" ? Math.round(performance.now()) : 0,
+        loadingText: lt,
+        ...(payload && typeof payload === "object" ? payload : {}),
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
   const perfModeHand = String(cfgAttr("arPerformanceProfile", "auto")).trim().toLowerCase();
   const handArProfile = omafitResolveArDeviceRuntimeProfile({ perfMode: perfModeHand });
   const handMicroUxDisabled = /^(0|false|off|no)$/i.test(String(cfgAttr("arMicroUx", "1")).trim());
@@ -10552,6 +10795,19 @@ async function runHandArSession({
     loading.textContent = t.errMediaDevices || t.errGeneric;
     throw new Error("omafit-ar: getUserMedia indisponível.");
   }
+
+  braceletHandLog("handSession:start", {
+    build: typeof OMAFIT_AR_WIDGET_BUILD !== "undefined" ? OMAFIT_AR_WIDGET_BUILD : "?",
+    glbUrlPreview: String(glbUrl || "").slice(0, 200),
+    microUxDisabled: handMicroUxDisabled,
+    perfMode: perfModeHand,
+    preferredCamera: String(cfgAttr("arPreferredCamera", "") || "").trim(),
+  });
+  dbgBraceletAr("H5", "runHandArSession:entry", "hand_session_start", {
+    build: typeof OMAFIT_AR_WIDGET_BUILD !== "undefined" ? OMAFIT_AR_WIDGET_BUILD : "?",
+    microUxDisabled: handMicroUxDisabled,
+    glbUrlPreview: String(glbUrl || "").slice(0, 160),
+  });
 
   const debug = /[?&]omafit_ar_debug=1\b/.test(String(location?.search || ""));
 
@@ -10609,6 +10865,7 @@ async function runHandArSession({
     }
   } catch (e) {
     loading.textContent = t.errCamera || t.errGeneric;
+    braceletHandLog("getUserMedia:failed", { message: e?.message || String(e) });
     throw e;
   }
 
@@ -10617,6 +10874,11 @@ async function runHandArSession({
     const fm = track?.getSettings?.()?.facingMode;
     if (fm === "environment") mirrorVideoX = false;
     if (fm === "user") mirrorVideoX = true;
+    braceletHandLog("camera:track", {
+      facingMode: fm || "(unknown)",
+      mirrorVideoX,
+      wantRearCamera,
+    });
   } catch {
     /* ignore */
   }
@@ -10655,7 +10917,18 @@ async function runHandArSession({
     arDeviceProfile: handArProfile,
   });
 
-  loading.textContent = t.loadingTracking || t.loading || "A carregar tracking...";
+  loading.textContent =
+    accessoryType === "bracelet"
+      ? "A preparar tracking da pulseira…"
+      : "A preparar tracking do pulso…";
+
+  braceletHandLog("mediapipe:before_vision_exports", {
+    visionKeys:
+      vision && typeof vision === "object"
+        ? Object.keys(vision).slice(0, 24)
+        : typeof vision,
+    hasDefault: Boolean(vision?.default),
+  });
 
   const visionExports = (() => {
     const v = vision;
@@ -10676,6 +10949,9 @@ async function runHandArSession({
   })();
   if (!visionExports) {
     console.error("[omafit-ar] vision module inválido (tasks-vision):", vision);
+    braceletHandLog("mediapipe:vision_exports_invalid", {
+      visionType: typeof vision,
+    });
     loading.textContent = t.errGeneric || t.errFace || "AR indisponível.";
     throw new Error(
       "omafit-ar: MediaPipe tasks-vision sem FilesetResolver/HandLandmarker — verifique import/CDN.",
@@ -10700,6 +10976,11 @@ async function runHandArSession({
   if (!Number.isFinite(fsTimeoutMs) || fsTimeoutMs <= 0) fsTimeoutMs = 45000;
   fsTimeoutMs = Math.min(120000, Math.max(8000, fsTimeoutMs));
 
+  braceletHandLog("mediapipe:fileset_resolver_start", {
+    wasmBase: MEDIAPIPE_WASM_BASE,
+    fsTimeoutMs,
+  });
+
   let filesetResolver;
   try {
     filesetResolver = await omaMpRace(
@@ -10708,34 +10989,73 @@ async function runHandArSession({
       "MediaPipe WASM (FilesetResolver)",
     );
     console.log("[omafit-ar] FilesetResolver OK");
+    braceletHandLog("mediapipe:fileset_resolver_ok", {});
   } catch (eFs) {
     console.error("[omafit-ar] FilesetResolver falhou:", eFs?.message || eFs);
+    braceletHandLog("mediapipe:fileset_resolver_fail", {
+      message: eFs?.message || String(eFs),
+    });
     loading.textContent = t.errGeneric || t.errFace || "AR indisponível.";
     throw eFs instanceof Error ? eFs : new Error(String(eFs));
   }
 
+  const handModelAssetUrl =
+    String(cfgAttr("arHandModelUrl", "") || "").trim() || MEDIAPIPE_HAND_MODEL_URL;
+  try {
+    void fetch(handModelAssetUrl, { mode: "cors", cache: "force-cache" }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+
+  function parseHandMpConf(key, fallback) {
+    const raw = String(cfgAttr(key, "") || "").trim();
+    if (raw === "") return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0.05 && n <= 1 ? n : fallback;
+  }
+  /**
+   * Pulseira: limiares por defeito ligeiramente mais baixos que o relógio
+   * (0,35/0,4) para reduzir frames sem mão detetada — o âncora só mostra o GLB
+   * com landmarks estáveis. Override: `data-ar-hand-min-detection-confidence`, etc.
+   */
+  const mpConfFallbackDet = accessoryType === "bracelet" ? 0.35 : 0.5;
+  const mpConfFallbackPres = accessoryType === "bracelet" ? 0.35 : 0.5;
+  const mpConfFallbackTrack = accessoryType === "bracelet" ? 0.4 : 0.5;
+  const mpMinDet = parseHandMpConf("arHandMinDetectionConfidence", mpConfFallbackDet);
+  const mpMinPres = parseHandMpConf("arHandMinPresenceConfidence", mpConfFallbackPres);
+  const mpMinTrack = parseHandMpConf("arHandMinTrackingConfidence", mpConfFallbackTrack);
+  dbgBraceletAr("H4", "mediapipe:mp_conf", "HandLandmarker_thresholds", {
+    mpMinDet,
+    mpMinPres,
+    mpMinTrack,
+  });
+
   async function createHandLandmarker(delegate) {
     return HandLandmarker.createFromOptions(filesetResolver, {
       baseOptions: {
-        modelAssetPath: MEDIAPIPE_HAND_MODEL_URL,
+        modelAssetPath: handModelAssetUrl,
         delegate,
       },
       runningMode: "VIDEO",
       numHands: 1,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minHandDetectionConfidence: mpMinDet,
+      minHandPresenceConfidence: mpMinPres,
+      minTrackingConfidence: mpMinTrack,
     });
   }
 
   /**
-   * Por defeito **CPU** — `GPU` bloqueia ou falha silenciosamente em WebView, Shopify app,
-   * Safari e muitos Android. Opt-in: `data-ar-hand-mp-delegate="gpu"`.
-   * `data-ar-hand-landmarker-timeout-ms`, `data-ar-hand-fileset-timeout-ms`,
-   * `data-ar-hand-pmrem-import-timeout-ms` (dynamic `import()` do IBL via esm.sh).
+   * Igual ao relógio por defeito: **CPU primeiro** (`data-ar-hand-mp-delegate` vazio).
+   * Opt-in pulseira só se precisares do arranque GPU rápido em redes lentas:
+   * `data-ar-hand-bracelet-gpu-first="1"` em `#omafit-widget-root` ou `#omafit-ar-root`.
+   * Modelo espelhado (rede/CSP): `data-ar-hand-model-url="https://…/hand_landmarker.task"`.
    */
-  let handLandmarker;
-  const delegatePref = String(cfgAttr("arHandMpDelegate", "") || "").trim().toLowerCase();
+  let handLandmarker = null;
+  const delegatePrefRaw = String(cfgAttr("arHandMpDelegate", "") || "").trim().toLowerCase();
+  const delegatePref =
+    accessoryType === "bracelet" && delegatePrefRaw === "gpu"
+      ? "cpu"
+      : delegatePrefRaw;
   const timeoutRaw = cfgAttr("arHandLandmarkerTimeoutMs", "");
   let mpTimeoutMs = Number(timeoutRaw);
   if (!Number.isFinite(mpTimeoutMs) || mpTimeoutMs <= 0) mpTimeoutMs = 24000;
@@ -10743,41 +11063,121 @@ async function runHandArSession({
 
   const cpuFirst = delegatePref !== "gpu";
 
+  const bfGpuFirstRaw = String(cfgAttr("arHandBraceletGpuFirst", "0")).trim().toLowerCase();
+  const braceletGpuFirstEnabled =
+    accessoryType === "bracelet" &&
+    delegatePref === "" &&
+    (bfGpuFirstRaw === "1" ||
+      bfGpuFirstRaw === "true" ||
+      bfGpuFirstRaw === "yes" ||
+      bfGpuFirstRaw === "on");
+
+  braceletHandLog("mediapipe:hand_landmarker_plan", {
+    delegatePrefRaw,
+    delegatePrefEffective: delegatePref,
+    mpTimeoutMs,
+    cpuFirst,
+    modelUrl: handModelAssetUrl.slice(0, 220),
+    braceletGpuFirstEnabled,
+  });
+
   async function createHandLandmarkerWithTimeout(delegate, label) {
-    const lmTo = Math.min(90000, Math.max(mpTimeoutMs, 15000));
+    let lmTo = Math.min(90000, Math.max(mpTimeoutMs, 15000));
+    if (!Number.isFinite(lmTo) || lmTo <= 0) lmTo = 24000;
+    lmTo = Math.min(45000, Math.max(8000, lmTo));
     return omaMpRace(createHandLandmarker(delegate), lmTo, label);
   }
 
-  if (cpuFirst) {
-    console.log(
-      "[omafit-ar] HandLandmarker CPU (default; use data-ar-hand-mp-delegate=gpu for GPU first)",
+  if (braceletGpuFirstEnabled) {
+    loading.textContent = "A carregar tracking da pulseira (GPU)…";
+    await new Promise((res) =>
+      requestAnimationFrame(() => requestAnimationFrame(res)),
     );
-    handLandmarker = await createHandLandmarkerWithTimeout(
-      "CPU",
-      "HandLandmarker CPU",
-    );
-    console.log("[omafit-ar] HandLandmarker OK (CPU)");
-  } else {
     try {
-      handLandmarker = await Promise.race([
-        createHandLandmarker("GPU"),
-        new Promise((_, rej) => {
-          setTimeout(() => {
-            rej(new Error("omafit-ar: HandLandmarker GPU timeout"));
-          }, mpTimeoutMs);
-        }),
-      ]);
-      console.log("[omafit-ar] HandLandmarker OK (GPU)");
-    } catch (eGpu) {
-      console.warn("[omafit-ar] HandLandmarker GPU falhou ou expirou:", eGpu?.message || eGpu);
-      loading.textContent = t.loadingTracking || t.loading || "A carregar tracking…";
-      handLandmarker = await createHandLandmarkerWithTimeout(
-        "CPU",
-        "HandLandmarker CPU fallback",
+      const gpuBraceletMs = Math.min(
+        14000,
+        Math.max(7000, Math.floor(mpTimeoutMs * 0.55)),
       );
-      console.log("[omafit-ar] HandLandmarker OK (CPU fallback)");
+      handLandmarker = await omaMpRace(
+        createHandLandmarker("GPU"),
+        gpuBraceletMs,
+        "HandLandmarker GPU (pulseira primeiro)",
+      );
+      console.log("[omafit-ar] HandLandmarker OK (GPU, pulseira primeiro)");
+      braceletHandLog("mediapipe:hand_landmarker_ok", {
+        delegate: "GPU_bracelet_first",
+      });
+    } catch (eBf) {
+      console.warn(
+        "[omafit-ar] Pulseira: tentativa GPU inicial falhou, a usar CPU.",
+        eBf?.message || eBf,
+      );
+      braceletHandLog("mediapipe:bracelet_gpu_first_fail", {
+        message: eBf?.message || String(eBf),
+      });
+      handLandmarker = null;
     }
   }
+
+  if (!handLandmarker) {
+    if (cpuFirst) {
+      loading.textContent =
+        accessoryType === "bracelet"
+          ? "A carregar tracking da pulseira (CPU)…"
+          : "A carregar tracking do pulso (CPU)…";
+      await new Promise((res) =>
+        requestAnimationFrame(() => requestAnimationFrame(res)),
+      );
+      console.log(
+        "[omafit-ar] HandLandmarker CPU (default; relógio ou fallback pulseira)",
+      );
+      handLandmarker = await createHandLandmarkerWithTimeout(
+        "CPU",
+        "HandLandmarker CPU",
+      );
+      console.log("[omafit-ar] HandLandmarker OK (CPU)");
+      braceletHandLog("mediapipe:hand_landmarker_ok", { delegate: "CPU" });
+    } else {
+      try {
+        loading.textContent =
+          accessoryType === "bracelet"
+            ? "A carregar tracking da pulseira (GPU)…"
+            : "A carregar tracking do pulso (GPU)…";
+        handLandmarker = await Promise.race([
+          createHandLandmarker("GPU"),
+          new Promise((_, rej) => {
+            setTimeout(() => {
+              rej(new Error("omafit-ar: HandLandmarker GPU timeout"));
+            }, mpTimeoutMs);
+          }),
+        ]);
+        console.log("[omafit-ar] HandLandmarker OK (GPU)");
+        braceletHandLog("mediapipe:hand_landmarker_ok", { delegate: "GPU" });
+      } catch (eGpu) {
+        console.warn("[omafit-ar] HandLandmarker GPU falhou ou expirou:", eGpu?.message || eGpu);
+        braceletHandLog("mediapipe:hand_landmarker_gpu_fail", {
+          message: eGpu?.message || String(eGpu),
+        });
+        loading.textContent =
+          accessoryType === "bracelet"
+            ? "A trocar para tracking da pulseira (CPU)…"
+            : "A trocar para tracking do pulso (CPU)…";
+        handLandmarker = await createHandLandmarkerWithTimeout(
+          "CPU",
+          "HandLandmarker CPU fallback",
+        );
+        console.log("[omafit-ar] HandLandmarker OK (CPU fallback)");
+        braceletHandLog("mediapipe:hand_landmarker_ok", { delegate: "CPU_fallback" });
+      }
+    }
+  }
+
+  braceletHandLog("handSession:after_landmarker", {
+    nextUi: "arLoading / modelo 3D",
+  });
+  dbgBraceletAr("H4", "runHandArSession:after_landmarker", "landmarker_ready", {
+    hasLandmarker: Boolean(handLandmarker),
+  });
 
   loading.textContent = t.arLoading || t.loading || "A carregar modelo 3D…";
 
@@ -10907,7 +11307,6 @@ async function runHandArSession({
   let handHdrEquirectTexture = null;
   try {
     const dep = `deps=three@${ESM_THREE_VER}`;
-    const pmremUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/utils/PMREMGenerator.js?${dep}`;
     const roomUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/environments/RoomEnvironment.js?${dep}`;
     const rgbeUrl = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/RGBELoader.js?${dep}`;
     const hdrUrl = cfgAttr("arHandHdrEnvUrl", "").trim();
@@ -10915,11 +11314,16 @@ async function runHandArSession({
     if (!Number.isFinite(pmremImpMs) || pmremImpMs <= 0) pmremImpMs = 20000;
     pmremImpMs = Math.min(45000, Math.max(6000, pmremImpMs));
 
-    const [{ PMREMGenerator }] = await omaMpRace(
-      import(pmremUrl),
+    braceletHandLog("pmrem:start", {
       pmremImpMs,
-      "PMREMGenerator import (esm)",
-    );
+      hdrCustom: Boolean(hdrUrl),
+      esmThree: ESM_THREE_VER,
+    });
+
+    const PMREMGenerator = THREE.PMREMGenerator;
+    if (typeof PMREMGenerator !== "function") {
+      throw new Error("THREE.PMREMGenerator indisponível (build Three antigo?)");
+    }
     const pmrem = new PMREMGenerator(renderer);
     if (hdrUrl) {
       const { RGBELoader } = await omaMpRace(
@@ -10950,8 +11354,10 @@ async function runHandArSession({
     pmrem.dispose();
     handAmbientLight.intensity = 0.38;
     handHemiLight.intensity = 0.2;
+    braceletHandLog("pmrem:ok", { hasSceneEnv: Boolean(scene.environment) });
   } catch (e) {
     console.warn("[omafit-ar] PMREM / IBL indisponível — reflexos reduzidos.", e?.message || e);
+    braceletHandLog("pmrem:fail", { message: e?.message || String(e) });
   }
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   /** Exposure > 1: metais com contraste de luxo sem “estourar” reflexos (com ACES). */
@@ -11534,6 +11940,11 @@ async function runHandArSession({
   const versionHint =
     arCfg?.dataset?.arGlbVersion || arCfg?.getAttribute?.("data-ar-glb-version") || "";
   const finalGlbUrl = buildGlbLoaderUrl(omafitAbsolutizeGlbUrlMaybe(glbUrl), versionHint);
+  braceletHandLog("glb:load_start", {
+    finalGlbUrl: String(finalGlbUrl || "").slice(0, 260),
+    glbVersionHint: String(versionHint || "").slice(0, 32),
+    dracoLoader: Boolean(dracoLoaderHand),
+  });
   let baseScale = 0.1;
   /** Raio local do anel/cilindro wrap (EIXO), em unidades GLB (pré-scale). */
   let localRingR = 0.025;
@@ -11571,15 +11982,23 @@ async function runHandArSession({
       : null;
   /** Escala radial suavizada [kFloor, 1] — mostrador permanece fora deste grupo. */
   let smoothedStrapK = 1;
+  dbgBraceletAr("H1", "glb:before_await_load", "await_glb_promise", {
+    url: String(finalGlbUrl || "").slice(0, 200),
+    draco: Boolean(dracoLoaderHand),
+  });
   await new Promise((resolve, reject) => {
     glbLoader.load(
       finalGlbUrl,
       (gltf) => {
         const glbScene = gltf.scene || gltf.scenes?.[0];
         if (!glbScene) {
+          dbgBraceletAr("H1", "glb:onLoad", "gltf_no_scene", {});
           reject(new Error("GLB sem cena"));
           return;
         }
+        dbgBraceletAr("H1", "glb:onLoad", "gltf_scene_ok", {
+          childCount: glbScene.children?.length ?? -1,
+        });
         bakeGLBTransforms(THREE, glbScene, ({ baked, skipped }) => {
           console.log(
             `[omafit-ar] hand GLB baked meshes=${baked} skipped=${skipped}`,
@@ -11613,7 +12032,7 @@ async function runHandArSession({
         braceletVertexDeform = null;
         if (accessoryType === "bracelet") {
           upgradeHandArLuxuryJewelryMaterials(THREE, glbScene);
-          braceletIsBangle = detectBraceletBangle(glbScene);
+          braceletIsBangle = detectBraceletBangle(THREE, glbScene);
           if (!braceletIsBangle) {
             if (countHandArSolidMeshes(glbScene) === 1) {
               braceletVertexDeform = initBraceletLinkVertexDeformation(
@@ -11704,12 +12123,36 @@ async function runHandArSession({
           ),
           bbox: { x: fitRes.size.x, y: fitRes.size.y, z: fitRes.size.z },
         });
+        braceletHandLog("glb:load_ok", {
+          baseScale: fitRes.baseScale,
+          bangle: accessoryType === "bracelet" ? braceletIsBangle : null,
+          braceletLinkVertex: accessoryType === "bracelet" ? Boolean(braceletVertexDeform) : null,
+          braceletLinkRadial: accessoryType === "bracelet" ? Boolean(braceletLinkRadial) : null,
+        });
 
         glbRoot.visible = true;
+        dbgBraceletAr("H3", "glb:before_resolve", "fit_complete", {
+          baseScale: fitRes.baseScale,
+          glbRootVisible: glbRoot.visible,
+          braceletIsBangle,
+          microUxPrepared: Boolean(handMicroUx?.preparedOpacity),
+          glbWorldScale: glbRoot.scale
+            ? { x: glbRoot.scale.x, y: glbRoot.scale.y, z: glbRoot.scale.z }
+            : null,
+        });
         resolve();
       },
       undefined,
-      (err) => reject(err),
+      (err) => {
+        dbgBraceletAr("H1", "glb:onError", "load_failed", {
+          message: String(err?.message || err).slice(0, 200),
+        });
+        braceletHandLog("glb:load_error", {
+          message: err?.message || String(err),
+          url: String(finalGlbUrl || "").slice(0, 260),
+        });
+        reject(err);
+      },
     );
   });
 
@@ -11785,6 +12228,9 @@ async function runHandArSession({
   let rafId = 0;
   let missedFrames = 0;
   const MISSED_HIDE_THRESHOLD = 6;
+  let braceletFirstLandmarkLogged = false;
+  /** Log debug H2 (sessão agent) uma vez quando há landmarks. */
+  let braceletH2DebugLogged = false;
 
   /**
    * === ESTABILIDADE DE HANDEDNESS (v11.2) ===
@@ -12632,9 +13078,24 @@ async function runHandArSession({
     }
     const handLabel = stableHandLabel;
     if (landmarks && landmarks.length >= 18) {
+      if (braceletHandDiag && !braceletFirstLandmarkLogged) {
+        braceletFirstLandmarkLogged = true;
+        braceletHandLog("tick:first_hand_landmarks", {
+          n: landmarks.length,
+          handLabel,
+          handScore: Number(lastHandScore || 0).toFixed(3),
+        });
+      }
       missedFrames = 0;
       updateAnchorFromHand(landmarks, dtMs, handLabel);
       anchor.visible = true;
+      if (accessoryType === "bracelet" && !braceletH2DebugLogged) {
+        braceletH2DebugLogged = true;
+        dbgBraceletAr("H2", "tick:first_landmarks", "anchor_on", {
+          n: landmarks.length,
+          glbRootVisible: glbRoot.visible,
+        });
+      }
       if (!handMicroUxDisabled) {
         try {
           if (handDetectRingEl) handDetectRingEl.classList.add("omafit-ar-track-detect-ring--on");
@@ -12784,6 +13245,10 @@ async function runHandArSession({
   }
 
   loading.style.display = "none";
+  dbgBraceletAr("H5", "runHandArSession:loading_hidden", "overlay_hidden_starting_raf", {
+    glbRootVisible: glbRoot.visible,
+    anchorVisible: anchor.visible,
+  });
   rafId = requestAnimationFrame(tick);
 
   // Live variant override hook: compatível com o face path.
@@ -12843,7 +13308,7 @@ async function runHandArSession({
               braceletVertexDeform = null;
               if (accessoryType === "bracelet") {
                 upgradeHandArLuxuryJewelryMaterials(THREE, next);
-                braceletIsBangle = detectBraceletBangle(next);
+                braceletIsBangle = detectBraceletBangle(THREE, next);
                 if (!braceletIsBangle) {
                   if (countHandArSolidMeshes(next) === 1) {
                     braceletVertexDeform = initBraceletLinkVertexDeformation(

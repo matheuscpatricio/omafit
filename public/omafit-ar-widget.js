@@ -78,9 +78,10 @@ import {
  *    **mesh**; **escala da loja** (`cfg.scale`) + posição/rotação no `glassesPivot`.
  *    Em runtime MindAR:
  *      anchor.group → wearPosition → … → calibRot → [tripOffsetGroup] →
- *      glassesPivot → [micro-ux wrap] → **glassesModelWrap** → [**glassesTrackingWrap**] → glasses (GLB).
+ *      glassesPivot → [micro-ux wrap] → **glassesModelWrap** → [**glassesTrackingWrap**] →
+ *      [**glassesStaticBindWrap**] → glasses (GLB).
  *      Com **tracking wrap** (automático, sem manual MindAR / sem `glb-standardize`): pose facial
- *      só no wrap; o mesh mantém offsets correctivos do GLB (`position` estática). Em cada nó,
+ *      no wrap; bind eixo GLB no grupo estático; o mesh mantém offsets (`position`); em cada nó,
  *      preferir escrita **S → R → T** (`scale`, `quaternion`, `position`) antes de `updateMatrix`
  *      para alinhar à composição típica e evitar estados intermédios estranhos.
  *      Modo `data-ar-glasses-geometry-anchor="1"`: `glassesPivot` filho directo de
@@ -330,8 +331,8 @@ const MEDIAPIPE_POSE_LANDMARKER_URL =
  *    correcto para envolver o pulso em vez de ficar minúsculo porque a
  *    dimensão máxima do bbox é o "fim do fecho" esticado em algumas GLBs.
  */
-const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.072;
-const OMAFIT_BRACELET_AR_WORLD_MEDIAN_DIM = 0.062;
+const OMAFIT_WRIST_AR_WORLD_MAX_DIM = 0.066;
+const OMAFIT_BRACELET_AR_WORLD_MEDIAN_DIM = 0.06;
 
 /**
  * Comprimento real (m) do segmento punho→MCP-médio numa mão adulta.
@@ -345,21 +346,48 @@ const OMAFIT_WRIST_TO_MCP_M = 0.10;
  * Usada como “valor base” para o ratio span_medido / span_ref no ajuste da correia.
  */
 const OMAFIT_BASE_KNUCKLE_SPAN_M = 0.078;
+/**
+ * Após `fitWristGlb` centrar o GLB, empurra o mesh em **−Y local** (sentido
+ * "para dentro" do braço pós-bind) para encostar o anel ao pulso e reduzir
+ * flutuação visual. Metros.
+ */
+const OMAFIT_HAND_GLB_LOCAL_Y_BIND_M = 0;
+/** Offset vertical local proporcional ao tamanho do GLB (sweet spot ~0.4-0.5). */
+const OMAFIT_BRACELET_GLB_LOCAL_Y_SIZE_MUL = 0.42;
+/** Recuo local em profundidade para reduzir efeito de flutuar à frente. */
+const OMAFIT_BRACELET_GLB_LOCAL_Z_SIZE_MUL = 0.5;
+/** Inset adicional pela normal do pulso (wrapper quaternion), em metros. */
+const OMAFIT_BRACELET_WRIST_NORMAL_INSET_M = 0.015;
+/** Offset base pedido para recuar pulso para o braço. */
+const OMAFIT_BRACELET_WRIST_OFFSET_BASE_M = 0.05;
+/** Offset dinâmico por largura do punho (LM5–LM17). */
+const OMAFIT_BRACELET_WRIST_OFFSET_WIDTH_MUL = 0.6;
+/** Lock extra no eixo do antebraço (evita drift). */
+const OMAFIT_BRACELET_FOREARM_LOCK_M = 0.01;
+/**
+ * Amarra a escala ao *wrist width* 3D `distance(LM5, LM17)` (já unprojected):
+ * factor ≈ `(span_m × k) / OMAFIT_BASE_KNUCKLE_SPAN_M` (equivalente ao teu
+ * `scale = wristWidth * 1,2` quando a referência de escala do runtime é a
+ * largura antropométrica base). *Clamp* evita saltos com landmarks instáveis.
+ */
+const OMAFIT_HAND_KNUCKLE_SPAN_SCALE_K = 1.2;
+const OMAFIT_HAND_KNUCKLE_SPAN_SCALE_MIN = 0.78;
+const OMAFIT_HAND_KNUCKLE_SPAN_SCALE_MAX = 1.32;
 /** Suavização da escala radial da correia (ms) — evita saltos quando zDist muda. */
 const OMAFIT_WATCH_STRAP_BIOMETRIC_TAU_MS = 220;
 /** PBR metais Tripo: roughness base e intensidade IBL (look “luxo”). */
 const OMAFIT_METAL_ROUGHNESS_DEFAULT = 0.22;
 const OMAFIT_METAL_ENV_MAP_INTENSITY = 1.5;
 /** Inércia da “zona de deslize” da pulseira ao longo do antebraço (ms). */
-const OMAFIT_BRACELET_SLIDE_TAU_FAST_MS = 88;
-const OMAFIT_BRACELET_SLIDE_TAU_LAG_MS = 265;
+const OMAFIT_BRACELET_SLIDE_TAU_FAST_MS = 90;
+const OMAFIT_BRACELET_SLIDE_TAU_LAG_MS = 230;
 /**
  * Referência (m) do segmento punho (LM0) → MCP médio (LM9) em adulto (~9,4 cm).
  * Usada na escala Y (espessura ao longo do dorso) e no factor de alcance em Z.
  */
 const OMAFIT_BRACELET_REF_FOREARM_REACH_M = 0.094;
 /** Deslocamento em −Y local da âncora (em direcção à palma) para encostar ao pulso. */
-const OMAFIT_BRACELET_SKIN_SINK_TARGET_M = 0.0031;
+const OMAFIT_BRACELET_SKIN_SINK_TARGET_M = 0.004;
 const OMAFIT_BRACELET_METRICS_EMA_MS = 210;
 const OMAFIT_BRACELET_SINK_EMA_MS = 260;
 /** Expoente suave para ajuste fino ao longo do antebraço (eixo Z do GLB). */
@@ -386,10 +414,17 @@ const OMAFIT_HAND_AXIS_TAU_MS = 90;
  * v12.0: EMA fixa na âncora da mão (pedido produto — “peso” físico).
  * Posição α=0.15, rotação SLERP t=0.10 (substitui tau exponencial neste path).
  */
-const OMAFIT_HAND_EMA_POS_ALPHA = 0.15;
-const OMAFIT_HAND_EMA_ROT_ALPHA = 0.1;
+const OMAFIT_HAND_EMA_POS_ALPHA = 0.17;
+const OMAFIT_HAND_EMA_ROT_ALPHA = 0.115;
+/** Filtro adaptativo (inspirado em One-Euro): menos jitter parado, menos lag em movimento. */
+const OMAFIT_HAND_POS_ALPHA_MIN = 0.06;
+const OMAFIT_HAND_POS_ALPHA_MAX = 0.28;
+const OMAFIT_HAND_POS_ALPHA_SPEED_GAIN = 0.12;
+const OMAFIT_HAND_ROT_ALPHA_MIN = 0.05;
+const OMAFIT_HAND_ROT_ALPHA_MAX = 0.22;
+const OMAFIT_HAND_ROT_ALPHA_SPEED_GAIN = 0.016;
 /** Quanto da rotação axial (normal 0–5–17 vs base) entra no quaternion final. */
-const OMAFIT_HAND_WRIST_ROLL_GAIN = 0.72;
+const OMAFIT_HAND_WRIST_ROLL_GAIN = 0.5;
 /**
  * Raio efectivo do cilindro oclusor = scale × raio biométrico do pulso.
  * Valor < 1: ligeiramente mais estreito que a estimativa da pulseira — corta só
@@ -421,7 +456,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-27_ar-asset-v5-cachebust";
+const OMAFIT_AR_WIDGET_BUILD = "2026-04-28_bracelet-wrist-offset-v9";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -434,7 +469,7 @@ try {
  * Serve para isolar problemas: óculos **dentro da cara** → provável Z; **invisível** → escala/rotação.
  * Manter `false` em produção.
  */
-const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = true;
+const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = false;
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -5152,9 +5187,13 @@ function injectGlobalStyles(root, primaryOverride) {
       animation: omafit-ar-ring-pulse 1.85s ease-in-out infinite;
     }
     /* Miniaturas + carrinho: filho de arWrap (fora do overflow do vídeo), acima do WebGL. */
-    .omafit-ar-shell .omafit-ar-variant-cart-strip {
+    .omafit-ar-shell .omafit-ar-variant-cart-strip,
+    .omafit-ar-variant-cart-strip {
       z-index: 120 !important;
       pointer-events: auto !important;
+      background: transparent !important;
+      background-image: none !important;
+      box-shadow: none !important;
     }
     /* Botão carrinho mais alto e barra mais acima (evita barra gestual / canto inferior). */
     .omafit-ar-shell .omafit-ar-variant-cart-strip .omafit-ar-cart-btn {
@@ -6153,8 +6192,8 @@ async function runArSession({
         bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
         left: "0",
         right: "0",
-        background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
-        padding: "12px 10px calc(10px + env(safe-area-inset-bottom, 0px))",
+        background: "transparent",
+        padding: "10px 10px max(8px, env(safe-area-inset-bottom, 0px))",
         zIndex: "120",
         display: "flex",
         flexDirection: "column",
@@ -6275,8 +6314,8 @@ async function runArSession({
         bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
         left: "0",
         right: "0",
-        background: "linear-gradient(transparent, rgba(0,0,0,0.78))",
-        padding: "12px 10px calc(10px + env(safe-area-inset-bottom, 0px))",
+        background: "transparent",
+        padding: "10px 10px max(8px, env(safe-area-inset-bottom, 0px))",
         zIndex: "120",
         pointerEvents: "auto",
       },
@@ -7913,9 +7952,10 @@ async function runArSession({
         : null;
 
     /**
-     * Óculos automáticos **sem** Tripo/geometria/bochechas/standardize: só `faceMatrix` →
-     * `glassesTrackingWrap` + offsets estáticos no mesh. Ignora wear/calib loja, fine pivot,
-     * `arGlassesDepthForwardM` e bump Z frontal (`OMAFIT_GLASSES_FACE_LOCAL_FORWARD_M`).
+     * Óculos automáticos **sem** Tripo/geometria/bochechas/standardize: `faceMatrix` →
+     * `glassesTrackingWrap` (interpupilar + `arGlassesDepthForwardM` ao longo do +Z da face),
+     * bind glTF→MindAR no `glassesStaticBindWrap`, offsets no mesh. Ignora wear/calib loja
+     * e micro-pivot; sem bump legado `OMAFIT_GLASSES_FACE_LOCAL_FORWARD_M`.
      */
     const glassesSimpleFaceOnly =
       accessoryType === "glasses" &&
@@ -7928,7 +7968,12 @@ async function runArSession({
     const glassesLocalFineMEffective = glassesSimpleFaceOnly
       ? { x: 0, y: 0, z: 0 }
       : glassesLocalFineM;
-    const glassesDepthForwardMEffective = glassesSimpleFaceOnly ? 0 : glassesDepthForwardM;
+    /**
+     * Modo simples: o deslocamento interpupilar e o “colar” ao rosto vêm do
+     * `glassesTrackingWrap` (mid-olhos + eixo de profundidade da face), não de
+     * `wearPosition`. Mantemos `arGlassesDepthForwardM` (nariz → lentes) aqui.
+     */
+    const glassesDepthForwardMEffective = glassesDepthForwardM;
     const glassesFaceForwardLocalM = glassesSimpleFaceOnly ? 0 : OMAFIT_GLASSES_FACE_LOCAL_FORWARD_M;
 
     const glassesPivotConfigEffective =
@@ -8151,9 +8196,15 @@ async function runArSession({
         const autoAttr = String(
           cfgAttr("arGlassesAutoDepthAxis", "1"),
         ).trim().toLowerCase();
-        const useAutoDepthAxis = !/^(0|off|false|no|legacy|ry180|manual)$/.test(
-          autoAttr,
-        );
+        const simpleFaceOnlyBindCandidate =
+          !glassesManualMindarRig &&
+          !glassesStructuralMindarRig &&
+          !glassesGlbStandardize &&
+          !glassesGeometryAnchor &&
+          !glassesCheekOrthogonalBasis;
+        const useAutoDepthAxis =
+          !simpleFaceOnlyBindCandidate &&
+          !/^(0|off|false|no|legacy|ry180|manual)$/.test(autoAttr);
         let bx = 0;
         let by = 0;
         let bz = 0;
@@ -8184,6 +8235,26 @@ async function runArSession({
                 sizeBboxPre: { x: sz.x, y: sz.y, z: sz.z },
                 sizeBboxPost: { x: szPost.x, y: szPost.y, z: szPost.z },
               });
+              /**
+               * Em alguns GLBs a auto-bind fica ambígua e o fix de handedness
+               * (`flippedWidthForRotation`) vira a armação para o lado errado.
+               * Neste caso aplicamos fallback determinístico `Ry(180)`.
+               */
+              if (signs?.flippedWidthForRotation) {
+                bx = 0;
+                by = 180;
+                bz = 0;
+                omafitApplyGlassesMindarBindFix(THREE, glasses, bx, by, bz);
+                glasses.updateMatrixWorld(true);
+                const szFix = new THREE.Vector3();
+                new THREE.Box3().setFromObject(glasses).getSize(szFix);
+                glassesFaceWideAxisX = szFix.x >= szFix.z;
+                console.warn("[omafit-ar] auto-bind ambíguo (flippedWidthForRotation); fallback Ry(180)", {
+                  widthSign: signs?.widthSign,
+                  rimHeightSign: auto.rimHeightSign,
+                  sizeBbox: { x: szFix.x, y: szFix.y, z: szFix.z },
+                });
+              }
             } else {
               /**
                * GLB Omafit canonical: frente lentes -Z, hastes +Z. Fallback
@@ -8478,11 +8549,16 @@ async function runArSession({
       }
       const useGlassesTrackingWrap =
         accessoryType === "glasses" && !glassesManualMindarRig && !glassesGlbStandardize;
+      /** Pai do mesh: rotação de bind glTF→MindAR; o wrap de tracking aplica só a pose da face (não zera o bind a cada frame). */
+      let glassesStaticBindWrap = null;
       if (useGlassesTrackingWrap) {
         glassesTrackingWrap = new GroupCtor();
         glassesTrackingWrap.name = "omafit-ar-glasses-tracking-wrap";
         glassesModelWrap.add(glassesTrackingWrap);
-        glassesTrackingWrap.add(glasses);
+        glassesStaticBindWrap = new GroupCtor();
+        glassesStaticBindWrap.name = "omafit-ar-glasses-static-bind";
+        glassesTrackingWrap.add(glassesStaticBindWrap);
+        glassesStaticBindWrap.add(glasses);
       } else {
         glassesModelWrap.add(glasses);
       }
@@ -8510,6 +8586,14 @@ async function runArSession({
         !glassesGlbStandardize
       ) {
         omafitStripGlassesMeshRollYxz(THREE, glasses);
+      }
+      if (glassesStaticBindWrap) {
+        glasses.updateMatrix();
+        glassesStaticBindWrap.position.set(0, 0, 0);
+        glassesStaticBindWrap.scale.set(1, 1, 1);
+        glassesStaticBindWrap.quaternion.copy(glasses.quaternion);
+        glasses.quaternion.identity();
+        glasses.rotation.set(0, 0, 0);
       }
       /** Centro lógico no wrap: translação só no mesh `glasses` (GLB inalterado). Com **tracking wrap**, soma também offset empírico estático. */
       if (accessoryType === "glasses") {
@@ -8652,7 +8736,27 @@ async function runArSession({
       let negModelX = false;
       if (mnx === "1" || mnx === "true" || mnx === "yes") negModelX = true;
       else if (mnx === "0" || mnx === "false" || mnx === "no") negModelX = false;
-      else negModelX = !disableFaceMirror;
+      else if (accessoryType === "glasses") {
+        /**
+         * Por defeito **não** espelhar o ramo 3D em X com o selfie: o MindAR
+         * já alinha o frame; `scaleX=-1` no grupo do GLB + `faceMatrix` costuma
+         * deslocar a armação (ex.: “virada à esquerda”) após o alinhamento
+         * interpupilar. Opt-in: `data-ar-glasses-projection-mirror-model-x="1"`.
+         * Outros acessórios: mantém o `auto` ≈ !disableFaceMirror.
+         */
+        const gmx = String(cfgAttr("arGlassesProjectionMirrorModelX", "0"))
+          .trim()
+          .toLowerCase();
+        if (gmx === "1" || gmx === "true" || gmx === "on" || gmx === "yes") {
+          negModelX = true;
+        } else if (gmx === "0" || gmx === "false" || gmx === "off" || gmx === "no") {
+          negModelX = false;
+        } else {
+          negModelX = !disableFaceMirror;
+        }
+      } else {
+        negModelX = !disableFaceMirror;
+      }
       if (negModelX && !flipSceneX) projectionMirrorFix.scale.set(-1, 1, 1);
       else projectionMirrorFix.scale.set(1, 1, 1);
     } catch {
@@ -9391,9 +9495,13 @@ async function runArSession({
                     eyeR: new THREE.Vector3(),
                     eyeL: new THREE.Vector3(),
                     faceForwardOff: new THREE.Vector3(),
+                    midMetric: new THREE.Vector3(),
+                    midW: new THREE.Vector3(),
+                    zFaceLocal: new THREE.Vector3(),
                   };
                 }
                 const fa = _omafitSimpleGlassesFaceAlignScratch;
+                const lmLoc = lm;
                 if (!fa.faceForwardOff) fa.faceForwardOff = new THREE.Vector3();
                 faceSrc.updateMatrixWorld(true);
                 faceAlignParent.updateMatrixWorld(true);
@@ -9424,12 +9532,71 @@ async function runArSession({
 
                 if (glassesTrackingWrap && st.glassesSimpleFaceOnly) {
                   /**
-                   * Sem rotação base no modelo: `glasses.rotation.set(0,0,0)` — Euler ≠ 0 inclina.
-                   * Quaternion da malha só no `glassesTrackingWrap` (faceQuat).
+                   * Rotação: 3×3 de `parentInv*faceWorld` (mesma pose que a malha 468 suavizada).
+                   * (Evitar `faceWorld×lmBasis` no wrap: a composição alterava o eixo e a percepção
+                   * de escala/virado.) Translação: ponto interpupilar em mundo → local do wrap;
+                   * +Z de profundidade: coluna 2 de `fa.basis` no referencial do pai.
+                   * O bind glTF→MindAR fica no `glassesStaticBindWrap`.
                    */
                   fa.q.setFromRotationMatrix(fa.basis);
-                  glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
                   glassesTrackingWrap.quaternion.copy(fa.q);
+                  const okMid = (() => {
+                    if (!lmLoc) return false;
+                    const smR0 = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
+                    if (
+                      smR0 &&
+                      Number.isFinite(smR0.x) &&
+                      Number.isFinite(smR0.y) &&
+                      Number.isFinite(smR0.z)
+                    ) {
+                      fa.eyeR.set(smR0.x, smR0.y, smR0.z);
+                    } else {
+                      const raw = lmLoc[OMAFIT_FACE_LM_EYE_R_OUT];
+                      if (!raw) return false;
+                      if (typeof raw.length === "number" && raw.length >= 3) {
+                        fa.eyeR.set(raw[0], raw[1], raw[2]);
+                      } else if (typeof raw.x === "number") {
+                        fa.eyeR.set(raw.x, raw.y, Number.isFinite(raw.z) ? raw.z : 0);
+                      } else return false;
+                    }
+                    const smL0 = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
+                    if (
+                      smL0 &&
+                      Number.isFinite(smL0.x) &&
+                      Number.isFinite(smL0.y) &&
+                      Number.isFinite(smL0.z)
+                    ) {
+                      fa.eyeL.set(smL0.x, smL0.y, smL0.z);
+                    } else {
+                      const rawL = lmLoc[OMAFIT_FACE_LM_EYE_L_OUT];
+                      if (!rawL) return false;
+                      if (typeof rawL.length === "number" && rawL.length >= 3) {
+                        fa.eyeL.set(rawL[0], rawL[1], rawL[2]);
+                      } else if (typeof rawL.x === "number") {
+                        fa.eyeL.set(rawL.x, rawL.y, Number.isFinite(rawL.z) ? rawL.z : 0);
+                      } else return false;
+                    }
+                    fa.midMetric.addVectors(fa.eyeR, fa.eyeL).multiplyScalar(0.5);
+                    fa.midW.copy(fa.midMetric).applyMatrix4(fa.faceWorld);
+                    return true;
+                  })();
+                  if (okMid && st.glassesEyeMidpointAlign && faceAlignParent) {
+                    glassesTrackingWrap.position.copy(fa.midW);
+                    faceAlignParent.worldToLocal(glassesTrackingWrap.position);
+                    const ce = fa.basis.elements;
+                    fa.zFaceLocal.set(ce[8], ce[9], ce[10]);
+                    if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
+                    fa.zFaceLocal.transformDirection(fa.parentInv);
+                    const df = Math.max(
+                      0,
+                      Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0,
+                    );
+                    if (df > 0) {
+                      glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
+                    }
+                  } else {
+                    glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
+                  }
                   glasses.rotation.order = "XYZ";
                   glasses.rotation.set(0, 0, 0);
                   try {
@@ -9469,7 +9636,6 @@ async function runArSession({
                   }
                 }
 
-                const lmLoc = lm;
                 if (lmLoc) {
                   const okR = (() => {
                     const sm = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
@@ -9508,9 +9674,26 @@ async function runArSession({
                     return false;
                   })();
                   if (okR && okL) {
+                    /**
+                     * IPD **só** no espaço `metricLandmarks` (antes de `faceWorld`). A
+                     * `face.matrixWorld` inclui escala do modelo 468 / fitting — usar a
+                     * distância após `applyMatrix4` infla o IPD e deixa a armação gigante.
+                     */
+                    const ipdLandmark = fa.eyeR.distanceTo(fa.eyeL);
+                    const fe = fa.faceWorld.elements;
+                    const sx = Math.hypot(fe[0], fe[1], fe[2]);
+                    const sy = Math.hypot(fe[4], fe[5], fe[6]);
+                    const szFace = Math.hypot(fe[8], fe[9], fe[10]);
+                    const faceScale =
+                      Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(szFace)
+                        ? Math.max(1e-6, (sx + sy + szFace) / 3)
+                        : 1;
                     fa.eyeR.applyMatrix4(fa.faceWorld);
                     fa.eyeL.applyMatrix4(fa.faceWorld);
-                    const ipdMetric = fa.eyeR.distanceTo(fa.eyeL);
+                    const ipdMetric =
+                      st.glassesSimpleFaceOnly && glassesTrackingWrap
+                        ? ipdLandmark / faceScale
+                        : fa.eyeR.distanceTo(fa.eyeL);
                     if (Number.isFinite(ipdMetric) && ipdMetric > 0) {
                       const ipdMul =
                         glassesTrackingWrap && st.glassesSimpleFaceOnly
@@ -11450,38 +11633,40 @@ async function runHandArSession({
    * Largura “segura” punho: distância MCP5–MCP17 × padding antes do ratio
    * antropométrico (folga 25–30 % pedida por produto).
    */
-  const OMAFIT_BRACELET_WRIST_WIDTH_PADDING = 1.34;
+  const OMAFIT_BRACELET_WRIST_WIDTH_PADDING = 1.08;
   /**
    * Ocupação vertical da mão em coord. normalizadas [0,1]: ≥ 0,4 → perto
    * (mais precisão); abaixo disso → suavização extra + possível aviso de proximidade.
    */
   const OMAFIT_HAND_SCREEN_CLOSE_FRAC = 0.4;
   /**
-   * Expansão biométrica vs distância normalizada MCP5–MCP17 (finos → 1,25, largos → 1,45).
+   * Expansão biométrica vs distância normalizada MCP5–MCP17.
+   * Valores anteriores (1,25–1,45) inflavam também relógios; mantemos só uma
+   * folga leve para não ultrapassar visualmente o pulso.
    */
-  const OMAFIT_BRACELET_EXPAND_THIN = 1.25;
-  const OMAFIT_BRACELET_EXPAND_WIDE = 1.45;
+  const OMAFIT_BRACELET_EXPAND_THIN = 1.02;
+  const OMAFIT_BRACELET_EXPAND_WIDE = 1.16;
   const OMAFIT_BRACELET_SPAN_NORM_LO = 0.056;
   const OMAFIT_BRACELET_SPAN_NORM_HI = 0.108;
   /** Pulso “largo”: +10 % só no eixo X (largura) vs profundidade. */
   const OMAFIT_BRACELET_WIDE_SCREEN_N = 0.095;
   const OMAFIT_BRACELET_WIDE_M = 0.086;
-  const OMAFIT_BRACELET_WIDE_LAT_BOOST = 1.1;
+  const OMAFIT_BRACELET_WIDE_LAT_BOOST = 1.04;
   /**
    * Elipse no plano do anel (XY local; eixo Z = braço após `fitWristGlb`):
    * X = largura ulnar–radial; Y = “profundidade” palmar–dorsal (pedido XZ no
    * texto do produto → aqui X e Y); Z = espessura ao longo do braço — só
    * `suBase` (sem W) para não deformar o perfil da peça no eixo do braço.
    */
-  const OMAFIT_BRACELET_ELLIPSE_X = 1.09;
+  const OMAFIT_BRACELET_ELLIPSE_X = 1.02;
   /** Quase neutro: evita “apertar” a abertura no eixo palmar–dorsal. */
   const OMAFIT_BRACELET_ELLIPSE_DEPTH = 0.99;
   /** Slerp do alinhamento punho→MCP9 em espaço de `calibRot` (ms). */
-  const OMAFIT_BRACELET_ALIGN_TAU_MS = 120;
+  const OMAFIT_BRACELET_ALIGN_TAU_MS = 190;
   /** Lerp da posição de wear (offset âncora) para a pulseira (ms). */
-  const OMAFIT_BRACELET_WEAR_LERP_MS = 155;
+  const OMAFIT_BRACELET_WEAR_LERP_MS = 240;
   /** Limite de correção angular extra (rad) — evita saltos quando MCP9 oscila. */
-  const OMAFIT_BRACELET_ALIGN_MAX_RAD = 0.14;
+  const OMAFIT_BRACELET_ALIGN_MAX_RAD = 0.11;
   /**
    * Raio do cilindro oclusor (mundo) = factor × raio interno estimado da
    * pulseira em mundo — ligeiramente menor que a cavidade interna para o
@@ -11497,8 +11682,8 @@ async function runHandArSession({
    * Raio estimado do punso a partir do segmento 5–17 (corda MCP): subir
    * alinha melhor as pontas do anel às extremidades laterais do punso.
    */
-  const OMAFIT_BRACELET_KNUCKLE_TO_WRIST_R = 0.39;
-  const OMAFIT_WATCH_KNUCKLE_TO_WRIST_R = 0.34;
+  const OMAFIT_BRACELET_KNUCKLE_TO_WRIST_R = 0.335;
+  const OMAFIT_WATCH_KNUCKLE_TO_WRIST_R = 0.325;
 
   /**
    * === CÁLCULO DO RAIO INTERNO REAL DO ANEL ===
@@ -11770,6 +11955,19 @@ async function runHandArSession({
       bbox.setFromObject(glbScene);
       bbox.getSize(size);
     }
+    /**
+     * Ajuste fino de encaixe no espaço local do GLB:
+     * - recentrado pelo interior já feito via `position.sub(center)`
+     * - Y proporcional à altura (encaixe no punho)
+     * - Z proporcional à profundidade (evita "flutuar na frente")
+     */
+    if (accessoryType === "bracelet") {
+      glbScene.position.y -= size.y * OMAFIT_BRACELET_GLB_LOCAL_Y_SIZE_MUL;
+      glbScene.position.z -= size.z * OMAFIT_BRACELET_GLB_LOCAL_Z_SIZE_MUL;
+    } else {
+      glbScene.position.y += OMAFIT_HAND_GLB_LOCAL_Y_BIND_M;
+    }
+    glbScene.updateMatrixWorld(true);
     const sortedOut = [size.x, size.y, size.z].sort((a, b) => a - b);
     const medianDimOut = sortedOut[1] || medianDim;
     const maxDimOut = sortedOut[2] || maxDim;
@@ -12037,6 +12235,7 @@ async function runHandArSession({
   const tmpY = new THREE.Vector3();
   const tmpZ = new THREE.Vector3();
   const tmpPos = new THREE.Vector3();
+  const tmpCamToWrist = new THREE.Vector3();
   /** Triângulo punho→MCP índice / mindinho: normal ≈ palma vs dorso (só relógio). */
   const wristTriA = new THREE.Vector3();
   const wristTriB = new THREE.Vector3();
@@ -12080,13 +12279,15 @@ async function runHandArSession({
    * perspectiva sem “pulsar” frame a frame.
    */
   let handKnuckleSpanRef = 0;
+  let smoothKnuckleSpan = OMAFIT_BASE_KNUCKLE_SPAN_M;
+  let smoothKnuckleSpanInit = false;
   /** Jitter span 5–17 (m) + histerese para aviso “aproxime o pulso”. */
   let prevKnuckleSpan3d = 0;
   let knuckleJitterEma = 0;
   let proximityHintStable = 0;
 
   let running = true;
-  let lastHandTimestamp = -1;
+  let lastVideoFrameTime = -1;
   let rafId = 0;
   let missedFrames = 0;
   const MISSED_HIDE_THRESHOLD = 6;
@@ -12211,20 +12412,27 @@ async function runHandArSession({
     }
 
     /**
-     * === BASE ORTONORMAL (v12.0) — ancoragem dupla + roll palmar ===
+     * === BASE ORTONORMAL — eixo "antebraço" + plano de largura (índice–mínimo) ===
      *
-     * Z (eixo longitudinal): punho (0) → média dos landmarks 1 (CMC polegar)
-     * e 17 (base mindinho). Segue a inclinação punso/mão melhor que só 0→9.
+     * Padrão sugerido (Y World ~ antebraço, roll com vector indicador–mínimo):
+     *   `forearmDir = normalize(elbow - wrist)`,
+     *   `quat0 = setFromUnitVectors((0,1,0), forearmDir)`,
+     *   `rollQuat = setFromUnitVectors((1,0,0), normalize(indexMCP - pinkyMCP))`, …
+     * O *Hand Landmarker* não tem cotovelo: `landmarks[1]` é a base do polegar, não
+     * o cotovelo. Proxy anatomicamente alinhado com "do pulso em direcção ao
+     * antebraço": `wrist - middleMcp` = (0) − (9) em mundo após unproject
+     * (o segmento 9→0 acompanha a linha mão/punho, invertido fica fora da mão).
      *
-     * X: vector 5→17 sem componente ao longo de Z (largura na prega).
-     * Y: Z × X; no relógio mistura-se a normal do plano 0–5–17 (dorso/palma).
-     *
-     * Roll axial: após `makeBasis`, aplica-se rotação extra em torno de Z
-     * local com ângulo atan2(n·X, n·Y) a partir da normal do triângulo 0–5–17,
-     * para o mostrador não ficar “colado” quando a palma roda (pronação).
+     * Aqui a convenção do GLB mantém a coluna **Z** = eixo longitudinal do braço
+     * (não Y), e **X** = projectação de 5→17 (MCP índice → MCP mínimo) no plano
+     * ⟂ Z — equivalente ao teu *handDir* com um grau de liberdade removido (twist).
+     * Em seguida `makeBasis` + *wrist roll* (palma) em torno de Z, como antes.
      */
-    handMidThumbPinky.addVectors(w1, w17).multiplyScalar(0.5);
-    handZForearm.subVectors(handMidThumbPinky, w0);
+    handZForearm.subVectors(w0, w9);
+    if (handZForearm.lengthSq() < 1e-8) {
+      handMidThumbPinky.addVectors(w1, w17).multiplyScalar(0.5);
+      handZForearm.subVectors(handMidThumbPinky, w0);
+    }
     if (handZForearm.lengthSq() < 1e-10) {
       handToMcpScratch.subVectors(w9, w0);
       handW0to1Scratch.subVectors(w1, w0);
@@ -12277,7 +12485,6 @@ async function runHandArSession({
     if (handLabel === "Left") tmpX.negate();
     tmpY.crossVectors(tmpZ, tmpX).normalize();
 
-    const toMcpRaw = handToMcpRawScratch.subVectors(w9, w0);
     const w0to1 = handW0to1Scratch.subVectors(w1, w0);
 
     /**
@@ -12288,18 +12495,50 @@ async function runHandArSession({
      * normal dorsal para o mostrador assentar POR CIMA da pele, não dentro.
      * Calibrações `wearZ` do lojista continuam a permitir ajuste fino.
      *
-     * Pulseira: pequeno deslocamento ao longo de punho→MCP (antebraço) e na
-     * direcção 0→1 (base do polegar) para seguir o braço quando a peça desliza.
+     * Pulseira: deslocamento ao longo de punho→MCP ligeiramente *negativo* para
+     * não puxar a anel em direcção aos nós (ficava "alta" na mão); ajuste fino
+     * em tmpY (normal) para aproximar o antebraço.
      */
-    tmpPos.copy(w0).addScaledVector(tmpY, 0.006);
+    tmpPos.copy(w0);
+    if (accessoryType === "watch") {
+      tmpPos.addScaledVector(tmpY, 0.0025);
+    } else {
+      /**
+       * Pulseira: inset pela normal do pulso (análogo a
+       * `model.position.addScaledVector(wristNormal, -0.015)`).
+       */
+      tmpPos.addScaledVector(
+        tmpY,
+        accessoryType === "bracelet"
+          ? -OMAFIT_BRACELET_WRIST_NORMAL_INSET_M
+          : 0.0025,
+      );
+    }
     if (accessoryType === "bracelet") {
-      if (toMcpRaw.lengthSq() > 1e-12) {
-        handToMcpScratch.copy(toMcpRaw).normalize();
-        tmpPos.addScaledVector(handToMcpScratch, 0.012);
+      const wristWidth = w5.distanceTo(w17);
+      const handDir = handToMcpRawScratch
+        .addVectors(w5, w17)
+        .multiplyScalar(0.5)
+        .sub(w0);
+      if (handDir.lengthSq() > 1e-12) {
+        handDir.normalize();
+        const dynamicOffset = THREE.MathUtils.clamp(
+          wristWidth * OMAFIT_BRACELET_WRIST_OFFSET_WIDTH_MUL,
+          0.03,
+          0.06,
+        );
+        const wristOffset = Math.max(
+          OMAFIT_BRACELET_WRIST_OFFSET_BASE_M,
+          dynamicOffset,
+        );
+        tmpPos.addScaledVector(
+          handDir,
+          -(wristOffset + OMAFIT_BRACELET_FOREARM_LOCK_M),
+        );
       }
       if (w0to1.lengthSq() > 1e-12) {
         handNAltScratch.copy(w0to1).normalize();
-        tmpPos.addScaledVector(handNAltScratch, 0.0065);
+        tmpPos.addScaledVector(handNAltScratch, 0.0012);
       }
     }
 
@@ -12350,9 +12589,13 @@ async function runHandArSession({
       smPos.copy(tmpPos);
       smoothInitialized = true;
     } else {
-      const posAlpha = closeEnoughHand
-        ? OMAFIT_HAND_EMA_POS_ALPHA
-        : OMAFIT_HAND_EMA_POS_ALPHA * 0.48;
+      const dtSec = Math.max(1e-3, clampDt / 1000);
+      const posSpeed = tmpPos.distanceTo(smPos) / dtSec;
+      let posAlpha = OMAFIT_HAND_POS_ALPHA_MIN + OMAFIT_HAND_POS_ALPHA_SPEED_GAIN * posSpeed;
+      posAlpha = THREE.MathUtils.clamp(posAlpha, OMAFIT_HAND_POS_ALPHA_MIN, OMAFIT_HAND_POS_ALPHA_MAX);
+      if (!closeEnoughHand) posAlpha *= 0.62;
+      posAlpha = THREE.MathUtils.clamp(posAlpha, 0.035, OMAFIT_HAND_POS_ALPHA_MAX);
+      posAlpha = THREE.MathUtils.lerp(posAlpha, OMAFIT_HAND_EMA_POS_ALPHA, 0.18);
       smPos.lerp(tmpPos, posAlpha);
       /**
        * Anti-flip guard: medir ângulo entre smoothedQuat e tmpQuat.
@@ -12376,9 +12619,13 @@ async function runHandArSession({
           });
         }
       } else {
-        const rotAlpha = closeEnoughHand
-          ? OMAFIT_HAND_EMA_ROT_ALPHA
-          : OMAFIT_HAND_EMA_ROT_ALPHA * 0.55;
+        const dtSec = Math.max(1e-3, clampDt / 1000);
+        const rotSpeed = angleBetween / dtSec;
+        let rotAlpha = OMAFIT_HAND_ROT_ALPHA_MIN + OMAFIT_HAND_ROT_ALPHA_SPEED_GAIN * rotSpeed;
+        rotAlpha = THREE.MathUtils.clamp(rotAlpha, OMAFIT_HAND_ROT_ALPHA_MIN, OMAFIT_HAND_ROT_ALPHA_MAX);
+        if (!closeEnoughHand) rotAlpha *= 0.7;
+        rotAlpha = THREE.MathUtils.clamp(rotAlpha, 0.03, OMAFIT_HAND_ROT_ALPHA_MAX);
+        rotAlpha = THREE.MathUtils.lerp(rotAlpha, OMAFIT_HAND_EMA_ROT_ALPHA, 0.2);
         smoothedQuat.slerp(tmpQuat, rotAlpha);
       }
     }
@@ -12448,9 +12695,19 @@ async function runHandArSession({
      * EMA lento (tau = 800 ms) para não pulsar com o jitter dos landmarks.
      */
     const handKnuckleSpan = w5.distanceTo(w17);
+    const aKn =
+      (1 - Math.exp(-clampDt / 220)) *
+      (closeEnoughHand ? 1 : 0.42);
+    if (!smoothKnuckleSpanInit) {
+      smoothKnuckleSpan = handKnuckleSpan;
+      smoothKnuckleSpanInit = true;
+    } else {
+      smoothKnuckleSpan += (handKnuckleSpan - smoothKnuckleSpan) * aKn;
+    }
+    const handKnuckleSpanStable = smoothKnuckleSpan;
     const isWideWrist =
       distanciaBaseNorm >= OMAFIT_BRACELET_WIDE_SCREEN_N ||
-      handKnuckleSpan >= OMAFIT_BRACELET_WIDE_M;
+      handKnuckleSpanStable >= OMAFIT_BRACELET_WIDE_M;
     const wideLatBoost = isWideWrist ? OMAFIT_BRACELET_WIDE_LAT_BOOST : 1;
     const braceletRingGeomMean = Math.sqrt(
       Math.max(1e-6, wristExpandMul * OMAFIT_BRACELET_ELLIPSE_X * wideLatBoost) *
@@ -12459,14 +12716,14 @@ async function runHandArSession({
     const aSpanRef =
       1 - Math.exp(-clampDt / OMAFIT_HAND_KNUCKLE_SPAN_REF_TAU_MS);
     if (handKnuckleSpanRef <= 1e-8) {
-      handKnuckleSpanRef = handKnuckleSpan;
-    } else if (handKnuckleSpan > handKnuckleSpanRef) {
-      handKnuckleSpanRef = handKnuckleSpan;
+      handKnuckleSpanRef = handKnuckleSpanStable;
+    } else if (handKnuckleSpanStable > handKnuckleSpanRef) {
+      handKnuckleSpanRef = handKnuckleSpanStable;
     } else {
-      handKnuckleSpanRef += (handKnuckleSpan - handKnuckleSpanRef) * aSpanRef;
+      handKnuckleSpanRef += (handKnuckleSpanStable - handKnuckleSpanRef) * aSpanRef;
     }
     const perspMul = THREE.MathUtils.clamp(
-      handKnuckleSpan / Math.max(0.034, handKnuckleSpanRef),
+      handKnuckleSpanStable / Math.max(0.034, handKnuckleSpanRef),
       accessoryType === "bracelet" ? 0.86 : 0.76,
       1.03,
     );
@@ -12498,15 +12755,15 @@ async function runHandArSession({
         : OMAFIT_WATCH_KNUCKLE_TO_WRIST_R;
     const effectiveKnuckleSpan =
       accessoryType === "bracelet"
-        ? handKnuckleSpan * OMAFIT_BRACELET_WRIST_WIDTH_PADDING
-        : handKnuckleSpan;
+        ? handKnuckleSpanStable * OMAFIT_BRACELET_WRIST_WIDTH_PADDING
+        : handKnuckleSpanStable;
     /**
      * Pulseira: garantir raio mínimo a partir da corda 5–17 (≈ largura do
      * punso na câmara) para as extremidades do anel não ficarem “dentro”
      * das pontas laterais percebidas.
      */
     const wristRadiusFromSpanChord =
-      accessoryType === "bracelet" ? handKnuckleSpan * 0.446 : 0;
+      accessoryType === "bracelet" ? handKnuckleSpanStable * 0.34 : 0;
     const wristRadiusRaw = Math.max(
       0.018,
       Math.min(
@@ -12526,8 +12783,8 @@ async function runHandArSession({
      */
     const forearmLengthRaw =
       accessoryType === "bracelet"
-        ? Math.max(0.46, Math.min(0.78, handKnuckleSpan * 5.05))
-        : Math.max(0.3, Math.min(0.6, handKnuckleSpan * 4.0));
+        ? Math.max(0.46, Math.min(0.78, handKnuckleSpanStable * 5.05))
+        : Math.max(0.3, Math.min(0.6, handKnuckleSpanStable * 4.0));
     if (!smoothOccluderInitialized) {
       smoothWristRadius = wristRadiusRaw;
       smoothForearmLength = forearmLengthRaw;
@@ -12600,11 +12857,31 @@ async function runHandArSession({
      * determina a posição do eixo. occluderR é só a ESPESSURA visual do
      * cilindro para cobertura defensiva.)
      */
-    armOccluder.position.y = -(smoothWristRadius + 0.006);
+    /**
+     * Oclusão dinâmica por lado visível:
+     * - Se `smY` aponta para a câmara, esse lado está visível.
+     * - O cilindro é deslocado para o lado oposto (sempre oclui o “lado de trás”).
+     */
+    tmpCamToWrist.subVectors(camera.position, smPos);
+    if (tmpCamToWrist.lengthSq() > 1e-10) {
+      tmpCamToWrist.normalize();
+    } else {
+      tmpCamToWrist.set(0, 0, 1);
+    }
+    const yFacingCamera = smY.dot(tmpCamToWrist) >= 0;
+    const occluderYOffsetMag = smoothWristRadius + 0.006;
+    armOccluder.position.y = yFacingCamera ? -occluderYOffsetMag : occluderYOffsetMag;
     /** Z offset: centrar o cilindro atrás do pulso (−L/2). */
     armOccluder.position.z = -smoothForearmLength / 2;
     armOccluder.updateMatrix();
     armOccluder.updateMatrixWorld(true);
+
+    const wristSpanScaleMul = THREE.MathUtils.clamp(
+      (handKnuckleSpanStable * OMAFIT_HAND_KNUCKLE_SPAN_SCALE_K) /
+        OMAFIT_BASE_KNUCKLE_SPAN_M,
+      OMAFIT_HAND_KNUCKLE_SPAN_SCALE_MIN,
+      OMAFIT_HAND_KNUCKLE_SPAN_SCALE_MAX,
+    );
 
     /**
      * === ESCALA ADAPTATIVA PELA SUPERFÍCIE INTERNA (v11.2) ===
@@ -12633,7 +12910,12 @@ async function runHandArSession({
         Number.isFinite(Number(userScale)) && Number(userScale) > 0
           ? Number(userScale)
           : 1;
-      const suBase = baseScale * userMul * adaptMul * perspMul;
+      const suBase =
+        baseScale *
+        userMul *
+        adaptMul *
+        perspMul *
+        wristSpanScaleMul;
       const Wb = wristExpandMul;
       if (accessoryType === "bracelet" && braceletPlaceState) {
         const sw = omafitBraceletWristScaleWearStep(THREE, braceletPlaceState, {
@@ -12691,7 +12973,8 @@ async function runHandArSession({
        * vertex-based, portanto não precisa de correcção separada.
        */
       if (accessoryType === "watch" && watchStrapRadial?.caseDial) {
-        const worldScale = adaptMul * perspMul * wristExpandMul;
+        const worldScale =
+          adaptMul * perspMul * wristExpandMul * wristSpanScaleMul;
         const invAdapt =
           Number.isFinite(worldScale) && worldScale > 1e-4 ? 1 / worldScale : 1;
         watchStrapRadial.caseDial.scale.setScalar(invAdapt);
@@ -12721,6 +13004,7 @@ async function runHandArSession({
           userMul *
           adaptMul *
           perspMul *
+          wristSpanScaleMul *
           (accessoryType === "bracelet" ? braceletRingGeomMean : wristExpandMul);
         const spanRatio =
           handKnuckleSpan / Math.max(1e-6, OMAFIT_BASE_KNUCKLE_SPAN_M);
@@ -12823,7 +13107,11 @@ async function runHandArSession({
         (OMAFIT_DEFAULT_WRIST_R_M + gapOffset);
       const caseRigidK =
         accessoryType === "watch" && watchStrapRadial?.caseDial
-          ? 1 / Math.max(1e-4, adaptMul * perspMul * wristExpandMul)
+          ? 1 /
+            Math.max(
+              1e-4,
+              adaptMul * perspMul * wristExpandMul * wristSpanScaleMul,
+            )
           : null;
       console.debug("[omafit-ar] hand anchor v12.1", {
         hand: handLabel || "?",
@@ -12844,7 +13132,10 @@ async function runHandArSession({
         /** Raio do EIXO do GLB (metade da mediana do bbox). */
         localRingR_mm: (localRingR * 1000).toFixed(1),
         adaptScale: adaptMul.toFixed(3),
-        glbScale: (baseScale * userMul * adaptMul).toFixed(4),
+        glbScale: (baseScale * userMul * adaptMul * wristSpanScaleMul).toFixed(
+          4,
+        ),
+        wristSpanScaleMul: wristSpanScaleMul.toFixed(3),
         /** Raio INTERNO final do GLB no mundo (deve ≈ wristR + gap).
          *  Se este valor for MENOR que smoothWristR, o GLB clipa no braço!
          *  Se for MAIOR que smoothWristR + 5mm, o GLB fica flutuando. */
@@ -12886,18 +13177,20 @@ async function runHandArSession({
       renderer.render(scene, camera);
       return;
     }
-    const nowTs = performance.now();
-    if (nowTs === lastHandTimestamp) {
+    const videoFrameTime = Number(video.currentTime) || 0;
+    if (videoFrameTime === lastVideoFrameTime) {
       renderer.render(scene, camera);
       return;
     }
+    lastVideoFrameTime = videoFrameTime;
+    const nowTs = performance.now();
     const dtMs = lastFrameTs < 0 ? 16 : nowTs - lastFrameTs;
     lastFrameTs = nowTs;
-    lastHandTimestamp = nowTs;
 
     let res = null;
     try {
-      res = handLandmarker.detectForVideo(video, nowTs);
+      const mediaTs = videoFrameTime > 0 ? videoFrameTime * 1000 : nowTs;
+      res = handLandmarker.detectForVideo(video, mediaTs);
     } catch (e) {
       console.warn("[omafit-ar] handLandmarker.detectForVideo:", e?.message || e);
     }

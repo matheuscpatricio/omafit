@@ -23,6 +23,9 @@ export function createOmafitBraceletWristPlacementState(THREE) {
     tmpV2: new THREE.Vector3(),
     tmpM: new THREE.Matrix4(),
     tmpQ: new THREE.Quaternion(),
+    tmpRefY: new THREE.Vector3(0, 1, 0),
+    tmpRefX: new THREE.Vector3(1, 0, 0),
+    tmpFixQuat: new THREE.Quaternion(),
   };
 }
 
@@ -176,41 +179,63 @@ export function omafitBraceletWristScaleWearStep(THREE, st, p) {
  *   calibRot: import("three").Object3D,
  *   alignGroup: import("three").Object3D,
  *   w0: import("three").Vector3,
+ *   w5: import("three").Vector3,
  *   w9: import("three").Vector3,
+ *   w17: import("three").Vector3,
+ *   camera: import("three").Camera,
  *   clampDt: number,
  *   closeEnoughHand: boolean,
  *   alignTauMs: number,
- *   maxAlignRad: number,
+ *   debugAxisLine?: import("three").Line | null,
  * }} p
  */
 export function omafitBraceletWristAlignStep(THREE, st, p) {
   p.calibRot.updateMatrixWorld(true);
-  const mcpWorld = st.tmpV0.subVectors(p.w9, p.w0);
-  if (mcpWorld.lengthSq() > 1e-10) {
-    mcpWorld.normalize();
+
+  const mid = st.tmpV0.addVectors(p.w5, p.w17).multiplyScalar(0.5);
+  const T = st.tmpV1.subVectors(p.w5, p.w17);
+  if (T.lengthSq() > 1e-10) {
+    T.normalize();
   } else {
-    mcpWorld.set(0, 0, 1);
+    T.set(1, 0, 0);
+  }
+
+  const B = st.tmpV2.subVectors(mid, p.w0);
+  if (B.lengthSq() > 1e-10) {
+    B.normalize();
+  } else {
+    B.set(0, 1, 0);
+  }
+
+  const N = st.tmpV0.crossVectors(T, B);
+  if (N.lengthSq() > 1e-10) {
+    N.normalize();
+  } else {
+    N.set(0, 0, 1);
+  }
+  const camDir = st.tmpV1.set(0, 0, -1).applyQuaternion(p.camera.quaternion).normalize();
+  if (N.dot(camDir) < 0) N.negate();
+
+  if (p.debugAxisLine && p.debugAxisLine.geometry?.attributes?.position) {
+    const pos = p.debugAxisLine.geometry.attributes.position;
+    const p0 = p.w0;
+    const p1 = st.tmpV2.copy(p.w0).addScaledVector(B, 0.05);
+    pos.setXYZ(0, p0.x, p0.y, p0.z);
+    pos.setXYZ(1, p1.x, p1.y, p1.z);
+    pos.needsUpdate = true;
   }
 
   st.tmpM.copy(p.calibRot.matrixWorld).invert();
-  const mcpLocal = st.tmpV1.copy(mcpWorld).transformDirection(st.tmpM);
-  if (mcpLocal.lengthSq() > 1e-10) {
-    mcpLocal.normalize();
+  const braceletAxisLocal = st.tmpV2.copy(B).transformDirection(st.tmpM);
+  if (braceletAxisLocal.lengthSq() > 1e-10) {
+    braceletAxisLocal.normalize();
   } else {
-    mcpLocal.set(0, 0, 1);
+    braceletAxisLocal.set(0, 1, 0);
   }
 
-  const refZ = st.tmpV2.set(0, 0, 1);
-  let angle = refZ.angleTo(mcpLocal);
-  angle = Math.min(angle, p.maxAlignRad);
-  const axis = st.tmpV0.crossVectors(refZ, mcpLocal);
-  const qlen = axis.lengthSq();
-  if (qlen < 1e-10) {
-    st.tmpQ.identity();
-  } else {
-    axis.multiplyScalar(1 / Math.sqrt(qlen));
-    st.tmpQ.setFromAxisAngle(axis, angle);
-  }
+  st.tmpQ.setFromUnitVectors(st.tmpRefY, braceletAxisLocal);
+  st.tmpFixQuat.setFromAxisAngle(st.tmpRefX, Math.PI / 2);
+  st.tmpQ.multiply(st.tmpFixQuat);
 
   const aAlign =
     (1 - Math.exp(-p.clampDt / Math.max(1e-3, p.alignTauMs))) *

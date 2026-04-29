@@ -1404,18 +1404,36 @@ function parseTripoInputRotDeg(raw) {
  * vazio → 180). Define `FAL_TRIPO_INPUT_ROT_DEG=0` para não rodar nem re‑upload.
  */
 async function resolveTripoImageUrlBeforeFal(imageUrl) {
+  const prepStartedAt = Date.now();
   const raw = process.env.FAL_TRIPO_INPUT_ROT_DEG;
   const s =
     raw == null || String(raw).trim() === "" ? "180" : String(raw).trim();
   const rot = parseTripoInputRotDeg(s);
+  console.log("[ar-eyewear] FAL preflight:start", {
+    imageUrlHost: (() => {
+      try {
+        return new URL(String(imageUrl || "")).host || "invalid-url";
+      } catch {
+        return "invalid-url";
+      }
+    })(),
+    rotDeg: rot,
+    rawRotEnv: raw == null ? "(unset)" : String(raw),
+  });
   if (rot === 0) {
+    console.log("[ar-eyewear] FAL preflight:skip_upload", {
+      reason: "rotDeg=0",
+      elapsedMs: Date.now() - prepStartedAt,
+    });
     return { imageUrl, prepared: false, rotDeg: 0 };
   }
 
+  console.log("[ar-eyewear] FAL preflight:fetch_image:start");
   const res = await fetch(imageUrl);
   if (!res.ok) {
     throw new Error(`Tripo input: fetch da imagem falhou (${res.status})`);
   }
+  console.log("[ar-eyewear] FAL preflight:fetch_image:ok", { status: res.status });
   const buf = Buffer.from(await res.arrayBuffer());
   const sharp = (await import("sharp")).default;
   let pipeline = sharp(buf, { failOn: "none" }).rotate();
@@ -1424,11 +1442,19 @@ async function resolveTripoImageUrlBeforeFal(imageUrl) {
   }
   const jpegBuf = await pipeline.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
   const file = new File([jpegBuf], "omafit-tripo-input.jpg", { type: "image/jpeg" });
+  console.log("[ar-eyewear] FAL preflight:fal_storage_upload:start", {
+    jpegBytes: jpegBuf.length,
+  });
   const uploadedUrl = await fal.storage.upload(file);
   const out = String(uploadedUrl || "").trim();
   if (!out) {
     throw new Error("Tripo input: fal.storage.upload não devolveu URL");
   }
+  console.log("[ar-eyewear] FAL preflight:done", {
+    prepared: true,
+    rotDeg: rot,
+    elapsedMs: Date.now() - prepStartedAt,
+  });
   return { imageUrl: out, prepared: true, rotDeg: rot };
 }
 
@@ -1541,6 +1567,12 @@ export async function generateGlbDraftViaFal({
   const logLines = [tripDiagLine];
   let result;
   try {
+    const subscribeStartedAt = Date.now();
+    console.log("[ar-eyewear] FAL subscribe:start", {
+      model,
+      timeoutMs: clientTimeoutMs,
+      pollIntervalMs,
+    });
     result = await fal.subscribe(model, {
       input: falTripoInput,
       logs: true,
@@ -1560,6 +1592,10 @@ export async function generateGlbDraftViaFal({
           }
         }
       },
+    });
+    console.log("[ar-eyewear] FAL subscribe:done", {
+      elapsedMs: Date.now() - subscribeStartedAt,
+      requestId: String(result?.requestId || ""),
     });
   } catch (e) {
     const body = e?.body ?? e?.response?.data;

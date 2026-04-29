@@ -132,16 +132,34 @@ async function resolveTripoImageUrlBeforeFal(imageUrl: string): Promise<{
   prepared: boolean;
   rotDeg: 0 | 90 | 180 | 270;
 }> {
+  const prepStartedAt = Date.now();
   /** Por defeito 180° (imagem “de cabeça para baixo” antes do Tripo). `0` desliga. */
   const rot = parseTripoInputRotDeg(env("FAL_TRIPO_INPUT_ROT_DEG", "180"));
+  console.log("[ar-eyewear-generate] FAL preflight:start", {
+    imageUrlHost: (() => {
+      try {
+        return new URL(String(imageUrl || "")).host || "invalid-url";
+      } catch {
+        return "invalid-url";
+      }
+    })(),
+    rotDeg: rot,
+    rawRotEnv: env("FAL_TRIPO_INPUT_ROT_DEG", "(unset)"),
+  });
   if (rot === 0) {
+    console.log("[ar-eyewear-generate] FAL preflight:skip_upload", {
+      reason: "rotDeg=0",
+      elapsedMs: Date.now() - prepStartedAt,
+    });
     return { imageUrl, prepared: false, rotDeg: 0 };
   }
 
+  console.log("[ar-eyewear-generate] FAL preflight:fetch_image:start");
   const res = await fetch(imageUrl);
   if (!res.ok) {
     throw new Error(`Tripo input: fetch da imagem falhou (${res.status})`);
   }
+  console.log("[ar-eyewear-generate] FAL preflight:fetch_image:ok", { status: res.status });
   const sharpMod = await import("npm:sharp@0.33.5");
   const sharp = sharpMod.default;
   const buf = Buffer.from(new Uint8Array(await res.arrayBuffer()));
@@ -151,11 +169,19 @@ async function resolveTripoImageUrlBeforeFal(imageUrl: string): Promise<{
   }
   const jpegBuf = await pipeline.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
   const file = new File([jpegBuf], "omafit-tripo-input.jpg", { type: "image/jpeg" });
+  console.log("[ar-eyewear-generate] FAL preflight:fal_storage_upload:start", {
+    jpegBytes: jpegBuf.length,
+  });
   const uploadedUrl = await fal.storage.upload(file);
   const out = String(uploadedUrl || "").trim();
   if (!out) {
     throw new Error("Tripo input: fal.storage.upload não devolveu URL");
   }
+  console.log("[ar-eyewear-generate] FAL preflight:done", {
+    prepared: true,
+    rotDeg: rot,
+    elapsedMs: Date.now() - prepStartedAt,
+  });
   return { imageUrl: out, prepared: true, rotDeg: rot };
 }
 
@@ -201,6 +227,12 @@ async function callFalAndGetGlbUrl(imageUrl: string): Promise<{
 
   let result: { data?: unknown; requestId?: string };
   try {
+    const subscribeStartedAt = Date.now();
+    console.log("[ar-eyewear-generate] FAL subscribe:start", {
+      modelId,
+      timeoutMs: clientTimeoutMs,
+      pollIntervalMs,
+    });
     result = await fal.subscribe(modelId, {
       input: falInput,
       logs: true,
@@ -217,6 +249,10 @@ async function callFalAndGetGlbUrl(imageUrl: string): Promise<{
           }
         }
       },
+    });
+    console.log("[ar-eyewear-generate] FAL subscribe:done", {
+      elapsedMs: Date.now() - subscribeStartedAt,
+      requestId: String(result?.requestId || ""),
     });
   } catch (e: unknown) {
     const err = e as { message?: string; body?: unknown };

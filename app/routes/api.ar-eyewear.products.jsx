@@ -113,6 +113,17 @@ export async function action({ request }) {
     const productId = String(body.productId || "").trim();
     const imageFrontUrl = String(body.imageFrontUrl || "").trim();
     const variantId = String(body.variantId || "").trim() || null;
+    console.log("[api.ar-eyewear.products] action:start", {
+      productId,
+      variantId: variantId || null,
+      imageHost: (() => {
+        try {
+          return new URL(imageFrontUrl || "https://invalid").host;
+        } catch {
+          return "invalid";
+        }
+      })(),
+    });
     const frameWidthMmRaw = body.frameWidthMm;
     const frameWidthMm =
       frameWidthMmRaw != null && String(frameWidthMmRaw).trim() !== ""
@@ -172,14 +183,31 @@ export async function action({ request }) {
     const base = `${session.shop.replace(/[^\w.-]+/g, "_")}/${id}`;
 
     try {
+      console.log("[api.ar-eyewear.products] fetchShopifyCdnImage:start", { assetId: id });
       const d1 = await fetchShopifyCdnImage(imageFrontUrl);
+      console.log("[api.ar-eyewear.products] fetchShopifyCdnImage:ok", {
+        assetId: id,
+        bytes: d1.buf?.length,
+        type: d1.type,
+      });
 
+      console.log("[api.ar-eyewear.products] storageUpload:front:start", { assetId: id });
       const u1 = await storageUpload(
         BUCKET_UPLOADS,
         `${base}/front.${extFromType(d1.type)}`,
         d1.buf,
         d1.type,
       );
+      console.log("[api.ar-eyewear.products] storageUpload:front:ok", {
+        assetId: id,
+        publicUrlHost: (() => {
+          try {
+            return new URL(u1.publicUrl || "").host;
+          } catch {
+            return "?";
+          }
+        })(),
+      });
 
       await patchAsset(id, {
         image_front_url: u1.publicUrl,
@@ -189,13 +217,21 @@ export async function action({ request }) {
         error_message: null,
       });
       try {
+        console.log("[api.ar-eyewear.products] invokeArEyewearGenerate:start", {
+          assetId: id,
+          shop: session.shop,
+        });
         const ret = await invokeArEyewearGenerate(id, session.shop);
+        console.log("[api.ar-eyewear.products] invokeArEyewearGenerate:ok", {
+          assetId: id,
+          generationPath: ret?.generationPath || ret?.generation?.path || "?",
+        });
         const asset = ret?.asset || (await getAssetById(id));
         return Response.json({ asset, generation: ret });
       } catch (genErr) {
         const failed = await patchAsset(id, {
           status: "failed",
-          error_message: genErr.message || "Falha na Edge Function de geração 3D",
+          error_message: genErr.message || "Falha na geração 3D (FAL / servidor)",
         });
         return Response.json({ asset: failed, error: failed.error_message }, { status: 500 });
       }

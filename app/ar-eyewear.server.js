@@ -1247,7 +1247,15 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
   const id = String(assetId || "").trim();
   if (!id) throw new Error("assetId obrigatório");
 
-  if (hasArEyewearFalConfigured()) {
+  const useNodeFal = hasArEyewearFalConfigured();
+  console.log("[ar-eyewear] invokeArEyewearGenerate:start", {
+    assetId: id,
+    shopDomain: String(shopDomain || "").trim() || "(from row)",
+    generationPath: useNodeFal ? "app_server (FAL no Node)" : "supabase_edge (ar-eyewear-generate)",
+    falApiKeyOnServer: useNodeFal,
+  });
+
+  if (useNodeFal) {
     const row = await getAssetById(id);
     if (!row) throw new Error("Asset não encontrado");
     const resolvedShop = String(row.shop_domain || shopDomain || "").trim();
@@ -1280,6 +1288,11 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
         (logTail ? `${logTail}\n` : "") +
         "generation_path=app_server (FAL @fal-ai/client subscribe no Node)",
     });
+    console.log("[ar-eyewear] invokeArEyewearGenerate:done", {
+      assetId: id,
+      generationPath: "app_server",
+      requestId: falOut.requestId || null,
+    });
     return {
       ok: true,
       glbDraftUrl,
@@ -1289,6 +1302,7 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
   }
 
   const fnUrl = `${url.replace(/\/$/, "")}/functions/v1/ar-eyewear-generate`;
+  console.log("[ar-eyewear] invokeArEyewearGenerate:edge_fetch", { fnUrl, assetId: id });
   const res = await fetch(fnUrl, {
     method: "POST",
     headers: {
@@ -1315,6 +1329,11 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
           "Defina FAL_API_KEY no servidor da app para gerar no Node (recomendado).",
     );
   }
+  console.log("[ar-eyewear] invokeArEyewearGenerate:edge_ok", {
+    assetId: id,
+    ok: json?.ok,
+    requestId: json?.requestId || null,
+  });
   return json;
 }
 

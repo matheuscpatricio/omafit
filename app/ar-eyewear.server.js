@@ -8,6 +8,7 @@ import {
   getArProductsMaxForPlan,
   normalizeShopifyPlanKey,
 } from "./billing-plans.server.js";
+import { detectAccessoryType } from "./ar-accessory-type.shared.js";
 
 const TABLE = "ar_eyewear_assets";
 
@@ -627,7 +628,7 @@ export function normalizeAccessoryType(value) {
 }
 
 /** Ver `ar-accessory-type.shared.js` — inclui categoria taxonómica + título. */
-export { detectAccessoryType } from "./ar-accessory-type.shared.js";
+export { detectAccessoryType };
 
 /**
  * Defaults de calibração por tipo. Cada tipo tem uma rotação/posição base

@@ -1276,11 +1276,34 @@ export async function invokeArEyewearGenerate(assetId, shopDomain) {
       generation_provider: "fal",
     });
 
-    const falOut = await generateGlbDraftViaFal({
-      shopDomain: resolvedShop,
-      assetId: id,
-      imageUrl,
-    });
+    const cfg = falConfig();
+    let falOut;
+    try {
+      falOut = await generateGlbDraftViaFal({
+        shopDomain: resolvedShop,
+        assetId: id,
+        imageUrl,
+      });
+    } catch (primaryErr) {
+      const fallbackModel = String(cfg.fallbackModelId || "").trim();
+      const primaryModel = String(cfg.modelId || "").trim();
+      const canFallback =
+        fallbackModel &&
+        fallbackModel !== primaryModel &&
+        shouldFallbackFalModel(primaryErr);
+      if (!canFallback) throw primaryErr;
+      console.warn("[ar-eyewear] fallback para modelo FAL alternativo:", {
+        from: primaryModel,
+        to: fallbackModel,
+        reason: String(primaryErr?.message || primaryErr).slice(0, 220),
+      });
+      falOut = await generateGlbDraftViaFal({
+        shopDomain: resolvedShop,
+        assetId: id,
+        imageUrl,
+        modelIdOverride: fallbackModel,
+      });
+    }
     const glbDraftUrl = falOut.publicUrl;
     const logTail = (falOut.generationLogs || "").trim();
     const asset = await patchAsset(id, {
@@ -1360,6 +1383,9 @@ function falConfig() {
     queueSubscribeMode: String(process.env.FAL_QUEUE_SUBSCRIBE_MODE || "polling")
       .trim()
       .toLowerCase(),
+    fallbackModelId: (
+      process.env.FAL_FALLBACK_MODEL_ID || "tripo3d/h3.1/image-to-3d"
+    ).trim(),
   };
 }
 
@@ -1386,6 +1412,15 @@ function formatFalClientError(err) {
     );
   }
   return msg;
+}
+
+function shouldFallbackFalModel(err) {
+  const msg = String(err?.message || err).toLowerCase();
+  return (
+    /\b503\b/.test(msg) ||
+    /runner scheduling failure|scheduling failure/.test(msg) ||
+    /in_queue|fila estagnada|queue_stagnant|queue timeout|hard timeout|sem conclusão/.test(msg)
+  );
 }
 
 /**
@@ -1444,6 +1479,54 @@ function buildFalTripoV25ImageTo3dInput(imageUrl) {
   if (tSeed && /^\d+$/.test(tSeed)) input.texture_seed = parseInt(tSeed, 10);
 
   return input;
+}
+
+function buildFalTripoH31ImageTo3dInput(imageUrl) {
+  /** @type {Record<string, string | number | boolean>} */
+  const input = { image_url: imageUrl };
+
+  const orient = (process.env.FAL_TRIPO_ORIENTATION || "align_image").trim().toLowerCase();
+  if (orient === "default" || orient === "align_image") input.orientation = orient;
+
+  const tex = (process.env.FAL_TRIPO_TEXTURE || "").trim().toLowerCase();
+  input.texture = tex === "no" ? false : true;
+  input.texture_quality = tex === "hd" ? "detailed" : "standard";
+  input.geometry_quality = "standard";
+
+  const pbrE = process.env.FAL_TRIPO_PBR;
+  if (pbrE != null && String(pbrE).trim() !== "") {
+    input.pbr = !/^(0|false|no|off)$/i.test(String(pbrE).trim());
+  }
+
+  const tAlign = (process.env.FAL_TRIPO_TEXTURE_ALIGNMENT || "").trim().toLowerCase();
+  if (tAlign === "original_image" || tAlign === "geometry") {
+    input.texture_alignment = tAlign;
+  }
+
+  const flRaw = String(process.env.FAL_TRIPO_FACE_LIMIT || "").trim().toLowerCase();
+  if (flRaw && !/^(0|omit|adaptive|auto)$/.test(flRaw)) {
+    const n = parseInt(flRaw, 10);
+    if (Number.isFinite(n) && n >= 4_000 && n <= 2_000_000) input.face_limit = n;
+  }
+
+  const autoE = process.env.FAL_TRIPO_AUTO_SIZE;
+  if (autoE != null && String(autoE).trim() !== "") {
+    input.auto_size = !/^(0|false|no|off)$/i.test(String(autoE).trim());
+  }
+
+  const seed = String(process.env.FAL_TRIPO_SEED || "").trim();
+  if (seed && /^\d+$/.test(seed)) input.model_seed = parseInt(seed, 10);
+  const tSeed = String(process.env.FAL_TRIPO_TEXTURE_SEED || "").trim();
+  if (tSeed && /^\d+$/.test(tSeed)) input.texture_seed = parseInt(tSeed, 10);
+
+  return input;
+}
+
+function buildFalInputForModel(model, imageUrl) {
+  if (String(model || "").includes("tripo3d/h3.1/image-to-3d")) {
+    return buildFalTripoH31ImageTo3dInput(imageUrl);
+  }
+  return buildFalTripoV25ImageTo3dInput(imageUrl);
 }
 
 /** @returns {0|90|180|270} */
@@ -1579,6 +1662,7 @@ export async function generateGlbDraftViaFal({
   shopDomain,
   assetId,
   imageUrl,
+  modelIdOverride = null,
 }) {
   const assetIdStr = String(assetId || "").trim();
   const {
@@ -1594,6 +1678,15 @@ export async function generateGlbDraftViaFal({
     60,
     Number.parseInt(String(process.env.FAL_MAX_IN_QUEUE_SECONDS || "900"), 10) || 900,
   );
+  // Timeout duro de espera por status da fila (mesmo sem updates da FAL).
+  const hardQueueTimeoutSeconds = Math.max(
+    60,
+    Number.parseInt(
+      String(process.env.FAL_QUEUE_HARD_TIMEOUT_SECONDS || String(maxInQueueSeconds + 120)),
+      10,
+    ) || maxInQueueSeconds + 120,
+  );
+  const hardQueueTimeoutMs = hardQueueTimeoutSeconds * 1000;
   /** Se `queue_position` não mudar durante este tempo (s), assume fila estagnada (congestão FAL). */
   const stagnantSeconds = Math.max(
     120,
@@ -1607,7 +1700,7 @@ export async function generateGlbDraftViaFal({
     throw new Error("FAL image_url ausente");
   }
 
-  const model = String(modelId || "")
+  const model = String(modelIdOverride || modelId || "")
     .trim()
     .replace(/^\/+|\/+$/g, "");
   fal.config({ credentials: apiKey });
@@ -1619,7 +1712,7 @@ export async function generateGlbDraftViaFal({
   const pollIntervalMs = Math.max(500, (Number(pollSeconds) || 4) * 1000);
 
   const prepared = await resolveTripoImageUrlBeforeFal(imageUrl);
-  const falTripoInput = buildFalTripoV25ImageTo3dInput(prepared.imageUrl);
+  const falTripoInput = buildFalInputForModel(model, prepared.imageUrl);
   const envTripoOrient = process.env.FAL_TRIPO_ORIENTATION;
   const envOrientLabel =
     envTripoOrient == null || String(envTripoOrient).trim() === ""
@@ -1791,8 +1884,25 @@ export async function generateGlbDraftViaFal({
       model,
       timeoutMs: clientTimeoutMs,
       pollIntervalMs,
+      hardQueueTimeoutMs,
     });
-    await fal.queue.subscribeToStatus(model, subscribeOpts);
+    let hardTimeoutId = null;
+    try {
+      await Promise.race([
+        fal.queue.subscribeToStatus(model, subscribeOpts),
+        new Promise((_, reject) => {
+          hardTimeoutId = setTimeout(() => {
+            reject(
+              new Error(
+                `FAL fila sem conclusão há ${hardQueueTimeoutSeconds}s (FAL_QUEUE_HARD_TIMEOUT_SECONDS)`,
+              ),
+            );
+          }, hardQueueTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (hardTimeoutId) clearTimeout(hardTimeoutId);
+    }
     falResultPayload = await fal.queue.result(model, { requestId: falRequestId });
     console.log("[ar-eyewear] FAL queue:result:ok", {
       elapsedMs: Date.now() - subscribeStartedAt,

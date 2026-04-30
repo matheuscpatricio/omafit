@@ -494,29 +494,6 @@ export default function ArEyewearPage() {
                             {a.error_message}
                           </Text>
                         )}
-                        {a.status === "processing" && a.generation_logs ? (
-                          <BlockStack gap="100">
-                            {String(a.generation_logs).includes("queue_position") ? (
-                              <Banner tone="info">{t("arEyewear.falQueuePositionHint")}</Banner>
-                            ) : null}
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {t("arEyewear.falQueueLogLabel")}
-                            </Text>
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              <span
-                                style={{
-                                  display: "block",
-                                  whiteSpace: "pre-wrap",
-                                  wordBreak: "break-word",
-                                  fontFamily: "monospace",
-                                  fontSize: "12px",
-                                }}
-                              >
-                                {String(a.generation_logs).slice(-1200)}
-                              </span>
-                            </Text>
-                          </BlockStack>
-                        ) : null}
                         {a.glb_draft_url && (
                           <Text as="p">
                             <a href={a.glb_draft_url} target="_blank" rel="noreferrer">

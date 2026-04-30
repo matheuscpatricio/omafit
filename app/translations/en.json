@@ -399,8 +399,6 @@
     "productTypeLabel": "Type",
     "categoryLabel": "Category",
     "queueWorkerBanner": "Some submissions are being processed. Refresh shortly to follow progress and publish the new 3D models.",
-    "falQueueLogLabel": "Generation queue status (updates when you refresh the list):",
-    "falQueuePositionHint": "If you see queue_position (e.g. 4), the request is in the FAL queue waiting for a runner — not an image error. If the number does not drop for many minutes, the queue may be congested; the server fails the job after FAL_IN_QUEUE_STAGNANT_SECONDS (default 600s) at the same position so you can requeue or change FAL_MODEL_ID.",
     "accessoryType": {
       "glasses": "Glasses",
       "necklace": "Necklace",

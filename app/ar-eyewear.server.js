@@ -1363,6 +1363,31 @@ function falConfig() {
   };
 }
 
+/** Mensagem amigável para erros conhecidos da API/queue FAL (ex.: 503 Runner Scheduling Failure). */
+function formatFalClientError(err) {
+  const msg = String(err?.message || err);
+  const status = err?.status ?? err?.response?.status;
+  const body = err?.body ?? err?.response?.data;
+  const bodyStr =
+    body && typeof body === "object"
+      ? JSON.stringify(body)
+      : typeof body === "string"
+        ? body
+        : "";
+  const combined = `${msg} ${bodyStr}`;
+  const is503 =
+    status === 503 ||
+    /\b503\b/.test(msg) ||
+    /runner scheduling failure|scheduling failure/i.test(combined);
+  if (is503) {
+    return (
+      `${msg.trim()} — FAL 503 (Runner Scheduling Failure): a plataforma não atribuiu um runner a tempo. ` +
+        "Costuma ser temporário: reenfileire daqui a alguns minutos. Se persistir, abra ticket na FAL com o request_id ou experimente outro FAL_MODEL_ID."
+    );
+  }
+  return msg;
+}
+
 /**
  * Tripo v2.5 — payload **mínimo** (rápido, como antes): só `image_url` + por defeito
  * `orientation: align_image`. Campos extra (HD, face_limit, auto_size, …) só entram
@@ -1660,25 +1685,6 @@ export async function generateGlbDraftViaFal({
     if (enqueued.queue_position != null && enqueued.queue_position !== "") {
       logLines.push(`queue_position=${enqueued.queue_position}`);
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
-      body: JSON.stringify({
-        sessionId: "49efff",
-        hypothesisId: "H2-submit",
-        location: "ar-eyewear.server.js:generateGlbDraftViaFal:afterSubmit",
-        message: "fal_queue_submit_ok",
-        data: {
-          model,
-          queuePosition: enqueued.queue_position ?? null,
-          requestIdPrefix: falRequestId.slice(0, 8),
-          assetIdLen: assetIdStr.length,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (assetIdStr) {
       void patchAsset(assetIdStr, {
         generation_request_id: falRequestId,
@@ -1704,25 +1710,6 @@ export async function generateGlbDraftViaFal({
         if (stCh || posCh) {
           if (st) dbgPrevSt = st;
           if (qPos != null) dbgPrevPos = qPos;
-          // #region agent log
-          fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
-            body: JSON.stringify({
-              sessionId: "49efff",
-              hypothesisId: "H1-queue-delta",
-              location: "ar-eyewear.server.js:generateGlbDraftViaFal:onQueueUpdate",
-              message: "fal_queue_status_change",
-              data: {
-                st: st || null,
-                queuePosition: qPos ?? null,
-                stChanged: stCh,
-                posChanged: posCh,
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-          // #endregion
         }
         if (st) {
           logLines.push(
@@ -1773,24 +1760,6 @@ export async function generateGlbDraftViaFal({
                     const snapshot = logLines.slice(-80).join("\n").slice(0, 12000);
                     void patchAsset(assetIdStr, { generation_logs: snapshot }).catch(() => {});
                   }
-                  // #region agent log
-                  fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
-                    body: JSON.stringify({
-                      sessionId: "49efff",
-                      hypothesisId: "H5-stagnant-queue",
-                      location: "ar-eyewear.server.js:generateGlbDraftViaFal:stagnant",
-                      message: "fal_queue_position_stagnant",
-                      data: {
-                        position: n,
-                        stagnantSec: Math.round(stgMs / 1000),
-                        limitSec: stagnantSeconds,
-                      },
-                      timestamp: Date.now(),
-                    }),
-                  }).catch(() => {});
-                  // #endregion
                   throw new Error(
                     `FAL fila estagnada: queue_position=${n} sem alteração há ${Math.round(
                       stgMs / 1000,
@@ -1829,42 +1798,7 @@ export async function generateGlbDraftViaFal({
       elapsedMs: Date.now() - subscribeStartedAt,
       requestId: falRequestId,
     });
-    // #region agent log
-    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
-      body: JSON.stringify({
-        sessionId: "49efff",
-        hypothesisId: "H3-result-ok",
-        location: "ar-eyewear.server.js:generateGlbDraftViaFal:afterResult",
-        message: "fal_queue_result_ok",
-        data: {
-          elapsedMs: Date.now() - subscribeStartedAt,
-          requestIdPrefix: falRequestId.slice(0, 8),
-          hasData: Boolean(falResultPayload?.data ?? falResultPayload),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
   } catch (e) {
-    // #region agent log
-    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
-      body: JSON.stringify({
-        sessionId: "49efff",
-        hypothesisId: "H4-fal-error",
-        location: "ar-eyewear.server.js:generateGlbDraftViaFal:catch",
-        message: "fal_queue_flow_error",
-        data: {
-          errMsg: String(e?.message || e).slice(0, 240),
-          hadRequestId: Boolean(falRequestId),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (falRequestId) {
       await fal.queue.cancel(model, { requestId: falRequestId }).catch((cancelErr) => {
         console.warn("[ar-eyewear] FAL queue.cancel:", cancelErr?.message || cancelErr);
@@ -1872,7 +1806,7 @@ export async function generateGlbDraftViaFal({
     }
     const body = e?.body ?? e?.response?.data;
     const extra = body ? ` ${JSON.stringify(body).slice(0, 500)}` : "";
-    throw new Error(`FAL fila/resultado falhou: ${e?.message || e}${extra}`);
+    throw new Error(`FAL fila/resultado falhou: ${formatFalClientError(e)}${extra}`);
   }
 
   const data = falResultPayload?.data ?? falResultPayload;

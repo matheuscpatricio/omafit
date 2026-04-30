@@ -400,7 +400,7 @@
     "categoryLabel": "Categoria",
     "queueWorkerBanner": "Existem envios em processamento. Atualize em instantes para acompanhar o andamento e publicar os novos modelos 3D.",
     "falQueueLogLabel": "Estado da fila de geração (atualiza ao carregar a lista):",
-    "falQueuePositionHint": "Se aparecer queue_position (ex.: 4), o pedido está na fila da FAL à espera de um runner — não é erro de imagem. Aguarde alguns minutos ou atualize a lista; se queue_position não baixar durante muito tempo, a fila global da FAL pode estar congestionada.",
+    "falQueuePositionHint": "Se aparecer queue_position (ex.: 4), o pedido está na fila da FAL à espera de um runner — não é erro de imagem. Se o número não baixar durante vários minutos, a fila pode estar congestionada; o servidor falha o job após FAL_IN_QUEUE_STAGNANT_SECONDS (default 600s) com a mesma posição, para poderes reenfileirar ou mudar FAL_MODEL_ID.",
     "accessoryType": {
       "glasses": "Óculos",
       "necklace": "Colar",

@@ -1569,6 +1569,12 @@ export async function generateGlbDraftViaFal({
     60,
     Number.parseInt(String(process.env.FAL_MAX_IN_QUEUE_SECONDS || "900"), 10) || 900,
   );
+  /** Se `queue_position` não mudar durante este tempo (s), assume fila estagnada (congestão FAL). */
+  const stagnantSeconds = Math.max(
+    120,
+    Number.parseInt(String(process.env.FAL_IN_QUEUE_STAGNANT_SECONDS || "600"), 10) || 600,
+  );
+  const stagnantMs = stagnantSeconds * 1000;
   if (!apiKey) {
     throw new Error("FAL_API_KEY não configurada no servidor");
   }
@@ -1682,6 +1688,8 @@ export async function generateGlbDraftViaFal({
 
     let dbgPrevSt = "";
     let dbgPrevPos = /** @type {number | null} */ (null);
+    let stagnantWatchPos = /** @type {number | null} */ (null);
+    let stagnantSinceMs = 0;
     const subscribeOpts = {
       requestId: falRequestId,
       logs: true,
@@ -1748,8 +1756,55 @@ export async function generateGlbDraftViaFal({
               `FAL ficou em IN_QUEUE por ${Math.round(queuedForMs / 1000)}s (limite ${maxInQueueSeconds}s)`,
             );
           }
+          // Congestão com “fila falsa”: IN_QUEUE eterno com a mesma queue_position (sem progresso).
+          if (qPos != null && qPos !== "") {
+            const n = Number(qPos);
+            if (Number.isFinite(n)) {
+              if (stagnantWatchPos === null || n !== stagnantWatchPos) {
+                stagnantWatchPos = n;
+                stagnantSinceMs = Date.now();
+              } else {
+                const stgMs = Date.now() - stagnantSinceMs;
+                if (stgMs > stagnantMs) {
+                  logLines.push(
+                    `queue_stagnant=position_${n}_unchanged_for_${Math.round(stgMs / 1000)}s`,
+                  );
+                  if (assetIdStr) {
+                    const snapshot = logLines.slice(-80).join("\n").slice(0, 12000);
+                    void patchAsset(assetIdStr, { generation_logs: snapshot }).catch(() => {});
+                  }
+                  // #region agent log
+                  fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
+                    body: JSON.stringify({
+                      sessionId: "49efff",
+                      hypothesisId: "H5-stagnant-queue",
+                      location: "ar-eyewear.server.js:generateGlbDraftViaFal:stagnant",
+                      message: "fal_queue_position_stagnant",
+                      data: {
+                        position: n,
+                        stagnantSec: Math.round(stgMs / 1000),
+                        limitSec: stagnantSeconds,
+                      },
+                      timestamp: Date.now(),
+                    }),
+                  }).catch(() => {});
+                  // #endregion
+                  throw new Error(
+                    `FAL fila estagnada: queue_position=${n} sem alteração há ${Math.round(
+                      stgMs / 1000,
+                    )}s (limite FAL_IN_QUEUE_STAGNANT_SECONDS=${stagnantSeconds}s). ` +
+                      "A fila Tripo pode estar congestionada. Tente mais tarde, reenfileire, ou defina FAL_MODEL_ID para outro modelo (ex.: fal-ai/triposr) no Railway.",
+                  );
+                }
+              }
+            }
+          }
         } else {
           inQueueSinceMs = 0;
+          stagnantWatchPos = null;
+          stagnantSinceMs = 0;
         }
         if (assetIdStr && st) {
           const now = Date.now();

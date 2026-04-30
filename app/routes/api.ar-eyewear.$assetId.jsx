@@ -65,22 +65,23 @@ export async function action({ request, params }) {
     }
 
     if (intent === "requeue") {
-      await patchAsset(id, {
+      const queued = await patchAsset(id, {
         status: "processing",
         error_message: null,
         worker_claimed_at: null,
       });
-      try {
-        const ret = await invokeArEyewearGenerate(id, session.shop);
-        const latest = await getAssetById(id);
-        return Response.json({ asset: latest || row, generation: ret });
-      } catch (genErr) {
-        const failed = await patchAsset(id, {
-          status: "failed",
-          error_message: genErr.message || "Falha na geração 3D (FAL)",
-        });
-        return Response.json({ asset: failed, error: failed.error_message }, { status: 500 });
-      }
+      // Dispara geração assíncrona para evitar timeout/502 no request HTTP do admin.
+      void invokeArEyewearGenerate(id, session.shop).catch(async (genErr) => {
+        try {
+          await patchAsset(id, {
+            status: "failed",
+            error_message: genErr?.message || "Falha na geração 3D (FAL)",
+          });
+        } catch (patchErr) {
+          console.error("[api.ar-eyewear.$assetId] requeue background patch failed", patchErr);
+        }
+      });
+      return Response.json({ asset: queued, queued: true }, { status: 202 });
     }
 
     if (intent === "publish") {

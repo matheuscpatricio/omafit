@@ -216,25 +216,23 @@ export async function action({ request }) {
         status: "queued",
         error_message: null,
       });
-      try {
-        console.log("[api.ar-eyewear.products] invokeArEyewearGenerate:start", {
-          assetId: id,
-          shop: session.shop,
-        });
-        const ret = await invokeArEyewearGenerate(id, session.shop);
-        console.log("[api.ar-eyewear.products] invokeArEyewearGenerate:ok", {
-          assetId: id,
-          generationPath: ret?.generationPath || ret?.generation?.path || "?",
-        });
-        const asset = ret?.asset || (await getAssetById(id));
-        return Response.json({ asset, generation: ret });
-      } catch (genErr) {
-        const failed = await patchAsset(id, {
-          status: "failed",
-          error_message: genErr.message || "Falha na geração 3D (FAL / servidor)",
-        });
-        return Response.json({ asset: failed, error: failed.error_message }, { status: 500 });
-      }
+      console.log("[api.ar-eyewear.products] invokeArEyewearGenerate:background_start", {
+        assetId: id,
+        shop: session.shop,
+      });
+      // Dispara geração assíncrona para o endpoint responder rápido (evita 502/timeout).
+      void invokeArEyewearGenerate(id, session.shop).catch(async (genErr) => {
+        try {
+          await patchAsset(id, {
+            status: "failed",
+            error_message: genErr?.message || "Falha na geração 3D (FAL / servidor)",
+          });
+        } catch (patchErr) {
+          console.error("[api.ar-eyewear.products] background patch failed", patchErr);
+        }
+      });
+      const asset = (await getAssetById(id)) || row;
+      return Response.json({ asset, queued: true }, { status: 202 });
     } catch (uploadErr) {
       await patchAsset(id, {
         status: "failed",

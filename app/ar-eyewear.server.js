@@ -1349,6 +1349,17 @@ function falConfig() {
     baseUrl: (process.env.FAL_BASE_URL || "https://queue.fal.run").trim().replace(/\/$/, ""),
     timeoutSeconds: Number(process.env.FAL_TIMEOUT_SECONDS || 1800),
     pollSeconds: Number(process.env.FAL_POLL_SECONDS || 4),
+    /** "low" | "normal" — env FAL_QUEUE_PRIORITY (default normal). */
+    queuePriority: String(process.env.FAL_QUEUE_PRIORITY || "normal").trim().toLowerCase() === "low" ? "low" : "normal",
+    /** Segundos para header x-fal-request-timeout no submit (fila antes de arrancar). Opcional. */
+    startTimeoutSeconds: (() => {
+      const n = Number.parseInt(String(process.env.FAL_START_TIMEOUT_SECONDS || "").trim(), 10);
+      return Number.isFinite(n) && n > 1 ? n : undefined;
+    })(),
+    /** "polling" | "streaming" — env FAL_QUEUE_SUBSCRIBE_MODE (default polling). */
+    queueSubscribeMode: String(process.env.FAL_QUEUE_SUBSCRIBE_MODE || "polling")
+      .trim()
+      .toLowerCase(),
   };
 }
 
@@ -1535,7 +1546,8 @@ function extractFalGlbUrl(payload) {
 
 /**
  * Gera GLB via FAL no backend (sem expor chave no frontend) e sobe para Storage.
- * Usa @fal-ai/client fal.subscribe() como na documentação oficial do Tripo (fila + resultado).
+ * Usa `fal.queue.submit` + `subscribeToStatus` + `result` (equivalente ao `subscribe`, mas
+ * permite gravar `request_id` cedo, cancelar em timeout e expor `queue_position` nos logs).
  * Retorna URL pública do draft, requestId da FAL e linhas de log da fila.
  */
 export async function generateGlbDraftViaFal({
@@ -1544,7 +1556,15 @@ export async function generateGlbDraftViaFal({
   imageUrl,
 }) {
   const assetIdStr = String(assetId || "").trim();
-  const { apiKey, modelId, timeoutSeconds, pollSeconds } = falConfig();
+  const {
+    apiKey,
+    modelId,
+    timeoutSeconds,
+    pollSeconds,
+    queuePriority,
+    startTimeoutSeconds,
+    queueSubscribeMode,
+  } = falConfig();
   const maxInQueueSeconds = Math.max(
     60,
     Number.parseInt(String(process.env.FAL_MAX_IN_QUEUE_SECONDS || "900"), 10) || 900,
@@ -1583,7 +1603,7 @@ export async function generateGlbDraftViaFal({
   ].join(" | ");
   try {
     console.log("[ar-eyewear] FAL Tripo —", tripDiagLine);
-    console.log("[ar-eyewear] FAL Tripo input (sem image_url):", {
+    console.log("[ar-eyewear] FAL Tripo input (image_url omitido do log — valor enviado à FAL existe):", {
       ...falTripoInput,
       image_url: "(redacted)",
       inputImagePrepared: prepared.prepared,
@@ -1594,12 +1614,13 @@ export async function generateGlbDraftViaFal({
   }
 
   const logLines = [tripDiagLine];
-  let result;
+  let falRequestId = "";
+  /** @type {{ data?: unknown; requestId?: string } | null} */
+  let falResultPayload = null;
   try {
     const subscribeStartedAt = Date.now();
     const maxInQueueMs = maxInQueueSeconds * 1000;
     let inQueueSinceMs = 0;
-    let stopSubscribe = false;
     /** @type {string} */
     let lastPersistedStatus = "";
     let lastPersistAtMs = 0;
@@ -1611,26 +1632,55 @@ export async function generateGlbDraftViaFal({
         console.log("[ar-eyewear] FAL queue persist", { assetId: assetIdStr, reason });
       }
     };
-    console.log("[ar-eyewear] FAL subscribe:start", {
-      model,
-      timeoutMs: clientTimeoutMs,
-      pollIntervalMs,
-    });
-    result = await fal.subscribe(model, {
+
+    const submitOpts = {
       input: falTripoInput,
+      logs: true,
+      priority: queuePriority,
+      ...(startTimeoutSeconds ? { startTimeout: startTimeoutSeconds } : {}),
+    };
+    console.log("[ar-eyewear] FAL queue:submit:start", {
+      model,
+      priority: queuePriority,
+      startTimeoutSeconds: startTimeoutSeconds ?? null,
+      subscribeMode: queueSubscribeMode,
+    });
+    const enqueued = await fal.queue.submit(model, submitOpts);
+    falRequestId = String(enqueued.request_id || "").trim();
+    if (!falRequestId) {
+      throw new Error("FAL queue.submit não devolveu request_id");
+    }
+    logLines.push(`fal_request_id=${falRequestId}`);
+    if (enqueued.queue_position != null && enqueued.queue_position !== "") {
+      logLines.push(`queue_position=${enqueued.queue_position}`);
+    }
+    if (assetIdStr) {
+      void patchAsset(assetIdStr, {
+        generation_request_id: falRequestId,
+        generation_logs: logLines.slice(-80).join("\n").slice(0, 12000),
+      }).catch(() => {});
+    }
+
+    const subscribeOpts = {
+      requestId: falRequestId,
       logs: true,
       pollInterval: pollIntervalMs,
       timeout: clientTimeoutMs,
+      ...(queueSubscribeMode === "streaming" ? { mode: "streaming" } : {}),
       onQueueUpdate: (update) => {
-        if (stopSubscribe) {
-          throw new Error(
-            `FAL permaneceu em fila acima do limite (${maxInQueueSeconds}s). Tente reenfileirar.`,
-          );
-        }
         const st = update?.status;
+        const qPos = update?.queue_position;
         if (st) {
-          logLines.push(`status=${st}`);
-          console.log(`[ar-eyewear] FAL ${model} status=${st}`);
+          logLines.push(
+            qPos != null && qPos !== ""
+              ? `status=${st} queue_position=${qPos}`
+              : `status=${st}`,
+          );
+          console.log(`[ar-eyewear] FAL ${model} status=${st}`, {
+            queue_position: qPos ?? null,
+          });
+        } else if (qPos != null && qPos !== "") {
+          logLines.push(`queue_position=${qPos}`);
         }
         const stepLogs = update?.logs;
         if (Array.isArray(stepLogs)) {
@@ -1643,22 +1693,18 @@ export async function generateGlbDraftViaFal({
           if (!inQueueSinceMs) inQueueSinceMs = Date.now();
           const queuedForMs = Date.now() - inQueueSinceMs;
           if (queuedForMs > maxInQueueMs) {
-            stopSubscribe = true;
             logLines.push(`queue_timeout=${Math.round(queuedForMs / 1000)}s`);
             if (assetIdStr) {
               const snapshot = logLines.slice(-80).join("\n").slice(0, 12000);
               void patchAsset(assetIdStr, { generation_logs: snapshot }).catch(() => {});
             }
             throw new Error(
-              `FAL ficou em IN_QUEUE por ${Math.round(
-                queuedForMs / 1000,
-              )}s (limite ${maxInQueueSeconds}s)`,
+              `FAL ficou em IN_QUEUE por ${Math.round(queuedForMs / 1000)}s (limite ${maxInQueueSeconds}s)`,
             );
           }
         } else {
           inQueueSinceMs = 0;
         }
-        // Heartbeat na BD: fila Tripo pode ficar muito tempo em IN_QUEUE — o admin vê progresso no refresh.
         if (assetIdStr && st) {
           const now = Date.now();
           const changed = st !== lastPersistedStatus;
@@ -1670,18 +1716,30 @@ export async function generateGlbDraftViaFal({
           }
         }
       },
+    };
+    console.log("[ar-eyewear] FAL queue:subscribeToStatus:start", {
+      model,
+      timeoutMs: clientTimeoutMs,
+      pollIntervalMs,
     });
-    console.log("[ar-eyewear] FAL subscribe:done", {
+    await fal.queue.subscribeToStatus(model, subscribeOpts);
+    falResultPayload = await fal.queue.result(model, { requestId: falRequestId });
+    console.log("[ar-eyewear] FAL queue:result:ok", {
       elapsedMs: Date.now() - subscribeStartedAt,
-      requestId: String(result?.requestId || ""),
+      requestId: falRequestId,
     });
   } catch (e) {
+    if (falRequestId) {
+      await fal.queue.cancel(model, { requestId: falRequestId }).catch((cancelErr) => {
+        console.warn("[ar-eyewear] FAL queue.cancel:", cancelErr?.message || cancelErr);
+      });
+    }
     const body = e?.body ?? e?.response?.data;
     const extra = body ? ` ${JSON.stringify(body).slice(0, 500)}` : "";
-    throw new Error(`FAL subscribe falhou: ${e?.message || e}${extra}`);
+    throw new Error(`FAL fila/resultado falhou: ${e?.message || e}${extra}`);
   }
 
-  const data = result?.data ?? result;
+  const data = falResultPayload?.data ?? falResultPayload;
   const glbUrl = extractFalGlbUrl(data);
   if (!glbUrl) {
     throw new Error(`FAL result sem URL GLB: ${JSON.stringify(data).slice(0, 600)}`);
@@ -1711,7 +1769,7 @@ export async function generateGlbDraftViaFal({
   }
   const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
   const uploaded = await storageUpload("ar-eyewear-glb", storagePath, glbBuf, "model/gltf-binary");
-  const requestId = String(result?.requestId || "").trim();
+  const requestId = String(falResultPayload?.requestId || falRequestId || "").trim();
   const generationLogs = logLines.slice(-120).join("\n");
   return {
     publicUrl: uploaded.publicUrl,

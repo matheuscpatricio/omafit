@@ -496,6 +496,9 @@ export default function ArEyewearPage() {
                         )}
                         {a.status === "processing" && a.generation_logs ? (
                           <BlockStack gap="100">
+                            {String(a.generation_logs).includes("queue_position") ? (
+                              <Banner tone="info">{t("arEyewear.falQueuePositionHint")}</Banner>
+                            ) : null}
                             <Text as="p" variant="bodySm" tone="subdued">
                               {t("arEyewear.falQueueLogLabel")}
                             </Text>

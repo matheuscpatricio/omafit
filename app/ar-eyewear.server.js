@@ -1654,6 +1654,25 @@ export async function generateGlbDraftViaFal({
     if (enqueued.queue_position != null && enqueued.queue_position !== "") {
       logLines.push(`queue_position=${enqueued.queue_position}`);
     }
+    // #region agent log
+    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
+      body: JSON.stringify({
+        sessionId: "49efff",
+        hypothesisId: "H2-submit",
+        location: "ar-eyewear.server.js:generateGlbDraftViaFal:afterSubmit",
+        message: "fal_queue_submit_ok",
+        data: {
+          model,
+          queuePosition: enqueued.queue_position ?? null,
+          requestIdPrefix: falRequestId.slice(0, 8),
+          assetIdLen: assetIdStr.length,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (assetIdStr) {
       void patchAsset(assetIdStr, {
         generation_request_id: falRequestId,
@@ -1661,6 +1680,8 @@ export async function generateGlbDraftViaFal({
       }).catch(() => {});
     }
 
+    let dbgPrevSt = "";
+    let dbgPrevPos = /** @type {number | null} */ (null);
     const subscribeOpts = {
       requestId: falRequestId,
       logs: true,
@@ -1670,6 +1691,31 @@ export async function generateGlbDraftViaFal({
       onQueueUpdate: (update) => {
         const st = update?.status;
         const qPos = update?.queue_position;
+        const stCh = Boolean(st && st !== dbgPrevSt);
+        const posCh = qPos != null && qPos !== dbgPrevPos;
+        if (stCh || posCh) {
+          if (st) dbgPrevSt = st;
+          if (qPos != null) dbgPrevPos = qPos;
+          // #region agent log
+          fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
+            body: JSON.stringify({
+              sessionId: "49efff",
+              hypothesisId: "H1-queue-delta",
+              location: "ar-eyewear.server.js:generateGlbDraftViaFal:onQueueUpdate",
+              message: "fal_queue_status_change",
+              data: {
+                st: st || null,
+                queuePosition: qPos ?? null,
+                stChanged: stCh,
+                posChanged: posCh,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+          // #endregion
+        }
         if (st) {
           logLines.push(
             qPos != null && qPos !== ""
@@ -1728,7 +1774,42 @@ export async function generateGlbDraftViaFal({
       elapsedMs: Date.now() - subscribeStartedAt,
       requestId: falRequestId,
     });
+    // #region agent log
+    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
+      body: JSON.stringify({
+        sessionId: "49efff",
+        hypothesisId: "H3-result-ok",
+        location: "ar-eyewear.server.js:generateGlbDraftViaFal:afterResult",
+        message: "fal_queue_result_ok",
+        data: {
+          elapsedMs: Date.now() - subscribeStartedAt,
+          requestIdPrefix: falRequestId.slice(0, 8),
+          hasData: Boolean(falResultPayload?.data ?? falResultPayload),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
   } catch (e) {
+    // #region agent log
+    fetch("http://127.0.0.1:7744/ingest/736271b4-0216-42af-91db-7273b476c84e", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "49efff" },
+      body: JSON.stringify({
+        sessionId: "49efff",
+        hypothesisId: "H4-fal-error",
+        location: "ar-eyewear.server.js:generateGlbDraftViaFal:catch",
+        message: "fal_queue_flow_error",
+        data: {
+          errMsg: String(e?.message || e).slice(0, 240),
+          hadRequestId: Boolean(falRequestId),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (falRequestId) {
       await fal.queue.cancel(model, { requestId: falRequestId }).catch((cancelErr) => {
         console.warn("[ar-eyewear] FAL queue.cancel:", cancelErr?.message || cancelErr);

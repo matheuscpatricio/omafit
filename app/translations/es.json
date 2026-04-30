@@ -400,6 +400,7 @@
     "categoryLabel": "Categoría",
     "queueWorkerBanner": "Hay envíos en procesamiento. Actualiza en unos instantes para seguir el progreso y publicar los nuevos modelos 3D.",
     "falQueueLogLabel": "Estado de la cola de generación (se actualiza al refrescar la lista):",
+    "falQueuePositionHint": "Si ves queue_position (p. ej. 4), la solicitud está en la cola de FAL esperando un runner — no es un error de imagen. Espera unos minutos o actualiza; si el número no baja mucho tiempo, la cola global de FAL puede estar congestionada.",
     "accessoryType": {
       "glasses": "Gafas",
       "necklace": "Collar",

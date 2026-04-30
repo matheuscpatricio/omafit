@@ -1545,6 +1545,10 @@ export async function generateGlbDraftViaFal({
 }) {
   const assetIdStr = String(assetId || "").trim();
   const { apiKey, modelId, timeoutSeconds, pollSeconds } = falConfig();
+  const maxInQueueSeconds = Math.max(
+    60,
+    Number.parseInt(String(process.env.FAL_MAX_IN_QUEUE_SECONDS || "900"), 10) || 900,
+  );
   if (!apiKey) {
     throw new Error("FAL_API_KEY não configurada no servidor");
   }
@@ -1593,6 +1597,9 @@ export async function generateGlbDraftViaFal({
   let result;
   try {
     const subscribeStartedAt = Date.now();
+    const maxInQueueMs = maxInQueueSeconds * 1000;
+    let inQueueSinceMs = 0;
+    let stopSubscribe = false;
     /** @type {string} */
     let lastPersistedStatus = "";
     let lastPersistAtMs = 0;
@@ -1615,6 +1622,11 @@ export async function generateGlbDraftViaFal({
       pollInterval: pollIntervalMs,
       timeout: clientTimeoutMs,
       onQueueUpdate: (update) => {
+        if (stopSubscribe) {
+          throw new Error(
+            `FAL permaneceu em fila acima do limite (${maxInQueueSeconds}s). Tente reenfileirar.`,
+          );
+        }
         const st = update?.status;
         if (st) {
           logLines.push(`status=${st}`);
@@ -1626,6 +1638,25 @@ export async function generateGlbDraftViaFal({
             const msg = String(l?.message || "").trim();
             if (msg) logLines.push(msg);
           }
+        }
+        if (st === "IN_QUEUE") {
+          if (!inQueueSinceMs) inQueueSinceMs = Date.now();
+          const queuedForMs = Date.now() - inQueueSinceMs;
+          if (queuedForMs > maxInQueueMs) {
+            stopSubscribe = true;
+            logLines.push(`queue_timeout=${Math.round(queuedForMs / 1000)}s`);
+            if (assetIdStr) {
+              const snapshot = logLines.slice(-80).join("\n").slice(0, 12000);
+              void patchAsset(assetIdStr, { generation_logs: snapshot }).catch(() => {});
+            }
+            throw new Error(
+              `FAL ficou em IN_QUEUE por ${Math.round(
+                queuedForMs / 1000,
+              )}s (limite ${maxInQueueSeconds}s)`,
+            );
+          }
+        } else {
+          inQueueSinceMs = 0;
         }
         // Heartbeat na BD: fila Tripo pode ficar muito tempo em IN_QUEUE — o admin vê progresso no refresh.
         if (assetIdStr && st) {

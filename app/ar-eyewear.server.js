@@ -408,10 +408,6 @@ export async function ensureArGlbMetafieldDefinition(admin) {
       description: "URL pública do GLB para o provador AR de óculos (Omafit).",
       type: "url",
       ownerType: "PRODUCT",
-      access: {
-        admin: "MERCHANT_READ_WRITE",
-        storefront: "PUBLIC_READ",
-      },
     },
     {
       name: "Omafit AR — URL do modelo 3D",
@@ -420,10 +416,6 @@ export async function ensureArGlbMetafieldDefinition(admin) {
       description: "URL pública do GLB para o provador AR de óculos (Omafit).",
       type: "single_line_text_field",
       ownerType: "PRODUCT",
-      access: {
-        admin: "MERCHANT_READ_WRITE",
-        storefront: "PUBLIC_READ",
-      },
     },
     {
       name: "Omafit AR — URL do modelo 3D (variante)",
@@ -432,10 +424,6 @@ export async function ensureArGlbMetafieldDefinition(admin) {
       description: "URL pública do GLB para o provador AR de óculos (Omafit) — nível variante.",
       type: "url",
       ownerType: "PRODUCTVARIANT",
-      access: {
-        admin: "MERCHANT_READ_WRITE",
-        storefront: "PUBLIC_READ",
-      },
     },
     {
       name: "Omafit AR — URL do modelo 3D (variante)",
@@ -444,10 +432,6 @@ export async function ensureArGlbMetafieldDefinition(admin) {
       description: "URL pública do GLB para o provador AR de óculos (Omafit) — nível variante.",
       type: "single_line_text_field",
       ownerType: "PRODUCTVARIANT",
-      access: {
-        admin: "MERCHANT_READ_WRITE",
-        storefront: "PUBLIC_READ",
-      },
     },
   ];
 
@@ -662,7 +646,6 @@ export async function ensureArCalibrationMetafieldDefinition(admin) {
         "Ajuste fino (rotação, altura, profundidade, tamanho) do modelo 3D exibido no provador AR Omafit.",
       type: AR_CALIBRATION_METAFIELD.type,
       ownerType: "PRODUCT",
-      access: { admin: "MERCHANT_READ_WRITE", storefront: "PUBLIC_READ" },
     },
     {
       name: "Omafit AR — Calibração do modelo 3D (variante)",
@@ -672,7 +655,6 @@ export async function ensureArCalibrationMetafieldDefinition(admin) {
         "Ajuste fino do modelo 3D por variante (sobrepõe a calibração do produto).",
       type: AR_CALIBRATION_METAFIELD.type,
       ownerType: "PRODUCTVARIANT",
-      access: { admin: "MERCHANT_READ_WRITE", storefront: "PUBLIC_READ" },
     },
   ];
   for (const definition of attempts) {
@@ -817,7 +799,6 @@ export async function ensureArAccessoryTypeMetafieldDefinition(admin) {
       "Tipo de acessório AR (glasses | necklace | watch | bracelet). Determina a stack de tracking no provador.",
     type: AR_ACCESSORY_TYPE_METAFIELD.type,
     ownerType: "PRODUCT",
-    access: { admin: "MERCHANT_READ_WRITE", storefront: "PUBLIC_READ" },
   };
   try {
     const response = await admin.graphql(METAFIELD_DEF_CREATE, {
@@ -1241,6 +1222,29 @@ export function hasArEyewearFalConfigured() {
  *
  * Sem FAL_API_KEY no servidor, usa a Edge Function (precisa de secret lá; arriscado para jobs longos).
  */
+
+/**
+ * Agenda `invokeArEyewearGenerate` no próximo tick do event loop (desacoplado do request HTTP).
+ * Evita que runtimes/proxies cancelem trabalho longo ligado ao ciclo de vida do pedido.
+ */
+export function scheduleInvokeArEyewearGenerate(assetId, shopDomain) {
+  const id = String(assetId || "").trim();
+  const shop = String(shopDomain || "").trim();
+  setImmediate(() => {
+    void invokeArEyewearGenerate(id, shop).catch(async (genErr) => {
+      if (!id) return;
+      try {
+        await patchAsset(id, {
+          status: "failed",
+          error_message: genErr?.message || "Falha na geração 3D",
+        });
+      } catch (patchErr) {
+        console.error("[ar-eyewear] scheduleInvokeArEyewearGenerate patch falhou:", patchErr);
+      }
+    });
+  });
+}
+
 export async function invokeArEyewearGenerate(assetId, shopDomain) {
   const { url, key } = getSupabaseConfig();
   if (!url || !key) throw new Error("Supabase not configured");
@@ -1539,6 +1543,7 @@ export async function generateGlbDraftViaFal({
   assetId,
   imageUrl,
 }) {
+  const assetIdStr = String(assetId || "").trim();
   const { apiKey, modelId, timeoutSeconds, pollSeconds } = falConfig();
   if (!apiKey) {
     throw new Error("FAL_API_KEY não configurada no servidor");
@@ -1588,6 +1593,17 @@ export async function generateGlbDraftViaFal({
   let result;
   try {
     const subscribeStartedAt = Date.now();
+    /** @type {string} */
+    let lastPersistedStatus = "";
+    let lastPersistAtMs = 0;
+    const persistQueueSnapshot = (reason) => {
+      if (!assetIdStr) return;
+      const snapshot = logLines.slice(-80).join("\n").slice(0, 12000);
+      void patchAsset(assetIdStr, { generation_logs: snapshot }).catch(() => {});
+      if (reason === "status_change") {
+        console.log("[ar-eyewear] FAL queue persist", { assetId: assetIdStr, reason });
+      }
+    };
     console.log("[ar-eyewear] FAL subscribe:start", {
       model,
       timeoutMs: clientTimeoutMs,
@@ -1609,6 +1625,17 @@ export async function generateGlbDraftViaFal({
           for (const l of stepLogs) {
             const msg = String(l?.message || "").trim();
             if (msg) logLines.push(msg);
+          }
+        }
+        // Heartbeat na BD: fila Tripo pode ficar muito tempo em IN_QUEUE — o admin vê progresso no refresh.
+        if (assetIdStr && st) {
+          const now = Date.now();
+          const changed = st !== lastPersistedStatus;
+          const heartbeat = now - lastPersistAtMs > 45_000;
+          if (changed || heartbeat) {
+            lastPersistedStatus = st;
+            lastPersistAtMs = now;
+            persistQueueSnapshot(changed ? "status_change" : "heartbeat");
           }
         }
       },

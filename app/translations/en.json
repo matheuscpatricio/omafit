@@ -399,6 +399,7 @@
     "productTypeLabel": "Type",
     "categoryLabel": "Category",
     "queueWorkerBanner": "Some submissions are being processed. Refresh shortly to follow progress and publish the new 3D models.",
+    "falQueueLogLabel": "Generation queue status (updates when you refresh the list):",
     "accessoryType": {
       "glasses": "Glasses",
       "necklace": "Necklace",

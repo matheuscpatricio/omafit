@@ -399,6 +399,7 @@
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoria",
     "queueWorkerBanner": "Existem envios em processamento. Atualize em instantes para acompanhar o andamento e publicar os novos modelos 3D.",
+    "falQueueLogLabel": "Estado da fila de geração (atualiza ao carregar a lista):",
     "accessoryType": {
       "glasses": "Óculos",
       "necklace": "Colar",

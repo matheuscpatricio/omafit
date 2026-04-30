@@ -245,7 +245,8 @@ export default function ArEyewearPage() {
   const imgOpts = selectedProduct ? imageSelectOptions(selectedProduct.images || [], t) : [];
 
   const hasQueuedJobs = useMemo(
-    () => (assets || []).some((a) => a.status === "queued"),
+    () =>
+      (assets || []).some((a) => a.status === "queued" || a.status === "processing"),
     [assets],
   );
   const productNameById = useMemo(() => {
@@ -493,6 +494,26 @@ export default function ArEyewearPage() {
                             {a.error_message}
                           </Text>
                         )}
+                        {a.status === "processing" && a.generation_logs ? (
+                          <BlockStack gap="100">
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t("arEyewear.falQueueLogLabel")}
+                            </Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              <span
+                                style={{
+                                  display: "block",
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-word",
+                                  fontFamily: "monospace",
+                                  fontSize: "12px",
+                                }}
+                              >
+                                {String(a.generation_logs).slice(-1200)}
+                              </span>
+                            </Text>
+                          </BlockStack>
+                        ) : null}
                         {a.glb_draft_url && (
                           <Text as="p">
                             <a href={a.glb_draft_url} target="_blank" rel="noreferrer">

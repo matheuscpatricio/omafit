@@ -11,7 +11,7 @@ import {
   getAssetById,
   patchAsset,
   storageUpload,
-  invokeArEyewearGenerate,
+  scheduleInvokeArEyewearGenerate,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
   normalizeAccessoryType,
@@ -216,21 +216,11 @@ export async function action({ request }) {
         status: "queued",
         error_message: null,
       });
-      console.log("[api.ar-eyewear.products] invokeArEyewearGenerate:background_start", {
+      console.log("[api.ar-eyewear.products] scheduleInvokeArEyewearGenerate", {
         assetId: id,
         shop: session.shop,
       });
-      // Dispara geração assíncrona para o endpoint responder rápido (evita 502/timeout).
-      void invokeArEyewearGenerate(id, session.shop).catch(async (genErr) => {
-        try {
-          await patchAsset(id, {
-            status: "failed",
-            error_message: genErr?.message || "Falha na geração 3D (FAL / servidor)",
-          });
-        } catch (patchErr) {
-          console.error("[api.ar-eyewear.products] background patch failed", patchErr);
-        }
-      });
+      scheduleInvokeArEyewearGenerate(id, session.shop);
       const asset = (await getAssetById(id)) || row;
       return Response.json({ asset, queued: true }, { status: 202 });
     } catch (uploadErr) {

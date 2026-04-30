@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 import {
   getAssetById,
   patchAsset,
-  invokeArEyewearGenerate,
+  scheduleInvokeArEyewearGenerate,
   ensureArGlbMetafieldDefinition,
   setProductArGlbMetafield,
   setVariantArGlbMetafield,
@@ -70,17 +70,7 @@ export async function action({ request, params }) {
         error_message: null,
         worker_claimed_at: null,
       });
-      // Dispara geração assíncrona para evitar timeout/502 no request HTTP do admin.
-      void invokeArEyewearGenerate(id, session.shop).catch(async (genErr) => {
-        try {
-          await patchAsset(id, {
-            status: "failed",
-            error_message: genErr?.message || "Falha na geração 3D (FAL)",
-          });
-        } catch (patchErr) {
-          console.error("[api.ar-eyewear.$assetId] requeue background patch failed", patchErr);
-        }
-      });
+      scheduleInvokeArEyewearGenerate(id, session.shop);
       return Response.json({ asset: queued, queued: true }, { status: 202 });
     }
 

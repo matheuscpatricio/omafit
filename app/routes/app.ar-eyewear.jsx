@@ -117,6 +117,7 @@ export default function ArEyewearPage() {
   const [frameWidthMm, setFrameWidthMm] = useState("");
   const [confirmingShop, setConfirmingShop] = useState(false);
   const [actionId, setActionId] = useState(null);
+  const [publishFeedback, setPublishFeedback] = useState(null);
 
   const loadAssets = useCallback(async () => {
     setAssetsLoading(true);
@@ -183,11 +184,24 @@ export default function ArEyewearPage() {
     setProductId(String(p.id || ""));
     const imgs = p.images || [];
     setGenerationImageUrl(imgs[0]?.url || "");
+    const vars = p.variants || [];
+    if (vars.length === 1) {
+      setVariantId(String(vars[0].id || ""));
+    } else if (vars.length > 1) {
+      setVariantId(String(vars[0].id || ""));
+    } else {
+      setVariantId("");
+    }
   };
 
   const submitFromShopify = async () => {
     if (!productId.trim()) {
       setError(t("arEyewear.errorProductId"));
+      return;
+    }
+    const vars = selectedProduct?.variants || [];
+    if (vars.length >= 1 && !String(variantId || "").trim()) {
+      setError(t("arEyewear.errorVariantRequired"));
       return;
     }
     if (!generationImageUrl) {
@@ -225,6 +239,7 @@ export default function ArEyewearPage() {
   const doAction = async (id, intent) => {
     setActionId(`${id}-${intent}`);
     setError(null);
+    if (intent !== "publish") setPublishFeedback(null);
     try {
       const res = await fetch(`/api/ar-eyewear/${id}`, {
         method: "POST",
@@ -234,6 +249,9 @@ export default function ArEyewearPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
+      if (intent === "publish" && data.publishTargets) {
+        setPublishFeedback(data.publishTargets);
+      }
       await loadAssets();
     } catch (e) {
       setError(e.message || t("arEyewear.errorAction"));
@@ -407,13 +425,10 @@ export default function ArEyewearPage() {
                   {(selectedProduct.variants || []).length > 1 ? (
                     <Select
                       label={t("arEyewear.variantSelect")}
-                      options={[
-                        { label: t("arEyewear.variantSelectAll"), value: "" },
-                        ...(selectedProduct.variants || []).map((v) => ({
-                          label: `${v.title}${v.price ? ` — ${v.price}` : ""}`,
-                          value: String(v.id || ""),
-                        })),
-                      ]}
+                      options={(selectedProduct.variants || []).map((v) => ({
+                        label: `${v.title}${v.price ? ` — ${v.price}` : ""}`,
+                        value: String(v.id || ""),
+                      }))}
                       value={variantId}
                       onChange={setVariantId}
                       helpText={t("arEyewear.variantSelectHelp")}
@@ -445,6 +460,29 @@ export default function ArEyewearPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
+              <Banner tone="info">
+                <Text as="p" variant="bodySm">
+                  {t("arEyewear.publishMetafieldExplain")}
+                </Text>
+              </Banner>
+              {publishFeedback ? (
+                <Banner
+                  tone={
+                    publishFeedback.variantMetafieldAttempted && !publishFeedback.variantMetafield
+                      ? "warning"
+                      : "success"
+                  }
+                  onDismiss={() => setPublishFeedback(null)}
+                >
+                  <Text as="p" variant="bodySm">
+                    {publishFeedback.variantMetafieldAttempted
+                      ? publishFeedback.variantMetafield
+                        ? t("arEyewear.publishDoneProductAndVariant")
+                        : t("arEyewear.publishDoneVariantFailed")
+                      : t("arEyewear.publishDoneProductOnly")}
+                  </Text>
+                </Banner>
+              ) : null}
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
                   {t("arEyewear.listTitle")}

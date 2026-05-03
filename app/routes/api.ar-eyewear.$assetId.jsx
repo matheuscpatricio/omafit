@@ -86,10 +86,20 @@ export async function action({ request, params }) {
         return Response.json({ error: "No glb_draft_url" }, { status: 400 });
       }
       await ensureArGlbMetafieldDefinition(admin);
+      /**
+       * Metafield no produto: o tema Liquid só renderiza o bloco AR se
+       * `product.metafields.omafit.ar_glb_url` estiver preenchido — por isso
+       * sempre atualizamos o produto na publicação (URL “default” da vitrine).
+       * Metafield na variante: quando o envio tem `variant_id`, gravamos também
+       * em `variant.metafields.omafit.ar_glb_url` para o provador trocar GLB
+       * por variante (miniaturas / `__OMAFIT_AR_VARIANTS__`).
+       */
       await setProductArGlbMetafield(admin, row.product_id, draftUrl);
+      let variantMetafieldOk = false;
       if (row.variant_id) {
         try {
           await setVariantArGlbMetafield(admin, row.variant_id, draftUrl);
+          variantMetafieldOk = true;
         } catch (vErr) {
           console.warn("[ar-eyewear] setVariantArGlbMetafield:", vErr?.message || vErr);
         }
@@ -98,12 +108,21 @@ export async function action({ request, params }) {
         shopDomain: session.shop,
         productId: row.product_id,
         keepAssetId: id,
+        variantId: row.variant_id,
       });
       const updated = await patchAsset(id, {
         status: "published",
         glb_published_url: draftUrl,
       });
-      return Response.json({ asset: updated });
+      return Response.json({
+        asset: updated,
+        publishTargets: {
+          productMetafield: true,
+          variantMetafield: variantMetafieldOk,
+          variantMetafieldAttempted: Boolean(row.variant_id),
+          variantId: row.variant_id || null,
+        },
+      });
     }
 
     return Response.json({ error: "Unknown intent" }, { status: 400 });

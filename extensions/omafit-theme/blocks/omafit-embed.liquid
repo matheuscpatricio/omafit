@@ -107,8 +107,14 @@
         {% assign v_img = '' %}
         {% if v.featured_image %}
           {% assign v_img = v.featured_image | image_url: width: 200 %}
+        {% elsif v.featured_media %}
+          {% assign v_img = v.featured_media.preview_image | image_url: width: 200 %}
         {% elsif v.image %}
           {% assign v_img = v.image | image_url: width: 200 %}
+        {% elsif product.featured_image %}
+          {% assign v_img = product.featured_image | image_url: width: 200 %}
+        {% elsif product.images.first %}
+          {% assign v_img = product.images.first | image_url: width: 200 %}
         {% endif %}
         (function () {
           var rawVc = {{ v_cal_json }};

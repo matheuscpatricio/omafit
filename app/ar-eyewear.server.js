@@ -302,13 +302,16 @@ export async function patchAsset(id, patch) {
 }
 
 /**
- * Garante apenas um "published" por produto/loja.
- * Assets publicados anteriores do mesmo produto viram rejected (substituídos).
+ * Ao publicar, marca como rejected apenas outros envios **published** do mesmo
+ * âmbito: mesmo produto e mesmo `variant_id` (string Shopify). `variant_id`
+ * null = escopo “produto inteiro”; assim publicar a variante A não invalida o
+ * GLB já publicado da variante B.
  */
 export async function supersedeOtherPublishedAssets({
   shopDomain,
   productId,
   keepAssetId,
+  variantId = null,
 }) {
   const { url, key } = getSupabaseConfig();
   if (!url || !key) throw new Error("Supabase not configured");
@@ -318,6 +321,15 @@ export async function supersedeOtherPublishedAssets({
     status: "eq.published",
     id: `neq.${keepAssetId}`,
   });
+  const vid =
+    variantId != null && String(variantId).trim() !== ""
+      ? String(variantId).trim()
+      : null;
+  if (vid != null) {
+    q.set("variant_id", `eq.${vid}`);
+  } else {
+    q.set("variant_id", "is.null");
+  }
   const res = await fetch(`${url}/rest/v1/${TABLE}?${q.toString()}`, {
     method: "PATCH",
     headers: {

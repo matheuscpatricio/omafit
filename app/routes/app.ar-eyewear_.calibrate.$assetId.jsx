@@ -1,13 +1,9 @@
 /**
  * /app/ar-eyewear/calibrate/:assetId
  *
- * Ferramenta visual para o lojista ajustar como o modelo 3D aparece no rosto:
- * rotação, altura, profundidade e tamanho. Sem termos técnicos — sliders com
- * nomes do dia-a-dia ("Girar para cima/baixo", "Altura", etc.).
- *
- * Guarda um metafield JSON (omafit.ar_calibration) no produto e, opcionalmente,
- * numa variante específica. O widget (omafit-embed.liquid + omafit-ar-widget.js)
- * lê esse JSON e aplica no GLB automaticamente.
+ * Página admin: o lojista alinha visualmente o acessório na pré-visualização
+ * (textos comerciais em i18n: arEyewear.calibrate.*). Persistência técnica
+ * continua em `ar-eyewear.server.js` (calibração produto/variante).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "react-router-dom";
@@ -704,6 +700,7 @@ function computeLocalInnerRadiusPreview(THREE, root, bbox) {
 }
 
 function PreviewModel({ src, cal, accessoryType = "glasses" }) {
+  const { t } = useAppI18n();
   const hostRef = useRef(null);
   const stateRef = useRef({
     THREE: null,
@@ -879,7 +876,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               const root = gltf.scene || gltf.scenes?.[0];
               if (!root) {
                 console.warn("[omafit-calibrate] GLB sem cena:", src);
-                setErrorMsg("O arquivo 3D não contém cena visível.");
+                setErrorMsg(t("arEyewear.calibrate.previewErrorNoScene"));
                 setPhase("error");
                 return;
               }
@@ -920,7 +917,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               const box = new THREE.Box3().setFromObject(root);
               if (typeof box.isEmpty === "function" && box.isEmpty()) {
                 console.warn("[omafit-calibrate] GLB sem geometria:", src);
-                setErrorMsg("O arquivo 3D não contém geometria renderizável.");
+                setErrorMsg(t("arEyewear.calibrate.previewErrorNoGeometry"));
                 setPhase("error");
                 return;
               }
@@ -1144,7 +1141,11 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               });
             } catch (e) {
               console.error("[omafit-calibrate] erro no setup do GLB:", e, src);
-              setErrorMsg(`Erro ao processar o modelo: ${e?.message || e}`);
+              setErrorMsg(
+                t("arEyewear.calibrate.previewErrorProcess", {
+                  detail: String(e?.message || e || ""),
+                }),
+              );
               setPhase("error");
             }
           },
@@ -1164,7 +1165,9 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                 (status ? `HTTP ${status} ${statusTxt || ""}`.trim() : null) ||
                 String(err) ||
                 "falha desconhecida";
-              setErrorMsg(msg);
+              setErrorMsg(
+                t("arEyewear.calibrate.previewErrorLoadModel", { detail: String(msg) }),
+              );
               setPhase("error");
             }
           },
@@ -1173,7 +1176,11 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
       .catch((e) => {
         if (cancelled) return;
         console.warn("[omafit-calibrate] falha a carregar Three.js:", e);
-        setErrorMsg(`Falha ao carregar o motor 3D: ${e?.message || e}`);
+        setErrorMsg(
+          t("arEyewear.calibrate.previewErrorEngine", {
+            detail: String(e?.message || e || ""),
+          }),
+        );
         setPhase("error");
       });
 
@@ -1199,7 +1206,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
         size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
       };
     };
-  }, [src, accessoryType]);
+  }, [src, accessoryType, t]);
 
   useEffect(() => {
     calRef.current = cal;

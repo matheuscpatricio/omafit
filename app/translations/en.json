@@ -335,53 +335,53 @@
     "title": "AR Accessories",
     "subtitle": "Create and publish 3D models of your accessories (e.g. eyewear) for a more realistic virtual try-on.",
     "uploadTitle": "New submission",
-    "uploadHelp": "One product photo (white background works best). Product ID = number in Shopify admin product URL (…/products/123456789). Optional: threeQuarter/profile fields for manual multipart upload.",
+    "uploadHelp": "One clear product photo (a light background usually works best). Optional extra photos on advanced manual upload.",
     "productId": "Shopify product ID",
     "productIdHelp": "Example: 8726381923 (digits only).",
     "variantId": "Variant ID (optional)",
-    "variantIdHelp": "Leave empty for one GLB per product.",
+    "variantIdHelp": "Optional on advanced manual upload.",
     "variantSelect": "Product variant",
-    "variantSelectHelp": "Each submission is tied to the selected variant. For multiple colors/options, create and publish one submission per variant — publishing one does not replace other variants’ published GLBs.",
-    "errorVariantRequired": "Select which product variant this 3D model is for.",
-    "publishMetafieldExplain": "Publishing always writes the GLB URL to the product metafield (omafit.ar_glb_url) — the theme needs it to render AR. If the submission is tied to a variant, the same URL is also saved on that variant so the try-on can switch models. For multiple GLBs on one product, submit and publish once per variant.",
-    "publishDoneProductOnly": "Published: product metafield updated. This submission had no variant — every variant uses the product GLB until you publish per-variant models.",
-    "publishDoneProductAndVariant": "Published: both product and variant metafields updated with the GLB URL.",
-    "publishDoneVariantFailed": "Published on the product, but saving the variant metafield failed. Check that omafit.ar_glb_url exists for PRODUCT VARIANT in Shopify; without it the storefront may not swap GLBs between variants.",
+    "variantSelectHelp": "Each request is tied to the variant you pick (for example a colour). For several options in the try-on, create one request per variant — publishing one does not remove models already live for the others.",
+    "errorVariantRequired": "Choose which product variant (colour, size, etc.) this virtual model represents.",
+    "publishMetafieldExplain": "When you publish to the store, the main virtual model is always linked to the product so the try-on appears on the page. If you picked a variant, we also update that option so shoppers see the right model when they switch colour or size. Several options? Create one request and publish once per variant.",
+    "publishDoneProductOnly": "Done: the model is live on the product. This request had no specific variant — every option shares the same model until you add per-variant requests.",
+    "publishDoneProductAndVariant": "Done: the model is live on the product and on the variant you selected.",
+    "publishDoneVariantFailed": "The model is live on the product, but we could not link it to the variant. Check your store settings or Omafit support — switching variants in the try-on may not update the model.",
     "frameWidth": "Frame width (mm, optional)",
     "frameWidthHelp": "Helps post-processing scale the mesh.",
     "photoFront": "Front photo",
     "photoThreeQuarter": "Three-quarter (45°) photo",
     "photoProfile": "Profile photo",
     "submit": "Submit for processing",
-    "listTitle": "Submissions and status",
+    "listTitle": "Requests and progress",
     "refresh": "Refresh",
     "empty": "No submissions yet.",
     "product": "Product",
-    "openDraft": "Open 3D (draft)",
-    "publish": "Publish to store (metafield)",
+    "openDraft": "Preview the virtual model",
+    "publish": "Publish to online store",
     "reject": "Reject",
     "requeue": "Re-queue",
     "errorProductId": "Enter the product ID.",
     "errorThreePhotos": "Select all three photos.",
-    "errorSelectImage": "Select the image to use for 3D generation.",
+    "errorSelectImage": "Choose the photo we will use to build the virtual model.",
     "errorLoadAssets": "Failed to load submissions.",
     "errorLoadProducts": "Failed to load products.",
     "errorSubmit": "Failed to submit for processing.",
     "errorAction": "Failed to run action.",
     "warnShop": "Open from the embedded Shopify admin for shop context.",
     "shopProductsTitle": "Store products (eyewear)",
-    "shopProductsHelp": "Select a product and pick the best image for 3D generation (only one photo is sent to the reconstruction service).",
+    "shopProductsHelp": "Pick the product and the photo where the accessory looks best to shoppers — we use it to create the try-on model.",
     "shopProductsSearch": "Filter by name",
     "shopProductsEmpty": "No products matched eyewear heuristics. Check product type, Shopify product category, or tags (e.g. glasses, sunglasses).",
     "shopProductsLoading": "Loading catalog…",
     "shopProductsSelect": "Select",
     "shopImagesTitle": "Confirm product images",
-    "shopImagesHelp": "Pick the image that best shows the eyewear from the front—sharp and well lit.",
-    "whiteBackgroundHint": "Tip: a product shot on a white or neutral background usually gives the best 3D results.",
+    "shopImagesHelp": "Prefer a front-facing, sharp, well-lit photo where the product is easy to see.",
+    "whiteBackgroundHint": "Tip: a light or neutral background usually looks cleaner and more premium in the try-on.",
     "selectFront": "Image — front",
     "selectThreeQuarter": "Image — three-quarter (45°)",
     "selectProfile": "Image — profile",
-    "selectGenerationImage": "Image for 3D generation",
+    "selectGenerationImage": "Photo to build the virtual model",
     "selectPlaceholder": "Choose…",
     "imageLabel": "Image {n}",
     "confirmShopImages": "Confirm images and send to processing",
@@ -402,7 +402,7 @@
     },
     "productTypeLabel": "Type",
     "categoryLabel": "Category",
-    "queueWorkerBanner": "Some submissions are being processed. Refresh shortly to follow progress and publish the new 3D models.",
+    "queueWorkerBanner": "We are preparing one or more models. Refresh in a moment for the latest status.",
     "accessoryType": {
       "glasses": "Glasses",
       "necklace": "Necklace",
@@ -414,57 +414,64 @@
       "hint": "We use tags first (e.g. ar:watch), then the Shopify product category (e.g. … > Watches), product type, and title. To force a type, add ar:watch, ar:bracelet, ar:necklace or ar:glasses before uploading."
     },
     "calibrate": {
-      "openButton": "Calibrate position",
-      "title": "Calibrate the 3D model on the face",
-      "subtitle": "Place the glasses (or accessory) correctly on the customer's face. Drag the controls and watch the preview on the left.",
+      "openButton": "Fine-tune try-on placement",
+      "title": "Polish how your try-on looks to shoppers",
+      "subtitle": "We show the accessory on a simple reference silhouette. Adjust the controls until it feels natural — the way a customer would expect it to sit in your store experience.",
       "back": "Back to AR Accessories",
-      "howToTitle": "How to use this page",
-      "howToIntro": "The controls on the right move the 3D model. Adjust until it looks like a real pair of glasses resting on the reference face in the preview.",
-      "howToStep1": "Start with \"Tilt up/down\" and \"Turn left/right\" until the model faces forward, with the lenses aligned to the reference eyes.",
-      "howToStep2": "Use \"Height on face\" to raise or lower the glasses. The temples should sit slightly above the ears on the reference face.",
-      "howToStep3": "For fine tuning, use \"Move closer/further\" and the nudge sliders.",
-      "howToStep4": "Click \"Save calibration\" when you're happy. Shoppers will see this position in the AR try-on.",
-      "previewHint": "Adjust until the glasses align with the eyes of the reference face.",
-      "targetLabel": "Where to save this adjustment",
-      "targetHelp": "Pick \"Whole product\" if every variant uses the same 3D model. Pick \"Only this variant\" if each color/style needs its own tweak.",
-      "targetProduct": "Whole product (applies to all variants)",
+      "howToTitle": "How it works",
+      "howToIntro": "Each control moves or turns the piece in the preview. Aim for a comfortable, believable fit on the face, wrist, or neck — whichever matches your product.",
+      "howToStep1": "Start with \"Tilt up/down\" and \"Turn left/right\" until the piece faces forward, with lenses lined up to the reference eyes for eyewear.",
+      "howToStep2": "Use \"Height\" to raise or lower — temples should sit just above the ear line on the silhouette.",
+      "howToStep3": "For finishing touches, use \"Move closer/further\" and the sideways nudge controls.",
+      "howToStep4": "When you like what you see, click \"Save this look\". Visitors will see that placement in your online try-on.",
+      "previewHint": "For glasses, align the piece with the eyes on the silhouette — that reference keeps results consistent.",
+      "targetLabel": "Apply this look to…",
+      "targetHelp": "Choose \"Whole product\" when every colour or size should share the same placement. Choose \"Only this variant\" when each option needs its own fine-tuning.",
+      "targetProduct": "Whole product (all variants)",
       "targetVariant": "Only this variant",
       "variantLabel": "Variant",
-      "save": "Save calibration",
-      "reset": "Reset to defaults",
+      "save": "Save this look",
+      "reset": "Restore suggested placement",
       "cancel": "Cancel",
-      "saveSuccess": "Calibration saved. Open the product on your store and check the AR try-on. Tip: if you opened the product page recently, hard refresh it (Ctrl+F5) — the theme keeps the old version cached for a few seconds.",
-      "saveError": "Couldn't save",
-      "tipsTitle": "Quick tips",
-      "tip1": "If the model appears sideways, use \"Turn left/right\" until it faces the camera.",
-      "tip2": "If it appears upside-down, fix it with \"Tilt up/down\" or \"Roll sideways\".",
-      "tip3": "If the accessory looks too big or too small on the face, tweak \"Size\" instead of height.",
+      "saveSuccess": "Saved to your store. Open the product page and refresh to see it in the try-on — browsers sometimes show a cached page first.",
+      "saveError": "We couldn't save your changes",
+      "tipsTitle": "Helpful suggestions",
+      "tip1": "If the piece looks sideways, use \"Turn left/right\" until it faces the shopper.",
+      "tip2": "If it looks upside down, correct it with \"Tilt up/down\" or \"Roll sideways\".",
+      "tip3": "If the accessory feels too big or small, adjust \"Size\" before changing height.",
+      "previewErrorNoScene": "We could not show this model in the preview — the file may be incomplete. Try publishing the model again from AR Accessories.",
+      "previewErrorNoGeometry": "We could not find visible shapes in this file for the preview. Check the file or regenerate the model.",
+      "previewErrorProcess": "We could not prepare the preview. More information: {detail}",
+      "previewErrorLoadModel": "We could not load the model for preview. Detail: {detail}",
+      "previewErrorEngine": "The preview could not start in this browser. Detail: {detail}",
       "sliders": {
+        "rotationGroup": "Angle",
+        "rotationReset": "Reset angle",
         "tilt": {
           "label": "Tilt up / down",
-          "help": "Use this if the model is leaning forwards or backwards.",
+          "help": "Use when the piece looks tipped toward or away from the viewer.",
           "helpByType": {
-            "watch": "Use this if the watch appears tilted forwards or backwards on top of the wrist.",
-            "bracelet": "Use this if the bracelet appears tilted forwards or backwards on the wrist.",
-            "necklace": "Use this if the necklace appears tilted forwards or backwards on the neck."
+            "watch": "When the watch looks tipped forward or backward on the wrist.",
+            "bracelet": "When the bracelet looks tipped forward or backward.",
+            "necklace": "When the necklace looks tipped forward or backward on the neck."
           }
         },
         "yaw": {
           "label": "Turn left / right",
-          "help": "Use this if the model is showing its side instead of facing forward.",
+          "help": "Use when the piece shows its edge instead of facing the shopper.",
           "helpByType": {
-            "watch": "Use this if the watch face is turned sideways instead of facing the camera.",
-            "bracelet": "Use this if the bracelet looks twisted sideways instead of following the wrist.",
-            "necklace": "Use this if the pendant is turned sideways instead of facing forward."
+            "watch": "When the dial is sideways instead of facing the camera.",
+            "bracelet": "When the bracelet twists instead of following the wrist.",
+            "necklace": "When the pendant sits sideways."
           }
         },
         "roll": {
           "label": "Roll sideways",
-          "help": "Straighten the model if it appears tilted to one side.",
+          "help": "Straightens the piece when it looks cocked to one side.",
           "helpByType": {
-            "watch": "Rolls the watch around the arm — one side lifts while the other drops.",
-            "bracelet": "Rolls the bracelet around the arm — one side lifts while the other drops.",
-            "necklace": "Rolls the necklace around the neck axis."
+            "watch": "Rolls along the arm — one edge lifts, the other lowers.",
+            "bracelet": "Rolls along the arm — one edge lifts, the other lowers.",
+            "necklace": "Rolls along the neckline."
           }
         },
         "height": {
@@ -478,11 +485,11 @@
             "bracelet": "Move closer / further from the wrist",
             "necklace": "Move closer / further from the neck"
           },
-          "help": "Bring the model closer or push it slightly away from the face.",
+          "help": "Brings the piece nearer to the face or sets it slightly farther back.",
           "helpByType": {
-            "watch": "Bring the watch closer to the skin or push it slightly away from the wrist.",
-            "bracelet": "Bring the bracelet closer to the skin or push it slightly away from the wrist.",
-            "necklace": "Bring the necklace closer to the skin or push it slightly away from the neck."
+            "watch": "Brings the watch closer to the skin or lifts it slightly off the wrist.",
+            "bracelet": "Brings the bracelet closer to the skin or lifts it slightly.",
+            "necklace": "Brings the necklace closer to the neck or adds a little space."
           }
         },
         "nudgeY": {
@@ -492,29 +499,29 @@
             "bracelet": "Position along the wrist",
             "necklace": "Height on the neck"
           },
-          "help": "Moves the glasses up or down (in cm) to align with the eyeline.",
+          "help": "Moves the glasses up or down (in centimetres) to match the eyeline.",
           "helpByType": {
-            "watch": "Slides the watch along the arm (in cm) — tweak if it sits above or below the wrist bone.",
-            "bracelet": "Slides the bracelet along the arm (in cm) — useful to place it exactly where the customer would wear it.",
-            "necklace": "Raises or lowers the necklace (in cm) — adjust until the pendant sits at the desired chest height."
+            "watch": "Slides along the arm — handy if the watch sits too high or low on the wrist.",
+            "bracelet": "Slides along the arm to match where a customer would wear it.",
+            "necklace": "Raises or lowers until the pendant sits where you want it."
           }
         },
         "nudgeX": {
           "label": "Nudge sideways",
-          "help": "Center the model if it looks shifted to the left or right.",
+          "help": "Centres the piece if it drifts left or right.",
           "helpByType": {
-            "watch": "Nudges the watch left or right on the wrist — useful if it sits off-center.",
-            "bracelet": "Nudges the bracelet left or right on the wrist.",
-            "necklace": "Nudges the necklace left or right on the neck."
+            "watch": "Shifts the watch left or right on the wrist.",
+            "bracelet": "Shifts the bracelet left or right on the wrist.",
+            "necklace": "Shifts the necklace left or right."
           }
         },
         "scale": {
           "label": "Size",
-          "help": "Makes the whole model bigger or smaller. Use sparingly: too big covers the face.",
+          "help": "Scales the whole piece. Go gently — too large can cover the face.",
           "helpByType": {
-            "watch": "Makes the watch bigger or smaller. Too small and it vanishes on the wrist; too big and it looks unrealistic.",
-            "bracelet": "Makes the bracelet bigger or smaller. Use sparingly: too big starts to look like a cuff.",
-            "necklace": "Makes the necklace bigger or smaller. Use sparingly: too big covers the whole neck."
+            "watch": "Scales the watch — very small sizes disappear; very large sizes look less believable.",
+            "bracelet": "Scales the bracelet — very large values can look heavy on the wrist.",
+            "necklace": "Scales the necklace — very large values can dominate the neckline."
           }
         }
       }

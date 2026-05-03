@@ -335,53 +335,53 @@
     "title": "Acessórios AR",
     "subtitle": "Transforme os seus acessórios em uma experiência de compra mais envolvente: apresente seus produtos com visual mais real, aumente a confiança do cliente antes da compra e destaque a sua marca com uma prova virtual que ajuda a vender mais.",
     "uploadTitle": "Novo envio",
-    "uploadHelp": "Uma foto do produto (fundo branco é ideal). ID do produto = número na URL do admin Shopify (…/products/123456789). Campos threeQuarter/profile no upload manual são opcionais.",
+    "uploadHelp": "Uma foto nítida do produto (fundo claro costuma dar melhor resultado). No upload manual, fotos extra são opcionais.",
     "productId": "ID do produto Shopify",
     "productIdHelp": "Ex.: 8726381923 (apenas números).",
     "variantId": "ID da variante (opcional)",
-    "variantIdHelp": "Deixe vazio para um GLB por produto.",
+    "variantIdHelp": "Opcional no envio manual avançado.",
     "variantSelect": "Variante do produto",
-    "variantSelectHelp": "Cada envio fica associado à variante escolhida. Para várias cores/modelos, gere e publique um envio por variante — publicar uma não substitui o GLB publicado das outras.",
-    "errorVariantRequired": "Escolha a variante do produto para este modelo 3D.",
-    "publishMetafieldExplain": "Ao publicar, a URL do GLB é sempre gravada no metafield do produto (omafit.ar_glb_url) — o tema precisa disso para mostrar o AR. Se o envio tiver variante associada, a mesma URL também é gravada nessa variante, para o provador trocar o modelo. Para vários GLBs no mesmo produto, use um envio e uma publicação por variante.",
-    "publishDoneProductOnly": "Publicado: metafield do produto atualizado. Este envio não tinha variante — todas as variantes usam o GLB do produto até publicares modelos por variante.",
-    "publishDoneProductAndVariant": "Publicado: metafields do produto e da variante atualizados com a URL do GLB.",
-    "publishDoneVariantFailed": "Publicado no produto, mas falhou gravar o metafield na variante. Confere na Shopify se existe a definição omafit.ar_glb_url ao nível de variante; sem isso o provador pode não trocar o GLB ao escolher variantes.",
+    "variantSelectHelp": "Cada pedido corresponde à variante que escolher (por exemplo, uma cor). Para várias opções no provador, crie um pedido por variante — disponibilizar uma não apaga o modelo já ativo das outras.",
+    "errorVariantRequired": "Indique qual variante do produto (cor, tamanho, etc.) este modelo representa.",
+    "publishMetafieldExplain": "Ao disponibilizar na loja, o modelo principal fica sempre associado ao produto (para o provador virtual aparecer na página). Se tiver escolhido uma variante, atualizamos também essa opção, para o cliente ver o modelo certo ao mudar de cor ou tamanho. Várias opções? Faça um pedido e disponibilize uma vez por variante.",
+    "publishDoneProductOnly": "Pronto: o modelo está disponível no produto. Este pedido não tinha variante específica — todas as opções usam o mesmo modelo até criar pedidos por variante.",
+    "publishDoneProductAndVariant": "Pronto: o modelo está disponível no produto e na variante que escolheu.",
+    "publishDoneVariantFailed": "O modelo ficou disponível no produto, mas não foi possível associá-lo à variante. Verifique as definições da loja ou o suporte Omafit — ao mudar de variante, o provador pode não atualizar o modelo.",
     "frameWidth": "Largura da armação (mm, opcional)",
     "frameWidthHelp": "Ajuda o pós-processamento a escalar o modelo.",
     "photoFront": "Foto frontal",
     "photoThreeQuarter": "Foto três-quartos (45°)",
     "photoProfile": "Foto de perfil",
     "submit": "Enviar para processamento",
-    "listTitle": "Envios e estado",
+    "listTitle": "Pedidos e progresso",
     "refresh": "Atualizar",
     "empty": "Nenhum envio ainda.",
     "product": "Produto",
-    "openDraft": "Abrir 3D (rascunho)",
-    "publish": "Publicar na loja (metafield)",
+    "openDraft": "Ver pré-visualização do modelo",
+    "publish": "Disponibilizar na loja online",
     "reject": "Rejeitar",
     "requeue": "Reenfileirar",
     "errorProductId": "Informe o ID do produto.",
     "errorThreePhotos": "Selecione as três fotos.",
-    "errorSelectImage": "Selecione a imagem que será usada na geração 3D.",
+    "errorSelectImage": "Escolha a imagem que vamos usar para criar o modelo virtual.",
     "errorLoadAssets": "Erro ao carregar envios.",
     "errorLoadProducts": "Erro ao carregar produtos.",
     "errorSubmit": "Erro ao enviar para processamento.",
     "errorAction": "Erro ao executar a ação.",
     "warnShop": "Abra pelo admin embutido da Shopify para contexto da loja.",
     "shopProductsTitle": "Produtos da loja (óculos)",
-    "shopProductsHelp": "Selecione o produto e escolha a melhor imagem para gerar o modelo 3D (uma única foto é usada pelo serviço de reconstrução).",
+    "shopProductsHelp": "Escolha o produto e a foto em que o acessório se vê melhor ao cliente — usamos essa imagem para criar o modelo do provador virtual.",
     "shopProductsSearch": "Filtrar por nome",
     "shopProductsEmpty": "Nenhum produto correspondeu aos critérios de óculos. Verifique o tipo de produto, a categoria padrão da Shopify ou as tags (ex.: óculos, sunglasses).",
     "shopProductsLoading": "A carregar catálogo…",
     "shopProductsSelect": "Selecionar",
     "shopImagesTitle": "Confirmar imagens do produto",
-    "shopImagesHelp": "Escolha a imagem que melhor mostra o óculo de frente, nítida e bem iluminada.",
-    "whiteBackgroundHint": "Recomendação: use uma foto do produto em fundo branco ou neutro — costuma dar o melhor resultado na geração 3D.",
+    "shopImagesHelp": "Prefira uma foto de frente, nítida e bem iluminada, em que o produto se perceba claramente.",
+    "whiteBackgroundHint": "Dica: fundo claro ou neutro costuma dar um resultado mais limpo e profissional no provador.",
     "selectFront": "Imagem — frontal",
     "selectThreeQuarter": "Imagem — três-quartos (45°)",
     "selectProfile": "Imagem — perfil",
-    "selectGenerationImage": "Imagem para geração 3D",
+    "selectGenerationImage": "Imagem para criar o modelo virtual",
     "selectPlaceholder": "Escolher…",
     "imageLabel": "Imagem {n}",
     "confirmShopImages": "Confirmar imagens e enviar para processamento",
@@ -402,7 +402,7 @@
     },
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoria",
-    "queueWorkerBanner": "Existem envios em processamento. Atualize em instantes para acompanhar o andamento e publicar os novos modelos 3D.",
+    "queueWorkerBanner": "Estamos a preparar um ou mais modelos. Atualize a página dentro de instantes para ver o estado mais recente.",
     "accessoryType": {
       "glasses": "Óculos",
       "necklace": "Colar",
@@ -414,57 +414,64 @@
       "hint": "Usamos primeiro as tags (ex.: ar:watch), depois a categoria de produto da Shopify (ex.: … > Watches), o tipo de produto e o título. Para forçar um tipo, adicione uma tag ar:watch, ar:bracelet, ar:necklace ou ar:glasses antes de enviar."
     },
     "calibrate": {
-      "openButton": "Calibrar posição",
-      "title": "Calibrar o modelo 3D no rosto",
-      "subtitle": "Deixe os óculos (ou o acessório) na posição certa em relação ao rosto do cliente. Arraste os controles e acompanhe na pré-visualização ao lado.",
-      "back": "Voltar para Acessórios AR",
-      "howToTitle": "Como usar esta página",
-      "howToIntro": "Os controles ao lado movem o modelo 3D. Ajuste até ele ficar parecido com os óculos colocados no rosto desenhado na pré-visualização.",
-      "howToStep1": "Comece por \"Girar para cima/baixo\" e \"Girar para esquerda/direita\" até o modelo aparecer de frente, com as lentes alinhadas aos olhos do rosto de referência.",
-      "howToStep2": "Use \"Altura\" para subir ou descer os óculos. O ideal é as hastes ficarem um pouco acima das orelhas do rosto.",
-      "howToStep3": "Se precisar de um ajuste fino, use \"Aproximar do rosto\" e os controles de empurrar um pouquinho para um lado.",
-      "howToStep4": "Clique em \"Salvar calibração\" quando estiver satisfeito. Os clientes passarão a ver essa posição no provador AR.",
-      "previewHint": "Ajuste até os óculos ficarem alinhados com os olhos do rosto de referência.",
-      "targetLabel": "Onde salvar este ajuste",
-      "targetHelp": "Escolha \"Produto inteiro\" se todas as variantes usam o mesmo modelo 3D. Escolha \"Apenas esta variante\" se cada cor/estilo precisar de um ajuste próprio.",
-      "targetProduct": "Produto inteiro (vale para todas as variantes)",
-      "targetVariant": "Apenas esta variante",
+      "openButton": "Ajustar posição no provador",
+      "title": "Deixe o provador virtual com o aspeto certo",
+      "subtitle": "Mostramos o acessório sobre uma silhueta de referência: use os controlos até ficar natural, como o cliente o veria ao experimentar na loja.",
+      "back": "Voltar aos Acessórios AR",
+      "howToTitle": "Como funciona",
+      "howToIntro": "Os controlos deslocam ou rodam a peça na pré-visualização. O objetivo é que pareça confortável e realista sobre o rosto (ou pulso ou pescoço, consoante o produto).",
+      "howToStep1": "Comece por \"Girar para cima/baixo\" e \"Girar para esquerda/direita\" até a peça ficar de frente, com as lentes alinhadas aos olhos da silhueta.",
+      "howToStep2": "Use \"Altura\" para subir ou descer — o ideal é que as hastes fiquem ligeiramente acima da linha das orelhas na imagem de referência.",
+      "howToStep3": "Para um toque final, use \"Aproximar / afastar\" e os controlos de deslocar para o lado.",
+      "howToStep4": "Quando gostar do resultado, clique em \"Guardar este ajuste\". A partir daí, os visitantes veem essa posição no provador da sua loja.",
+      "previewHint": "Ajuste até a peça alinhar com os olhos da silhueta — é o ponto de referência mais útil para óculos.",
+      "targetLabel": "Este ajuste aplica-se a…",
+      "targetHelp": "Escolha \"Todo o produto\" se todas as cores ou tamanhos devem partilhar a mesma posição. Escolha \"Só esta variante\" quando cada opção precisa de um alinhamento diferente.",
+      "targetProduct": "Todo o produto (todas as variantes)",
+      "targetVariant": "Só esta variante",
       "variantLabel": "Variante",
-      "save": "Salvar calibração",
-      "reset": "Restaurar valores padrão",
+      "save": "Guardar este ajuste",
+      "reset": "Repor posição sugerida",
       "cancel": "Cancelar",
-      "saveSuccess": "Calibração salva. Abra o produto na loja e confirme no provador AR. Dica: se abriu a página do produto há pouco, atualize-a com Ctrl+F5 — o tema guarda a versão antiga por alguns segundos.",
-      "saveError": "Não foi possível salvar",
-      "tipsTitle": "Dicas rápidas",
-      "tip1": "Se o modelo aparecer virado para um lado, use \"Girar para esquerda/direita\" até ele ficar de frente.",
-      "tip2": "Se ele aparecer de cabeça para baixo, use \"Girar para cima/baixo\" ou \"Inclinar lateralmente\" para corrigir.",
-      "tip3": "Para um acessório grande ou pequeno demais no rosto do cliente, ajuste o \"Tamanho\" em vez de mexer na altura.",
+      "saveSuccess": "Ajuste guardado na sua loja. Abra a página do produto e atualize-a para ver o resultado no provador — por vezes o navegador mostra primeiro a versão em cache.",
+      "saveError": "Não foi possível guardar o ajuste",
+      "tipsTitle": "Sugestões úteis",
+      "tip1": "Se a peça aparecer de perfil, use \"Girar para esquerda/direita\" até ficar de frente.",
+      "tip2": "Se parecer invertida, corrija com \"Girar para cima/baixo\" ou \"Inclinar lateralmente\".",
+      "tip3": "Se o acessório parecer grande ou pequeno demais, mexa primeiro em \"Tamanho\" antes de alterar a altura.",
+      "previewErrorNoScene": "Não conseguimos mostrar este modelo na pré-visualização — o ficheiro parece incompleto. Tente voltar a disponibilizar o modelo a partir de Acessórios AR.",
+      "previewErrorNoGeometry": "Não encontrámos formas visíveis neste modelo para mostrar na pré-visualização. Verifique se o ficheiro está correto ou volte a gerar o modelo.",
+      "previewErrorProcess": "Não foi possível preparar a pré-visualização. Mais informação: {detail}",
+      "previewErrorLoadModel": "Não foi possível carregar o modelo para pré-visualizar. Detalhe: {detail}",
+      "previewErrorEngine": "A pré-visualização não arrancou neste navegador. Detalhe: {detail}",
       "sliders": {
+        "rotationGroup": "Orientação",
+        "rotationReset": "Repor orientação",
         "tilt": {
           "label": "Girar para cima / para baixo",
-          "help": "Use se o modelo aparecer tombado para frente ou para trás.",
+          "help": "Use quando a peça parecer inclinada para a frente ou para trás.",
           "helpByType": {
-            "watch": "Use se o relógio aparecer tombado para a frente ou para trás em cima do pulso.",
-            "bracelet": "Use se a pulseira aparecer tombada para a frente ou para trás em cima do pulso.",
-            "necklace": "Use se o colar aparecer tombado para a frente ou para trás em cima do pescoço."
+            "watch": "Quando o relógio parecer inclinado para a frente ou para trás sobre o pulso.",
+            "bracelet": "Quando a pulseira parecer inclinada para a frente ou para trás.",
+            "necklace": "Quando o colar parecer inclinado para a frente ou para trás no pescoço."
           }
         },
         "yaw": {
           "label": "Girar para esquerda / para direita",
-          "help": "Use se o modelo estiver virado de lado em vez de aparecer de frente.",
+          "help": "Use quando a peça estiver de lado em vez de voltada para o cliente.",
           "helpByType": {
-            "watch": "Use se o mostrador do relógio estiver virado de lado em vez de voltado para a câmara.",
-            "bracelet": "Use se a pulseira estiver virada de lado em vez de alinhada com o pulso.",
-            "necklace": "Use se o pingente do colar estiver virado de lado."
+            "watch": "Quando o mostrador estiver de lado em vez de voltado para a câmara.",
+            "bracelet": "Quando a pulseira estiver torcida em vez de seguir o pulso.",
+            "necklace": "Quando o pingente estiver de lado."
           }
         },
         "roll": {
           "label": "Inclinar lateralmente",
-          "help": "Endireita o modelo quando ele fica torto para um dos lados.",
+          "help": "Endireita a peça quando parece tombada para um dos lados.",
           "helpByType": {
-            "watch": "Inclina o relógio no eixo do braço — uma das laterais sobe e a outra desce.",
-            "bracelet": "Inclina a pulseira no eixo do braço — uma das laterais sobe e a outra desce.",
-            "necklace": "Inclina o colar no eixo do pescoço."
+            "watch": "Inclina o relógio ao longo do braço — uma lateral sobe e a outra desce.",
+            "bracelet": "Inclina a pulseira ao longo do braço — uma lateral sobe e a outra desce.",
+            "necklace": "Inclina o colar ao longo do pescoço."
           }
         },
         "height": {
@@ -478,11 +485,11 @@
             "bracelet": "Aproximar / afastar do pulso",
             "necklace": "Aproximar / afastar do pescoço"
           },
-          "help": "Traz o modelo para mais perto ou o afasta um pouco do rosto.",
+          "help": "Traz a peça mais para perto ou afasta-a ligeiramente do rosto.",
           "helpByType": {
-            "watch": "Traz o relógio para mais perto da pele ou o afasta um pouco do pulso.",
-            "bracelet": "Traz a pulseira para mais perto da pele ou a afasta um pouco do pulso.",
-            "necklace": "Traz o colar para mais perto do pescoço ou o afasta um pouco."
+            "watch": "Aproxima ou afasta o relógio da pele no pulso.",
+            "bracelet": "Aproxima ou afasta a pulseira da pele no pulso.",
+            "necklace": "Aproxima ou afasta o colar do pescoço."
           }
         },
         "nudgeY": {
@@ -492,29 +499,29 @@
             "bracelet": "Posição ao longo do pulso",
             "necklace": "Altura no pescoço"
           },
-          "help": "Sobe ou desce os óculos (em cm) para alinhar com a linha dos olhos.",
+          "help": "Sobe ou desce os óculos (em centímetros) para alinhar com os olhos.",
           "helpByType": {
-            "watch": "Desloca o relógio ao longo do braço (em cm) — ajuste se ficar acima ou abaixo do osso do pulso.",
-            "bracelet": "Desloca a pulseira ao longo do braço (em cm) — útil para a colocar exatamente onde o cliente usaria.",
-            "necklace": "Sobe ou desce o colar (em cm) — ajuste até o pingente ficar na altura do peito desejada."
+            "watch": "Desloca o relógio ao longo do braço — útil se estiver alto ou baixo demais no pulso.",
+            "bracelet": "Desloca a pulseira ao longo do braço — para coincidir com onde o cliente a usaria.",
+            "necklace": "Sobe ou desce o colar até o pingente ficar à altura desejada."
           }
         },
         "nudgeX": {
           "label": "Empurrar para o lado",
-          "help": "Centraliza o modelo se ele ficar deslocado para a esquerda ou direita.",
+          "help": "Centra a peça se estiver deslocada para a esquerda ou direita.",
           "helpByType": {
-            "watch": "Empurra o relógio para a esquerda ou direita no pulso — útil se estiver desalinhado.",
-            "bracelet": "Empurra a pulseira para a esquerda ou direita no pulso.",
-            "necklace": "Empurra o colar para a esquerda ou direita no pescoço."
+            "watch": "Desloca o relógio para a esquerda ou direita no pulso.",
+            "bracelet": "Desloca a pulseira para a esquerda ou direita no pulso.",
+            "necklace": "Desloca o colar para a esquerda ou direita no pescoço."
           }
         },
         "scale": {
           "label": "Tamanho",
-          "help": "Aumenta ou diminui o modelo inteiro. Use com cuidado: muito grande cobre o rosto.",
+          "help": "Aumenta ou reduz a peça toda. Com moderação: em excesso tapa o rosto.",
           "helpByType": {
-            "watch": "Aumenta ou diminui o relógio. Relógios pequenos demais desaparecem no pulso; muito grandes parecem artificiais.",
-            "bracelet": "Aumenta ou diminui a pulseira. Use com cuidado: muito grande parece uma manilha.",
-            "necklace": "Aumenta ou diminui o colar. Use com cuidado: muito grande tapa o pescoço todo."
+            "watch": "Aumenta ou reduz o relógio — muito pequeno desaparece no pulso; muito grande perde naturalidade.",
+            "bracelet": "Aumenta ou reduz a pulseira — valores muito altos deixam o visual pesado.",
+            "necklace": "Aumenta ou reduz o colar — valores muito altos cobrem demasiado o pescoço."
           }
         }
       }

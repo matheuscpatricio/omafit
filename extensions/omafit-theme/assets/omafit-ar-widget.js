@@ -6241,17 +6241,17 @@ async function runArSession({
     arBottomBar = el("div", {
       className: "omafit-ar-variant-cart-strip",
       style: {
-        position: "absolute",
-        bottom: "max(88px, calc(10vh + env(safe-area-inset-bottom, 0px)))",
-        left: "0",
-        right: "0",
-        background: "transparent",
-        padding: "10px 10px max(8px, env(safe-area-inset-bottom, 0px))",
-        zIndex: "999",
+        flexShrink: "0",
+        width: "100%",
+        boxSizing: "border-box",
+        background: "#0d0d0d",
+        padding: "10px 12px max(10px, env(safe-area-inset-bottom, 0px))",
+        zIndex: "20",
         display: "flex",
         flexDirection: "column",
         gap: "8px",
         pointerEvents: "auto",
+        borderTop: "1px solid rgba(255,255,255,0.12)",
       },
     });
 
@@ -6362,9 +6362,6 @@ async function runArSession({
     arBottomBar.appendChild(cartBtn);
   }
 
-  /** Por cima do vídeo/WebGL (`arFit` tem overflow:hidden + host MindAR). */
-  if (arBottomBar) arWrap.appendChild(arBottomBar);
-
   colContent.style.padding = "0";
   /**
    * Contentor do modal: deixar `hidden` para que o conteúdo AR não transborde
@@ -6377,6 +6374,12 @@ async function runArSession({
   colContent.style.display = "flex";
   colContent.style.flexDirection = "column";
   colContent.appendChild(arWrap);
+  /**
+   * Barra de variantes + carrinho no `shell` (abaixo de `mainRow`), não dentro
+   * de `arWrap`: `mainRow`/`colContent` usam overflow:hidden para o MindAR e
+   * recortavam a faixa absoluta — miniaturas “invisíveis” na loja.
+   */
+  if (arBottomBar) shell.appendChild(arBottomBar);
 
   let mindarThree = null;
   let arResizeObserver = null;
@@ -14092,7 +14095,6 @@ async function main() {
   function openModal() {
     if (modal) return;
     document.body.style.overflow = "hidden";
-    const arVariants = Array.isArray(window.__OMAFIT_AR_VARIANTS__) ? window.__OMAFIT_AR_VARIANTS__ : [];
     const arProductId = root.dataset.productId || root.getAttribute("data-product-id") || "";
     modal = buildInfoModal({
       primaryColor,
@@ -14103,6 +14105,9 @@ async function main() {
       t,
       onClose: closeModal,
       onStartAr: (shell, mainRow, colContent, header) => {
+        const freshVariants = Array.isArray(window.__OMAFIT_AR_VARIANTS__)
+          ? window.__OMAFIT_AR_VARIANTS__
+          : [];
         runArSession({
           shell,
           mainRow,
@@ -14112,7 +14117,7 @@ async function main() {
           primaryColor,
           t,
           onClose: closeModal,
-          variants: arVariants,
+          variants: freshVariants,
           productId: arProductId,
         });
       },

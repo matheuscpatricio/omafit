@@ -76,6 +76,7 @@ export default function WidgetPage() {
     admin_locale: locale || 'en',
     embed_position: 'below_buy_buttons',
     cta_type: 'link',
+    tryon_layout: 'default',
   });
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [collectionsError, setCollectionsError] = useState(null);
@@ -171,6 +172,10 @@ export default function WidgetPage() {
                 ? 'above_buy_buttons'
                 : 'below_buy_buttons',
             cta_type: loadedConfig.cta_type === 'button' ? 'button' : 'link',
+            tryon_layout:
+              loadedConfig.tryon_layout === 'sidebar' || loadedConfig.tryon_layout === 'default'
+                ? loadedConfig.tryon_layout
+                : 'default',
           });
         }
       } else {
@@ -365,6 +370,10 @@ export default function WidgetPage() {
             ? 'above_buy_buttons'
             : 'below_buy_buttons',
         cta_type: configToSave.cta_type === 'button' ? 'button' : 'link',
+        tryon_layout:
+          configToSave.tryon_layout === 'sidebar' || configToSave.tryon_layout === 'default'
+            ? configToSave.tryon_layout
+            : 'default',
       };
       
       console.log('[Widget] Payload a ser enviado:', {
@@ -570,6 +579,17 @@ export default function WidgetPage() {
                 value={config.cta_type || "link"}
                 onChange={(value) => handleChange("cta_type", value)}
                 helpText={t("widget.ctaTypeHelp")}
+              />
+
+              <Select
+                label={t("widget.tryonLayoutLabel")}
+                options={[
+                  { label: t("widget.tryonLayoutDefault"), value: "default" },
+                  { label: t("widget.tryonLayoutSidebar"), value: "sidebar" },
+                ]}
+                value={config.tryon_layout === "sidebar" ? "sidebar" : "default"}
+                onChange={(value) => handleChange("tryon_layout", value)}
+                helpText={t("widget.tryonLayoutHelp")}
               />
 
               <Divider />

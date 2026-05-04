@@ -101,8 +101,16 @@ function normalizeCtaType(value) {
   return "link";
 }
 
+function normalizeTryonLayout(value) {
+  const s = String(value || "").trim().toLowerCase();
+  if (s === "sidebar") return "sidebar";
+  return "default";
+}
+
 async function fetchConfigByShop(shopDomain) {
   const selectFull =
+    "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,tryon_layout,created_at,updated_at";
+  const selectWithoutTryonLayout =
     "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,created_at,updated_at";
   const selectLegacy =
     "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at";
@@ -116,8 +124,18 @@ async function fetchConfigByShop(shopDomain) {
     { headers: supabaseHeaders() },
   );
   if (!response.ok) {
-    const errText = await response.text().catch(() => "");
+    let errText = await response.text().catch(() => "");
+    if (response.status === 400 && errText.includes("tryon_layout")) {
+      response = await fetch(
+        `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(
+          shopDomain,
+        )}&select=${selectWithoutTryonLayout}&order=updated_at.desc&limit=1`,
+        { headers: supabaseHeaders() },
+      );
+      errText = response.ok ? "" : await response.text().catch(() => "");
+    }
     const missingEmbed =
+      !response.ok &&
       response.status === 400 &&
       errText &&
       (errText.includes("embed_position") || errText.includes("cta_type"));
@@ -154,6 +172,7 @@ async function fetchConfigByShop(shopDomain) {
     ...row,
     embed_position: normalizeEmbedPosition(row.embed_position),
     cta_type: normalizeCtaType(row.cta_type),
+    tryon_layout: normalizeTryonLayout(row.tryon_layout),
   };
 }
 
@@ -252,6 +271,7 @@ export async function action({ request }) {
       admin_locale: normalizeSupportedLocale(body?.admin_locale ? String(body.admin_locale).trim() : effectiveLocale),
       embed_position: normalizeEmbedPosition(body?.embed_position),
       cta_type: normalizeCtaType(body?.cta_type),
+      tryon_layout: normalizeTryonLayout(body?.tryon_layout),
       updated_at: new Date().toISOString(),
     };
 
@@ -283,6 +303,45 @@ export async function action({ request }) {
       })(),
       (() => {
         const { embed_position, cta_type, excluded_collections, admin_locale, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, admin_locale, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, excluded_collections, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, excluded_collections, admin_locale, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, embed_position, cta_type, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, embed_position, cta_type, admin_locale, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const { tryon_layout, embed_position, cta_type, excluded_collections, ...rest } = payloadBase;
+        return rest;
+      })(),
+      (() => {
+        const {
+          tryon_layout,
+          embed_position,
+          cta_type,
+          excluded_collections,
+          admin_locale,
+          ...rest
+        } = payloadBase;
         return rest;
       })(),
     ];

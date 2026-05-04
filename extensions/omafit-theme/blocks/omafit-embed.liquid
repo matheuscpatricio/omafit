@@ -105,37 +105,77 @@
           {% assign v_cal_json = v_cal.value | json %}
         {% endif %}
         {% assign v_img = '' %}
-        {% if v.featured_image %}
-          {% assign v_img = v.featured_image | image_url: width: 200 %}
-        {% elsif v.featured_media %}
+        {% if v.featured_media %}
           {% assign v_img = v.featured_media.preview_image | image_url: width: 200 %}
+        {% elsif v.featured_image %}
+          {% assign v_img = v.featured_image | image_url: width: 200 %}
         {% elsif v.image %}
           {% assign v_img = v.image | image_url: width: 200 %}
-        {% elsif product.featured_image %}
-          {% assign v_img = product.featured_image | image_url: width: 200 %}
-        {% elsif product.images.first %}
-          {% assign v_img = product.images.first | image_url: width: 200 %}
+        {% endif %}
+        {% comment %}
+          Galeria: imagem pode estar ligada à variante sem featured_media (comum em OS 2.0).
+        {% endcomment %}
+        {% if v_img == blank %}
+          {% for image in product.images %}
+            {% if v_img != blank %}
+              {% break %}
+            {% endif %}
+            {% for vv in image.variants %}
+              {% if vv.id == v.id %}
+                {% assign v_img = image | image_url: width: 200 %}
+                {% break %}
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        {% endif %}
+        {% if v_img == blank %}
+          {% for media in product.media %}
+            {% if v_img != blank %}
+              {% break %}
+            {% endif %}
+            {% if media.media_type == 'image' %}
+              {% for vv in media.variants %}
+                {% if vv.id == v.id %}
+                  {% assign v_img = media.preview_image | image_url: width: 200 %}
+                  {% break %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+        {% if v_img == blank %}
+          {% if product.featured_image %}
+            {% assign v_img = product.featured_image | image_url: width: 200 %}
+          {% elsif product.images.first %}
+            {% assign v_img = product.images.first | image_url: width: 200 %}
+          {% elsif product.featured_media %}
+            {% assign v_img = product.featured_media.preview_image | image_url: width: 200 %}
+          {% endif %}
         {% endif %}
         (function () {
-          var rawVc = {{ v_cal_json }};
-          var vc = null;
-          if (rawVc && typeof rawVc === 'object' && rawVc.value) {
-            try { vc = typeof rawVc.value === 'string' ? JSON.parse(rawVc.value) : rawVc.value; } catch (e) { vc = null; }
-          } else if (rawVc && typeof rawVc === 'object') {
-            vc = rawVc;
+          try {
+            var rawVc = {{ v_cal_json }};
+            var vc = null;
+            if (rawVc && typeof rawVc === 'object' && rawVc.value) {
+              try { vc = typeof rawVc.value === 'string' ? JSON.parse(rawVc.value) : rawVc.value; } catch (e) { vc = null; }
+            } else if (rawVc && typeof rawVc === 'object') {
+              vc = rawVc;
+            }
+            _variants.push({
+              id: {{ v.id | json }},
+              title: {{ v.title | json }},
+              price: {{ v.price | json }},
+              imageUrl: (function (u) {
+                if (typeof u !== 'string' || !u) return u;
+                if (u.indexOf('//') === 0) return 'https:' + u;
+                return u;
+              })({{ v_img | json }}),
+              glbUrl: {{ v_glb_url | json }},
+              calibration: vc
+            });
+          } catch (eVar) {
+            try { console.warn('[omafit] variante AR omitida', {{ v.id | json }}, eVar); } catch (e2) {}
           }
-          _variants.push({
-            id: {{ v.id | json }},
-            title: {{ v.title | json }},
-            price: {{ v.price | json }},
-            imageUrl: (function (u) {
-              if (typeof u !== 'string' || !u) return u;
-              if (u.indexOf('//') === 0) return 'https:' + u;
-              return u;
-            })({{ v_img | json }}),
-            glbUrl: {{ v_glb_url | json }},
-            calibration: vc
-          });
         })();
       {% endfor %}
       window.__OMAFIT_AR_VARIANTS__ = _variants;
@@ -332,6 +372,7 @@
       data-ar-glb-version="{{ product.updated_at | date: '%s' }}"
       data-glb-url="{{ glb_url | escape }}"
       data-product-id="{{ product.id }}"
+      data-product-handle="{{ product.handle | escape }}"
       data-product-title="{{ product.title | escape }}"
       data-product-image="{{ product_image_url | escape }}"
       data-store-logo="{{ logo_url | escape }}"
@@ -400,7 +441,7 @@
         assign ar_cb_sep = '&'
       endif
     -%}
-    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}&oma_ar_asset=202604311"></script>
+    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}&oma_ar_asset=202605044"></script>
   {% endif %}
 {% endif %}
 

@@ -761,52 +761,54 @@ export default function WidgetPage() {
                     {t("widget.tryonLayoutHeroLocked")}
                   </Text>
                 )}
-                <BlockStack gap="200">
-                  <Text variant="bodySm" tone="subdued">
-                    {t("widget.tryonLayoutHeroImageHelp")}
-                  </Text>
-                  {config.tryon_layout_background_image ? (
-                    <InlineStack gap="300" align="start">
-                      <Thumbnail
-                        source={config.tryon_layout_background_image}
-                        alt={t("widget.tryonLayoutHeroImage")}
-                        size="medium"
-                      />
-                      <BlockStack gap="100">
-                        <Button
-                          onClick={() => backgroundFileInputRef.current?.click()}
-                          variant="secondary"
-                          disabled={!hasHeroLayoutAccess}
-                        >
-                          {t("widget.changeHeroBackground")}
-                        </Button>
-                        <Button
-                          onClick={handleRemoveHeroBackground}
-                          variant="plain"
-                          tone="critical"
-                          disabled={!hasHeroLayoutAccess}
-                        >
-                          {t("widget.removeHeroBackground")}
-                        </Button>
-                      </BlockStack>
-                    </InlineStack>
-                  ) : (
-                    <Button
-                      onClick={() => backgroundFileInputRef.current?.click()}
-                      variant="secondary"
-                      disabled={!hasHeroLayoutAccess}
-                    >
-                      {t("widget.uploadHeroBackground")}
-                    </Button>
-                  )}
-                  <input
-                    ref={backgroundFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleHeroBackgroundUpload}
-                    style={{ display: "none" }}
-                  />
-                </BlockStack>
+                {config.tryon_layout === "hero" && (
+                  <BlockStack gap="200">
+                    <Text variant="bodySm" tone="subdued">
+                      {t("widget.tryonLayoutHeroImageHelp")}
+                    </Text>
+                    {config.tryon_layout_background_image ? (
+                      <InlineStack gap="300" align="start">
+                        <Thumbnail
+                          source={config.tryon_layout_background_image}
+                          alt={t("widget.tryonLayoutHeroImage")}
+                          size="medium"
+                        />
+                        <BlockStack gap="100">
+                          <Button
+                            onClick={() => backgroundFileInputRef.current?.click()}
+                            variant="secondary"
+                            disabled={!hasHeroLayoutAccess}
+                          >
+                            {t("widget.changeHeroBackground")}
+                          </Button>
+                          <Button
+                            onClick={handleRemoveHeroBackground}
+                            variant="plain"
+                            tone="critical"
+                            disabled={!hasHeroLayoutAccess}
+                          >
+                            {t("widget.removeHeroBackground")}
+                          </Button>
+                        </BlockStack>
+                      </InlineStack>
+                    ) : (
+                      <Button
+                        onClick={() => backgroundFileInputRef.current?.click()}
+                        variant="secondary"
+                        disabled={!hasHeroLayoutAccess}
+                      >
+                        {t("widget.uploadHeroBackground")}
+                      </Button>
+                    )}
+                    <input
+                      ref={backgroundFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleHeroBackgroundUpload}
+                      style={{ display: "none" }}
+                    />
+                  </BlockStack>
+                )}
               </BlockStack>
 
               <Divider />

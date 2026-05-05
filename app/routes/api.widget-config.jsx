@@ -62,18 +62,32 @@ async function fetchLatestConfig(shopDomain, select) {
   return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
-async function upsertConfig(payload) {
+async function updateConfigByShopDomain(shopDomain, payload) {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/widget_configurations?on_conflict=shop_domain`,
+    `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
     {
-      method: "POST",
-      headers: supabaseHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
+      method: "PATCH",
+      headers: supabaseHeaders({ Prefer: "return=representation" }),
       body: JSON.stringify(payload),
     },
   );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(body || `widget_configurations upsert failed (${res.status})`);
+    throw new Error(body || `widget_configurations patch failed (${res.status})`);
+  }
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function insertConfig(payload) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/widget_configurations`, {
+    method: "POST",
+    headers: supabaseHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `widget_configurations insert failed (${res.status})`);
   }
   const rows = await res.json();
   return Array.isArray(rows) && rows.length ? rows[0] : null;
@@ -127,7 +141,8 @@ export async function action({ request }) {
 
     const body = await request.json().catch(() => ({}));
     const payload = normalizePayload(body, session.shop, hasHeroAccess(billing.row?.plan));
-    const config = await upsertConfig(payload);
+    const updatedRows = await updateConfigByShopDomain(session.shop, payload);
+    const config = updatedRows.length > 0 ? updatedRows[0] : await insertConfig(payload);
     return Response.json({ config, billingPlan: billing.row?.plan || null });
   } catch (err) {
     console.error("[api.widget-config] action", err);

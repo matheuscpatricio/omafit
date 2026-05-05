@@ -37,6 +37,8 @@
     "ctaTypeLink": "Text link (underlined)",
     "ctaTypeButton": "Branded button with store logo",
     "ctaTypeHelp": "For the button style, upload your store logo for the best branded look. Without a logo, the button shows text only.",
+    "ctaButtonRadiusLabel": "Button corner radius",
+    "ctaButtonRadiusHelp": "Sets how rounded the try-on button corners are (0px = square, 40px = very rounded).",
     "tryonLayoutLabel": "Try-on layout",
     "tryonLayoutDefault": "Classic — full-width steps",
     "tryonLayoutSidebar": "Sidebar — branded left panel with progress",

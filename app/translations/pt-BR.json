@@ -37,6 +37,8 @@
     "ctaTypeLink": "Link (texto sublinhado)",
     "ctaTypeButton": "Botão com logo da loja",
     "ctaTypeHelp": "No modo botão, recomenda-se enviar o logo da loja para um visual alinhado à marca. Sem logo, o botão mostra apenas o texto.",
+    "ctaButtonRadiusLabel": "Arredondamento do botão",
+    "ctaButtonRadiusHelp": "Define o raio dos cantos do botão do provador (0px = reto, 40px = bem arredondado).",
     "tryonLayoutLabel": "Layout do provador",
     "tryonLayoutDefault": "Clássico — passos em largura total",
     "tryonLayoutSidebar": "Barra lateral — painel à esquerda com progresso",

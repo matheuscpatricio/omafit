@@ -37,6 +37,8 @@
     "ctaTypeLink": "Enlace (texto subrayado)",
     "ctaTypeButton": "Botón con logo de la tienda",
     "ctaTypeHelp": "Para el botón, sube el logo para un aspecto más de marca. Sin logo, el botón muestra solo el texto.",
+    "ctaButtonRadiusLabel": "Redondeo del botón",
+    "ctaButtonRadiusHelp": "Define el radio de las esquinas del botón del probador (0px = recto, 40px = muy redondeado).",
     "tryonLayoutLabel": "Diseño del probador",
     "tryonLayoutDefault": "Clásico — pasos a ancho completo",
     "tryonLayoutSidebar": "Barra lateral — panel izquierdo con progreso",

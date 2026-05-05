@@ -951,11 +951,11 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgLegacy =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,cta_button_border_radius,created_at,updated_at';
 
       let configResponse = await fetch(
         `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}`,
@@ -1209,7 +1209,12 @@
         isActive: isWidgetActive,
         excludedCollections: excludedCollections,
         embedPosition: normEmbed,
-        ctaType: normCta
+        ctaType: normCta,
+        ctaButtonBorderRadius: (function () {
+          var n = Number(config && config.cta_button_border_radius);
+          if (!Number.isFinite(n)) return 40;
+          return Math.max(0, Math.min(40, Math.round(n)));
+        })()
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
       
@@ -1240,7 +1245,8 @@
         widgetEnabled: true,
         isActive: true,
         embedPosition: 'below_buy_buttons',
-        ctaType: 'link'
+        ctaType: 'link',
+        ctaButtonBorderRadius: 40
       };
     }
   }
@@ -3026,6 +3032,12 @@
 
   /** Botão pill com logo + texto (alternativa ao link). */
   function createOmafitButton() {
+    const buttonRadiusRaw = Number(
+      OMAFIT_CONFIG?.ctaButtonBorderRadius ?? OMAFIT_CONFIG?.cta_button_border_radius
+    );
+    const buttonRadius = Number.isFinite(buttonRadiusRaw)
+      ? Math.max(0, Math.min(40, Math.round(buttonRadiusRaw)))
+      : 40;
     const primaryColor = OMAFIT_CONFIG?.colors?.primary || OMAFIT_CONFIG?.colors?.text || '#810707';
     const label = OMAFIT_CONFIG?.linkText || 'Experimentar virtualmente';
     const logoRaw = OMAFIT_CONFIG?.storeLogo != null ? String(OMAFIT_CONFIG.storeLogo).trim() : '';
@@ -3040,7 +3052,7 @@
     btn.style.justifyContent = 'center';
     btn.style.gap = '10px';
     btn.style.padding = '12px 22px';
-    btn.style.borderRadius = '9999px';
+    btn.style.borderRadius = buttonRadius + 'px';
     btn.style.border = '2px solid ' + primaryColor;
     btn.style.background = '#ffffff';
     btn.style.color = primaryColor;

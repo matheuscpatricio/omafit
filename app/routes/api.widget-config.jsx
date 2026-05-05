@@ -152,6 +152,11 @@ async function upsertWidgetConfig({ supabaseUrl, supabaseKey, payload }) {
   return { ok: false, status: lastStatus, errorText: lastErrorText };
 }
 
+function isMissingColumnError(errorText, columnName) {
+  const text = String(errorText || "").toLowerCase();
+  return text.includes(columnName.toLowerCase()) && text.includes("column");
+}
+
 export async function loader({ request }) {
   try {
     const { session } = await authenticate.admin(request);
@@ -200,6 +205,15 @@ export async function action({ request }) {
     const saveResult = await upsertWidgetConfig({ supabaseUrl, supabaseKey, payload });
     if (!saveResult.ok) {
       console.error("[api.widget-config][POST] Supabase error:", saveResult.status, saveResult.errorText);
+      if (isMissingColumnError(saveResult.errorText, "cta_button_border_radius")) {
+        return Response.json(
+          {
+            error:
+              "Coluna cta_button_border_radius não existe no banco. Execute o SQL: supabase_add_cta_button_border_radius.sql",
+          },
+          { status: 400 },
+        );
+      }
       return Response.json({ error: "Unexpected Server Error" }, { status: 500 });
     }
 

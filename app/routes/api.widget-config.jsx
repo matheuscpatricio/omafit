@@ -1,229 +1,136 @@
-import process from "node:process";
 import { authenticate } from "../shopify.server";
+import { ensureShopHasActiveBilling } from "../billing-access.server";
 
-function getSupabaseEnv() {
-  const env = process.env || {};
-  const supabaseUrl = env.VITE_SUPABASE_URL || env.SUPABASE_URL || "";
-  const supabaseKey =
-    env.SUPABASE_SERVICE_ROLE_KEY ||
-    env.VITE_SUPABASE_ANON_KEY ||
-    env.SUPABASE_ANON_KEY ||
-    "";
-  return { supabaseUrl, supabaseKey };
-}
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  "";
 
-function getHeaders(supabaseKey, extra = {}) {
+const GROWTH_PLUS_PLANS = new Set(["growth", "pro", "professional", "enterprise"]);
+
+function supabaseHeaders(extra = {}) {
   return {
-    apikey: supabaseKey,
-    Authorization: `Bearer ${supabaseKey}`,
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${SUPABASE_KEY}`,
     "Content-Type": "application/json",
     ...extra,
   };
 }
 
-function buildSelectQuery({ includeEmbedAndCta = true, includeExcludedCollections = true, includeButtonRadius = true } = {}) {
-  const fields = [
-    "id",
-    "shop_domain",
-    "link_text",
-    "store_logo",
-    "primary_color",
-    "widget_enabled",
-    "admin_locale",
-    "tryon_layout",
-    "created_at",
-    "updated_at",
-  ];
-  if (includeExcludedCollections) fields.splice(6, 0, "excluded_collections");
-  if (includeEmbedAndCta) fields.splice(7, 0, "embed_position", "cta_type");
-  if (includeButtonRadius) fields.splice(9, 0, "cta_button_border_radius");
-  return fields.join(",");
+function hasHeroAccess(plan) {
+  return GROWTH_PLUS_PLANS.has(String(plan || "").trim().toLowerCase());
 }
 
-async function fetchWidgetConfig({ supabaseUrl, supabaseKey, shopDomain }) {
-  const attempts = [
-    buildSelectQuery({ includeEmbedAndCta: true, includeExcludedCollections: true, includeButtonRadius: true }),
-    buildSelectQuery({ includeEmbedAndCta: true, includeExcludedCollections: true, includeButtonRadius: false }),
-    buildSelectQuery({ includeEmbedAndCta: false, includeExcludedCollections: true, includeButtonRadius: false }),
-    buildSelectQuery({ includeEmbedAndCta: false, includeExcludedCollections: false, includeButtonRadius: false }),
-  ];
-
-  let lastErrorText = "";
-  let lastStatus = 500;
-
-  for (const select of attempts) {
-    const response = await fetch(
-      `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${select}&order=updated_at.desc&limit=1`,
-      { headers: getHeaders(supabaseKey) },
-    );
-
-    if (response.ok) {
-      const rows = await response.json().catch(() => []);
-      return {
-        ok: true,
-        config: Array.isArray(rows) && rows.length > 0 ? rows[0] : null,
-      };
-    }
-
-    lastStatus = response.status;
-    lastErrorText = await response.text().catch(() => "");
-    if (response.status !== 400) break;
-  }
-
-  return { ok: false, status: lastStatus, errorText: lastErrorText };
+function normalizeLayout(value, heroAllowed) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "hero" && heroAllowed) return "hero";
+  if (raw === "sidebar") return "sidebar";
+  return "default";
 }
 
-function normalizePayload(body, shopDomain) {
-  const excludedCollections = Array.isArray(body?.excluded_collections)
-    ? body.excluded_collections.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
-
-  const ctaButtonBorderRadiusRaw = Number(body?.cta_button_border_radius);
-  const ctaButtonBorderRadius = Number.isFinite(ctaButtonBorderRadiusRaw)
-    ? Math.max(0, Math.min(40, Math.round(ctaButtonBorderRadiusRaw)))
-    : 40;
-
+function normalizePayload(body, shopDomain, heroAllowed) {
+  const radius = Number(body?.cta_button_border_radius);
+  const bg = String(body?.tryon_layout_background_image || "").trim();
   return {
     shop_domain: shopDomain,
-    link_text: body?.link_text ? String(body.link_text) : "Experimentar virtualmente",
+    link_text: String(body?.link_text || "Experimentar virtualmente").trim(),
     store_logo: body?.store_logo ? String(body.store_logo).trim() : null,
-    primary_color: body?.primary_color ? String(body.primary_color) : "#810707",
+    primary_color: String(body?.primary_color || "#810707").trim(),
     widget_enabled: body?.widget_enabled !== false,
-    excluded_collections: excludedCollections,
-    admin_locale: body?.admin_locale ? String(body.admin_locale) : "en",
+    excluded_collections: Array.isArray(body?.excluded_collections) ? body.excluded_collections : [],
+    admin_locale: String(body?.admin_locale || "en").trim(),
     embed_position: body?.embed_position === "above_buy_buttons" ? "above_buy_buttons" : "below_buy_buttons",
     cta_type: body?.cta_type === "button" ? "button" : "link",
-    cta_button_border_radius: ctaButtonBorderRadius,
-    tryon_layout: body?.tryon_layout === "sidebar" ? "sidebar" : "default",
+    cta_button_border_radius: Number.isFinite(radius) ? Math.max(0, Math.min(40, Math.round(radius))) : 40,
+    tryon_layout: normalizeLayout(body?.tryon_layout, heroAllowed),
+    tryon_layout_background_image: bg || null,
   };
 }
 
-async function upsertWidgetConfig({ supabaseUrl, supabaseKey, payload }) {
-  const attempts = [
-    payload,
-    (() => {
-      const copy = { ...payload };
-      delete copy.cta_button_border_radius;
-      return copy;
-    })(),
-    (() => {
-      const copy = { ...payload };
-      delete copy.cta_button_border_radius;
-      delete copy.embed_position;
-      delete copy.cta_type;
-      return copy;
-    })(),
-    (() => {
-      const copy = { ...payload };
-      delete copy.cta_button_border_radius;
-      delete copy.embed_position;
-      delete copy.cta_type;
-      delete copy.excluded_collections;
-      return copy;
-    })(),
-  ];
-
-  let lastStatus = 500;
-  let lastErrorText = "";
-
-  for (const body of attempts) {
-    const response = await fetch(
-      `${supabaseUrl}/rest/v1/widget_configurations?on_conflict=shop_domain`,
-      {
-        method: "POST",
-        headers: getHeaders(supabaseKey, {
-          Prefer: "resolution=merge-duplicates,return=representation",
-        }),
-        body: JSON.stringify(body),
-      },
-    );
-
-    if (response.ok) {
-      const rows = await response.json().catch(() => []);
-      return {
-        ok: true,
-        config: Array.isArray(rows) && rows.length > 0 ? rows[0] : null,
-      };
-    }
-
-    lastStatus = response.status;
-    lastErrorText = await response.text().catch(() => "");
-    if (response.status !== 400) break;
+async function fetchLatestConfig(shopDomain, select) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${select}&order=updated_at.desc&limit=1`,
+    { headers: supabaseHeaders() },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `widget_configurations read failed (${res.status})`);
   }
-
-  return { ok: false, status: lastStatus, errorText: lastErrorText };
+  const rows = await res.json();
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
-function isMissingColumnError(errorText, columnName) {
-  const text = String(errorText || "").toLowerCase();
-  return text.includes(columnName.toLowerCase()) && text.includes("column");
+async function upsertConfig(payload) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/widget_configurations?on_conflict=shop_domain`,
+    {
+      method: "POST",
+      headers: supabaseHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `widget_configurations upsert failed (${res.status})`);
+  }
+  const rows = await res.json();
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
 export async function loader({ request }) {
   try {
-    const { session } = await authenticate.admin(request);
-    const shopDomain = String(session?.shop || "").trim();
-    if (!shopDomain) {
-      return Response.json({ error: "shop_domain_missing" }, { status: 400 });
+    const { admin, session } = await authenticate.admin(request);
+    const billing = await ensureShopHasActiveBilling(admin, session.shop);
+    if (!billing.active) return Response.json({ error: "billing_inactive" }, { status: 402 });
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return Response.json({ error: "Supabase not configured" }, { status: 500 });
     }
 
-    const { supabaseUrl, supabaseKey } = getSupabaseEnv();
-    if (!supabaseUrl || !supabaseKey) {
-      return Response.json({ error: "supabase_not_configured" }, { status: 500 });
+    const select = [
+      "id",
+      "shop_domain",
+      "link_text",
+      "store_logo",
+      "primary_color",
+      "widget_enabled",
+      "excluded_collections",
+      "admin_locale",
+      "embed_position",
+      "cta_type",
+      "cta_button_border_radius",
+      "tryon_layout",
+      "tryon_layout_background_image",
+      "created_at",
+      "updated_at",
+    ].join(",");
+    const config = await fetchLatestConfig(session.shop, select);
+    if (config && config.tryon_layout === "hero" && !hasHeroAccess(billing.row?.plan)) {
+      config.tryon_layout = "default";
     }
-
-    const result = await fetchWidgetConfig({ supabaseUrl, supabaseKey, shopDomain });
-    if (!result.ok) {
-      console.error("[api.widget-config][GET] Supabase error:", result.status, result.errorText);
-      return Response.json({ error: "Unexpected Server Error" }, { status: 500 });
-    }
-
-    return Response.json({ config: result.config });
+    return Response.json({ config, billingPlan: billing.row?.plan || null });
   } catch (err) {
-    console.error("[api.widget-config][GET]", err);
-    return Response.json({ error: "Unexpected Server Error" }, { status: 500 });
+    console.error("[api.widget-config] loader", err);
+    return Response.json({ error: err?.message || "Internal error" }, { status: 500 });
   }
 }
 
 export async function action({ request }) {
   try {
-    if (request.method !== "POST") {
-      return Response.json({ error: "Method Not Allowed" }, { status: 405 });
-    }
-
-    const { session } = await authenticate.admin(request);
-    const shopDomain = String(session?.shop || "").trim();
-    if (!shopDomain) {
-      return Response.json({ error: "shop_domain_missing" }, { status: 400 });
+    const { admin, session } = await authenticate.admin(request);
+    const billing = await ensureShopHasActiveBilling(admin, session.shop);
+    if (!billing.active) return Response.json({ error: "billing_inactive" }, { status: 402 });
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return Response.json({ error: "Supabase not configured" }, { status: 500 });
     }
 
     const body = await request.json().catch(() => ({}));
-    const payload = normalizePayload(body, shopDomain);
-    const { supabaseUrl, supabaseKey } = getSupabaseEnv();
-    if (!supabaseUrl || !supabaseKey) {
-      return Response.json({ error: "supabase_not_configured" }, { status: 500 });
-    }
-
-    const saveResult = await upsertWidgetConfig({ supabaseUrl, supabaseKey, payload });
-    if (!saveResult.ok) {
-      console.error("[api.widget-config][POST] Supabase error:", saveResult.status, saveResult.errorText);
-      if (isMissingColumnError(saveResult.errorText, "cta_button_border_radius")) {
-        return Response.json(
-          {
-            error:
-              "Coluna cta_button_border_radius não existe no banco. Execute o SQL: supabase_add_cta_button_border_radius.sql",
-          },
-          { status: 400 },
-        );
-      }
-      return Response.json({ error: "Unexpected Server Error" }, { status: 500 });
-    }
-
-    return Response.json({ ok: true, config: saveResult.config });
+    const payload = normalizePayload(body, session.shop, hasHeroAccess(billing.row?.plan));
+    const config = await upsertConfig(payload);
+    return Response.json({ config, billingPlan: billing.row?.plan || null });
   } catch (err) {
-    console.error("[api.widget-config][POST]", err);
-    return Response.json({ error: err?.message || "Unexpected Server Error" }, { status: 500 });
+    console.error("[api.widget-config] action", err);
+    return Response.json({ error: err?.message || "Internal error" }, { status: 500 });
   }
 }
-
-

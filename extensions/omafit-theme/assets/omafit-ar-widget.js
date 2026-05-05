@@ -490,7 +490,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-04-29-bracelet-single-occluder-v31";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-05-hero-layout-v1";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -5166,7 +5166,62 @@ function waitForOmafitWidgetAdminBranding(maxMs = 8000) {
   });
 }
 
-function injectGlobalStyles(root, primaryOverride) {
+function omafitResolveTryonLayout(root) {
+  try {
+    const ds = String(
+      root?.dataset?.tryonLayout ?? root?.getAttribute?.("data-tryon-layout") ?? "",
+    )
+      .trim()
+      .toLowerCase();
+    if (ds === "hero") return "hero";
+    if (ds === "sidebar") return "sidebar";
+    if (ds === "default" || ds === "classic") return "default";
+    const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
+    const qv = (q.get("tryonLayout") || q.get("tryon_layout") || "").trim().toLowerCase();
+    if (qv === "hero") return "hero";
+    if (qv === "sidebar") return "sidebar";
+  } catch {
+    /* ignore */
+  }
+  return "default";
+}
+
+function omafitResolveTryonLayoutBackground(root, fallback) {
+  try {
+    const fromData = String(
+      root?.dataset?.tryonLayoutBackgroundImage ??
+        root?.getAttribute?.("data-tryon-layout-background-image") ??
+        "",
+    ).trim();
+    if (fromData) return omafitUpgradeShopifyMediaToHttps(fromData);
+    const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
+    const fromQuery = String(q.get("tryonLayoutBackgroundImage") || q.get("tryon_layout_background_image") || "").trim();
+    if (fromQuery) return omafitUpgradeShopifyMediaToHttps(fromQuery);
+  } catch {
+    /* ignore */
+  }
+  return omafitUpgradeShopifyMediaToHttps(fallback || "");
+}
+
+function omafitContrastOnPrimary(hex) {
+  const h = String(hex || "").replace("#", "").trim();
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  if (full.length !== 6) return "#ffffff";
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.55 ? "#111827" : "#ffffff";
+}
+
+function omafitArSidebarStepLabels(lang) {
+  const base = String(lang || "pt").toLowerCase().split("-")[0];
+  if (base === "es") return { progress: "Progreso", step1: "Bienvenida", step2: "Probador AR" };
+  if (base === "en") return { progress: "Progress", step1: "Welcome", step2: "AR try-on" };
+  return { progress: "Progresso", step1: "Boas-vindas", step2: "Provador AR" };
+}
+
+function injectGlobalStyles(root, primaryOverride, tryonLayout = "default") {
   const old = document.getElementById("omafit-ar-styles");
   if (old) old.remove();
 
@@ -5188,12 +5243,25 @@ function injectGlobalStyles(root, primaryOverride) {
   s.id = "omafit-ar-styles";
   s.textContent = `
     @keyframes omafit-ar-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes omafit-ar-text-enter {
+      0% { opacity: 0; transform: translateY(10px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
     /* Modal AR está em document.body (fora de #omafit-ar-root) — incluir .omafit-ar-shell como no TryOnWidget. */
     #omafit-ar-root, #omafit-ar-root *,
     .omafit-ar-shell, .omafit-ar-shell * {
       font-family: ${appliedStack} !important;
     }
     .omafit-ar-shell { animation: omafit-ar-fade-in 0.35s ease-out; }
+    .omafit-ar-text-enter {
+      opacity: 0;
+      transform: translateY(10px);
+      animation-name: omafit-ar-text-enter;
+      animation-duration: 360ms;
+      animation-fill-mode: forwards;
+      animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: opacity, transform;
+    }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
     .omafit-ar-try-on-link:focus { outline: 2px solid ${primary}; outline-offset: 2px; }
     /* Temas que metem x via ::before/::after em <button> — sem isto parecem dois X sobrepostos. */
@@ -5270,6 +5338,53 @@ function injectGlobalStyles(root, primaryOverride) {
     /* Se forcarmos width/height:100% no canvas por CSS, o canvas "estica"   */
     /* ao container mas as projecoes 3D continuam calculadas para o aspect   */
     /* do video -> oculos aparecem rodados/offset ("virado pro lado").       */
+    ${
+      tryonLayout === "sidebar"
+        ? `
+    .omafit-ar-shell-sidebar-layout { display: flex; flex-direction: row; min-height: 100dvh; }
+    .omafit-ar-shell-sidebar-layout .omafit-ar-sbar-desktop-only {
+      width: min(288px, 30vw);
+      background: ${primary};
+      color: ${omafitContrastOnPrimary(primary)};
+      display: none;
+      flex-direction: column;
+      min-height: 0;
+      padding: 24px 16px;
+      border-right: 1px solid rgba(255,255,255,.14);
+      box-sizing: border-box;
+    }
+    .omafit-ar-shell-sidebar-layout .omafit-ar-sbar-mobile-only {
+      display: block;
+      background: ${primary};
+      color: ${omafitContrastOnPrimary(primary)};
+      border-bottom: 1px solid rgba(255,255,255,.14);
+    }
+    .omafit-ar-shell-sidebar-layout .omafit-ar-sbar-progress-track {
+      height: 8px; border-radius: 999px; background: rgba(255,255,255,.24); overflow: hidden;
+    }
+    .omafit-ar-shell-sidebar-layout .omafit-ar-sbar-progress-fill {
+      height: 100%; border-radius: 999px; background: rgba(255,255,255,.88); transition: width .28s ease;
+    }
+    @media (min-width: 768px) {
+      .omafit-ar-shell-sidebar-layout .omafit-ar-sbar-desktop-only { display: flex; }
+      .omafit-ar-shell-sidebar-layout .omafit-ar-sbar-mobile-only { display: none; }
+    }`
+        : ""
+    }
+    .omafit-ar-shell-hero-layout { display: flex; flex-direction: column; min-height: 100dvh; }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-mobile {
+      display: flex; min-height: 180px; flex-shrink: 0; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; color: ${omafitContrastOnPrimary(primary)};
+      background-size: cover; background-position: center top;
+    }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-desktop {
+      display: none; width: min(43vw, 520px); flex-shrink: 0; min-height: 0; color: ${omafitContrastOnPrimary(primary)};
+      background-size: cover; background-position: center;
+    }
+    @media (min-width: 768px) {
+      .omafit-ar-shell-hero-layout { flex-direction: row; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-mobile { display: none; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-desktop { display: flex; }
+    }
   `;
   document.head.appendChild(s);
   const hasThemeFontFace = document.getElementById("omafit-ar-theme-font-face");
@@ -5298,6 +5413,19 @@ function injectGlobalStyles(root, primaryOverride) {
     },
   });
   // #endregion
+}
+
+function omafitAnimateTextEntrance(root) {
+  if (!root?.querySelectorAll) return;
+  const nodes = root.querySelectorAll("h1, h2, h3, h4, p, li, [data-omafit-text-anim='1']");
+  let idx = 0;
+  for (const node of nodes) {
+    if (!node || node.dataset?.omafitTextAnimated === "1") continue;
+    node.dataset.omafitTextAnimated = "1";
+    node.classList.add("omafit-ar-text-enter");
+    node.style.animationDelay = `${Math.min(idx, 10) * 48}ms`;
+    idx += 1;
+  }
 }
 
 function createTriggerLink(text, primaryColor) {
@@ -5375,8 +5503,19 @@ function buildInfoModal({
   t,
   onClose,
   onStartAr,
+  layout = "default",
+  layoutSidebar = false,
+  layoutBackgroundImage = "",
+  locale = "pt",
 }) {
   const productImgHttps = omafitUpgradeShopifyMediaToHttps(productImage);
+  const layoutMode = layout === "hero" ? "hero" : layoutSidebar ? "sidebar" : "default";
+  const isSidebar = layoutMode === "sidebar";
+  const isHero = layoutMode === "hero";
+  const heroBg = omafitUpgradeShopifyMediaToHttps(layoutBackgroundImage || productImgHttps);
+  const heroBgCss = heroBg
+    ? `linear-gradient(180deg, ${primaryColor}e6 0%, ${primaryColor}66 42%, ${primaryColor}12 100%), url("${heroBg.replace(/"/g, "%22")}")`
+    : `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor}99 100%)`;
   // #region agent log
   __omafitArDbgLog({
     location: "omafit-ar-widget.js:buildInfoModal",
@@ -5390,14 +5529,21 @@ function buildInfoModal({
   });
   // #endregion
 
-  const shell = el("div", { className: "omafit-ar-shell" });
+  const shell = el("div", {
+    className:
+      layoutMode === "hero"
+        ? "omafit-ar-shell omafit-ar-shell-hero-layout"
+        : layoutMode === "sidebar"
+          ? "omafit-ar-shell omafit-ar-shell-sidebar-layout"
+          : "omafit-ar-shell",
+  });
   shell.style.cssText = [
     "position: fixed",
     "inset: 0",
     `z-index: ${Z_SHELL}`,
     "background: #fff",
     "display: flex",
-    "flex-direction: column",
+    isSidebar || isHero ? "flex-direction: row" : "flex-direction: column",
     "overflow: hidden",
   ].join(";");
 
@@ -5499,11 +5645,141 @@ function buildInfoModal({
   header.appendChild(logoWrap);
   header.appendChild(closeBtn);
 
+  let sidebarDesktop = null;
+  let sidebarMobile = null;
+  if (isSidebar) {
+    const L = omafitArSidebarStepLabels(locale);
+    const mkCloseSidebarBtn = () => {
+      const btn = el(
+        "div",
+        {
+          role: "button",
+          tabIndex: 0,
+          className: "omafit-ar-close-btn",
+          title: t.close,
+          style: {
+            width: "40px",
+            height: "40px",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            color: "currentColor",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: "0",
+            borderRadius: "8px",
+            opacity: "0.92",
+          },
+        },
+        [svgX()],
+      );
+      btn.setAttribute("data-omafit-ar-close-modal", "1");
+      btn.addEventListener("click", onClose);
+      btn.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          onClose();
+        }
+      });
+      return btn;
+    };
+    const mobFill = el("div", { className: "omafit-ar-sbar-progress-fill" });
+    mobFill.style.width = "50%";
+    const deskFill = el("div", { className: "omafit-ar-sbar-progress-fill" });
+    deskFill.style.width = "50%";
+    const mobCounter = el("span", { textContent: "1/2", style: { fontSize: "10px", fontWeight: "600" } });
+    const mobStep = el("p", {
+      style: { margin: "8px 14px 12px", textAlign: "center", fontSize: "11px", fontWeight: "600" },
+      textContent: `1. ${L.step1}`,
+    });
+    const deskCurrent = el("p", {
+      style: { marginTop: "14px", fontSize: "12px", opacity: "0.8" },
+      textContent: L.step1,
+    });
+    const mkNav = (n, label) => {
+      const item = el("div", {
+        style: {
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "8px",
+          padding: "10px 12px",
+          borderRadius: "10px",
+          fontSize: "13px",
+          marginBottom: "8px",
+        },
+      });
+      item.appendChild(
+        el("span", {
+          textContent: String(n),
+          style: {
+            marginTop: "1px",
+            display: "inline-flex",
+            width: "20px",
+            height: "20px",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "999px",
+            border: "1px solid currentColor",
+            fontSize: "10px",
+            flexShrink: "0",
+          },
+        }),
+      );
+      item.appendChild(el("span", { textContent: label, style: { minWidth: "0", flex: "1" } }));
+      return item;
+    };
+    const deskNav1 = mkNav(1, L.step1);
+    const deskNav2 = mkNav(2, L.step2);
+    const applySidebarStep = (key) => {
+      const isAr = key === "ar";
+      mobFill.style.width = isAr ? "100%" : "50%";
+      deskFill.style.width = isAr ? "100%" : "50%";
+      mobCounter.textContent = isAr ? "2/2" : "1/2";
+      mobStep.textContent = `${isAr ? 2 : 1}. ${isAr ? L.step2 : L.step1}`;
+      deskCurrent.textContent = isAr ? L.step2 : L.step1;
+      deskNav1.style.opacity = isAr ? "0.55" : "1";
+      deskNav1.style.fontWeight = isAr ? "400" : "600";
+      deskNav2.style.opacity = isAr ? "1" : "0.55";
+      deskNav2.style.fontWeight = isAr ? "600" : "400";
+    };
+
+    sidebarMobile = el("div", { className: "omafit-ar-sbar-mobile-only" });
+    const mobTopBar = el("div", {
+      style: { display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "8px 10px 0" },
+    });
+    mobTopBar.appendChild(mkCloseSidebarBtn());
+    const mobTop = el("div", { style: { display: "flex", justifyContent: "center", padding: "4px 12px 8px" } });
+    if (logoUrl) mobTop.appendChild(el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "40px", width: "auto", maxWidth: "70vw", objectFit: "contain" } }));
+    else if (shopName) mobTop.appendChild(el("span", { textContent: shopName, style: { fontWeight: "600", fontSize: "14px" } }));
+    const mobProg = el("div", { style: { padding: "8px 12px 4px", borderTop: "1px solid rgba(255,255,255,.14)" } });
+    const mobProgTop = el("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "8px" } });
+    mobProgTop.appendChild(el("span", { textContent: L.progress, style: { fontSize: "10px", fontWeight: "600", letterSpacing: ".14em", textTransform: "uppercase", opacity: ".86" } }));
+    mobProgTop.appendChild(mobCounter);
+    mobProg.appendChild(mobProgTop);
+    mobProg.appendChild(el("div", { className: "omafit-ar-sbar-progress-track" }, [mobFill]));
+    sidebarMobile.appendChild(mobTopBar);
+    sidebarMobile.appendChild(mobTop);
+    sidebarMobile.appendChild(mobProg);
+    sidebarMobile.appendChild(mobStep);
+
+    sidebarDesktop = el("aside", { className: "omafit-ar-sbar-desktop-only" });
+    if (logoUrl) sidebarDesktop.appendChild(el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "48px", width: "auto", maxWidth: "100%", objectFit: "contain", objectPosition: "left", marginBottom: "16px" } }));
+    else if (shopName) sidebarDesktop.appendChild(el("div", { textContent: shopName, style: { fontWeight: "600", marginBottom: "14px", opacity: ".9" } }));
+    sidebarDesktop.appendChild(el("p", { textContent: L.progress, style: { margin: "0 0 8px", fontSize: "10px", fontWeight: "600", letterSpacing: ".14em", textTransform: "uppercase", opacity: ".82" } }));
+    sidebarDesktop.appendChild(el("div", { className: "omafit-ar-sbar-progress-track" }, [deskFill]));
+    sidebarDesktop.appendChild(el("div", { style: { marginTop: "14px", flex: "1", minHeight: "0", overflowY: "auto" } }, [deskNav1, deskNav2]));
+    sidebarDesktop.appendChild(deskCurrent);
+    shell.__omafitArSidebarApi = { setStep: applySidebarStep };
+    applySidebarStep("welcome");
+    header.style.display = "none";
+  }
+
   const mainRow = el("div", {
     style: {
       flex: "1",
       display: "flex",
-      flexDirection: "row",
+      flexDirection: isSidebar || isHero ? "column" : "row",
       overflow: "hidden",
       minHeight: "0",
     },
@@ -5525,7 +5801,7 @@ function buildInfoModal({
   const imgBox = el("div", {
     style: {
       width: "100%",
-      maxWidth: "28rem",
+      maxWidth: isSidebar ? "20rem" : "28rem",
       borderRadius: "16px",
       overflow: "hidden",
       background: "#f3f4f6",
@@ -5544,7 +5820,7 @@ function buildInfoModal({
   const colContent = el("div", {
     style: {
       flex: "1",
-      padding: "12px 16px 24px",
+      padding: isSidebar || isHero ? "8px 14px 12px" : "12px 16px 24px",
       overflowY: "auto",
       boxSizing: "border-box",
     },
@@ -5555,8 +5831,8 @@ function buildInfoModal({
       display: "block",
       background: "#f9fafb",
       borderRadius: "12px",
-      padding: "12px",
-      marginBottom: "16px",
+      padding: isSidebar || isHero ? "8px" : "12px",
+      marginBottom: isSidebar || isHero ? "10px" : "16px",
     },
     className: "omafit-ar-mobile-img",
   });
@@ -5579,8 +5855,8 @@ function buildInfoModal({
     el("h3", {
       textContent: t.title,
       style: {
-        margin: "0 0 8px 0",
-        fontSize: "clamp(1.35rem, 4vw, 1.85rem)",
+        margin: "0 0 6px 0",
+        fontSize: isSidebar || isHero ? "clamp(1.05rem, 2.2vw, 1.25rem)" : "clamp(1.35rem, 4vw, 1.85rem)",
         fontWeight: "600",
         color: primaryColor,
       },
@@ -5589,7 +5865,12 @@ function buildInfoModal({
   titleBlock.appendChild(
     el("p", {
       textContent: t.desc,
-      style: { margin: 0, color: "#374151", fontSize: "clamp(1rem, 3vw, 1.2rem)", lineHeight: "1.45" },
+      style: {
+        margin: 0,
+        color: "#374151",
+        fontSize: isSidebar || isHero ? "clamp(0.88rem, 1.8vw, 0.98rem)" : "clamp(1rem, 3vw, 1.2rem)",
+        lineHeight: isSidebar || isHero ? "1.35" : "1.45",
+      },
     }),
   );
 
@@ -5598,21 +5879,26 @@ function buildInfoModal({
       background: "#eff6ff",
       border: "1px solid #bfdbfe",
       borderRadius: "8px",
-      padding: "16px",
-      marginBottom: "20px",
+      padding: isSidebar || isHero ? "12px" : "16px",
+      marginBottom: isSidebar || isHero ? "12px" : "20px",
     },
   });
   const blueInner = el("div", { style: { textAlign: "center" } });
   blueInner.appendChild(
     el("h4", {
       textContent: t.howTitle,
-      style: { margin: "0 0 8px 0", fontWeight: "600", color: "#1e40af", fontSize: "1.05rem" },
+      style: { margin: "0 0 6px 0", fontWeight: "600", color: "#1e40af", fontSize: isSidebar || isHero ? "0.95rem" : "1.05rem" },
     }),
   );
   blueInner.appendChild(
     el("p", {
       textContent: t.howBody,
-      style: { margin: 0, color: "#1d4ed8", fontSize: "clamp(0.95rem, 2.8vw, 1.05rem)", lineHeight: "1.5" },
+      style: {
+        margin: 0,
+        color: "#1d4ed8",
+        fontSize: isSidebar || isHero ? "clamp(0.82rem, 1.7vw, 0.92rem)" : "clamp(0.95rem, 2.8vw, 1.05rem)",
+        lineHeight: isSidebar || isHero ? "1.4" : "1.5",
+      },
     }),
   );
   blueBox.appendChild(blueInner);
@@ -5626,9 +5912,9 @@ function buildInfoModal({
         background: primaryColor,
         color: "#fff",
         border: "none",
-        padding: "14px 20px",
+        padding: isSidebar || isHero ? "11px 14px" : "14px 20px",
         borderRadius: "8px",
-        fontSize: "clamp(1rem, 3vw, 1.15rem)",
+        fontSize: isSidebar || isHero ? "clamp(0.9rem, 1.8vw, 1rem)" : "clamp(1rem, 3vw, 1.15rem)",
         fontWeight: "600",
         cursor: "pointer",
         display: "flex",
@@ -5637,7 +5923,7 @@ function buildInfoModal({
         gap: "8px",
         fontFamily: "inherit",
         transition: "filter 0.2s ease, box-shadow 0.2s ease",
-        marginBottom: "12px",
+        marginBottom: isSidebar || isHero ? "8px" : "12px",
       },
     },
     [],
@@ -5664,7 +5950,13 @@ function buildInfoModal({
 
   const privacy = el("p", {
     textContent: t.privacy,
-    style: { margin: 0, textAlign: "center", color: "#6b7280", fontSize: "0.875rem", lineHeight: "1.4" },
+    style: {
+      margin: 0,
+      textAlign: "center",
+      color: "#6b7280",
+      fontSize: isSidebar || isHero ? "0.78rem" : "0.875rem",
+      lineHeight: isSidebar || isHero ? "1.3" : "1.4",
+    },
   });
 
   try {
@@ -5701,11 +5993,74 @@ function buildInfoModal({
   mainRow.appendChild(colImg);
   mainRow.appendChild(colContent);
 
-  shell.appendChild(header);
-  shell.appendChild(mainRow);
+  if (isSidebar) {
+    const contentOuter = el("div", {
+      style: { flex: "1", display: "flex", flexDirection: "column", minHeight: "0", overflow: "hidden" },
+    });
+    if (sidebarMobile) contentOuter.appendChild(sidebarMobile);
+    contentOuter.appendChild(mainRow);
+    if (sidebarDesktop) shell.appendChild(sidebarDesktop);
+    shell.appendChild(contentOuter);
+  } else if (isHero) {
+    const contentOuter = el("div", {
+      style: { flex: "1", display: "flex", flexDirection: "column", minHeight: "0", overflow: "hidden" },
+    });
+    const heroMobile = el("section", {
+      className: "omafit-ar-hero-mobile",
+      style: { backgroundImage: heroBgCss },
+    });
+    heroMobile.appendChild(
+      logoUrl
+        ? el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "40px", width: "auto", maxWidth: "min(220px,70vw)", objectFit: "contain" } })
+        : el("p", { textContent: shopName || "", style: { margin: 0, fontSize: "14px", fontWeight: "600", letterSpacing: ".22em", textTransform: "uppercase" } }),
+    );
+    heroMobile.appendChild(el("div", { style: { width: "64px", height: "1px", background: "currentColor", opacity: ".7" } }));
+    contentOuter.appendChild(heroMobile);
+    contentOuter.appendChild(mainRow);
+
+    const heroDesktop = el("aside", {
+      className: "omafit-ar-hero-desktop",
+      style: { backgroundImage: heroBgCss },
+    });
+    const heroInner = el("div", {
+      style: { width: "100%", minHeight: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "32px", boxSizing: "border-box", background: "rgba(0,0,0,.10)" },
+    });
+    heroInner.appendChild(
+      logoUrl
+        ? el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "48px", width: "auto", maxWidth: "220px", objectFit: "contain", objectPosition: "left" } })
+        : el("p", { textContent: shopName || "", style: { margin: 0, fontSize: "14px", fontWeight: "600", letterSpacing: ".26em", textTransform: "uppercase" } }),
+    );
+    heroInner.appendChild(el("div", { style: { width: "80px", height: "1px", background: "currentColor", opacity: ".7" } }));
+    heroDesktop.appendChild(heroInner);
+    shell.appendChild(contentOuter);
+    shell.appendChild(heroDesktop);
+  } else {
+    shell.appendChild(header);
+    shell.appendChild(mainRow);
+    const closeBtns = header.querySelectorAll(".omafit-ar-close-btn");
+    if (closeBtns.length > 1) {
+      for (let i = 1; i < closeBtns.length; i += 1) closeBtns[i]?.remove?.();
+    }
+  }
 
   const mq = window.matchMedia("(min-width: 768px)");
   function applyMq() {
+    if (isSidebar || isHero) {
+      colImg.style.display = "none";
+      mobileImgWrap.style.display = "block";
+      if (isSidebar && mq.matches) {
+        mobileImgWrap.style.maxWidth = "240px";
+        mobileImgWrap.style.width = "100%";
+        mobileImgWrap.style.marginLeft = "auto";
+        mobileImgWrap.style.marginRight = "auto";
+      } else {
+        mobileImgWrap.style.maxWidth = "";
+        mobileImgWrap.style.width = "";
+        mobileImgWrap.style.marginLeft = "";
+        mobileImgWrap.style.marginRight = "";
+      }
+      return;
+    }
     if (mq.matches) {
       colImg.style.display = "flex";
       mobileImgWrap.style.display = "none";
@@ -5716,6 +6071,7 @@ function buildInfoModal({
   }
   mq.addEventListener("change", applyMq);
   applyMq();
+  omafitAnimateTextEntrance(shell);
 
   return shell;
 }
@@ -6254,6 +6610,11 @@ async function runArSession({
   productId,
 }) {
   colContent.innerHTML = "";
+  try {
+    shell.__omafitArSidebarApi?.setStep?.("ar");
+  } catch {
+    /* ignore */
+  }
   const desktopCol = shell.querySelector(".omafit-ar-col-desktop");
   if (desktopCol) desktopCol.style.display = "none";
 
@@ -6576,6 +6937,7 @@ async function runArSession({
    * `shell` ou posição absoluta sumia em alguns layouts/telemóveis.
    */
   if (arBottomBar) colContent.appendChild(arBottomBar);
+  omafitAnimateTextEntrance(colContent);
 
   let mindarThree = null;
   let arResizeObserver = null;
@@ -6706,8 +7068,9 @@ async function runArSession({
     }
   };
 
-  const headerClose = header.querySelector("[data-omafit-ar-close-modal]");
-  if (headerClose && headerClose.dataset.omafitArSessionClose !== "1") {
+  const closeTargets = shell.querySelectorAll("[data-omafit-ar-close-modal]");
+  for (const headerClose of closeTargets) {
+    if (headerClose?.dataset?.omafitArSessionClose === "1") continue;
     headerClose.dataset.omafitArSessionClose = "1";
     headerClose.addEventListener(
       "click",
@@ -12119,6 +12482,7 @@ async function runHandArSession({
     wrist,
     indexLm,
     pinkyLm,
+    radiusOverrideWorld,
   ) {
     if (
       !instMesh?.isInstancedMesh ||
@@ -12146,7 +12510,11 @@ async function runHandArSession({
     if (braceletRadTangent.lengthSq() < 1e-12) return;
     braceletRadTangent.normalize();
 
-    const radiusWorld = indexLm.distanceTo(pinkyLm) * 0.55;
+    const radiusFromLandmarks = indexLm.distanceTo(pinkyLm) * 0.34;
+    const radiusWorldRaw = Number.isFinite(radiusOverrideWorld)
+      ? radiusOverrideWorld
+      : radiusFromLandmarks;
+    const radiusWorld = THREE.MathUtils.clamp(radiusWorldRaw, 0.016, 0.042);
     if (radiusWorld < 1e-8) return;
 
     braceletRadRingCenter
@@ -14030,6 +14398,7 @@ async function runHandArSession({
             w0,
             w5,
             w17,
+            smoothWristRadius,
           );
         }
       } else {
@@ -14920,7 +15289,9 @@ async function main() {
   // #endregion
 
   try {
-  injectGlobalStyles(root, primaryColor);
+  const tryonLayoutMode = omafitResolveTryonLayout(root);
+  const tryonLayoutBackground = omafitResolveTryonLayoutBackground(root, productImage);
+  injectGlobalStyles(root, primaryColor, tryonLayoutMode);
   {
     const deferPreload =
       String(root?.dataset?.arDeferModulePreload ?? root?.getAttribute?.("data-ar-defer-module-preload") ?? "")
@@ -14950,6 +15321,10 @@ async function main() {
       productTitle,
       productImage,
       t,
+      layout: tryonLayoutMode,
+      layoutSidebar: tryonLayoutMode === "sidebar",
+      layoutBackgroundImage: tryonLayoutBackground,
+      locale: lang,
       onClose: closeModal,
       onStartAr: (shell, mainRow, colContent, header) => {
         const freshVariants = Array.isArray(window.__OMAFIT_AR_VARIANTS__)

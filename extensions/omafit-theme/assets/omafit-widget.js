@@ -951,7 +951,7 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at';
       var selectWidgetCfgLegacy =
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
@@ -963,6 +963,20 @@
       );
       if (!configResponse.ok) {
         var errT = await configResponse.text().catch(function () { return ''; });
+        if (
+          configResponse.status === 400 &&
+          errT &&
+          errT.indexOf('tryon_layout_background_image') !== -1 &&
+          selectWidgetCfgFull.indexOf('tryon_layout_background_image') !== -1
+        ) {
+          console.warn('⚠️ Coluna tryon_layout_background_image ausente no Supabase. Repetindo busca sem ela.');
+          selectWidgetCfgFull = selectWidgetCfgFull.replace(',tryon_layout_background_image', '');
+          configResponse = await fetch(
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
+            { headers: configHeaders }
+          );
+          errT = await configResponse.text().catch(function () { return ''; });
+        }
         if (
           configResponse.status === 400 &&
           errT &&
@@ -1199,12 +1213,12 @@
           : 'below_buy_buttons';
       var normCta = String(rawCta || '').trim().toLowerCase() === 'button' ? 'button' : 'link';
       var normTryonLayout =
-        config &&
-        String(config.tryon_layout != null ? config.tryon_layout : '')
-          .trim()
-          .toLowerCase() === 'sidebar'
-          ? 'sidebar'
-          : 'default';
+        (function () {
+          var rawLayout = config && String(config.tryon_layout != null ? config.tryon_layout : '').trim().toLowerCase();
+          if (rawLayout === 'hero') return 'hero';
+          if (rawLayout === 'sidebar') return 'sidebar';
+          return 'default';
+        })();
 
       const mappedConfig = {
         publicId: validPublicId,
@@ -1235,7 +1249,9 @@
           Number.isFinite(Number(config?.cta_button_border_radius))
             ? Number(config?.cta_button_border_radius)
             : null,
-        tryonLayout: normTryonLayout
+        tryonLayout: normTryonLayout,
+        tryonLayoutBackgroundImage: config?.tryon_layout_background_image || '',
+        tryon_layout_background_image: config?.tryon_layout_background_image || ''
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
       
@@ -1268,7 +1284,9 @@
         embedPosition: 'below_buy_buttons',
         ctaType: 'link',
         ctaButtonBorderRadius: null,
-        tryonLayout: 'default'
+        tryonLayout: 'default',
+        tryonLayoutBackgroundImage: '',
+        tryon_layout_background_image: ''
       };
     }
   }
@@ -1851,7 +1869,15 @@
     const availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
     const availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
     var omafitIframeTryonLayout =
-      OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayout === 'sidebar' ? 'sidebar' : 'default';
+      OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayout === 'hero'
+        ? 'hero'
+        : OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayout === 'sidebar'
+          ? 'sidebar'
+          : 'default';
+    var omafitIframeTryonLayoutBackground =
+      OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayoutBackgroundImage
+        ? String(OMAFIT_CONFIG.tryonLayoutBackgroundImage)
+        : '';
 
     const widgetPath = collectionType === 'footwear' ? '/widget-shoes' : '/widget';
 
@@ -1873,6 +1899,8 @@
       '&locale=' + encodeURIComponent(storeLanguage) +
       '&tryon_layout=' + encodeURIComponent(omafitIframeTryonLayout) +
       '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout) +
+      (omafitIframeTryonLayoutBackground ? '&tryon_layout_background_image=' + encodeURIComponent(omafitIframeTryonLayoutBackground) : '') +
+      (omafitIframeTryonLayoutBackground ? '&tryonLayoutBackgroundImage=' + encodeURIComponent(omafitIframeTryonLayoutBackground) : '') +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (productCollectionHandles.length
         ? '&collectionHandles=' + encodeURIComponent(productCollectionHandles.join(','))
@@ -2097,7 +2125,9 @@
           recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
           recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
           tryon_layout: omafitIframeTryonLayout,
-          tryonLayout: omafitIframeTryonLayout
+          tryonLayout: omafitIframeTryonLayout,
+          tryon_layout_background_image: omafitIframeTryonLayoutBackground,
+          tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
           }, OMAFIT_WIDGET_ORIGIN);
 
           // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)
@@ -2171,7 +2201,9 @@
                 recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
                 recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
                 tryon_layout: omafitIframeTryonLayout,
-                tryonLayout: omafitIframeTryonLayout
+                tryonLayout: omafitIframeTryonLayout,
+                tryon_layout_background_image: omafitIframeTryonLayoutBackground,
+                tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
               }, OMAFIT_WIDGET_ORIGIN);
             } else {
               // Enviar atualização de configuração sem logo (logo inválido)
@@ -2201,7 +2233,9 @@
                 recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
                 recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
                 tryon_layout: omafitIframeTryonLayout,
-                tryonLayout: omafitIframeTryonLayout
+                tryonLayout: omafitIframeTryonLayout,
+                tryon_layout_background_image: omafitIframeTryonLayoutBackground,
+                tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
               }, OMAFIT_WIDGET_ORIGIN);
             }
           } else {
@@ -2232,7 +2266,9 @@
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
               recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
               tryon_layout: omafitIframeTryonLayout,
-              tryonLayout: omafitIframeTryonLayout
+              tryonLayout: omafitIframeTryonLayout,
+              tryon_layout_background_image: omafitIframeTryonLayoutBackground,
+              tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
             }, OMAFIT_WIDGET_ORIGIN);
           }
         };

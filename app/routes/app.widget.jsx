@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLoaderData } from 'react-router-dom';
 import { redirect } from "react-router";
 import { Buffer } from "node:buffer";
 import {
@@ -17,7 +17,8 @@ import {
   Thumbnail,
   Checkbox,
   RangeSlider,
-  RadioButton
+  RadioButton,
+  Badge
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
@@ -41,12 +42,16 @@ export const loader = async ({ request }) => {
     if (embeddedFromQuery) qs.set("embedded", embeddedFromQuery);
     return redirect(`/app/billing?${qs.toString()}`);
   }
-  return null;
+  return {
+    billingPlan: check.row?.plan || null,
+    billingStatus: check.row?.billing_status || null,
+  };
 };
 
 export default function WidgetPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const loaderData = useLoaderData();
   const { t, locale } = useAppI18n();
   const shopDomain = getShopDomain(searchParams);
   const appSearch = searchParams.toString();
@@ -67,6 +72,9 @@ export default function WidgetPage() {
   const [error, setError] = useState(null);
   const [configId, setConfigId] = useState(null);
   const fileInputRef = useRef(null);
+  const backgroundFileInputRef = useRef(null);
+  const currentPlan = String(loaderData?.billingPlan || '').toLowerCase();
+  const hasHeroLayoutAccess = ['growth', 'pro', 'professional', 'enterprise'].includes(currentPlan);
 
   const [config, setConfig] = useState({
     link_text: '',
@@ -78,6 +86,7 @@ export default function WidgetPage() {
     embed_position: 'below_buy_buttons',
     cta_type: 'link',
     tryon_layout: 'default',
+    tryon_layout_background_image: '',
     cta_button_border_radius: 40,
   });
   const [collectionsLoading, setCollectionsLoading] = useState(false);
@@ -175,9 +184,12 @@ export default function WidgetPage() {
                 : 'below_buy_buttons',
             cta_type: loadedConfig.cta_type === 'button' ? 'button' : 'link',
             tryon_layout:
-              loadedConfig.tryon_layout === 'sidebar' || loadedConfig.tryon_layout === 'default'
+              loadedConfig.tryon_layout === 'hero' && hasHeroLayoutAccess
+                ? 'hero'
+                : loadedConfig.tryon_layout === 'sidebar' || loadedConfig.tryon_layout === 'default'
                 ? loadedConfig.tryon_layout
                 : 'default',
+            tryon_layout_background_image: loadedConfig.tryon_layout_background_image || '',
             cta_button_border_radius: (() => {
               const n = Number(loadedConfig.cta_button_border_radius);
               if (!Number.isFinite(n)) return 40;
@@ -352,6 +364,68 @@ export default function WidgetPage() {
     }
   };
 
+  const handleHeroBackgroundUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setError(t('widget.errorInvalidImageFile'));
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setError(t('widget.errorImageMaxSize'));
+      return;
+    }
+
+    try {
+      setError(null);
+      setSaving(true);
+
+      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error(t('widget.errorSupabase'));
+      }
+
+      const fileExtension = file.name.split('.').pop() || 'png';
+      const fileName = `${crypto.randomUUID()}-${Date.now()}.${fileExtension}`;
+      const bucketName = 'Video banner';
+      const filePath = `widget-hero-backgrounds/${fileName}`;
+
+      const uploadResponse = await fetch(
+        `${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucketName)}/${encodeURIComponent(filePath)}`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': file.type,
+            'x-upsert': 'true',
+          },
+          body: file,
+        },
+      );
+
+      if (!uploadResponse.ok) {
+        const body = await uploadResponse.text().catch(() => '');
+        throw new Error(body || t('widget.errorUploadHeroBackground'));
+      }
+
+      const publicUrl = `${supabaseUrl.replace(/\/$/, '')}/storage/v1/object/public/${encodeURIComponent(bucketName)}/${encodeURIComponent(filePath)}`;
+      const newConfig = { ...config, tryon_layout_background_image: publicUrl };
+      setConfig(newConfig);
+      await saveConfig(newConfig);
+    } catch (err) {
+      console.error('[Widget] Erro ao fazer upload da imagem hero:', err);
+      setError(err.message || t('widget.errorUploadHeroBackground'));
+    } finally {
+      setSaving(false);
+      if (event.target) event.target.value = '';
+    }
+  };
+
   const saveConfig = async (configToSave) => {
     try {
       setSaving(true);
@@ -363,6 +437,9 @@ export default function WidgetPage() {
 
       // Garantir que store_logo seja uma string válida e não vazia/null
       const storeLogoValue = configToSave.store_logo ? String(configToSave.store_logo).trim() : null;
+      const heroBackgroundValue = configToSave.tryon_layout_background_image
+        ? String(configToSave.tryon_layout_background_image).trim()
+        : null;
       
       const payload = {
         shop_domain: shopDomain,
@@ -378,9 +455,12 @@ export default function WidgetPage() {
             : 'below_buy_buttons',
         cta_type: configToSave.cta_type === 'button' ? 'button' : 'link',
         tryon_layout:
-          configToSave.tryon_layout === 'sidebar' || configToSave.tryon_layout === 'default'
+          configToSave.tryon_layout === 'hero' && hasHeroLayoutAccess
+            ? 'hero'
+            : configToSave.tryon_layout === 'sidebar' || configToSave.tryon_layout === 'default'
             ? configToSave.tryon_layout
             : 'default',
+        tryon_layout_background_image: heroBackgroundValue || null,
         cta_button_border_radius: (() => {
           const n = Number(configToSave.cta_button_border_radius);
           if (!Number.isFinite(n)) return 40;
@@ -516,6 +596,12 @@ export default function WidgetPage() {
     await saveConfig(newConfig);
   };
 
+  const handleRemoveHeroBackground = async () => {
+    const newConfig = { ...config, tryon_layout_background_image: '' };
+    setConfig(newConfig);
+    await saveConfig(newConfig);
+  };
+
   if (loading) {
     return (
       <Page title={t("widget.title")}>
@@ -639,7 +725,7 @@ export default function WidgetPage() {
                 </Text>
                 <RadioButton
                   label={t("widget.tryonLayoutDefault")}
-                  checked={config.tryon_layout !== "sidebar"}
+                  checked={config.tryon_layout !== "sidebar" && config.tryon_layout !== "hero"}
                   name="tryon_layout"
                   id="tryon-layout-default"
                   onChange={(checked) => {
@@ -655,6 +741,72 @@ export default function WidgetPage() {
                     if (checked) handleChange("tryon_layout", "sidebar");
                   }}
                 />
+                <InlineStack gap="200" blockAlign="center">
+                  <RadioButton
+                    label={t("widget.tryonLayoutHero")}
+                    checked={config.tryon_layout === "hero"}
+                    name="tryon_layout"
+                    id="tryon-layout-hero"
+                    disabled={!hasHeroLayoutAccess}
+                    onChange={(checked) => {
+                      if (checked && hasHeroLayoutAccess) handleChange("tryon_layout", "hero");
+                    }}
+                  />
+                  <Badge tone={hasHeroLayoutAccess ? "success" : "attention"}>
+                    {t("widget.tryonLayoutHeroPlanBadge")}
+                  </Badge>
+                </InlineStack>
+                {!hasHeroLayoutAccess && (
+                  <Text variant="bodySm" tone="subdued">
+                    {t("widget.tryonLayoutHeroLocked")}
+                  </Text>
+                )}
+                <BlockStack gap="200">
+                  <Text variant="bodySm" tone="subdued">
+                    {t("widget.tryonLayoutHeroImageHelp")}
+                  </Text>
+                  {config.tryon_layout_background_image ? (
+                    <InlineStack gap="300" align="start">
+                      <Thumbnail
+                        source={config.tryon_layout_background_image}
+                        alt={t("widget.tryonLayoutHeroImage")}
+                        size="medium"
+                      />
+                      <BlockStack gap="100">
+                        <Button
+                          onClick={() => backgroundFileInputRef.current?.click()}
+                          variant="secondary"
+                          disabled={!hasHeroLayoutAccess}
+                        >
+                          {t("widget.changeHeroBackground")}
+                        </Button>
+                        <Button
+                          onClick={handleRemoveHeroBackground}
+                          variant="plain"
+                          tone="critical"
+                          disabled={!hasHeroLayoutAccess}
+                        >
+                          {t("widget.removeHeroBackground")}
+                        </Button>
+                      </BlockStack>
+                    </InlineStack>
+                  ) : (
+                    <Button
+                      onClick={() => backgroundFileInputRef.current?.click()}
+                      variant="secondary"
+                      disabled={!hasHeroLayoutAccess}
+                    >
+                      {t("widget.uploadHeroBackground")}
+                    </Button>
+                  )}
+                  <input
+                    ref={backgroundFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleHeroBackgroundUpload}
+                    style={{ display: "none" }}
+                  />
+                </BlockStack>
               </BlockStack>
 
               <Divider />

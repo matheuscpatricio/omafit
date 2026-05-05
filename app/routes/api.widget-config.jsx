@@ -30,6 +30,7 @@ function buildSelectQuery({ includeEmbedAndCta = true, includeExcludedCollection
     "primary_color",
     "widget_enabled",
     "admin_locale",
+    "tryon_layout",
     "created_at",
     "updated_at",
   ];
@@ -52,7 +53,7 @@ async function fetchWidgetConfig({ supabaseUrl, supabaseKey, shopDomain }) {
 
   for (const select of attempts) {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${select}&limit=1`,
+      `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${select}&order=updated_at.desc&limit=1`,
       { headers: getHeaders(supabaseKey) },
     );
 
@@ -93,6 +94,7 @@ function normalizePayload(body, shopDomain) {
     embed_position: body?.embed_position === "above_buy_buttons" ? "above_buy_buttons" : "below_buy_buttons",
     cta_type: body?.cta_type === "button" ? "button" : "link",
     cta_button_border_radius: ctaButtonBorderRadius,
+    tryon_layout: body?.tryon_layout === "sidebar" ? "sidebar" : "default",
   };
 }
 
@@ -223,3 +225,5 @@ export async function action({ request }) {
     return Response.json({ error: err?.message || "Unexpected Server Error" }, { status: 500 });
   }
 }
+
+

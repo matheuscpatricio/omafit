@@ -16,7 +16,8 @@ import {
   Spinner,
   Thumbnail,
   Checkbox,
-  RangeSlider
+  RangeSlider,
+  RadioButton
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
@@ -509,26 +510,11 @@ export default function WidgetPage() {
     });
   }, []);
 
-  const handleSingleOptionCheckbox = useCallback((field, value, checked) => {
-    if (!checked) return;
-    handleChange(field, value);
-  }, [handleChange]);
-
   const handleRemoveLogo = async () => {
     const newConfig = { ...config, store_logo: '' };
     setConfig(newConfig);
     await saveConfig(newConfig);
   };
-
-  const previewPrimaryColor = config.primary_color || '#810707';
-  const previewLinkText = config.link_text || t('widget.defaultLinkText');
-  const previewButtonRadius = (() => {
-    const n = Number(config.cta_button_border_radius);
-    if (!Number.isFinite(n)) return 40;
-    return Math.max(0, Math.min(40, Math.round(n)));
-  })();
-  const previewHasValidLogo =
-    typeof config.store_logo === 'string' && /^https?:\/\//i.test(config.store_logo.trim());
 
   if (loading) {
     return (
@@ -595,12 +581,16 @@ export default function WidgetPage() {
                 <Checkbox
                   label={t("widget.embedPositionBelow")}
                   checked={config.embed_position !== "above_buy_buttons"}
-                  onChange={(checked) => handleSingleOptionCheckbox("embed_position", "below_buy_buttons", checked)}
+                  onChange={(checked) =>
+                    handleChange("embed_position", checked ? "below_buy_buttons" : "above_buy_buttons")
+                  }
                 />
                 <Checkbox
                   label={t("widget.embedPositionAbove")}
                   checked={config.embed_position === "above_buy_buttons"}
-                  onChange={(checked) => handleSingleOptionCheckbox("embed_position", "above_buy_buttons", checked)}
+                  onChange={(checked) =>
+                    handleChange("embed_position", checked ? "above_buy_buttons" : "below_buy_buttons")
+                  }
                 />
               </BlockStack>
 
@@ -614,12 +604,16 @@ export default function WidgetPage() {
                 <Checkbox
                   label={t("widget.ctaTypeLink")}
                   checked={config.cta_type !== "button"}
-                  onChange={(checked) => handleSingleOptionCheckbox("cta_type", "link", checked)}
+                  onChange={(checked) =>
+                    handleChange("cta_type", checked ? "link" : "button")
+                  }
                 />
                 <Checkbox
                   label={t("widget.ctaTypeButton")}
                   checked={config.cta_type === "button"}
-                  onChange={(checked) => handleSingleOptionCheckbox("cta_type", "button", checked)}
+                  onChange={(checked) =>
+                    handleChange("cta_type", checked ? "button" : "link")
+                  }
                 />
                 {config.cta_type === "button" && (
                   <RangeSlider
@@ -634,79 +628,6 @@ export default function WidgetPage() {
                     suffix={`${config.cta_button_border_radius}px`}
                   />
                 )}
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">
-                    {t("widget.ctaPreviewLabel")}
-                  </Text>
-                  <div
-                    style={{
-                      border: '1px solid #E1E3E5',
-                      borderRadius: 8,
-                      padding: 12,
-                      display: 'inline-block',
-                      width: 'fit-content',
-                      maxWidth: '100%'
-                    }}
-                  >
-                    {config.cta_type === "button" ? (
-                      <button
-                        type="button"
-                        style={{
-                          fontFamily: 'inherit',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 10,
-                          padding: '12px 22px',
-                          borderRadius: `${previewButtonRadius}px`,
-                          border: `2px solid ${previewPrimaryColor}`,
-                          background: '#ffffff',
-                          color: previewPrimaryColor,
-                          cursor: 'default',
-                          fontSize: '15px',
-                          fontWeight: 600,
-                          lineHeight: 1.25,
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-                          maxWidth: '100%'
-                        }}
-                      >
-                        {previewHasValidLogo && (
-                          <img
-                            src={config.store_logo}
-                            alt=""
-                            style={{
-                              width: 32,
-                              height: 32,
-                              objectFit: 'contain',
-                              borderRadius: 6,
-                              flexShrink: 0
-                            }}
-                          />
-                        )}
-                        <span style={{ textAlign: 'center' }}>{previewLinkText}</span>
-                      </button>
-                    ) : (
-                      <a
-                        href="#"
-                        onClick={(event) => event.preventDefault()}
-                        style={{
-                          fontFamily: 'inherit',
-                          fontSize: 'inherit',
-                          fontWeight: 'inherit',
-                          lineHeight: 'inherit',
-                          color: previewPrimaryColor,
-                          textDecoration: 'underline',
-                          textDecorationColor: previewPrimaryColor,
-                          textUnderlineOffset: '3px',
-                          display: 'inline-block',
-                          cursor: 'default'
-                        }}
-                      >
-                        {previewLinkText}
-                      </a>
-                    )}
-                  </div>
-                </BlockStack>
               </BlockStack>
 
               <BlockStack gap="200">
@@ -716,15 +637,23 @@ export default function WidgetPage() {
                 <Text variant="bodySm" tone="subdued">
                   {t("widget.tryonLayoutHelp")}
                 </Text>
-                <Checkbox
+                <RadioButton
                   label={t("widget.tryonLayoutDefault")}
                   checked={config.tryon_layout !== "sidebar"}
-                  onChange={(checked) => handleSingleOptionCheckbox("tryon_layout", "default", checked)}
+                  name="tryon_layout"
+                  id="tryon-layout-default"
+                  onChange={(checked) => {
+                    if (checked) handleChange("tryon_layout", "default");
+                  }}
                 />
-                <Checkbox
+                <RadioButton
                   label={t("widget.tryonLayoutSidebar")}
                   checked={config.tryon_layout === "sidebar"}
-                  onChange={(checked) => handleSingleOptionCheckbox("tryon_layout", "sidebar", checked)}
+                  name="tryon_layout"
+                  id="tryon-layout-sidebar"
+                  onChange={(checked) => {
+                    if (checked) handleChange("tryon_layout", "sidebar");
+                  }}
                 />
               </BlockStack>
 

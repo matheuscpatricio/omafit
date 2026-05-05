@@ -951,9 +951,9 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,tryon_layout,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,created_at,updated_at';
       var selectWidgetCfgLegacy =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at';
 
@@ -1231,6 +1231,10 @@
         excludedCollections: excludedCollections,
         embedPosition: normEmbed,
         ctaType: normCta,
+        ctaButtonBorderRadius:
+          Number.isFinite(Number(config?.cta_button_border_radius))
+            ? Number(config?.cta_button_border_radius)
+            : null,
         tryonLayout: normTryonLayout
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
@@ -1263,6 +1267,7 @@
         isActive: true,
         embedPosition: 'below_buy_buttons',
         ctaType: 'link',
+        ctaButtonBorderRadius: null,
         tryonLayout: 'default'
       };
     }
@@ -3075,7 +3080,11 @@
     btn.style.justifyContent = 'center';
     btn.style.gap = '10px';
     btn.style.padding = '12px 22px';
-    btn.style.borderRadius = '9999px';
+    var cfgBorderRadius = Number(OMAFIT_CONFIG && OMAFIT_CONFIG.ctaButtonBorderRadius);
+    btn.style.borderRadius =
+      Number.isFinite(cfgBorderRadius) && cfgBorderRadius >= 0
+        ? String(cfgBorderRadius) + 'px'
+        : '9999px';
     btn.style.border = '2px solid ' + primaryColor;
     btn.style.background = '#ffffff';
     btn.style.color = primaryColor;

@@ -390,9 +390,11 @@ export default function WidgetPage() {
       }
 
       const fileExtension = file.name.split('.').pop() || 'png';
-      const fileName = `${crypto.randomUUID()}-${Date.now()}.${fileExtension}`;
+      const fileName = `hero-bg-${crypto.randomUUID()}-${Date.now()}.${fileExtension}`;
       const bucketName = 'Video banner';
-      const filePath = `widget-hero-backgrounds/${fileName}`;
+      // Reutiliza a pasta já liberada nas policies atuais de Storage.
+      // Mantemos separação lógica pelo prefixo hero-bg no nome do arquivo.
+      const filePath = `widget-logos/${fileName}`;
 
       const uploadResponse = await fetch(
         `${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucketName)}/${encodeURIComponent(filePath)}`,

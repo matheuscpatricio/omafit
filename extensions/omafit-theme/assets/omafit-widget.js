@@ -958,7 +958,7 @@
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at';
 
       let configResponse = await fetch(
-        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}`,
+        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
         { headers: configHeaders }
       );
       if (!configResponse.ok) {
@@ -972,7 +972,7 @@
           console.warn('⚠️ Coluna tryon_layout ausente no Supabase. Repetindo busca sem ela.');
           selectWidgetCfgFull = selectWidgetCfgFull.replace(',tryon_layout', '');
           configResponse = await fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
             { headers: configHeaders }
           );
           errT = await configResponse.text().catch(function () { return ''; });
@@ -984,7 +984,7 @@
         ) {
           console.warn('⚠️ Colunas embed_position/cta_type ausentes. Repetindo busca sem elas.');
           configResponse = await fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgLegacy}`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgLegacy}&order=updated_at.desc&limit=1`,
             { headers: configHeaders }
           );
           if (!configResponse.ok) {
@@ -994,7 +994,7 @@
         if (!configResponse.ok && configResponse.status === 400 && errT && errT.indexOf('excluded_collections') !== -1) {
           console.warn('⚠️ Coluna excluded_collections não encontrada no banco. Repetindo busca sem essa coluna.');
           configResponse = await fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgNoExcluded}`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgNoExcluded}&order=updated_at.desc&limit=1`,
             { headers: configHeaders }
           );
           if (!configResponse.ok) {

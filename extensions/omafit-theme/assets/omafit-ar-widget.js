@@ -5371,19 +5371,32 @@ function injectGlobalStyles(root, primaryOverride, tryonLayout = "default") {
     }`
         : ""
     }
-    .omafit-ar-shell-hero-layout { display: flex; flex-direction: column; min-height: 100dvh; }
-    .omafit-ar-shell-hero-layout .omafit-ar-hero-mobile {
-      display: flex; min-height: 180px; flex-shrink: 0; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; color: ${omafitContrastOnPrimary(primary)};
+    .omafit-ar-shell-hero-layout { position: fixed; }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-root {
+      position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-mobile {
+      position: absolute; left: 0; right: 0; top: 0;
+      height: max(170px, min(32dvh, 280px));
       background-size: cover; background-position: center top;
     }
-    .omafit-ar-shell-hero-layout .omafit-ar-hero-desktop {
-      display: none; width: min(43vw, 520px); flex-shrink: 0; min-height: 0; color: ${omafitContrastOnPrimary(primary)};
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-desktop {
+      display: none;
+      position: absolute; top: 0; right: 0; bottom: 0;
+      width: min(46%, 560px);
       background-size: cover; background-position: center;
     }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-blur {
+      position: absolute; inset: 0; opacity: 0; pointer-events: none;
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      background: rgba(255,255,255,.24);
+      transition: opacity .24s ease;
+    }
+    .omafit-ar-shell-hero-layout.omafit-ar-hero-blur-on .omafit-ar-hero-bg-blur { opacity: 1; }
     @media (min-width: 768px) {
-      .omafit-ar-shell-hero-layout { flex-direction: row; }
-      .omafit-ar-shell-hero-layout .omafit-ar-hero-mobile { display: none; }
-      .omafit-ar-shell-hero-layout .omafit-ar-hero-desktop { display: flex; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-mobile { display: none; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-desktop { display: block; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-blur { background: rgba(255,255,255,.2); }
     }
   `;
   document.head.appendChild(s);
@@ -5513,9 +5526,12 @@ function buildInfoModal({
   const isSidebar = layoutMode === "sidebar";
   const isHero = layoutMode === "hero";
   const heroBg = omafitUpgradeShopifyMediaToHttps(layoutBackgroundImage || productImgHttps);
-  const heroBgCss = heroBg
-    ? `linear-gradient(180deg, ${primaryColor}e6 0%, ${primaryColor}66 42%, ${primaryColor}12 100%), url("${heroBg.replace(/"/g, "%22")}")`
-    : `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor}99 100%)`;
+  const heroBgMobileCss = heroBg
+    ? `linear-gradient(180deg, ${primaryColor}f0 0%, ${primaryColor}aa 40%, ${primaryColor}40 78%, ${primaryColor}10 100%), url("${heroBg.replace(/"/g, "%22")}")`
+    : `linear-gradient(180deg, ${primaryColor}f0 0%, ${primaryColor}30 100%)`;
+  const heroBgDesktopCss = heroBg
+    ? `linear-gradient(270deg, ${primaryColor}f0 0%, ${primaryColor}aa 36%, ${primaryColor}4d 68%, ${primaryColor}12 100%), url("${heroBg.replace(/"/g, "%22")}")`
+    : `linear-gradient(270deg, ${primaryColor}f0 0%, ${primaryColor}30 100%)`;
   // #region agent log
   __omafitArDbgLog({
     location: "omafit-ar-widget.js:buildInfoModal",
@@ -6003,37 +6019,29 @@ function buildInfoModal({
     shell.appendChild(contentOuter);
   } else if (isHero) {
     const contentOuter = el("div", {
-      style: { flex: "1", display: "flex", flexDirection: "column", minHeight: "0", overflow: "hidden" },
+      style: {
+        flex: "1",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: "0",
+        overflow: "hidden",
+        position: "relative",
+        zIndex: "1",
+      },
     });
-    const heroMobile = el("section", {
-      className: "omafit-ar-hero-mobile",
-      style: { backgroundImage: heroBgCss },
-    });
-    heroMobile.appendChild(
-      logoUrl
-        ? el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "40px", width: "auto", maxWidth: "min(220px,70vw)", objectFit: "contain" } })
-        : el("p", { textContent: shopName || "", style: { margin: 0, fontSize: "14px", fontWeight: "600", letterSpacing: ".22em", textTransform: "uppercase" } }),
-    );
-    heroMobile.appendChild(el("div", { style: { width: "64px", height: "1px", background: "currentColor", opacity: ".7" } }));
-    contentOuter.appendChild(heroMobile);
+    const bgRoot = el("div", { className: "omafit-ar-hero-bg-root" });
+    bgRoot.appendChild(el("div", { className: "omafit-ar-hero-bg-mobile", style: { backgroundImage: heroBgMobileCss } }));
+    bgRoot.appendChild(el("div", { className: "omafit-ar-hero-bg-desktop", style: { backgroundImage: heroBgDesktopCss } }));
+    bgRoot.appendChild(el("div", { className: "omafit-ar-hero-bg-blur" }));
+    shell.appendChild(bgRoot);
     contentOuter.appendChild(mainRow);
-
-    const heroDesktop = el("aside", {
-      className: "omafit-ar-hero-desktop",
-      style: { backgroundImage: heroBgCss },
-    });
-    const heroInner = el("div", {
-      style: { width: "100%", minHeight: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "32px", boxSizing: "border-box", background: "rgba(0,0,0,.10)" },
-    });
-    heroInner.appendChild(
-      logoUrl
-        ? el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "48px", width: "auto", maxWidth: "220px", objectFit: "contain", objectPosition: "left" } })
-        : el("p", { textContent: shopName || "", style: { margin: 0, fontSize: "14px", fontWeight: "600", letterSpacing: ".26em", textTransform: "uppercase" } }),
-    );
-    heroInner.appendChild(el("div", { style: { width: "80px", height: "1px", background: "currentColor", opacity: ".7" } }));
-    heroDesktop.appendChild(heroInner);
     shell.appendChild(contentOuter);
-    shell.appendChild(heroDesktop);
+    shell.__omafitArHeroApi = {
+      setBlur(isOn) {
+        shell.classList.toggle("omafit-ar-hero-blur-on", Boolean(isOn));
+      },
+    };
+    shell.__omafitArHeroApi.setBlur(false);
   } else {
     shell.appendChild(header);
     shell.appendChild(mainRow);
@@ -6612,6 +6620,7 @@ async function runArSession({
   colContent.innerHTML = "";
   try {
     shell.__omafitArSidebarApi?.setStep?.("ar");
+    shell.__omafitArHeroApi?.setBlur?.(true);
   } catch {
     /* ignore */
   }

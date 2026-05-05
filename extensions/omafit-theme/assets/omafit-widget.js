@@ -951,11 +951,11 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,tryon_layout,created_at,updated_at';
       var selectWidgetCfgLegacy =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,cta_button_border_radius,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at';
 
       let configResponse = await fetch(
         `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}`,
@@ -963,6 +963,20 @@
       );
       if (!configResponse.ok) {
         var errT = await configResponse.text().catch(function () { return ''; });
+        if (
+          configResponse.status === 400 &&
+          errT &&
+          errT.indexOf('tryon_layout') !== -1 &&
+          selectWidgetCfgFull.indexOf('tryon_layout') !== -1
+        ) {
+          console.warn('⚠️ Coluna tryon_layout ausente no Supabase. Repetindo busca sem ela.');
+          selectWidgetCfgFull = selectWidgetCfgFull.replace(',tryon_layout', '');
+          configResponse = await fetch(
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}`,
+            { headers: configHeaders }
+          );
+          errT = await configResponse.text().catch(function () { return ''; });
+        }
         if (
           configResponse.status === 400 &&
           errT &&
@@ -1184,6 +1198,13 @@
           ? 'above_buy_buttons'
           : 'below_buy_buttons';
       var normCta = String(rawCta || '').trim().toLowerCase() === 'button' ? 'button' : 'link';
+      var normTryonLayout =
+        config &&
+        String(config.tryon_layout != null ? config.tryon_layout : '')
+          .trim()
+          .toLowerCase() === 'sidebar'
+          ? 'sidebar'
+          : 'default';
 
       const mappedConfig = {
         publicId: validPublicId,
@@ -1210,11 +1231,7 @@
         excludedCollections: excludedCollections,
         embedPosition: normEmbed,
         ctaType: normCta,
-        ctaButtonBorderRadius: (function () {
-          var n = Number(config && config.cta_button_border_radius);
-          if (!Number.isFinite(n)) return 40;
-          return Math.max(0, Math.min(40, Math.round(n)));
-        })()
+        tryonLayout: normTryonLayout
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
       
@@ -1246,7 +1263,7 @@
         isActive: true,
         embedPosition: 'below_buy_buttons',
         ctaType: 'link',
-        ctaButtonBorderRadius: 40
+        tryonLayout: 'default'
       };
     }
   }
@@ -1828,6 +1845,8 @@
     const variantCatalogList = Array.isArray(productVariantCatalog.variants) ? productVariantCatalog.variants : [];
     const availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
     const availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
+    var omafitIframeTryonLayout =
+      OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayout === 'sidebar' ? 'sidebar' : 'default';
 
     const widgetPath = collectionType === 'footwear' ? '/widget-shoes' : '/widget';
 
@@ -1847,6 +1866,8 @@
       '&store_name=' + encodeURIComponent(resolvedStoreName) +
       '&language=' + encodeURIComponent(storeLanguage) +
       '&locale=' + encodeURIComponent(storeLanguage) +
+      '&tryon_layout=' + encodeURIComponent(omafitIframeTryonLayout) +
+      '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout) +
       (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
       (productCollectionHandles.length
         ? '&collectionHandles=' + encodeURIComponent(productCollectionHandles.join(','))
@@ -2069,7 +2090,9 @@
           collectionElasticity: typeof collectionElasticity === 'string' ? collectionElasticity : '',
           complementaryProduct: complementaryProduct || null,
           recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
-          recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
+          recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
+          tryon_layout: omafitIframeTryonLayout,
+          tryonLayout: omafitIframeTryonLayout
           }, OMAFIT_WIDGET_ORIGIN);
 
           // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)
@@ -2141,7 +2164,9 @@
                 collectionElasticity: collectionElasticity || '',
                 complementaryProduct: complementaryProduct || null,
                 recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
-                recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
+                recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
+                tryon_layout: omafitIframeTryonLayout,
+                tryonLayout: omafitIframeTryonLayout
               }, OMAFIT_WIDGET_ORIGIN);
             } else {
               // Enviar atualização de configuração sem logo (logo inválido)
@@ -2169,7 +2194,9 @@
                 collectionElasticity: collectionElasticity || '',
                 complementaryProduct: complementaryProduct || null,
                 recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
-                recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
+                recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
+                tryon_layout: omafitIframeTryonLayout,
+                tryonLayout: omafitIframeTryonLayout
               }, OMAFIT_WIDGET_ORIGIN);
             }
           } else {
@@ -2198,7 +2225,9 @@
               collectionElasticity: collectionElasticity || '',
               complementaryProduct: complementaryProduct || null,
               recommendedProductName: complementaryProduct ? complementaryProduct.title : '',
-              recommendedProductUrl: complementaryProduct ? complementaryProduct.url : ''
+              recommendedProductUrl: complementaryProduct ? complementaryProduct.url : '',
+              tryon_layout: omafitIframeTryonLayout,
+              tryonLayout: omafitIframeTryonLayout
             }, OMAFIT_WIDGET_ORIGIN);
           }
         };
@@ -3032,12 +3061,6 @@
 
   /** Botão pill com logo + texto (alternativa ao link). */
   function createOmafitButton() {
-    const buttonRadiusRaw = Number(
-      OMAFIT_CONFIG?.ctaButtonBorderRadius ?? OMAFIT_CONFIG?.cta_button_border_radius
-    );
-    const buttonRadius = Number.isFinite(buttonRadiusRaw)
-      ? Math.max(0, Math.min(40, Math.round(buttonRadiusRaw)))
-      : 40;
     const primaryColor = OMAFIT_CONFIG?.colors?.primary || OMAFIT_CONFIG?.colors?.text || '#810707';
     const label = OMAFIT_CONFIG?.linkText || 'Experimentar virtualmente';
     const logoRaw = OMAFIT_CONFIG?.storeLogo != null ? String(OMAFIT_CONFIG.storeLogo).trim() : '';
@@ -3052,7 +3075,7 @@
     btn.style.justifyContent = 'center';
     btn.style.gap = '10px';
     btn.style.padding = '12px 22px';
-    btn.style.borderRadius = buttonRadius + 'px';
+    btn.style.borderRadius = '9999px';
     btn.style.border = '2px solid ' + primaryColor;
     btn.style.background = '#ffffff';
     btn.style.color = primaryColor;

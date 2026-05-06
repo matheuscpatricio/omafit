@@ -86,6 +86,18 @@
     }
   }
 
+  function removeInjectedOmafitCtaOnly() {
+    try {
+      document.querySelectorAll('.omafit-widget').forEach(function (w) {
+        if (w.closest('#omafit-ar-root')) return;
+        if (w.querySelector('.omafit-ar-try-on-link')) return;
+        w.remove();
+      });
+    } catch (_e) {
+      // non-blocking
+    }
+  }
+
   function applyOmafitArEyewearSuppression() {
     if (!isOmafitArEyewearPage()) return;
     if (getOmafitArGlbUrlFromDom()) return;
@@ -123,6 +135,53 @@
 
   // Configuração global (será preenchida pela API)
   let OMAFIT_CONFIG = null;
+  let OMAFIT_WARMUP_STARTED = false;
+  const OMAFIT_WARM_POOL = Object.create(null);
+  const OMAFIT_WARM_PATHS = ['/widget', '/widget-shoes'];
+
+  function getWarmupContainer() {
+    let host = document.getElementById('omafit-iframe-warmup-host');
+    if (host) return host;
+    host = document.createElement('div');
+    host.id = 'omafit-iframe-warmup-host';
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText =
+      'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1;';
+    document.body.appendChild(host);
+    return host;
+  }
+
+  function ensureWarmIframe(path) {
+    if (!path || OMAFIT_WARM_POOL[path]) return;
+    let iframe = document.createElement('iframe');
+    iframe.setAttribute('title', 'omafit-warmup');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.tabIndex = -1;
+    iframe.style.cssText = 'width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
+    iframe.setAttribute('allow', 'camera *; microphone *; fullscreen *');
+    iframe.addEventListener('load', function () {
+      const entry = OMAFIT_WARM_POOL[path];
+      if (entry) entry.ready = true;
+    });
+    iframe.src = OMAFIT_WIDGET_ORIGIN + path + '?omafit_warmup=1';
+    OMAFIT_WARM_POOL[path] = { iframe: iframe, ready: false };
+    getWarmupContainer().appendChild(iframe);
+  }
+
+  function scheduleOmafitWidgetWarmup() {
+    // Warmup por iframe oculto desativado para não pesar a PDP.
+    return;
+  }
+
+  function takeWarmIframe(path) {
+    const entry = OMAFIT_WARM_POOL[path];
+    if (!entry || !entry.ready || !entry.iframe) return null;
+    const iframe = entry.iframe;
+    entry.iframe = null;
+    entry.ready = false;
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    return iframe;
+  }
 
   /** Expõe cor / texto / logo do admin no #omafit-widget-root para o MindAR (omafit-ar-widget.js) ler. */
   function syncAdminBrandingToWidgetRoot(cfg) {
@@ -1567,8 +1626,13 @@
       }
       return;
     }
-    // Carregar fontes apenas quando o usuário abre o modal (não bloqueia carregamento da página)
-    loadOmafitFontsWhenNeeded();
+    if (typeof omafitTryOnPreconnect === 'function') {
+      omafitTryOnPreconnect();
+    }
+    // Carregar fontes após o próximo tick: não compete com a primeira pintura do modal.
+    setTimeout(function () {
+      loadOmafitFontsWhenNeeded();
+    }, 0);
 
     // Se configuração não estiver carregada, tentar carregar agora
     if (!OMAFIT_CONFIG) {
@@ -1630,20 +1694,9 @@
       return;
     }
 
-    const allProductImages = await getOnlyProductImages();
-    console.log('📸 Total de imagens encontradas:', allProductImages.length);
-
-    let productInfo = getProductInfo();
-    productInfo = await enrichProductInfo(productInfo);
-    const productVariantCatalog = await getCurrentProductVariantCatalog(productInfo);
-    const currentProductData = await getCurrentProductData(productInfo);
-    const currentVariantSelection = getSelectedVariantContext(currentProductData);
-    if (!productInfo.productDescription && currentProductData && currentProductData.description) {
-      productInfo.productDescription = normalizeProductDescriptionText(currentProductData.description);
-      productInfo.productDescriptionHtml = String(currentProductData.description || '').trim();
-    }
     const isMobile = window.innerWidth <= 768;
 
+    // Modal visível de imediato (spinner no overlay). Dados e iframe.src vêm em seguida — sem splash extra.
     const overlay = document.createElement('div');
     overlay.className = 'omafit-modal-overlay';
     overlay.style.cssText =
@@ -1664,6 +1717,162 @@
       'opacity: 0;';
 
     const iframe = document.createElement('iframe');
+    (function setIframeCameraDelegationEarly() {
+      var allowVal = 'camera *; microphone *; fullscreen *';
+      iframe.setAttribute('allow', allowVal);
+      iframe.allow = allowVal;
+    })();
+    iframe.style.cssText =
+      'width: 95vw;' +
+      'max-width: 1000px;' +
+      'height: 85vh;' +
+      'max-height: 800px;' +
+      'border: none;' +
+      'border-radius: 16px;' +
+      'background: ' +
+      (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.background ? OMAFIT_CONFIG.colors.background : '#ffffff') +
+      ';' +
+      'box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);' +
+      'transform: scale(0.9);' +
+      'opacity: 0;' +
+      'transition: all 0.4s ease-in-out;';
+
+    const loadingContainer = document.createElement('div');
+    loadingContainer.style.cssText =
+      'position: absolute;' +
+      'top: 50%;' +
+      'left: 50%;' +
+      'transform: translate(-50%, -50%);' +
+      'text-align: center;' +
+      'z-index: 1000000;';
+
+    const loadingText = document.createElement('div');
+    loadingText.style.cssText =
+      'color: white;' +
+      'font-size: 16px;' +
+      'font-family: ' +
+      OMAFIT_CONFIG.fontFamily +
+      ';' +
+      'margin-top: 15px;' +
+      'font-weight: 500;';
+    loadingText.textContent = 'Carregando try-on virtual...';
+
+    const spinner = document.createElement('div');
+    spinner.style.cssText =
+      'width: 50px;' +
+      'height: 50px;' +
+      'border: 4px solid rgba(255,255,255,0.3);' +
+      'border-top-color: white;' +
+      'border-radius: 50%;' +
+      'animation: spin 1s linear infinite;' +
+      'margin: 0 auto 15px;';
+
+    loadingContainer.appendChild(spinner);
+    loadingContainer.appendChild(loadingText);
+
+    if (!document.getElementById('omafit-spinner-style')) {
+      const spinnerStyle = document.createElement('style');
+      spinnerStyle.id = 'omafit-spinner-style';
+      spinnerStyle.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+      document.head.appendChild(spinnerStyle);
+    }
+
+    const iframeContainer = document.createElement('div');
+    iframeContainer.style.cssText =
+      'position: relative;' +
+      'width: 95vw;' +
+      'max-width: 1000px;' +
+      'height: 85vh;' +
+      'max-height: 800px;';
+
+    const closeButton = document.createElement('button');
+    closeButton.innerHTML = '×';
+    closeButton.style.cssText =
+      'position: absolute;' +
+      'top: 12px;' +
+      'right: 12px;' +
+      'width: 36px;' +
+      'height: 36px;' +
+      'border: none;' +
+      'border-radius: 0;' +
+      'background: transparent;' +
+      'color: #333;' +
+      'font-size: 32px;' +
+      'cursor: pointer;' +
+      'display: flex;' +
+      'align-items: center;' +
+      'justify-content: center;' +
+      'z-index: 1000001;' +
+      'font-weight: 300;' +
+      'line-height: 1;' +
+      'padding: 4px;' +
+      'transition: opacity 0.2s;' +
+      'opacity: 0.7;';
+
+    const closeModal = function () {
+      if (document.body.contains(overlay)) {
+        overlay.style.background = 'rgba(0, 0, 0, 0)';
+        overlay.style.backdropFilter = 'blur(0px)';
+        overlay.style.opacity = '0';
+        iframe.style.transform = 'scale(0.9)';
+        iframe.style.opacity = '0';
+
+        setTimeout(function () {
+          if (document.body.contains(overlay)) {
+            document.body.removeChild(overlay);
+            document.body.style.overflow = '';
+            scheduleOmafitWidgetWarmup();
+          }
+        }, 400);
+      }
+    };
+
+    closeButton.addEventListener('mouseenter', function () {
+      this.style.opacity = '1';
+    });
+    closeButton.addEventListener('mouseleave', function () {
+      this.style.opacity = '0.7';
+    });
+
+    closeButton.addEventListener('click', closeModal);
+
+    if (!isMobile) {
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) {
+          closeModal();
+        }
+      });
+    }
+
+    const handleEscape = function (e) {
+      if (e.key === 'Escape') {
+        closeModal();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+
+    iframeContainer.appendChild(iframe);
+    iframeContainer.appendChild(closeButton);
+    overlay.appendChild(loadingContainer);
+    overlay.appendChild(iframeContainer);
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+
+    requestAnimationFrame(function () {
+      if (!isMobile) {
+        overlay.style.background = 'rgba(0, 0, 0, 0.6)';
+        overlay.style.backdropFilter = 'blur(4px)';
+      }
+      overlay.style.opacity = '1';
+      iframe.style.transform = 'scale(1)';
+      iframe.style.opacity = '1';
+    });
+
+    try {
+    let productInfo = getProductInfo();
+    var allProductImages;
+    var currentProductData;
 
     // Detectar fonte da loja do CSS computado
     function getStoreFontFamily() {
@@ -1717,10 +1926,12 @@
 
     var storeLogoUrlForConfig = '';
     var cfgLogo = OMAFIT_CONFIG.storeLogo ? String(OMAFIT_CONFIG.storeLogo) : '';
-    if (cfgLogo && /^https?:\/\//i.test(cfgLogo)) {
-      storeLogoUrlForConfig = cfgLogo;
-    } else if (arLogoFromDom && /^https?:\/\//i.test(arLogoFromDom)) {
-      storeLogoUrlForConfig = arLogoFromDom;
+    var cfgLogoNormalized = normalizeUrl(cfgLogo);
+    var arLogoNormalized = normalizeUrl(arLogoFromDom);
+    if (cfgLogoNormalized && /^https?:\/\//i.test(cfgLogoNormalized)) {
+      storeLogoUrlForConfig = cfgLogoNormalized;
+    } else if (arLogoNormalized && /^https?:\/\//i.test(arLogoNormalized)) {
+      storeLogoUrlForConfig = arLogoNormalized;
     }
 
     // Montar configuração — inclui storeLogo só se for URL (para o provador AR no iframe ler do config)
@@ -1818,18 +2029,65 @@
     });
     let collectionTitle = (rootEl && rootEl.dataset && rootEl.dataset.collectionTitle) ? rootEl.dataset.collectionTitle : '';
     const defaultGender = (rootEl && rootEl.dataset && rootEl.dataset.defaultGender) ? rootEl.dataset.defaultGender : '';
-    if (!collectionTitle && collectionHandle) {
-      collectionTitle = await fetchCollectionTitle(collectionHandle);
-    }
-    const collectionType = await fetchCollectionType(shopDomain, collectionHandle);
-    let collectionElasticity = await fetchCollectionElasticity(shopDomain, collectionHandle);
+    var collectionTitlePromise =
+      !collectionTitle && collectionHandle
+        ? fetchCollectionTitle(collectionHandle)
+        : Promise.resolve(collectionTitle);
+    var FAST_CONTEXT_TIMEOUT_MS = 280;
+    var withFastTimeout = function (promise, fallbackValue) {
+      return Promise.race([
+        promise,
+        new Promise(function (resolve) {
+          setTimeout(function () { resolve(fallbackValue); }, FAST_CONTEXT_TIMEOUT_MS);
+        }),
+      ]);
+    };
+
+    var dataPack = await Promise.all([
+      getOnlyProductImages(),
+      getCurrentProductData(productInfo),
+      withFastTimeout(collectionTitlePromise, collectionTitle || ''),
+      withFastTimeout(fetchCollectionType(shopDomain, collectionHandle), ''),
+      withFastTimeout(fetchCollectionElasticity(shopDomain, collectionHandle), ''),
+      withFastTimeout(getComplementaryProduct(collectionHandle), null)
+    ]);
+    allProductImages = dataPack[0];
+    currentProductData = dataPack[1];
+    collectionTitle = String(dataPack[2] || collectionTitle || '').trim();
+    const collectionType = dataPack[3];
+    let collectionElasticity = dataPack[4];
+    const complementaryProduct = dataPack[5];
     if (collectionType === 'footwear') {
       collectionElasticity = '';
     }
-    
-    // Buscar produto complementar (usa coleção atual se houver; senão busca de qualquer coleção)
-    const complementaryProduct = await getComplementaryProduct(collectionHandle);
-    
+
+    console.log('📸 Total de imagens encontradas:', allProductImages.length);
+
+    if (currentProductData) {
+      if (!productInfo.productId) {
+        productInfo.productId = String(currentProductData.id || '');
+      }
+      if (!productInfo.productName) {
+        productInfo.productName = String(currentProductData.title || '');
+      }
+      var descHtmlEarly = String(currentProductData.description || '').trim();
+      if (descHtmlEarly) {
+        if (!String(productInfo.productDescriptionHtml || '').trim()) {
+          productInfo.productDescriptionHtml = descHtmlEarly;
+        }
+        if (!String(productInfo.productDescription || '').trim()) {
+          productInfo.productDescription = normalizeProductDescriptionText(descHtmlEarly);
+        }
+      }
+    }
+    productInfo = await enrichProductInfo(productInfo);
+    const productVariantCatalog = buildProductVariantCatalog(currentProductData);
+    const currentVariantSelection = getSelectedVariantContext(currentProductData);
+    if (!productInfo.productDescription && currentProductData && currentProductData.description) {
+      productInfo.productDescription = normalizeProductDescriptionText(currentProductData.description);
+      productInfo.productDescriptionHtml = String(currentProductData.description || '').trim();
+    }
+
     // Limitar imagens na URL - passar apenas as primeiras 3 para evitar URL muito longa
     const limitedImages = allProductImages.slice(0, 3);
     
@@ -1881,59 +2139,30 @@
 
     const widgetPath = collectionType === 'footwear' ? '/widget-shoes' : '/widget';
 
+    // URL inicial enxuta para reduzir tempo de navegação/boot do iframe.
+    // Dados ricos (descrição, catálogo, coleções, logo, config completa) seguem via postMessage após load.
     let widgetUrl =
       'https://omafit.netlify.app' + widgetPath +
       '?productImage=' + encodeURIComponent(productImage) +
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
-      (productDescriptionForUrl ? '&productDescription=' + encodeURIComponent(productDescriptionForUrl) : '') +
-      (productDescriptionForUrl ? '&product_description=' + encodeURIComponent(productDescriptionForUrl) : '') +
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
-      '&shop_domain=' + encodeURIComponent(shopDomain) +
-      '&shopName=' + encodeURIComponent(resolvedStoreName) +
-      '&shop_name=' + encodeURIComponent(resolvedStoreName) +
-      '&storeName=' + encodeURIComponent(resolvedStoreName) +
-      '&store_name=' + encodeURIComponent(resolvedStoreName) +
       '&language=' + encodeURIComponent(storeLanguage) +
       '&locale=' + encodeURIComponent(storeLanguage) +
       '&tryon_layout=' + encodeURIComponent(omafitIframeTryonLayout) +
-      '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout) +
-      (omafitIframeTryonLayoutBackground ? '&tryon_layout_background_image=' + encodeURIComponent(omafitIframeTryonLayoutBackground) : '') +
-      (omafitIframeTryonLayoutBackground ? '&tryonLayoutBackgroundImage=' + encodeURIComponent(omafitIframeTryonLayoutBackground) : '') +
-      (collectionHandle ? '&collectionHandle=' + encodeURIComponent(collectionHandle) : '') +
-      (productCollectionHandles.length
-        ? '&collectionHandles=' + encodeURIComponent(productCollectionHandles.join(','))
-        : '') +
-      (collectionTitle ? '&collectionTitle=' + encodeURIComponent(collectionTitle) : '') +
-      (collectionTitle ? '&collectionName=' + encodeURIComponent(collectionTitle) : '') +
-      (defaultGender ? '&defaultGender=' + encodeURIComponent(defaultGender) : '') +
-      (collectionType ? '&collectionType=' + encodeURIComponent(collectionType) : '') +
-      (collectionElasticity ? '&collectionElasticity=' + encodeURIComponent(collectionElasticity) : '') +
-      (complementaryProduct ? '&complementaryProductUrl=' + encodeURIComponent(complementaryProduct.url) : '') +
-      (complementaryProduct ? '&recommendedProductUrl=' + encodeURIComponent(complementaryProduct.url) : '') +
-      (complementaryProduct ? '&recommendedProductName=' + encodeURIComponent(complementaryProduct.title) : '') +
-      '&config=' + encodeURIComponent(JSON.stringify(config));
+      '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout);
     
-    // Se houver imagens, passar apenas as primeiras 3 na URL para evitar URL muito longa
-    // O widget pode buscar o resto usando productId se necessário
-    if (limitedImages.length > 0) {
-      const urlWithImages = widgetUrl + '&productImages=' + encodeURIComponent(JSON.stringify(limitedImages));
-      // Verificar se URL não está muito longa (limite ~2000 caracteres para evitar 414)
-      if (urlWithImages.length < 2000) {
-        widgetUrl = urlWithImages;
-      } else {
-        console.warn('⚠️ URL muito longa, passando apenas primeira imagem. Widget buscará o resto usando productId.');
-      }
+    if (omafitIframeTryonLayoutBackground) {
+      widgetUrl += '&tryon_layout_background_image=' + encodeURIComponent(omafitIframeTryonLayoutBackground);
+      widgetUrl += '&tryonLayoutBackgroundImage=' + encodeURIComponent(omafitIframeTryonLayoutBackground);
     }
     
     console.log('🔗 URL do widget (tamanho:', widgetUrl.length, 'chars):', widgetUrl.substring(0, 200) + '...');
     
-    // Se URL ainda estiver muito longa, usar postMessage para enviar dados grandes
+    // Mantém payload pesado fora da URL; fallback de segurança.
     if (widgetUrl.length > 2000) {
-      console.warn('⚠️ URL ainda muito longa, usando postMessage para enviar dados grandes');
-      // Remover productImages da URL se estiver muito longa
-      widgetUrl = widgetUrl.split('&productImages=')[0];
+      console.warn('⚠️ URL do widget ainda longa; mantendo versão mínima.');
     }
 
     var glbPass = getOmafitArGlbUrlFromDom();
@@ -2007,63 +2236,6 @@
         if (OMAFIT_DEBUG) console.warn('Omafit: propagar data-ar-* para iframe falhou', e);
       }
     }
-
-    /**
-     * Permissions Policy no iframe: tem de seguir a sintaxe real (v. MDN
-     * Permissions-Policy / iframe `allow`). `camera https://…` **não** é
-     * allowlist válida — o Chrome trata como negação e aparece
-     * "camera is not allowed in this document". `camera *` delega a funcionalidade
-     * ao contexto do documento carregado no `src` (origem do widget).
-     */
-    (function setIframeCameraDelegation() {
-      var allowVal = 'camera *; microphone *; fullscreen *';
-      iframe.setAttribute('allow', allowVal);
-      iframe.allow = allowVal;
-    })();
-    iframe.src = widgetUrl;
-    iframe.style.cssText =
-      'width: 95vw;' +
-      'max-width: 1000px;' +
-      'height: 85vh;' +
-      'max-height: 800px;' +
-      'border: none;' +
-      'border-radius: 16px;' +
-      'background: ' + OMAFIT_CONFIG.colors.background + ';' +
-      'box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);' +
-      'transform: scale(0.9);' +
-      'opacity: 0;' +
-      'transition: all 0.4s ease-in-out;';
-
-    const loadingContainer = document.createElement('div');
-    loadingContainer.style.cssText =
-      'position: absolute;' +
-      'top: 50%;' +
-      'left: 50%;' +
-      'transform: translate(-50%, -50%);' +
-      'text-align: center;' +
-      'z-index: 1000000;';
-
-    const loadingText = document.createElement('div');
-    loadingText.style.cssText =
-      'color: white;' +
-      'font-size: 16px;' +
-      'font-family: ' + OMAFIT_CONFIG.fontFamily + ';' +
-      'margin-top: 15px;' +
-      'font-weight: 500;';
-    loadingText.textContent = 'Carregando try-on virtual...';
-
-    const spinner = document.createElement('div');
-    spinner.style.cssText =
-      'width: 50px;' +
-      'height: 50px;' +
-      'border: 4px solid rgba(255,255,255,0.3);' +
-      'border-top-color: white;' +
-      'border-radius: 50%;' +
-      'animation: spin 1s linear infinite;' +
-      'margin: 0 auto 15px;';
-
-    loadingContainer.appendChild(spinner);
-    loadingContainer.appendChild(loadingText);
 
     iframe.addEventListener('load', function () {
       if (loadingContainer.parentNode) {
@@ -2313,103 +2485,13 @@
       }
     });
 
-    if (!document.getElementById('omafit-spinner-style')) {
-      const spinnerStyle = document.createElement('style');
-      spinnerStyle.id = 'omafit-spinner-style';
-      spinnerStyle.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
-      document.head.appendChild(spinnerStyle);
+    iframe.src = widgetUrl;
+    } catch (modalErr) {
+      console.error('❌ Omafit: erro ao montar modal do provador:', modalErr);
+      closeModal();
+      alert('Não foi possível abrir o provador. Tente novamente.');
+      return;
     }
-
-    const iframeContainer = document.createElement('div');
-    iframeContainer.style.cssText =
-      'position: relative;' +
-      'width: 95vw;' +
-      'max-width: 1000px;' +
-      'height: 85vh;' +
-      'max-height: 800px;';
-
-    const closeButton = document.createElement('button');
-    closeButton.innerHTML = '×';
-    closeButton.style.cssText =
-      'position: absolute;' +
-      'top: 12px;' +
-      'right: 12px;' +
-      'width: 36px;' +
-      'height: 36px;' +
-      'border: none;' +
-      'border-radius: 0;' +
-      'background: transparent;' +
-      'color: #333;' +
-      'font-size: 32px;' +
-      'cursor: pointer;' +
-      'display: flex;' +
-      'align-items: center;' +
-      'justify-content: center;' +
-      'z-index: 1000001;' +
-      'font-weight: 300;' +
-      'line-height: 1;' +
-      'padding: 4px;' +
-      'transition: opacity 0.2s;' +
-      'opacity: 0.7;';
-
-    const closeModal = function () {
-      if (document.body.contains(overlay)) {
-        overlay.style.background = 'rgba(0, 0, 0, 0)';
-        overlay.style.backdropFilter = 'blur(0px)';
-        overlay.style.opacity = '0';
-        iframe.style.transform = 'scale(0.9)';
-        iframe.style.opacity = '0';
-
-        setTimeout(function () {
-          if (document.body.contains(overlay)) {
-            document.body.removeChild(overlay);
-            document.body.style.overflow = '';
-          }
-        }, 400);
-      }
-    };
-
-    closeButton.addEventListener('mouseenter', function () {
-      this.style.opacity = '1';
-    });
-    closeButton.addEventListener('mouseleave', function () {
-      this.style.opacity = '0.7';
-    });
-
-    closeButton.addEventListener('click', closeModal);
-
-    if (!isMobile) {
-      overlay.addEventListener('click', function (e) {
-        if (e.target === overlay) {
-          closeModal();
-        }
-      });
-    }
-
-    const handleEscape = function (e) {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleEscape);
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-
-    iframeContainer.appendChild(iframe);
-    iframeContainer.appendChild(closeButton);
-    overlay.appendChild(loadingContainer);
-    overlay.appendChild(iframeContainer);
-    document.body.appendChild(overlay);
-    document.body.style.overflow = 'hidden';
-
-    setTimeout(function () {
-      if (!isMobile) {
-        overlay.style.background = 'rgba(0, 0, 0, 0.6)';
-        overlay.style.backdropFilter = 'blur(4px)';
-      }
-      overlay.style.opacity = '1';
-      iframe.style.transform = 'scale(1)';
-      iframe.style.opacity = '1';
-    }, 10);
   };
 
   // --- Add to cart (mensagens do iframe) ---
@@ -3098,6 +3180,7 @@
       preconnect.crossOrigin = 'anonymous';
       document.head.appendChild(preconnect);
     }
+    scheduleOmafitWidgetWarmup();
   }
 
   /** Botão pill com logo + texto (alternativa ao link). */
@@ -3439,14 +3522,14 @@
       if (!isEnabled) {
         console.warn('⚠️ Widget Omafit está desabilitado. widgetEnabled:', OMAFIT_CONFIG.widgetEnabled, 'isActive:', OMAFIT_CONFIG.isActive);
         console.warn('⚠️ Para habilitar, configure widget_enabled=true no app e is_active=true em widget_keys');
+        removeInjectedOmafitCtaOnly();
         return;
       }
 
-      // Aguardar um pouco para garantir que o DOM está pronto
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Inserir o widget na página
+      // Re-render com configuração real da API.
+      removeInjectedOmafitCtaOnly();
       insertOmafitLinkUnderAddToCart();
+      scheduleOmafitWidgetWarmup();
 
       console.log('✅ Omafit inicializado com sucesso');
     } catch (e) {
@@ -3469,6 +3552,7 @@
         // Verificar se está habilitado mesmo no fallback
         if (OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false) {
           insertOmafitLinkUnderAddToCart();
+          scheduleOmafitWidgetWarmup();
         }
         syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
       } catch (err) {
@@ -3479,6 +3563,7 @@
 
   // Inicializar widget (deferido para não bloquear carregamento da página)
   function startInit() {
+    scheduleOmafitWidgetWarmup();
     function doInit() {
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initOmafit);

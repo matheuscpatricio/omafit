@@ -365,7 +365,7 @@ const OMAFIT_BRACELET_WRIST_OFFSET_WIDTH_MUL = 0.08;
 const OMAFIT_BRACELET_WRIST_OFFSET_MIN_M = 0.004;
 const OMAFIT_BRACELET_WRIST_OFFSET_MAX_M = 0.012;
 /** Compensação de escala após reduzir recuo do pulso. */
-const OMAFIT_BRACELET_SCALE_BOOST = 1.15;
+const OMAFIT_BRACELET_SCALE_BOOST = 0.94;
 /** Micro-ajuste local para evitar efeito "afundado". */
 const OMAFIT_BRACELET_GLB_MICRO_POS_Y_M = 0.005;
 const OMAFIT_BRACELET_GLB_MICRO_POS_Z_M = 0.003;
@@ -5203,6 +5203,32 @@ function omafitResolveTryonLayoutBackground(root, fallback) {
   return omafitUpgradeShopifyMediaToHttps(fallback || "");
 }
 
+function omafitResolvePrimaryColor(root, preferred = "") {
+  const fromPreferred = String(preferred || "").trim();
+  const fromDataset = String(root?.dataset?.primaryColor || "").trim();
+  const fromAdminAttr = String(root?.getAttribute?.("data-omafit-admin-primary") || "").trim();
+  const fromStyleVar = String(root?.style?.getPropertyValue("--omafit-ar-primary") || "").trim();
+  let fromQuery = "";
+  try {
+    const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
+    fromQuery = String(
+      q.get("primaryColor") ||
+        q.get("primary_color") ||
+        q.get("primary") ||
+        q.get("brandColor") ||
+        q.get("brand_color") ||
+        "",
+    ).trim();
+  } catch {
+    fromQuery = "";
+  }
+  return (
+    (fromPreferred || fromDataset || fromAdminAttr || fromStyleVar || fromQuery || "#810707")
+      .replace(/[<>]/g, "")
+      .trim() || "#810707"
+  );
+}
+
 function omafitContrastOnPrimary(hex) {
   const h = String(hex || "").replace("#", "").trim();
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -5228,16 +5254,7 @@ function injectGlobalStyles(root, primaryOverride, tryonLayout = "default") {
   const rawFont = resolveArFontFamilyStack(root);
   const stack = formatCssFontFamilyStack(rawFont);
   const appliedStack = stack || "'Outfit', system-ui, sans-serif";
-  const fromOverride =
-    typeof primaryOverride === "string" && primaryOverride.trim()
-      ? primaryOverride.trim()
-      : "";
-  const primary =
-    (fromOverride ||
-      (root?.dataset?.primaryColor || "").trim() ||
-      root?.style?.getPropertyValue("--omafit-ar-primary") ||
-      "#810707")
-      .replace(/[<>]/g, "") || "#810707";
+  const primary = omafitResolvePrimaryColor(root, primaryOverride);
 
   const s = document.createElement("style");
   s.id = "omafit-ar-styles";
@@ -5371,19 +5388,27 @@ function injectGlobalStyles(root, primaryOverride, tryonLayout = "default") {
     }`
         : ""
     }
-    .omafit-ar-shell-hero-layout { display: flex; flex-direction: column; min-height: 100dvh; }
-    .omafit-ar-shell-hero-layout .omafit-ar-hero-mobile {
-      display: flex; min-height: 180px; flex-shrink: 0; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; color: ${omafitContrastOnPrimary(primary)};
-      background-size: cover; background-position: center top;
+    .omafit-ar-shell-hero-layout { position: fixed; }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-root {
+      position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
     }
-    .omafit-ar-shell-hero-layout .omafit-ar-hero-desktop {
-      display: none; width: min(43vw, 520px); flex-shrink: 0; min-height: 0; color: ${omafitContrastOnPrimary(primary)};
-      background-size: cover; background-position: center;
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-mobile {
+      position: absolute; inset: 0;
+      transition: filter .24s ease, transform .24s ease;
+    }
+    .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-desktop {
+      display: none;
+      position: absolute; inset: 0;
+      transition: filter .24s ease, transform .24s ease;
+    }
+    .omafit-ar-shell-hero-layout.omafit-ar-hero-blur-on .omafit-ar-hero-bg-mobile,
+    .omafit-ar-shell-hero-layout.omafit-ar-hero-blur-on .omafit-ar-hero-bg-desktop {
+      filter: blur(4px);
+      transform: scale(1.03);
     }
     @media (min-width: 768px) {
-      .omafit-ar-shell-hero-layout { flex-direction: row; }
-      .omafit-ar-shell-hero-layout .omafit-ar-hero-mobile { display: none; }
-      .omafit-ar-shell-hero-layout .omafit-ar-hero-desktop { display: flex; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-mobile { display: none; }
+      .omafit-ar-shell-hero-layout .omafit-ar-hero-bg-desktop { display: block; }
     }
   `;
   document.head.appendChild(s);
@@ -5494,6 +5519,93 @@ function svgX() {
   return svg;
 }
 
+function omafitHeroClampPct(n) {
+  return Math.max(0, Math.min(100, n));
+}
+
+function omafitHeroContainImageLeftPercent(w, h, iw, ih) {
+  if (w <= 0 || h <= 0 || iw <= 0 || ih <= 0) return 58;
+  const scale = Math.min(w / iw, h / ih);
+  const dispW = iw * scale;
+  return omafitHeroClampPct(((w - dispW) / w) * 100);
+}
+
+/** Degradê overlay desktop: reforço forte em volta de seam (% da largura) = borda esquerda da imagem em contain + right. */
+function omafitHeroDesktopShadeGradient(primaryColor, seam) {
+  const p = primaryColor;
+  if (seam == null || Number.isNaN(seam)) {
+    return `linear-gradient(90deg, ${p} 0%, ${p}f2 42%, ${p}d9 58%, ${p}00 82%, ${p}00 100%)`;
+  }
+  const s = omafitHeroClampPct(seam);
+  let t1 = omafitHeroClampPct(s - 26);
+  let t2 = omafitHeroClampPct(s - 16);
+  let t3 = omafitHeroClampPct(s - 8);
+  let t4 = omafitHeroClampPct(s - 2);
+  let t5 = s;
+  let t6 = omafitHeroClampPct(s + 4);
+  let t7 = omafitHeroClampPct(s + 10);
+  let t8 = omafitHeroClampPct(s + 18);
+  let t9 = Math.min(100, Math.max(t8 + 0.5, s + 30));
+  if (t2 <= t1) t2 = Math.min(100, t1 + 0.35);
+  if (t3 <= t2) t3 = Math.min(100, t2 + 0.35);
+  if (t4 <= t3) t4 = Math.min(100, t3 + 0.35);
+  if (t5 <= t4) t5 = Math.min(100, t4 + 0.35);
+  if (t6 <= t5) t6 = Math.min(100, t5 + 0.35);
+  if (t7 <= t6) t7 = Math.min(100, t6 + 0.35);
+  if (t8 <= t7) t8 = Math.min(100, t7 + 0.35);
+  if (t9 <= t8) t9 = Math.min(100, t8 + 0.35);
+  return `linear-gradient(90deg, ${p} 0%, ${p} ${t1}%, ${p}fe ${t2}%, ${p}fc ${t3}%, ${p}fa ${t4}%, ${p}f5 ${t5}%, ${p}d5 ${t6}%, ${p}88 ${t7}%, ${p}38 ${t8}%, ${p}00 ${t9}%, ${p}00 100%)`;
+}
+
+function omafitHeroDesktopFeatherStyle(featherEl, seam, primaryColor) {
+  if (!featherEl) return;
+  const p = primaryColor;
+  if (seam == null || Number.isNaN(seam)) {
+    featherEl.style.display = "none";
+    return;
+  }
+  const s = omafitHeroClampPct(seam);
+  featherEl.style.display = "block";
+  featherEl.style.position = "absolute";
+  featherEl.style.left = `${s}%`;
+  featherEl.style.top = "0";
+  featherEl.style.bottom = "0";
+  featherEl.style.width = "min(2.75rem, 7vw)";
+  featherEl.style.transform = "translateX(-50%)";
+  featherEl.style.zIndex = "2";
+  featherEl.style.pointerEvents = "none";
+  featherEl.style.backdropFilter = "blur(10px)";
+  featherEl.style.webkitBackdropFilter = "blur(10px)";
+  featherEl.style.background = `linear-gradient(90deg, ${p}aa 0%, ${p}55 35%, transparent 100%)`;
+  featherEl.style.webkitMaskImage = "linear-gradient(90deg, transparent 0%, #000 16%, #000 84%, transparent 100%)";
+  featherEl.style.maskImage = "linear-gradient(90deg, transparent 0%, #000 16%, #000 84%, transparent 100%)";
+}
+
+function omafitBindHeroDesktopShadeFromContain(shadeEl, featherEl, measureEl, primaryColor, heroBgSrc) {
+  const img = new Image();
+  function apply() {
+    const w = measureEl.clientWidth;
+    const h = measureEl.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    if (iw <= 0 || ih <= 0) return;
+    const seam = omafitHeroContainImageLeftPercent(w, h, iw, ih);
+    shadeEl.style.backgroundImage = omafitHeroDesktopShadeGradient(primaryColor, seam);
+    omafitHeroDesktopFeatherStyle(featherEl, seam, primaryColor);
+  }
+  function fallback() {
+    shadeEl.style.backgroundImage = omafitHeroDesktopShadeGradient(primaryColor, null);
+    omafitHeroDesktopFeatherStyle(featherEl, null, primaryColor);
+  }
+  img.onload = apply;
+  img.onerror = fallback;
+  img.src = heroBgSrc;
+  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => apply()) : null;
+  if (measureEl && ro) ro.observe(measureEl);
+  requestAnimationFrame(apply);
+}
+
 function buildInfoModal({
   primaryColor,
   logoUrl,
@@ -5513,9 +5625,10 @@ function buildInfoModal({
   const isSidebar = layoutMode === "sidebar";
   const isHero = layoutMode === "hero";
   const heroBg = omafitUpgradeShopifyMediaToHttps(layoutBackgroundImage || productImgHttps);
-  const heroBgCss = heroBg
-    ? `linear-gradient(180deg, ${primaryColor}e6 0%, ${primaryColor}66 42%, ${primaryColor}12 100%), url("${heroBg.replace(/"/g, "%22")}")`
-    : `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor}99 100%)`;
+  const heroBgMobileCss = heroBg
+    ? `linear-gradient(180deg, ${primaryColor}00 0%, ${primaryColor}00 18%, ${primaryColor}d9 42%, ${primaryColor}f2 58%, ${primaryColor} 100%), url("${heroBg.replace(/"/g, "%22")}")`
+    : `linear-gradient(180deg, ${primaryColor}cc 0%, ${primaryColor} 100%)`;
+  const heroBgDesktopSolidGradient = `linear-gradient(90deg, ${primaryColor}cc 0%, ${primaryColor} 100%)`;
   // #region agent log
   __omafitArDbgLog({
     location: "omafit-ar-widget.js:buildInfoModal",
@@ -5820,9 +5933,19 @@ function buildInfoModal({
   const colContent = el("div", {
     style: {
       flex: "1",
-      padding: isSidebar || isHero ? "8px 14px 12px" : "12px 16px 24px",
       overflowY: "auto",
       boxSizing: "border-box",
+      ...(isHero
+        ? {
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "flex-end",
+            minHeight: "0",
+            padding: "8px 14px max(18px, env(safe-area-inset-bottom, 0px))",
+          }
+        : {
+            padding: isSidebar ? "8px 14px 12px" : "12px 16px 24px",
+          }),
     },
   });
 
@@ -5850,6 +5973,13 @@ function buildInfoModal({
     mobileImgWrap.appendChild(mimg);
   }
 
+  /** Mesmo contraste que TryOnWidget hero step 1 (textos claros + CTA branco). */
+  const heroInfoFg = "#ffffff";
+  const heroInfoMuted = "rgba(255, 255, 255, 0.92)";
+  const heroInfoAccent = "rgba(255, 255, 255, 0.95)";
+  const heroInfoPanelBg = "rgba(255, 255, 255, 0.12)";
+  const heroInfoPanelBorder = "rgba(255, 255, 255, 0.35)";
+
   const titleBlock = el("div", { style: { textAlign: "center", marginBottom: "16px" } });
   titleBlock.appendChild(
     el("h3", {
@@ -5858,7 +5988,7 @@ function buildInfoModal({
         margin: "0 0 6px 0",
         fontSize: isSidebar || isHero ? "clamp(1.05rem, 2.2vw, 1.25rem)" : "clamp(1.35rem, 4vw, 1.85rem)",
         fontWeight: "600",
-        color: primaryColor,
+        color: isHero ? heroInfoFg : primaryColor,
       },
     }),
   );
@@ -5867,7 +5997,7 @@ function buildInfoModal({
       textContent: t.desc,
       style: {
         margin: 0,
-        color: "#374151",
+        color: isHero ? heroInfoMuted : "#374151",
         fontSize: isSidebar || isHero ? "clamp(0.88rem, 1.8vw, 0.98rem)" : "clamp(1rem, 3vw, 1.2rem)",
         lineHeight: isSidebar || isHero ? "1.35" : "1.45",
       },
@@ -5876,8 +6006,8 @@ function buildInfoModal({
 
   const blueBox = el("div", {
     style: {
-      background: "#eff6ff",
-      border: "1px solid #bfdbfe",
+      background: isHero ? heroInfoPanelBg : "#eff6ff",
+      border: isHero ? `1px solid ${heroInfoPanelBorder}` : "1px solid #bfdbfe",
       borderRadius: "8px",
       padding: isSidebar || isHero ? "12px" : "16px",
       marginBottom: isSidebar || isHero ? "12px" : "20px",
@@ -5887,7 +6017,12 @@ function buildInfoModal({
   blueInner.appendChild(
     el("h4", {
       textContent: t.howTitle,
-      style: { margin: "0 0 6px 0", fontWeight: "600", color: "#1e40af", fontSize: isSidebar || isHero ? "0.95rem" : "1.05rem" },
+      style: {
+        margin: "0 0 6px 0",
+        fontWeight: "600",
+        color: isHero ? heroInfoAccent : "#1e40af",
+        fontSize: isSidebar || isHero ? "0.95rem" : "1.05rem",
+      },
     }),
   );
   blueInner.appendChild(
@@ -5895,7 +6030,7 @@ function buildInfoModal({
       textContent: t.howBody,
       style: {
         margin: 0,
-        color: "#1d4ed8",
+        color: isHero ? heroInfoAccent : "#1d4ed8",
         fontSize: isSidebar || isHero ? "clamp(0.82rem, 1.7vw, 0.92rem)" : "clamp(0.95rem, 2.8vw, 1.05rem)",
         lineHeight: isSidebar || isHero ? "1.4" : "1.5",
       },
@@ -5909,9 +6044,9 @@ function buildInfoModal({
       type: "button",
       style: {
         width: "100%",
-        background: primaryColor,
-        color: "#fff",
-        border: "none",
+        background: isHero ? "#ffffff" : primaryColor,
+        color: isHero ? primaryColor : "#fff",
+        border: isHero ? "2px solid rgba(255, 255, 255, 0.95)" : "none",
         padding: isSidebar || isHero ? "11px 14px" : "14px 20px",
         borderRadius: "8px",
         fontSize: isSidebar || isHero ? "clamp(0.9rem, 1.8vw, 1rem)" : "clamp(1rem, 3vw, 1.15rem)",
@@ -5930,15 +6065,24 @@ function buildInfoModal({
   );
   cta.appendChild(document.createTextNode(t.cta + " "));
   const arw = svgArrowRight();
-  arw.style.color = "#fff";
+  arw.style.color = isHero ? primaryColor : "#fff";
   cta.appendChild(arw);
   cta.addEventListener("mouseenter", () => {
-    cta.style.filter = "brightness(0.92)";
-    cta.style.boxShadow = `0 4px 14px ${primaryColor}44`;
+    if (isHero) {
+      cta.style.filter = "brightness(0.98)";
+      cta.style.boxShadow = "0 4px 14px rgba(0,0,0,0.2)";
+      cta.style.background = "rgba(255, 255, 255, 0.92)";
+    } else {
+      cta.style.filter = "brightness(0.92)";
+      cta.style.boxShadow = `0 4px 14px ${primaryColor}44`;
+    }
   });
   cta.addEventListener("mouseleave", () => {
     cta.style.filter = "none";
     cta.style.boxShadow = "none";
+    if (isHero) {
+      cta.style.background = "#ffffff";
+    }
   });
   cta.addEventListener("click", () => {
     if (!omafitArDocumentAllowsCamera()) {
@@ -5953,7 +6097,7 @@ function buildInfoModal({
     style: {
       margin: 0,
       textAlign: "center",
-      color: "#6b7280",
+      color: isHero ? heroInfoMuted : "#6b7280",
       fontSize: isSidebar || isHero ? "0.78rem" : "0.875rem",
       lineHeight: isSidebar || isHero ? "1.3" : "1.4",
     },
@@ -5984,7 +6128,7 @@ function buildInfoModal({
     /* ignore */
   }
 
-  colContent.appendChild(mobileImgWrap);
+  if (!isHero) colContent.appendChild(mobileImgWrap);
   colContent.appendChild(titleBlock);
   colContent.appendChild(blueBox);
   colContent.appendChild(cta);
@@ -6003,37 +6147,81 @@ function buildInfoModal({
     shell.appendChild(contentOuter);
   } else if (isHero) {
     const contentOuter = el("div", {
-      style: { flex: "1", display: "flex", flexDirection: "column", minHeight: "0", overflow: "hidden" },
+      style: {
+        flex: "1",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: "0",
+        overflow: "hidden",
+        position: "relative",
+        zIndex: "1",
+      },
     });
-    const heroMobile = el("section", {
-      className: "omafit-ar-hero-mobile",
-      style: { backgroundImage: heroBgCss },
-    });
-    heroMobile.appendChild(
-      logoUrl
-        ? el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "40px", width: "auto", maxWidth: "min(220px,70vw)", objectFit: "contain" } })
-        : el("p", { textContent: shopName || "", style: { margin: 0, fontSize: "14px", fontWeight: "600", letterSpacing: ".22em", textTransform: "uppercase" } }),
+    const bgRoot = el("div", { className: "omafit-ar-hero-bg-root" });
+    bgRoot.appendChild(
+      el("div", {
+        className: "omafit-ar-hero-bg-mobile",
+        style: heroBg
+          ? {
+              backgroundImage: heroBgMobileCss,
+              backgroundSize: "cover, cover",
+              backgroundPosition: "center top, center top",
+              backgroundRepeat: "no-repeat, no-repeat",
+            }
+          : { backgroundImage: heroBgMobileCss, backgroundSize: "cover" },
+      }),
     );
-    heroMobile.appendChild(el("div", { style: { width: "64px", height: "1px", background: "currentColor", opacity: ".7" } }));
-    contentOuter.appendChild(heroMobile);
+    if (heroBg) {
+      const heroBgUrl = `url("${heroBg.replace(/"/g, "%22")}")`;
+      const desktopWrap = el("div", { className: "omafit-ar-hero-bg-desktop" });
+      desktopWrap.appendChild(
+        el("div", {
+          className: "omafit-ar-hero-bg-desktop-base",
+          style: {
+            position: "absolute",
+            inset: 0,
+            backgroundColor: primaryColor,
+            backgroundImage: heroBgUrl,
+            backgroundSize: "contain",
+            backgroundPosition: "right center",
+            backgroundRepeat: "no-repeat",
+          },
+        }),
+      );
+      const shadeEl = el("div", {
+        className: "omafit-ar-hero-bg-desktop-shade",
+        style: {
+          position: "absolute",
+          inset: 0,
+          backgroundImage: omafitHeroDesktopShadeGradient(primaryColor, null),
+          backgroundSize: "100% 100%",
+          backgroundRepeat: "no-repeat",
+          pointerEvents: "none",
+        },
+      });
+      desktopWrap.appendChild(shadeEl);
+      const featherEl = el("div", { className: "omafit-ar-hero-bg-desktop-feather" });
+      featherEl.style.display = "none";
+      desktopWrap.appendChild(featherEl);
+      bgRoot.appendChild(desktopWrap);
+      omafitBindHeroDesktopShadeFromContain(shadeEl, featherEl, bgRoot, primaryColor, heroBg);
+    } else {
+      bgRoot.appendChild(
+        el("div", {
+          className: "omafit-ar-hero-bg-desktop",
+          style: { backgroundImage: heroBgDesktopSolidGradient, backgroundSize: "cover" },
+        }),
+      );
+    }
+    shell.appendChild(bgRoot);
     contentOuter.appendChild(mainRow);
-
-    const heroDesktop = el("aside", {
-      className: "omafit-ar-hero-desktop",
-      style: { backgroundImage: heroBgCss },
-    });
-    const heroInner = el("div", {
-      style: { width: "100%", minHeight: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "32px", boxSizing: "border-box", background: "rgba(0,0,0,.10)" },
-    });
-    heroInner.appendChild(
-      logoUrl
-        ? el("img", { src: logoUrl, alt: shopName || "", style: { maxHeight: "48px", width: "auto", maxWidth: "220px", objectFit: "contain", objectPosition: "left" } })
-        : el("p", { textContent: shopName || "", style: { margin: 0, fontSize: "14px", fontWeight: "600", letterSpacing: ".26em", textTransform: "uppercase" } }),
-    );
-    heroInner.appendChild(el("div", { style: { width: "80px", height: "1px", background: "currentColor", opacity: ".7" } }));
-    heroDesktop.appendChild(heroInner);
     shell.appendChild(contentOuter);
-    shell.appendChild(heroDesktop);
+    shell.__omafitArHeroApi = {
+      setBlur(isOn) {
+        shell.classList.toggle("omafit-ar-hero-blur-on", Boolean(isOn));
+      },
+    };
+    shell.__omafitArHeroApi.setBlur(false);
   } else {
     shell.appendChild(header);
     shell.appendChild(mainRow);
@@ -6047,7 +6235,7 @@ function buildInfoModal({
   function applyMq() {
     if (isSidebar || isHero) {
       colImg.style.display = "none";
-      mobileImgWrap.style.display = "block";
+      mobileImgWrap.style.display = isHero ? "none" : "block";
       if (isSidebar && mq.matches) {
         mobileImgWrap.style.maxWidth = "240px";
         mobileImgWrap.style.width = "100%";
@@ -6612,6 +6800,7 @@ async function runArSession({
   colContent.innerHTML = "";
   try {
     shell.__omafitArSidebarApi?.setStep?.("ar");
+    shell.__omafitArHeroApi?.setBlur?.(true);
   } catch {
     /* ignore */
   }
@@ -13805,14 +13994,24 @@ async function runHandArSession({
       );
     }
     if (accessoryType === "bracelet") {
+      /**
+       * Mantém o centro no punho e aplica apenas um inset pequeno/estável na
+       * normal local já calibrada (tmpY). O bloco anterior recalculava uma
+       * normal alternativa (palmNormal) por frame e sobrescrevia `tmpPos`,
+       * causando desencaixe lateral no pulso.
+       */
       const wristWidth = w5.distanceTo(w17);
-      const braceletRadius = wristWidth * 0.5 * 1.05;
-      const palmNormal = handNAltScratch
-        .subVectors(w5, w0)
-        .cross(handToMcpRawScratch.subVectors(w17, w0));
-      if (palmNormal.lengthSq() > 1e-12) palmNormal.normalize();
-      else palmNormal.copy(tmpY);
-      tmpPos.copy(w0).addScaledVector(palmNormal, -braceletRadius * 0.15);
+      const dynamicInset = THREE.MathUtils.clamp(wristWidth * 0.065, 0.003, 0.007);
+      const forearmRetreat = THREE.MathUtils.clamp(
+        OMAFIT_BRACELET_WRIST_OFFSET_BASE_M + wristWidth * OMAFIT_BRACELET_WRIST_OFFSET_WIDTH_MUL,
+        OMAFIT_BRACELET_WRIST_OFFSET_MIN_M,
+        OMAFIT_BRACELET_WRIST_OFFSET_MAX_M,
+      );
+      tmpPos
+        .copy(w0)
+        .addScaledVector(tmpY, -dynamicInset)
+        // Empurra levemente para o antebraço para evitar ficar "alto" na mão.
+        .addScaledVector(handToMcpScratch, -forearmRetreat);
     }
 
     /**
@@ -14328,17 +14527,13 @@ async function runHandArSession({
         perspMul *
         wristSpanScaleMul *
         (accessoryType === "bracelet" ? OMAFIT_BRACELET_SCALE_BOOST : 1);
-      if (accessoryType === "bracelet" && localInnerR > 1e-6) {
-        const wristWidthNow = w5.distanceTo(w17);
-        const targetCircumference = wristWidthNow * Math.PI;
-        const modelCircumference = 2 * Math.PI * localInnerR;
-        const circMul = targetCircumference / Math.max(1e-6, modelCircumference);
-        suBase =
-          circMul *
-          userMul *
-          perspMul *
-          wristSpanScaleMul *
-          OMAFIT_BRACELET_SCALE_BOOST;
+      if (accessoryType === "bracelet") {
+        /**
+         * Proteção hard para pulseira: limita escala base a um intervalo
+         * anatómico plausível. O cálculo antigo por circunferência podia
+         * inflar muito quando `localInnerR` vinha subestimado no GLB.
+         */
+        suBase = THREE.MathUtils.clamp(suBase, baseScale * 0.68, baseScale * 1.24);
       }
       const Wb = wristExpandMul;
       if (accessoryType === "bracelet" && braceletPlaceState) {
@@ -15144,16 +15339,15 @@ async function main() {
   const embedPrimary = String(
     widgetRootEl?.getAttribute("data-omafit-admin-primary") || "",
   ).trim();
-  const rootPrimary = String(root.dataset.primaryColor || "").trim().replace(/[<>]/g, "");
-  const primaryColor =
-    (rootPrimary || embedPrimary || adminBrand?.primary || "#810707")
-      .trim()
-      .replace(/[<>]/g, "") || "#810707";
+  const primaryColor = omafitResolvePrimaryColor(
+    root,
+    (embedPrimary || adminBrand?.primary || "").trim(),
+  );
   const productTitle = root.dataset.productTitle || "Produto";
   const productImage = omafitUpgradeShopifyMediaToHttps(root.dataset.productImage || "");
   const rootLogo = (root.dataset.storeLogo || root.getAttribute("data-store-logo") || "").trim();
   let logoUrl = (rootLogo || adminBrand?.storeLogo || "").trim();
-  if (logoUrl.startsWith("//")) logoUrl = `https:${logoUrl}`;
+  logoUrl = omafitUpgradeShopifyMediaToHttps(logoUrl);
   const shopName = (root.dataset.shopName || root.getAttribute("data-shop-name") || "").trim();
   const lang = pickLocale(root.dataset.locale);
 

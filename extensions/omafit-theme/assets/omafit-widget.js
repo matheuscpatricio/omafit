@@ -2152,6 +2152,35 @@
       '&locale=' + encodeURIComponent(storeLanguage) +
       '&tryon_layout=' + encodeURIComponent(omafitIframeTryonLayout) +
       '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout);
+
+    /** Dados da loja na query — o provador AR (iframe /widget) lê o bootstrap só pela URL antes do postMessage. */
+    if (config && config.primaryColor && String(config.primaryColor).trim()) {
+      widgetUrl += '&primaryColor=' + encodeURIComponent(String(config.primaryColor).trim());
+    }
+    if (resolvedStoreName && String(resolvedStoreName).trim()) {
+      var _omafitStoreDisp = String(resolvedStoreName).trim();
+      widgetUrl += '&shopName=' + encodeURIComponent(_omafitStoreDisp);
+      widgetUrl += '&shop_name=' + encodeURIComponent(_omafitStoreDisp);
+      widgetUrl += '&storeName=' + encodeURIComponent(_omafitStoreDisp);
+      widgetUrl += '&store_name=' + encodeURIComponent(_omafitStoreDisp);
+    }
+    var _omafitFontUrl =
+      (config.fontFamily && String(config.fontFamily).trim()) ||
+      (typeof detectedFontFamily !== 'undefined' && detectedFontFamily
+        ? String(detectedFontFamily).trim()
+        : '');
+    if (_omafitFontUrl && _omafitFontUrl !== 'inherit') {
+      widgetUrl += '&fontFamily=' + encodeURIComponent(_omafitFontUrl);
+    }
+    if (OMAFIT_CONFIG && OMAFIT_CONFIG.linkText && String(OMAFIT_CONFIG.linkText).trim()) {
+      widgetUrl += '&linkText=' + encodeURIComponent(String(OMAFIT_CONFIG.linkText).trim());
+    }
+    if (storeLogoUrlForConfig) {
+      var _omafitUrlWithLogo = widgetUrl + '&storeLogo=' + encodeURIComponent(storeLogoUrlForConfig);
+      if (_omafitUrlWithLogo.length < 2400) {
+        widgetUrl = _omafitUrlWithLogo;
+      }
+    }
     
     if (omafitIframeTryonLayoutBackground) {
       widgetUrl += '&tryon_layout_background_image=' + encodeURIComponent(omafitIframeTryonLayoutBackground);

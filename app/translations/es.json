@@ -189,6 +189,7 @@
     "errorSave": "Error al guardar tablas.",
     "errorRlsSizeCharts": "Permiso denegado en Supabase (RLS) al guardar tablas de medidas. Ejecuta el SQL: supabase_fix_size_charts_rls.sql",
     "errorProductHandleColumnMissing": "La columna product_handle aún no existe en Supabase. Ejecuta el SQL: supabase_add_product_handle_to_size_charts.sql",
+    "errorLegacyUniqueConstraint": "Existe una restricción UNIQUE antigua en size_charts que ignora product_handle. Ejecuta (o vuelve a ejecutar) el SQL: supabase_add_product_handle_to_size_charts.sql para eliminarla.",
     "errorShopDomainMissing": "Dominio de tienda no encontrado.",
     "errorSupabaseNotConfigured": "Supabase no está configurado.",
     "warnCollectionMetadataNotPersisted": "Las tablas se guardaron, pero el tipo/elasticidad de colección aún no se persistieron. Ejecuta las migraciones de Supabase.",

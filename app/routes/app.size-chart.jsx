@@ -193,6 +193,19 @@ export default function SizeChartPage() {
       return t('sizeChart.errorProductHandleColumnMissing');
     }
 
+    const isUniqueViolation =
+      lower.includes('"code":"23505"') ||
+      lower.includes('duplicate key value') ||
+      lower.includes('duplicate key value violates unique constraint');
+    const mentionsLegacyConstraint =
+      lower.includes('unique_shop_collection_handle_gender') ||
+      lower.includes('size_charts_shop_collection_gender_key') ||
+      (lower.includes('size_charts') && !lower.includes('product_handle'));
+
+    if (isUniqueViolation && mentionsLegacyConstraint) {
+      return t('sizeChart.errorLegacyUniqueConstraint');
+    }
+
     return message;
   }, [t]);
 

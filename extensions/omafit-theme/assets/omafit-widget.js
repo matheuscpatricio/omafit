@@ -2126,6 +2126,9 @@
     const variantCatalogList = Array.isArray(productVariantCatalog.variants) ? productVariantCatalog.variants : [];
     const availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
     const availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
+    const resolvedProductHandle =
+      (productInfo && productInfo.productHandle ? String(productInfo.productHandle).trim() : '') ||
+      (currentProductData && currentProductData.handle ? String(currentProductData.handle).trim() : '');
     var omafitIframeTryonLayout =
       OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayout === 'hero'
         ? 'hero'
@@ -2146,6 +2149,7 @@
       '?productImage=' + encodeURIComponent(productImage) +
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
+      (resolvedProductHandle ? '&productHandle=' + encodeURIComponent(resolvedProductHandle) : '') +
       '&publicId=' + encodeURIComponent(publicIdToUse) +
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       '&language=' + encodeURIComponent(storeLanguage) +
@@ -2300,6 +2304,8 @@
           selected_image: productImage || '',
           productImage: productImage || '',
           product_image: productImage || '',
+          productHandle: resolvedProductHandle,
+          product_handle: resolvedProductHandle,
           variantCatalog: variantCatalogList,
           variant_catalog: variantCatalogList,
           availableSizes: availableSizesList,

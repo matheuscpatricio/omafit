@@ -165,10 +165,15 @@ export default function SizeChartPage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState(null);
   const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedScopeTab, setSelectedScopeTab] = useState(0);
   const [selectedCollectionIndex, setSelectedCollectionIndex] = useState(0);
+  const [selectedProductIndex, setSelectedProductIndex] = useState(0);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState(null);
+  const [shopifyProducts, setShopifyProducts] = useState([]);
 
-  // Por coleção e gênero: { enabled, measurementRefs (3), sizes }
-  const [charts, setCharts] = useState({});
+  // Por escopo, identificador e gênero: { collection: {handle: ...}, product: {handle: ...} }
+  const [charts, setCharts] = useState({ collection: {}, product: {} });
 
   const toFriendlySizeChartsError = useCallback((rawMessage) => {
     const message = String(rawMessage || '').trim();
@@ -184,11 +189,46 @@ export default function SizeChartPage() {
       return t('sizeChart.errorRlsSizeCharts');
     }
 
+    if (lower.includes('product_handle') && (lower.includes('column') || lower.includes('42703'))) {
+      return t('sizeChart.errorProductHandleColumnMissing');
+    }
+
     return message;
   }, [t]);
 
   const collectionHandles = ['', ...shopifyCollections.map((c) => c.handle)];
-  const selectedHandle = collectionHandles[selectedCollectionIndex] ?? '';
+  const productHandles = shopifyProducts.map((p) => p.handle).filter(Boolean);
+  const selectedScope = selectedScopeTab === 1 ? 'product' : 'collection';
+  const selectedCollectionHandle = collectionHandles[selectedCollectionIndex] ?? '';
+  const selectedProductHandle = productHandles[selectedProductIndex] ?? '';
+  const selectedHandle = selectedScope === 'product' ? selectedProductHandle : selectedCollectionHandle;
+
+  const loadProducts = useCallback(async () => {
+    try {
+      setProductsLoading(true);
+      setProductsError(null);
+      const response = await fetch('/api/products', { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(t('sizeChart.errorLoadProducts'));
+      }
+      const data = await response.json();
+      const products = Array.isArray(data?.products) ? data.products : [];
+      setShopifyProducts(
+        products
+          .filter((item) => item?.handle)
+          .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')))
+      );
+    } catch (err) {
+      console.error('[SizeChart] Erro ao carregar produtos:', err);
+      setProductsError(t('sizeChart.errorLoadProducts'));
+    } finally {
+      setProductsLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
 
   const loadSizeCharts = useCallback(async () => {
     if (!shopDomain) return;
@@ -207,26 +247,28 @@ export default function SizeChartPage() {
     );
     if (chartsRes.ok) {
       const data = await chartsRes.json();
-      const byCollection = {};
+      const byScope = { collection: {}, product: {} };
       data.forEach((row) => {
-        const handle = row.collection_handle ?? '';
-        if (!byCollection[handle]) {
-          byCollection[handle] = createEmptyCollectionCharts();
+        const productHandle = String(row.product_handle || '').trim();
+        const handle = productHandle || (row.collection_handle ?? '');
+        const scope = productHandle ? 'product' : 'collection';
+        if (!byScope[scope][handle]) {
+          byScope[scope][handle] = createEmptyCollectionCharts();
         }
         if (row.collection_type && ALL_COLLECTION_TYPES.includes(row.collection_type)) {
-          byCollection[handle].collectionType = row.collection_type;
+          byScope[scope][handle].collectionType = row.collection_type;
         }
         if (row.collection_elasticity && ['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(row.collection_elasticity)) {
-          byCollection[handle].collectionElasticity = row.collection_elasticity;
+          byScope[scope][handle].collectionElasticity = row.collection_elasticity;
         }
         const refs = normalizeMeasurementRefsForType(row.measurement_refs, row.collection_type);
-        byCollection[handle][row.gender] = {
+        byScope[scope][handle][row.gender] = {
           enabled: true,
           measurementRefs: refs,
           sizes: row.sizes || []
         };
       });
-      setCharts(byCollection);
+      setCharts(byScope);
     }
   }, [shopDomain]);
 
@@ -240,8 +282,10 @@ export default function SizeChartPage() {
     return () => { cancelled = true; };
   }, [shopDomain, loadSizeCharts]);
 
-  const getChart = (handle, gender) => {
-    const coll = charts[handle];
+  const getScopeCharts = (scope = selectedScope) => charts[scope] || {};
+
+  const getChart = (handle, gender, scope = selectedScope) => {
+    const coll = getScopeCharts(scope)[handle];
     const collectionType = coll?.collectionType ?? DEFAULT_COLLECTION_TYPE;
     const fallbackChart = {
       enabled: false,
@@ -257,22 +301,22 @@ export default function SizeChartPage() {
     };
   };
 
-  const getCollectionType = (handle) => {
-    const type = charts[handle]?.collectionType;
+  const getCollectionType = (handle, scope = selectedScope) => {
+    const type = getScopeCharts(scope)[handle]?.collectionType;
     return COLLECTION_TYPE_OPTIONS.some((opt) => opt.value === type) ? type : DEFAULT_COLLECTION_TYPE;
   };
 
-  const setCollectionType = (handle, collectionType) => {
+  const setCollectionType = (handle, collectionType, scope = selectedScope) => {
     setCharts((prev) => {
-      const next = { ...prev };
-      if (!next[handle]) {
-        next[handle] = createEmptyCollectionCharts();
+      const next = { ...prev, [scope]: { ...(prev[scope] || {}) } };
+      if (!next[scope][handle]) {
+        next[scope][handle] = createEmptyCollectionCharts();
       }
       const nextMeasurementRefs = getMeasurementRefsForCollectionType(collectionType);
       const nextElasticity = isFootwearCollectionType(collectionType)
         ? ''
-        : (['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(next[handle].collectionElasticity)
-          ? next[handle].collectionElasticity
+        : (['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(next[scope][handle].collectionElasticity)
+          ? next[scope][handle].collectionElasticity
           : DEFAULT_COLLECTION_ELASTICITY);
 
       const remapChart = (chart = { enabled: false, measurementRefs: nextMeasurementRefs, sizes: [] }) => ({
@@ -287,58 +331,58 @@ export default function SizeChartPage() {
         })
       });
 
-      next[handle] = {
-        ...next[handle],
+      next[scope][handle] = {
+        ...next[scope][handle],
         collectionType,
         collectionElasticity: nextElasticity,
-        male: remapChart(next[handle].male),
-        female: remapChart(next[handle].female),
-        unisex: remapChart(next[handle].unisex)
+        male: remapChart(next[scope][handle].male),
+        female: remapChart(next[scope][handle].female),
+        unisex: remapChart(next[scope][handle].unisex)
       };
       return next;
     });
   };
 
-  const handleCollectionTypeCheckbox = (handle, optionValue, checked) => {
+  const handleCollectionTypeCheckbox = (handle, optionValue, checked, scope = selectedScope) => {
     // Mantem seleção única: só altera quando marcar
     if (!checked) return;
-    setCollectionType(handle, optionValue);
+    setCollectionType(handle, optionValue, scope);
   };
 
-  const getCollectionElasticity = (handle) => {
-    if (isFootwearCollectionType(getCollectionType(handle))) {
+  const getCollectionElasticity = (handle, scope = selectedScope) => {
+    if (isFootwearCollectionType(getCollectionType(handle, scope))) {
       return '';
     }
-    const elasticity = charts[handle]?.collectionElasticity;
+    const elasticity = getScopeCharts(scope)[handle]?.collectionElasticity;
     return COLLECTION_ELASTICITY_OPTIONS.some((opt) => opt.value === elasticity)
       ? elasticity
       : DEFAULT_COLLECTION_ELASTICITY;
   };
 
-  const setCollectionElasticity = (handle, collectionElasticity) => {
+  const setCollectionElasticity = (handle, collectionElasticity, scope = selectedScope) => {
     setCharts((prev) => {
-      const next = { ...prev };
-      if (!next[handle]) {
-        next[handle] = createEmptyCollectionCharts();
+      const next = { ...prev, [scope]: { ...(prev[scope] || {}) } };
+      if (!next[scope][handle]) {
+        next[scope][handle] = createEmptyCollectionCharts();
       }
-      next[handle] = { ...next[handle], collectionElasticity };
+      next[scope][handle] = { ...next[scope][handle], collectionElasticity };
       return next;
     });
   };
 
-  const handleCollectionElasticityCheckbox = (handle, optionValue, checked) => {
+  const handleCollectionElasticityCheckbox = (handle, optionValue, checked, scope = selectedScope) => {
     // Mantem seleção única: só altera quando marcar
     if (!checked) return;
-    setCollectionElasticity(handle, optionValue);
+    setCollectionElasticity(handle, optionValue, scope);
   };
 
-  const setChart = (handle, gender, updater) => {
+  const setChart = (handle, gender, updater, scope = selectedScope) => {
     setCharts((prev) => {
-      const next = { ...prev };
-      if (!next[handle]) {
-        next[handle] = createEmptyCollectionCharts();
+      const next = { ...prev, [scope]: { ...(prev[scope] || {}) } };
+      if (!next[scope][handle]) {
+        next[scope][handle] = createEmptyCollectionCharts();
       }
-      next[handle] = { ...next[handle], [gender]: updater(next[handle][gender]) };
+      next[scope][handle] = { ...next[scope][handle], [gender]: updater(next[scope][handle][gender]) };
       return next;
     });
   };
@@ -355,22 +399,26 @@ export default function SizeChartPage() {
       if (!supabaseUrl || !supabaseKey) throw new Error(t('sizeChart.errorSupabaseNotConfigured'));
 
       const toSave = [];
-      Object.entries(charts).forEach(([handle, byGender]) => {
-        const collectionType = getCollectionType(handle);
-        const expectedMeasurementCount = getExpectedMeasurementCount(collectionType);
-        ['male', 'female', 'unisex'].forEach((gender) => {
-          const c = byGender[gender];
-          if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === expectedMeasurementCount) {
-            toSave.push({
-              shop_domain: shopDomain,
-              collection_handle: handle,
-              gender,
-              collection_type: collectionType,
-              collection_elasticity: isFootwearCollectionType(collectionType) ? null : getCollectionElasticity(handle),
-              measurement_refs: c.measurementRefs,
-              sizes: c.sizes
-            });
-          }
+      ['collection', 'product'].forEach((scope) => {
+        Object.entries(charts[scope] || {}).forEach(([handle, byGender]) => {
+          if (scope === 'product' && !handle) return;
+          const collectionType = getCollectionType(handle, scope);
+          const expectedMeasurementCount = getExpectedMeasurementCount(collectionType);
+          ['male', 'female', 'unisex'].forEach((gender) => {
+            const c = byGender[gender];
+            if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === expectedMeasurementCount) {
+              toSave.push({
+                shop_domain: shopDomain,
+                collection_handle: scope === 'product' ? '' : handle,
+                product_handle: scope === 'product' ? handle : '',
+                gender,
+                collection_type: collectionType,
+                collection_elasticity: isFootwearCollectionType(collectionType) ? null : getCollectionElasticity(handle, scope),
+                measurement_refs: c.measurementRefs,
+                sizes: c.sizes
+              });
+            }
+          });
         });
       });
 
@@ -442,6 +490,10 @@ export default function SizeChartPage() {
   const selectedCollectionType = getCollectionType(selectedHandle);
   const isFootwearSelected = isFootwearCollectionType(selectedCollectionType);
   const currentChart = getChart(selectedHandle, currentGender);
+  const selectedDisplayLabel =
+    selectedScope === 'product'
+      ? (shopifyProducts[selectedProductIndex]?.title || selectedHandle || t('sizeChart.product'))
+      : (selectedHandle ? selectedHandle : t('sizeChart.default'));
 
   const handleToggleChart = () => {
     setChart(selectedHandle, currentGender, (c) => ({
@@ -526,6 +578,24 @@ export default function SizeChartPage() {
     const label = h === '' ? t('sizeChart.defaultCollection') : (shopifyCollections[idx - 1]?.title || h);
     return { label, value: String(idx) };
   });
+  const productOptions = productHandles.length > 0
+    ? productHandles.map((h, idx) => ({
+        label: shopifyProducts[idx]?.title ? `${shopifyProducts[idx].title} (${h})` : h,
+        value: String(idx)
+      }))
+    : [{ label: t('sizeChart.noProductsFound'), value: '0' }];
+  const scopeTabs = [
+    {
+      content: t('sizeChart.configureByCollection'),
+      id: 'collection',
+      panelID: 'scope-collection'
+    },
+    {
+      content: t('sizeChart.configureByProduct'),
+      id: 'product',
+      panelID: 'scope-product'
+    }
+  ];
 
   return (
     <Page
@@ -550,18 +620,47 @@ export default function SizeChartPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">{t('sizeChart.configureByCollection')}</Text>
+              <Text variant="headingMd" as="h2">{t('sizeChart.configureSizeTables')}</Text>
               <Text variant="bodyMd" tone="subdued">
                 {t('sizeChart.configureHelp')}
               </Text>
 
+              <Tabs
+                tabs={scopeTabs}
+                selected={String(selectedScopeTab)}
+                onSelect={(id) => setSelectedScopeTab(parseInt(id, 10))}
+              />
+
               <Box minWidth="280px">
-                <Select
-                  label={t('sizeChart.collection')}
-                  options={collectionOptions}
-                  value={String(selectedCollectionIndex)}
-                  onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
-                />
+                {selectedScope === 'product' ? (
+                  <BlockStack gap="200">
+                    {productsLoading && (
+                      <InlineStack gap="200" blockAlign="center">
+                        <Spinner size="small" />
+                        <Text variant="bodySm" tone="subdued">{t('sizeChart.loadingProducts')}</Text>
+                      </InlineStack>
+                    )}
+                    {productsError && (
+                      <Banner tone="critical" onDismiss={() => setProductsError(null)}>
+                        {productsError}
+                      </Banner>
+                    )}
+                    <Select
+                      label={t('sizeChart.product')}
+                      options={productOptions}
+                      value={String(selectedProductIndex)}
+                      disabled={productHandles.length === 0}
+                      onChange={(v) => setSelectedProductIndex(parseInt(v, 10))}
+                    />
+                  </BlockStack>
+                ) : (
+                  <Select
+                    label={t('sizeChart.collection')}
+                    options={collectionOptions}
+                    value={String(selectedCollectionIndex)}
+                    onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
+                  />
+                )}
               </Box>
 
               <BlockStack gap="200">
@@ -608,7 +707,7 @@ export default function SizeChartPage() {
 
               <InlineStack align="space-between">
                 <Text variant="headingMd" as="h3">
-                  {t('sizeChart.table')} {GENDER_OPTIONS[selectedTab].label} {selectedHandle ? `· ${selectedHandle}` : t('sizeChart.default')}
+                  {t('sizeChart.table')} {GENDER_OPTIONS[selectedTab].label} · {selectedDisplayLabel}
                 </Text>
                 <Badge tone={currentChart.enabled ? 'success' : 'info'}>
                   {currentChart.enabled ? t('common.active') : t('common.inactive')}

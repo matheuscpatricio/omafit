@@ -490,7 +490,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-07-remove-how-it-works-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-11-ar-variants-all-v1";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -7038,21 +7038,29 @@ async function runArSession({
   }
 
   const sessionGlb = String(glbUrl || "").trim();
-  /** GLB do produto (`data-glb-url`) ou, se vazio, o primeiro `glbUrl` presente nas variantes (Liquid). */
-  const baseGlb =
+  /**
+   * `baseGlb`: GLB a nível de produto — calculado APÓS o enrich para que
+   * variantes sem glbUrl próprio (e.g. partilham o GLB do produto) apareçam.
+   * Ordem de prioridade: `data-glb-url` (sessão) > primeiro glbUrl nas variantes.
+   */
+  const resolveBaseGlb = (src) =>
     sessionGlb ||
-    (Array.isArray(variantSource)
-      ? variantSource.map((v) => String(v?.glbUrl ?? v?.glb_url ?? "").trim()).find(Boolean) || ""
+    (Array.isArray(src)
+      ? src.map((v) => String(v?.glbUrl ?? v?.glb_url ?? "").trim()).find(Boolean) || ""
       : "");
+  const baseGlb = resolveBaseGlb(variantSource);
 
   const resolveVariantGlb = (v) =>
-    String(v?.glbUrl ?? v?.glb_url ?? "").trim() || baseGlb;
-  /** Incluir todas as variantes com id — GLB partilhado ao nível do produto ou numa variante (`baseGlb`). */
+    String(v?.glbUrl ?? v?.glb_url ?? "").trim() || resolveBaseGlb(variantSource);
+  /**
+   * Incluir TODAS as variantes com `id` — não filtrar por GLB próprio porque
+   * várias variantes podem partilhar o `baseGlb` (GLB ao nível do produto).
+   * O único requisito é ter um `id` válido.
+   */
   let arVariants = variantSource.filter((v) => {
     if (!v) return false;
     const id = v.id != null ? String(v.id).trim() : "";
-    if (!id) return false;
-    return Boolean(resolveVariantGlb(v));
+    return Boolean(id);
   });
   /**
    * Iframe Netlify: não há `window.__OMAFIT_AR_VARIANTS__` do Liquid. Com
@@ -7062,10 +7070,11 @@ async function runArSession({
   try {
     const r = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
     const vid = r ? String(r.dataset.variantId || r.getAttribute("data-variant-id") || "").trim() : "";
-    if (arVariants.length === 0 && vid && baseGlb) {
+    const syntheticGlb = resolveBaseGlb(variantSource);
+    if (arVariants.length === 0 && vid && syntheticGlb) {
       const pimg = r ? String(r.dataset.productImage || r.getAttribute("data-product-image") || "").trim() : "";
       const ptitle = r ? String(r.dataset.productTitle || r.getAttribute("data-product-title") || "").trim() : "";
-      arVariants = [{ id: vid, title: ptitle || "Variant", imageUrl: pimg, glbUrl: baseGlb, calibration: null }];
+      arVariants = [{ id: vid, title: ptitle || "Variant", imageUrl: pimg, glbUrl: syntheticGlb, calibration: null }];
       console.log("[omafit-ar] variante sintética (Netlify / sem __OMAFIT_AR_VARIANTS__)", {
         variantId: vid,
         hasImage: Boolean(pimg),

@@ -6835,14 +6835,16 @@ function omafitResolveProductHandleForVariantFetch() {
         ).trim()
       : "";
   if (fromDom) return fromDom;
+  // Fallback: no Netlify iframe o `pathname` pode não ser `/products/...`.
+  // Quando o `omafit-widget.js` do tema passa `productHandle` via query string,
+  // precisamos aceitar isso para enriquecer variantes com `products/{handle}.js`.
   try {
     const qs =
       typeof window !== "undefined" && window.location?.search
         ? new URLSearchParams(window.location.search)
         : null;
     if (qs) {
-      const fromQ =
-        String(qs.get("productHandle") || qs.get("product_handle") || qs.get("handle") || "").trim();
+      const fromQ = String(qs.get("productHandle") || qs.get("product_handle") || qs.get("handle") || "").trim();
       if (fromQ) return fromQ;
     }
   } catch {
@@ -7074,25 +7076,6 @@ async function runArSession({
   }
   let currentVariantId = arVariants.length > 0 ? arVariants[0].id : null;
   let currentGlbUrl = arVariants.length > 0 ? resolveVariantGlb(arVariants[0]) : baseGlb;
-  try {
-    if (
-      typeof location !== "undefined" &&
-      /[?&]omafit_ar_debug=1\b/.test(String(location.search || ""))
-    ) {
-      console.info("[omafit-ar] variant wiring", {
-        productHandleForFetch: productHandleForFetch || "(none)",
-        variantSourceLen: Array.isArray(variantSource) ? variantSource.length : 0,
-        arVariantsLen: arVariants.length,
-        hasBaseGlb: Boolean(String(baseGlb || "").trim()),
-        windowVariantsLen:
-          typeof window !== "undefined" && Array.isArray(window.__OMAFIT_AR_VARIANTS__)
-            ? window.__OMAFIT_AR_VARIANTS__.length
-            : 0,
-      });
-    }
-  } catch {
-    /* ignore */
-  }
   try {
     const pqv = new URLSearchParams(
       typeof window !== "undefined" ? window.location.search || "" : "",

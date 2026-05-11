@@ -6836,6 +6836,19 @@ function omafitResolveProductHandleForVariantFetch() {
       : "";
   if (fromDom) return fromDom;
   try {
+    const qs =
+      typeof window !== "undefined" && window.location?.search
+        ? new URLSearchParams(window.location.search)
+        : null;
+    if (qs) {
+      const fromQ =
+        String(qs.get("productHandle") || qs.get("product_handle") || qs.get("handle") || "").trim();
+      if (fromQ) return fromQ;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
     const m = typeof location !== "undefined" ? location.pathname.match(/\/products\/([^/?#]+)/i) : null;
     return m && m[1] ? decodeURIComponent(m[1]) : "";
   } catch {
@@ -7061,6 +7074,25 @@ async function runArSession({
   }
   let currentVariantId = arVariants.length > 0 ? arVariants[0].id : null;
   let currentGlbUrl = arVariants.length > 0 ? resolveVariantGlb(arVariants[0]) : baseGlb;
+  try {
+    if (
+      typeof location !== "undefined" &&
+      /[?&]omafit_ar_debug=1\b/.test(String(location.search || ""))
+    ) {
+      console.info("[omafit-ar] variant wiring", {
+        productHandleForFetch: productHandleForFetch || "(none)",
+        variantSourceLen: Array.isArray(variantSource) ? variantSource.length : 0,
+        arVariantsLen: arVariants.length,
+        hasBaseGlb: Boolean(String(baseGlb || "").trim()),
+        windowVariantsLen:
+          typeof window !== "undefined" && Array.isArray(window.__OMAFIT_AR_VARIANTS__)
+            ? window.__OMAFIT_AR_VARIANTS__.length
+            : 0,
+      });
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     const pqv = new URLSearchParams(
       typeof window !== "undefined" ? window.location.search || "" : "",

@@ -2228,6 +2228,22 @@
         /* non-blocking */
       }
       /**
+       * Handle Shopify — o AR no iframe usa `products/{handle}.js` para listar
+       * variantes. Sem isto no URL / `data-product-handle`, o Netlify só vê
+       * `variant` + GLB e pode não enriquecer o catálogo.
+       */
+      try {
+        var phAr =
+          (productInfo && productInfo.productHandle && String(productInfo.productHandle).trim()) ||
+          (currentProductData && currentProductData.handle && String(currentProductData.handle).trim()) ||
+          '';
+        if (phAr) {
+          widgetUrl += '&productHandle=' + encodeURIComponent(phAr);
+        }
+      } catch (_phAr) {
+        /* non-blocking */
+      }
+      /**
        * Propaga ao iframe Netlify todos os `data-ar-*` emitidos pelo Liquid —
        * sem eles o widget interno cai em `glasses` por default e mostra
        * textos de óculos para relógios/pulseiras/colares. Ler `arRoot` em
@@ -2240,6 +2256,7 @@
             var v = (arRoot.getAttribute(dataKey) || '').trim();
             if (v) widgetUrl += '&' + queryKey + '=' + encodeURIComponent(v);
           };
+          passAttr('productHandle', 'data-product-handle');
           passAttr('arAccessoryType', 'data-ar-accessory-type');
           passAttr('arCategoryPath', 'data-ar-category-path');
           passAttr('arProductType', 'data-ar-product-type');

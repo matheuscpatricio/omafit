@@ -30,17 +30,6 @@ function normalizeLayout(value, heroAllowed) {
   return "default";
 }
 
-function normalizeApparelGenderScope(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (raw === "male" || raw === "female") return raw;
-  return "both";
-}
-
-function isMissingColumnError(message, column) {
-  const text = String(message || "").toLowerCase();
-  return text.includes(String(column).toLowerCase()) && (text.includes("column") || text.includes("pgrst204") || text.includes("42703"));
-}
-
 function normalizePayload(body, shopDomain, heroAllowed) {
   const radius = Number(body?.cta_button_border_radius);
   const bg = String(body?.tryon_layout_background_image || "").trim();
@@ -57,7 +46,6 @@ function normalizePayload(body, shopDomain, heroAllowed) {
     cta_button_border_radius: Number.isFinite(radius) ? Math.max(0, Math.min(40, Math.round(radius))) : 40,
     tryon_layout: normalizeLayout(body?.tryon_layout, heroAllowed),
     tryon_layout_background_image: bg || null,
-    apparel_gender_scope: normalizeApparelGenderScope(body?.apparel_gender_scope),
   };
 }
 
@@ -128,22 +116,10 @@ export async function loader({ request }) {
       "cta_button_border_radius",
       "tryon_layout",
       "tryon_layout_background_image",
-      "apparel_gender_scope",
       "created_at",
       "updated_at",
     ];
-    let config;
-    try {
-      config = await fetchLatestConfig(session.shop, selectFields.join(","));
-    } catch (readErr) {
-      if (!isMissingColumnError(readErr?.message, "apparel_gender_scope")) throw readErr;
-      console.warn("[api.widget-config] apparel_gender_scope ausente, carregando sem a coluna");
-      config = await fetchLatestConfig(
-        session.shop,
-        selectFields.filter((field) => field !== "apparel_gender_scope").join(","),
-      );
-      if (config) config.apparel_gender_scope = "both";
-    }
+    const config = await fetchLatestConfig(session.shop, selectFields.join(","));
     if (config && config.tryon_layout === "hero" && !hasHeroAccess(billing.row?.plan)) {
       config.tryon_layout = "default";
     }
@@ -170,15 +146,6 @@ export async function action({ request }) {
     return Response.json({ config, billingPlan: billing.row?.plan || null });
   } catch (err) {
     console.error("[api.widget-config] action", err);
-    if (isMissingColumnError(err?.message, "apparel_gender_scope")) {
-      return Response.json(
-        {
-          error:
-            "Coluna apparel_gender_scope não existe no banco. Execute o SQL: supabase_add_apparel_gender_scope_to_widget_configurations.sql",
-        },
-        { status: 400 },
-      );
-    }
     return Response.json({ error: err?.message || "Internal error" }, { status: 500 });
   }
 }

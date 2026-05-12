@@ -1010,7 +1010,7 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,apparel_gender_scope,created_at,updated_at';
+        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at';
       var selectWidgetCfgLegacy =
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
@@ -1022,20 +1022,6 @@
       );
       if (!configResponse.ok) {
         var errT = await configResponse.text().catch(function () { return ''; });
-        if (
-          configResponse.status === 400 &&
-          errT &&
-          errT.indexOf('apparel_gender_scope') !== -1 &&
-          selectWidgetCfgFull.indexOf('apparel_gender_scope') !== -1
-        ) {
-          console.warn('⚠️ Coluna apparel_gender_scope ausente no Supabase. Repetindo busca sem ela.');
-          selectWidgetCfgFull = selectWidgetCfgFull.replace(',apparel_gender_scope', '');
-          configResponse = await fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
-            { headers: configHeaders }
-          );
-          errT = await configResponse.text().catch(function () { return ''; });
-        }
         if (
           configResponse.status === 400 &&
           errT &&
@@ -1285,13 +1271,6 @@
           ? 'above_buy_buttons'
           : 'below_buy_buttons';
       var normCta = String(rawCta || '').trim().toLowerCase() === 'button' ? 'button' : 'link';
-      var rawApparelGenderScope = config && (config.apparel_gender_scope != null ? config.apparel_gender_scope : config.apparelGenderScope);
-      var normApparelGenderScope =
-        String(rawApparelGenderScope || '').trim().toLowerCase() === 'male'
-          ? 'male'
-          : String(rawApparelGenderScope || '').trim().toLowerCase() === 'female'
-            ? 'female'
-            : 'both';
       var normTryonLayout =
         (function () {
           var rawLayout = config && String(config.tryon_layout != null ? config.tryon_layout : '').trim().toLowerCase();
@@ -1329,8 +1308,6 @@
           Number.isFinite(Number(config?.cta_button_border_radius))
             ? Number(config?.cta_button_border_radius)
             : null,
-        apparelGenderScope: normApparelGenderScope,
-        apparel_gender_scope: normApparelGenderScope,
         tryonLayout: normTryonLayout,
         tryonLayoutBackgroundImage: config?.tryon_layout_background_image || '',
         tryon_layout_background_image: config?.tryon_layout_background_image || ''
@@ -1366,8 +1343,6 @@
         embedPosition: 'below_buy_buttons',
         ctaType: 'link',
         ctaButtonBorderRadius: null,
-        apparelGenderScope: 'both',
-        apparel_gender_scope: 'both',
         tryonLayout: 'default',
         tryonLayoutBackgroundImage: '',
         tryon_layout_background_image: ''
@@ -2164,12 +2139,6 @@
       OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayoutBackgroundImage
         ? String(OMAFIT_CONFIG.tryonLayoutBackgroundImage)
         : '';
-    var omafitIframeApparelGenderScope =
-      OMAFIT_CONFIG && OMAFIT_CONFIG.apparelGenderScope === 'male'
-        ? 'male'
-        : OMAFIT_CONFIG && OMAFIT_CONFIG.apparelGenderScope === 'female'
-          ? 'female'
-          : 'both';
 
     const widgetPath = collectionType === 'footwear' ? '/widget-shoes' : '/widget';
 
@@ -2185,8 +2154,6 @@
       '&shopDomain=' + encodeURIComponent(shopDomain) +
       '&language=' + encodeURIComponent(storeLanguage) +
       '&locale=' + encodeURIComponent(storeLanguage) +
-      '&apparelGenderScope=' + encodeURIComponent(omafitIframeApparelGenderScope) +
-      '&apparel_gender_scope=' + encodeURIComponent(omafitIframeApparelGenderScope) +
       '&tryon_layout=' + encodeURIComponent(omafitIframeTryonLayout) +
       '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout);
 
@@ -2356,9 +2323,7 @@
           selectedVariantId: currentVariantSelection.selectedVariantId,
           selected_variant_id: currentVariantSelection.selectedVariantId,
           selectedVariantOptions: currentVariantSelection.selectedVariantOptions,
-          selected_variant_options: currentVariantSelection.selectedVariantOptions,
-          apparelGenderScope: omafitIframeApparelGenderScope,
-          apparel_gender_scope: omafitIframeApparelGenderScope
+          selected_variant_options: currentVariantSelection.selectedVariantOptions
         };
 
         const sendWidgetPayloads = function () {

@@ -113,10 +113,17 @@ function createEmptyCollectionCharts() {
   return {
     collectionType: DEFAULT_COLLECTION_TYPE,
     collectionElasticity: DEFAULT_COLLECTION_ELASTICITY,
+    genderScope: 'both',
     male: { enabled: false, measurementRefs: getMeasurementRefsForCollectionType(DEFAULT_COLLECTION_TYPE), sizes: [] },
     female: { enabled: false, measurementRefs: getMeasurementRefsForCollectionType(DEFAULT_COLLECTION_TYPE), sizes: [] },
     unisex: { enabled: false, measurementRefs: getMeasurementRefsForCollectionType(DEFAULT_COLLECTION_TYPE), sizes: [] }
   };
+}
+
+function normalizeGenderScope(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'male' || raw === 'female') return raw;
+  return 'both';
 }
 
 export default function SizeChartPage() {
@@ -281,6 +288,11 @@ export default function SizeChartPage() {
         if (row.collection_elasticity && ['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(row.collection_elasticity)) {
           byScope[scope][handle].collectionElasticity = row.collection_elasticity;
         }
+        // O escopo é replicado em todas as linhas da coleção/produto. A última lida vence
+        // (idempotente, pois deve ser igual em todas) — fallback 'both' quando coluna ausente.
+        if (row.gender_scope !== undefined && row.gender_scope !== null) {
+          byScope[scope][handle].genderScope = normalizeGenderScope(row.gender_scope);
+        }
         const refs = normalizeMeasurementRefsForType(row.measurement_refs, row.collection_type);
         byScope[scope][handle][row.gender] = {
           enabled: true,
@@ -396,6 +408,27 @@ export default function SizeChartPage() {
     setCollectionElasticity(handle, optionValue, scope);
   };
 
+  const getGenderScope = (handle, scope = selectedScope) => {
+    return normalizeGenderScope(getScopeCharts(scope)[handle]?.genderScope);
+  };
+
+  const setGenderScope = (handle, value, scope = selectedScope) => {
+    const next = normalizeGenderScope(value);
+    setCharts((prev) => {
+      const updated = { ...prev, [scope]: { ...(prev[scope] || {}) } };
+      if (!updated[scope][handle]) {
+        updated[scope][handle] = createEmptyCollectionCharts();
+      }
+      updated[scope][handle] = { ...updated[scope][handle], genderScope: next };
+      return updated;
+    });
+  };
+
+  const handleGenderScopeCheckbox = (handle, value, checked, scope = selectedScope) => {
+    if (!checked) return;
+    setGenderScope(handle, value, scope);
+  };
+
   const setChart = (handle, gender, updater, scope = selectedScope) => {
     setCharts((prev) => {
       const next = { ...prev, [scope]: { ...(prev[scope] || {}) } };
@@ -423,7 +456,10 @@ export default function SizeChartPage() {
         Object.entries(charts[scope] || {}).forEach(([handle, byGender]) => {
           if (scope === 'product' && !handle) return;
           const collectionType = getCollectionType(handle, scope);
+          const genderScope = getGenderScope(handle, scope);
           const expectedMeasurementCount = getExpectedMeasurementCount(collectionType);
+          // Mesmo com gender_scope='male'/'female', mantemos linhas pré-existentes do gênero
+          // oposto para preservar dados do lojista; o widget filtra pelo gender_scope.
           ['male', 'female', 'unisex'].forEach((gender) => {
             const c = byGender[gender];
             if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === expectedMeasurementCount) {
@@ -434,6 +470,7 @@ export default function SizeChartPage() {
                 gender,
                 collection_type: collectionType,
                 collection_elasticity: isFootwearCollectionType(collectionType) ? null : getCollectionElasticity(handle, scope),
+                gender_scope: genderScope,
                 measurement_refs: c.measurementRefs,
                 sizes: c.sizes
               });
@@ -469,12 +506,29 @@ export default function SizeChartPage() {
         let insertErrText = '';
         if (!insertRes.ok) {
           insertErrText = await insertRes.text();
+          const missingGenderScopeColumn =
+            insertErrText.includes('gender_scope') &&
+            (insertErrText.includes('column') || insertErrText.includes('42703') || insertErrText.includes('PGRST204'));
+
+          if (missingGenderScopeColumn) {
+            // eslint-disable-next-line no-unused-vars
+            const fallbackPayload = toSave.map(({ gender_scope, ...rest }) => rest);
+            insertRes = await doInsert(fallbackPayload);
+            if (insertRes.ok) {
+              setError(t('sizeChart.warnGenderScopeColumnMissing'));
+            } else {
+              insertErrText = await insertRes.text();
+            }
+          }
+        }
+        if (!insertRes.ok) {
           const missingCollectionMetaColumn =
             (insertErrText.includes('collection_type') || insertErrText.includes('collection_elasticity')) &&
             (insertErrText.includes('column') || insertErrText.includes('42703'));
 
           if (missingCollectionMetaColumn) {
-            const fallbackPayload = toSave.map(({ collection_type, collection_elasticity, ...rest }) => rest);
+            // eslint-disable-next-line no-unused-vars
+            const fallbackPayload = toSave.map(({ collection_type, collection_elasticity, gender_scope, ...rest }) => rest);
             insertRes = await doInsert(fallbackPayload);
             if (insertRes.ok) {
               setError(t('sizeChart.warnCollectionMetadataNotPersisted'));
@@ -506,7 +560,14 @@ export default function SizeChartPage() {
     }
   };
 
-  const currentGender = GENDER_OPTIONS[selectedTab]?.value ?? 'male';
+  const selectedGenderScope = getGenderScope(selectedHandle);
+  const visibleGenderOptions = useMemo(() => {
+    if (selectedGenderScope === 'male') return GENDER_OPTIONS.filter((o) => o.value === 'male');
+    if (selectedGenderScope === 'female') return GENDER_OPTIONS.filter((o) => o.value === 'female');
+    return GENDER_OPTIONS;
+  }, [GENDER_OPTIONS, selectedGenderScope]);
+  const visibleTabIndex = Math.min(selectedTab, Math.max(0, visibleGenderOptions.length - 1));
+  const currentGender = visibleGenderOptions[visibleTabIndex]?.value ?? 'male';
   const selectedCollectionType = getCollectionType(selectedHandle);
   const isFootwearSelected = isFootwearCollectionType(selectedCollectionType);
   const currentChart = getChart(selectedHandle, currentGender);
@@ -514,6 +575,13 @@ export default function SizeChartPage() {
     selectedScope === 'product'
       ? (shopifyProducts[selectedProductIndex]?.title || selectedHandle || t('sizeChart.product'))
       : (selectedHandle ? selectedHandle : t('sizeChart.default'));
+
+  // Quando o escopo restringe os gêneros visíveis, força o tab a um valor válido.
+  useEffect(() => {
+    if (selectedTab > visibleGenderOptions.length - 1) {
+      setSelectedTab(0);
+    }
+  }, [visibleGenderOptions.length, selectedTab]);
 
   const handleToggleChart = () => {
     setChart(selectedHandle, currentGender, (c) => ({
@@ -587,7 +655,7 @@ export default function SizeChartPage() {
     );
   }
 
-  const tabs = GENDER_OPTIONS.map((opt, i) => ({
+  const tabs = visibleGenderOptions.map((opt, i) => ({
     content: opt.label,
     id: String(i),
     accessibilityLabel: t('sizeChart.tabLabel', { label: opt.label }),
@@ -770,6 +838,32 @@ export default function SizeChartPage() {
 
               <BlockStack gap="200">
                 <Text variant="headingSm" as="h3">
+                  {t('sizeChart.genderScopeTitle')}
+                </Text>
+                <Text variant="bodySm" tone="subdued">
+                  {t('sizeChart.genderScopeHelp')}
+                </Text>
+                <BlockStack gap="100">
+                  <Checkbox
+                    label={t('sizeChart.genderScopeBoth')}
+                    checked={selectedGenderScope === 'both'}
+                    onChange={(checked) => handleGenderScopeCheckbox(selectedHandle, 'both', checked)}
+                  />
+                  <Checkbox
+                    label={t('sizeChart.genderScopeMale')}
+                    checked={selectedGenderScope === 'male'}
+                    onChange={(checked) => handleGenderScopeCheckbox(selectedHandle, 'male', checked)}
+                  />
+                  <Checkbox
+                    label={t('sizeChart.genderScopeFemale')}
+                    checked={selectedGenderScope === 'female'}
+                    onChange={(checked) => handleGenderScopeCheckbox(selectedHandle, 'female', checked)}
+                  />
+                </BlockStack>
+              </BlockStack>
+
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">
                   {t('sizeChart.collectionTypeTitle')}
                 </Text>
                 <Text variant="bodySm" tone="subdued">
@@ -812,14 +906,14 @@ export default function SizeChartPage() {
 
               <InlineStack align="space-between">
                 <Text variant="headingMd" as="h3">
-                  {t('sizeChart.table')} {GENDER_OPTIONS[selectedTab].label} · {selectedDisplayLabel}
+                  {t('sizeChart.table')} {visibleGenderOptions[visibleTabIndex]?.label || ''} · {selectedDisplayLabel}
                 </Text>
                 <Badge tone={currentChart.enabled ? 'success' : 'info'}>
                   {currentChart.enabled ? t('common.active') : t('common.inactive')}
                 </Badge>
               </InlineStack>
 
-              <Tabs tabs={tabs} selected={String(selectedTab)} onSelect={(id) => setSelectedTab(parseInt(id, 10))} />
+              <Tabs tabs={tabs} selected={String(visibleTabIndex)} onSelect={(id) => setSelectedTab(parseInt(id, 10))} />
 
               <Box paddingBlockStart="400">
                 <Card>

@@ -16,8 +16,13 @@ import {
   Tabs,
   Badge,
   Box,
-  Checkbox
+  Checkbox,
+  Combobox,
+  Listbox,
+  Icon,
+  EmptySearchResult
 } from '@shopify/polaris';
+import { SearchIcon } from '@shopify/polaris-icons';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
 import { authenticate } from '../shopify.server';
@@ -171,6 +176,8 @@ export default function SizeChartPage() {
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState(null);
   const [shopifyProducts, setShopifyProducts] = useState([]);
+  const [collectionSearch, setCollectionSearch] = useState('');
+  const [productSearch, setProductSearch] = useState('');
 
   // Por escopo, identificador e gênero: { collection: {handle: ...}, product: {handle: ...} }
   const [charts, setCharts] = useState({ collection: {}, product: {} });
@@ -589,14 +596,28 @@ export default function SizeChartPage() {
 
   const collectionOptions = collectionHandles.map((h, idx) => {
     const label = h === '' ? t('sizeChart.defaultCollection') : (shopifyCollections[idx - 1]?.title || h);
-    return { label, value: String(idx) };
+    return { label, value: String(idx), searchable: `${label} ${h}`.toLowerCase() };
   });
   const productOptions = productHandles.length > 0
-    ? productHandles.map((h, idx) => ({
-        label: shopifyProducts[idx]?.title ? `${shopifyProducts[idx].title} (${h})` : h,
-        value: String(idx)
-      }))
-    : [{ label: t('sizeChart.noProductsFound'), value: '0' }];
+    ? productHandles.map((h, idx) => {
+        const title = shopifyProducts[idx]?.title || '';
+        const label = title ? `${title} (${h})` : h;
+        return { label, value: String(idx), searchable: `${title} ${h}`.toLowerCase() };
+      })
+    : [];
+
+  const normalizedCollectionSearch = collectionSearch.trim().toLowerCase();
+  const filteredCollectionOptions = normalizedCollectionSearch
+    ? collectionOptions.filter((opt) => opt.searchable.includes(normalizedCollectionSearch))
+    : collectionOptions;
+
+  const normalizedProductSearch = productSearch.trim().toLowerCase();
+  const filteredProductOptions = normalizedProductSearch
+    ? productOptions.filter((opt) => opt.searchable.includes(normalizedProductSearch))
+    : productOptions;
+
+  const selectedCollectionLabel = collectionOptions[selectedCollectionIndex]?.label || '';
+  const selectedProductLabel = productOptions[selectedProductIndex]?.label || '';
   const scopeTabs = [
     {
       content: t('sizeChart.configureByCollection'),
@@ -658,21 +679,92 @@ export default function SizeChartPage() {
                         {productsError}
                       </Banner>
                     )}
-                    <Select
-                      label={t('sizeChart.product')}
-                      options={productOptions}
-                      value={String(selectedProductIndex)}
-                      disabled={productHandles.length === 0}
-                      onChange={(v) => setSelectedProductIndex(parseInt(v, 10))}
-                    />
+                    <Combobox
+                      activator={
+                        <Combobox.TextField
+                          label={t('sizeChart.product')}
+                          placeholder={selectedProductLabel || t('sizeChart.searchProductPlaceholder')}
+                          prefix={<Icon source={SearchIcon} />}
+                          value={productSearch}
+                          onChange={(value) => setProductSearch(value)}
+                          onFocus={() => setProductSearch('')}
+                          autoComplete="off"
+                          disabled={productHandles.length === 0}
+                          helpText={selectedProductLabel ? `${t('sizeChart.currentSelection')}: ${selectedProductLabel}` : undefined}
+                        />
+                      }
+                    >
+                      {productHandles.length === 0 ? (
+                        <EmptySearchResult
+                          title={t('sizeChart.noProductsFound')}
+                          withIllustration={false}
+                        />
+                      ) : filteredProductOptions.length > 0 ? (
+                        <Listbox
+                          onSelect={(value) => {
+                            setSelectedProductIndex(parseInt(value, 10));
+                            setProductSearch('');
+                          }}
+                        >
+                          {filteredProductOptions.map((opt) => (
+                            <Listbox.Option
+                              key={opt.value}
+                              value={opt.value}
+                              selected={String(selectedProductIndex) === opt.value}
+                              accessibilityLabel={opt.label}
+                            >
+                              {opt.label}
+                            </Listbox.Option>
+                          ))}
+                        </Listbox>
+                      ) : (
+                        <EmptySearchResult
+                          title={t('sizeChart.noProductsMatchSearch')}
+                          withIllustration={false}
+                        />
+                      )}
+                    </Combobox>
                   </BlockStack>
                 ) : (
-                  <Select
-                    label={t('sizeChart.collection')}
-                    options={collectionOptions}
-                    value={String(selectedCollectionIndex)}
-                    onChange={(v) => setSelectedCollectionIndex(parseInt(v, 10))}
-                  />
+                  <Combobox
+                    activator={
+                      <Combobox.TextField
+                        label={t('sizeChart.collection')}
+                        placeholder={selectedCollectionLabel || t('sizeChart.searchCollectionPlaceholder')}
+                        prefix={<Icon source={SearchIcon} />}
+                        value={collectionSearch}
+                        onChange={(value) => setCollectionSearch(value)}
+                        onFocus={() => setCollectionSearch('')}
+                        autoComplete="off"
+                        helpText={selectedCollectionLabel ? `${t('sizeChart.currentSelection')}: ${selectedCollectionLabel}` : undefined}
+                      />
+                    }
+                  >
+                    {filteredCollectionOptions.length > 0 ? (
+                      <Listbox
+                        onSelect={(value) => {
+                          setSelectedCollectionIndex(parseInt(value, 10));
+                          setCollectionSearch('');
+                        }}
+                      >
+                        {filteredCollectionOptions.map((opt) => (
+                          <Listbox.Option
+                            key={opt.value}
+                            value={opt.value}
+                            selected={String(selectedCollectionIndex) === opt.value}
+                            accessibilityLabel={opt.label}
+                          >
+                            {opt.label}
+                          </Listbox.Option>
+                        ))}
+                      </Listbox>
+                    ) : (
+                      <EmptySearchResult
+                        title={t('sizeChart.noCollectionsMatchSearch')}
+                        withIllustration={false}
+                      />
+                    )}
+                  </Combobox>
                 )}
               </Box>
 

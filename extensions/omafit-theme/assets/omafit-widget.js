@@ -2304,6 +2304,9 @@
           selected_image: productImage || '',
           productImage: productImage || '',
           product_image: productImage || '',
+          /** Lista completa (URLs) — a URL do iframe não inclui `productImages` para não estourar tamanho. */
+          productImages: Array.isArray(allProductImages) ? allProductImages : [],
+          product_images: Array.isArray(allProductImages) ? allProductImages : [],
           productHandle: resolvedProductHandle,
           product_handle: resolvedProductHandle,
           variantCatalog: variantCatalogList,
@@ -2369,13 +2372,14 @@
             }, OMAFIT_WIDGET_ORIGIN);
           }
 
-          // Enviar todas as imagens do produto (não apenas as 3 primeiras)
-          if (allProductImages.length > 3) {
-            iframe.contentWindow.postMessage({
+          // Lista completa de imagens (a URL do iframe não inclui `productImages` para evitar 414).
+          iframe.contentWindow.postMessage(
+            {
               type: 'omafit-product-images',
-              images: allProductImages
-            }, OMAFIT_WIDGET_ORIGIN);
-          }
+              images: Array.isArray(allProductImages) ? allProductImages : [],
+            },
+            OMAFIT_WIDGET_ORIGIN
+          );
 
           // Enviar logo se existir (base64 pode ser muito grande para URL)
           if (OMAFIT_CONFIG.storeLogo) {

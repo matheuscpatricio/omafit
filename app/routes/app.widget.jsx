@@ -88,6 +88,7 @@ export default function WidgetPage() {
     tryon_layout: 'default',
     tryon_layout_background_image: '',
     cta_button_border_radius: 40,
+    apparel_gender_scope: 'both',
   });
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [collectionsError, setCollectionsError] = useState(null);
@@ -105,6 +106,10 @@ export default function WidgetPage() {
 
     if (isRlsWidgetConfigError && lower.includes('widget_configurations')) {
       return t('widget.errorRlsWidgetConfigurations');
+    }
+
+    if (lower.includes('apparel_gender_scope') && (lower.includes('column') || lower.includes('pgrst204') || lower.includes('42703'))) {
+      return t('widget.errorApparelGenderScopeColumnMissing');
     }
 
     return message;
@@ -183,6 +188,10 @@ export default function WidgetPage() {
                 ? 'above_buy_buttons'
                 : 'below_buy_buttons',
             cta_type: loadedConfig.cta_type === 'button' ? 'button' : 'link',
+            apparel_gender_scope:
+              loadedConfig.apparel_gender_scope === 'male' || loadedConfig.apparel_gender_scope === 'female'
+                ? loadedConfig.apparel_gender_scope
+                : 'both',
             tryon_layout:
               loadedConfig.tryon_layout === 'hero' && hasHeroLayoutAccess
                 ? 'hero'
@@ -456,6 +465,10 @@ export default function WidgetPage() {
             ? 'above_buy_buttons'
             : 'below_buy_buttons',
         cta_type: configToSave.cta_type === 'button' ? 'button' : 'link',
+        apparel_gender_scope:
+          configToSave.apparel_gender_scope === 'male' || configToSave.apparel_gender_scope === 'female'
+            ? configToSave.apparel_gender_scope
+            : 'both',
         tryon_layout:
           configToSave.tryon_layout === 'hero' && hasHeroLayoutAccess
             ? 'hero'
@@ -581,6 +594,11 @@ export default function WidgetPage() {
   const handleChange = useCallback((field, value) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
   }, []);
+
+  const handleApparelGenderScopeCheckbox = useCallback((value, checked) => {
+    if (!checked) return;
+    handleChange("apparel_gender_scope", value);
+  }, [handleChange]);
 
   const handleToggleExcludedCollection = useCallback((collectionHandle, checked) => {
     setConfig((prev) => {
@@ -799,6 +817,30 @@ export default function WidgetPage() {
                     )}
                   </div>
                 </BlockStack>
+              </BlockStack>
+
+              <BlockStack gap="200">
+                <Text variant="bodyMd" fontWeight="semibold" as="span">
+                  {t("widget.apparelGenderScopeLabel")}
+                </Text>
+                <Text variant="bodySm" tone="subdued">
+                  {t("widget.apparelGenderScopeHelp")}
+                </Text>
+                <Checkbox
+                  label={t("widget.apparelGenderScopeBoth")}
+                  checked={config.apparel_gender_scope !== "male" && config.apparel_gender_scope !== "female"}
+                  onChange={(checked) => handleApparelGenderScopeCheckbox("both", checked)}
+                />
+                <Checkbox
+                  label={t("widget.apparelGenderScopeMale")}
+                  checked={config.apparel_gender_scope === "male"}
+                  onChange={(checked) => handleApparelGenderScopeCheckbox("male", checked)}
+                />
+                <Checkbox
+                  label={t("widget.apparelGenderScopeFemale")}
+                  checked={config.apparel_gender_scope === "female"}
+                  onChange={(checked) => handleApparelGenderScopeCheckbox("female", checked)}
+                />
               </BlockStack>
 
               <BlockStack gap="200">

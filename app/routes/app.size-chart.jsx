@@ -699,11 +699,17 @@ export default function SizeChartPage() {
     }
   ];
 
+  const sizeChartMappingHref = `/app/size-chart-mapping${appSearch ? `?${appSearch}` : ''}`;
+
   return (
     <Page
       title={t('sizeChart.title')}
       subtitle={t('sizeChart.subtitle')}
       backAction={{ content: t('common.dashboard'), onAction: () => navigate(appBackHref) }}
+      primaryAction={{
+        content: t('sizeChart.viewProductMapping'),
+        onAction: () => navigate(sizeChartMappingHref)
+      }}
     >
       <Layout>
         {success && (

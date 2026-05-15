@@ -10,6 +10,7 @@ import {
   runCatalogSearches,
   titleLooksDark,
   resolveCatalogSearchTargetGender,
+  parseCollectionHandlesInput,
 } from "../widget-catalog-search.server";
 import prisma from "../db.server";
 import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server";
@@ -52,6 +53,7 @@ export async function action({ request }) {
     collectionType === "lower" || collectionType === "full" ? collectionType : "upper";
   const shopperGender = String(params.shopper_gender || "").trim();
   const chartGenderScope = String(params.chart_gender_scope || "both").trim();
+  const collectionHandles = parseCollectionHandlesInput(params.collection_handles);
   const targetGender = resolveCatalogSearchTargetGender({
     shopperGender,
     chartGenderScope,
@@ -66,12 +68,14 @@ export async function action({ request }) {
       titleLooksDark: titleLooksDark(productName),
       shopperGender,
       chartGenderScope,
+      collectionHandles,
     });
 
     const candidatesRaw = await runCatalogSearches(admin, queries, {
       excludeHandle,
       limit: 15,
       targetGender,
+      collectionHandles,
     });
 
     const candidates = await rankCandidatesByLearnedBoost(
@@ -81,7 +85,22 @@ export async function action({ request }) {
       candidatesRaw
     );
 
-    return corsHeaders({ candidates, error: null });
+    const payload = { candidates, error: null };
+    if (candidates.length === 0) {
+      payload.debug = {
+        exclude_handle: excludeHandle,
+        collection_handles_param: collectionHandles,
+        collection_handles_count: collectionHandles.length,
+        search_queries_count: queries.length,
+        target_gender: targetGender,
+        hint:
+          collectionHandles.length === 0
+            ? "Sem collection_handles no pedido; o servidor tenta inferir coleções do produto âncora."
+            : "Verifique imagem destacada dos produtos e filtro de género.",
+      };
+    }
+
+    return corsHeaders(payload);
   } catch (err) {
     console.error("[api.widget.catalog-search]", err);
     return corsHeaders({

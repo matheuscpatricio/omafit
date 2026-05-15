@@ -57,6 +57,48 @@ export function getWidgetCatalogSecret() {
   ).trim();
 }
 
+/** Canonical HMAC catalog-search — manter em sync com omafit-widget `fetchOmafitCatalogSearch`. */
+export function buildCatalogSearchCanonicalStrings(params, { shopDomain, publicId, timestamp }) {
+  const collection_type = String(params.collection_type || "");
+  const exclude_handle = String(params.exclude_handle || "");
+  const product_name = String(params.product_name || "");
+  const user_message = String(params.user_message || "");
+  const shopper_gender = String(params.shopper_gender || "");
+  const chart_gender_scope = String(params.chart_gender_scope || "");
+  const collection_handles = String(params.collection_handles || "");
+
+  const join = (pairs) => pairs.map(([k, v]) => `${k}=${v}`).join("|");
+
+  const withGender = [
+    ["collection_type", collection_type],
+    ["exclude_handle", exclude_handle],
+    ["product_name", product_name],
+    ["public_id", publicId],
+    ["shop_domain", shopDomain],
+    ["timestamp", timestamp],
+    ["user_message", user_message],
+    ["shopper_gender", shopper_gender],
+    ["chart_gender_scope", chart_gender_scope],
+  ];
+
+  const withCollections = [
+    ["collection_handles", collection_handles],
+    ...withGender,
+  ];
+
+  const legacy = [
+    ["collection_type", collection_type],
+    ["exclude_handle", exclude_handle],
+    ["product_name", product_name],
+    ["public_id", publicId],
+    ["shop_domain", shopDomain],
+    ["timestamp", timestamp],
+    ["user_message", user_message],
+  ];
+
+  return [join(withCollections), join(withGender), join(legacy)];
+}
+
 /**
  * Verifica assinatura HMAC dos pedidos do widget.
  * Se WIDGET_CATALOG_HMAC_SECRET não estiver definido: em desenvolvimento aceita;
@@ -91,20 +133,16 @@ export function verifyCatalogSearchSignature(params) {
     return { ok: true, shopDomain, publicId };
   }
 
-  const canonical = [
-    `collection_type=${String(params.collection_type || "")}`,
-    `exclude_handle=${String(params.exclude_handle || "")}`,
-    `product_name=${String(params.product_name || "")}`,
-    `public_id=${publicId}`,
-    `shop_domain=${shopDomain}`,
-    `timestamp=${timestamp}`,
-    `user_message=${String(params.user_message || "")}`,
-    `shopper_gender=${String(params.shopper_gender || "")}`,
-    `chart_gender_scope=${String(params.chart_gender_scope || "")}`,
-  ].join("|");
+  const canonicals = buildCatalogSearchCanonicalStrings(params, {
+    shopDomain,
+    publicId,
+    timestamp,
+  });
 
-  const expected = hmacHex(secret, canonical);
-  if (!timingSafeEqual(expected, signature)) {
+  const matches = canonicals.some((canonical) =>
+    timingSafeEqual(hmacHex(secret, canonical), signature)
+  );
+  if (!matches) {
     return { ok: false, reason: "bad_signature" };
   }
 

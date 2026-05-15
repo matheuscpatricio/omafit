@@ -61,6 +61,23 @@ function uniqueQueries(arr) {
   return out;
 }
 
+/** Handles de coleções Shopify (csv ou array) — produtos da mesma coleção entram nos candidatos. */
+export function parseCollectionHandlesInput(input) {
+  if (Array.isArray(input)) {
+    return uniqueQueries(
+      input.map((h) => String(h || "").trim()).filter(Boolean)
+    ).slice(0, 8);
+  }
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+  return uniqueQueries(
+    raw
+      .split(/[,;|]/)
+      .map((h) => h.trim())
+      .filter(Boolean)
+  ).slice(0, 8);
+}
+
 export function normalizeShopperGender(v) {
   const s = String(v || "")
     .trim()
@@ -116,6 +133,7 @@ export function buildCatalogSearchQueries({
   titleLooksDark = false,
   shopperGender = "",
   chartGenderScope = "both",
+  collectionHandles = [],
 }) {
   const msg = String(userMessage || "").trim();
   const name = String(productName || "").trim();
@@ -124,6 +142,10 @@ export function buildCatalogSearchQueries({
     chartGenderScope,
   });
   const queries = [];
+
+  for (const handle of parseCollectionHandlesInput(collectionHandles)) {
+    queries.push(`collection:${handle}`);
+  }
 
   if (effectiveGender === "male") {
     queries.push("tag:men", "tag:masculino", "tag:homem", "tag:male");
@@ -207,15 +229,82 @@ const SEARCH_PRODUCTS = `#graphql
         node {
           handle
           title
+          productType
+          tags
           onlineStoreUrl
           featuredImage {
             url
+          }
+          images(first: 1) {
+            edges {
+              node {
+                url
+              }
+            }
           }
         }
       }
     }
   }
 `;
+
+const COLLECTION_PRODUCTS = `#graphql
+  query WidgetCatalogCollectionProducts($handle: String!, $first: Int!) {
+    collectionByHandle(handle: $handle) {
+      products(first: $first) {
+        edges {
+          node {
+            handle
+            title
+            productType
+            tags
+            onlineStoreUrl
+            featuredImage {
+              url
+            }
+            images(first: 1) {
+              edges {
+                node {
+                  url
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const PRODUCT_COLLECTION_HANDLES = `#graphql
+  query WidgetProductCollectionHandles($handle: String!) {
+    productByHandle(handle: $handle) {
+      collections(first: 15) {
+        edges {
+          node {
+            handle
+          }
+        }
+      }
+    }
+  }
+`;
+
+function graphqlErrors(json) {
+  return Array.isArray(json?.errors) ? json.errors : [];
+}
+
+function resolveCandidateImageUrl(node) {
+  const featured = node?.featuredImage?.url;
+  if (featured) return featured;
+  const fromImages = node?.images?.edges?.[0]?.node?.url;
+  if (fromImages) return fromImages;
+  for (const { node: v } of node?.variants?.edges || []) {
+    const u = v?.image?.url;
+    if (u) return u;
+  }
+  return "";
+}
 
 const PRODUCT_BY_HANDLE = `#graphql
   query WidgetProductByHandle($handle: String!) {
@@ -257,15 +346,20 @@ const PRODUCT_BY_HANDLE = `#graphql
   }
 `;
 
-function mapEdgesToCandidates(edges, excludeHandle, targetGender = "unisex") {
+function mapEdgesToCandidates(
+  edges,
+  excludeHandle,
+  targetGender = "unisex",
+  { requireImage = true, applyGenderFilter = true } = {}
+) {
   const ex = String(excludeHandle || "").trim().toLowerCase();
   const list = [];
   for (const { node } of edges || []) {
     if (!node?.handle) continue;
     if (ex && node.handle.toLowerCase() === ex) continue;
-    if (!productMatchesTargetGender(node, targetGender)) continue;
-    const imageUrl = node.featuredImage?.url || "";
-    if (!imageUrl) continue;
+    if (applyGenderFilter && !productMatchesTargetGender(node, targetGender)) continue;
+    const imageUrl = resolveCandidateImageUrl(node);
+    if (requireImage && !imageUrl) continue;
     list.push({
       handle: node.handle,
       title: node.title || node.handle,
@@ -276,10 +370,89 @@ function mapEdgesToCandidates(edges, excludeHandle, targetGender = "unisex") {
   return list;
 }
 
+/**
+ * Se o widget não enviar coleções, infere a partir do produto âncora (exclude_handle).
+ */
+export async function resolveCollectionHandlesForCatalog(
+  admin,
+  collectionHandles,
+  anchorProductHandle
+) {
+  const parsed = parseCollectionHandlesInput(collectionHandles);
+  if (parsed.length) return parsed;
+
+  const anchor = String(anchorProductHandle || "").trim();
+  if (!anchor) return [];
+
+  try {
+    const response = await admin.graphql(PRODUCT_COLLECTION_HANDLES, {
+      variables: { handle: anchor },
+    });
+    const json = await response.json();
+    const errs = graphqlErrors(json);
+    if (errs.length) {
+      console.warn("[catalog-search] product collections:", errs.map((e) => e.message).join("; "));
+    }
+    const edges = json?.data?.productByHandle?.collections?.edges ?? [];
+    return uniqueQueries(edges.map((e) => e?.node?.handle).filter(Boolean)).slice(0, 8);
+  } catch (err) {
+    console.warn("[catalog-search] resolveCollectionHandlesForCatalog:", err);
+    return [];
+  }
+}
+
+/**
+ * Produtos das coleções Shopify do produto em try-on (só exclui o handle atual).
+ */
+export async function fetchCandidatesFromCollections(
+  admin,
+  collectionHandles,
+  { excludeHandle, limit = 15, targetGender = "unisex" } = {}
+) {
+  const handles = parseCollectionHandlesInput(collectionHandles);
+  if (!handles.length) return [];
+
+  const gender =
+    targetGender === "male" || targetGender === "female" || targetGender === "unisex"
+      ? targetGender
+      : "unisex";
+  const perCollection = Math.min(30, Math.max(limit, 12));
+  const byHandle = new Map();
+
+  for (const collectionHandle of handles) {
+    try {
+      const response = await admin.graphql(COLLECTION_PRODUCTS, {
+        variables: { handle: collectionHandle, first: perCollection },
+      });
+      const json = await response.json();
+      const errs = graphqlErrors(json);
+      if (errs.length) {
+        console.warn(
+          "[catalog-search] collection graphql:",
+          collectionHandle,
+          errs.map((e) => e.message).join("; ")
+        );
+        continue;
+      }
+      const edges = json?.data?.collectionByHandle?.products?.edges ?? [];
+      for (const c of mapEdgesToCandidates(edges, excludeHandle, gender)) {
+        if (!byHandle.has(c.handle)) {
+          byHandle.set(c.handle, c);
+        }
+      }
+    } catch (err) {
+      console.warn("[catalog-search] collection fetch failed:", collectionHandle, err);
+    }
+    if (byHandle.size >= limit) break;
+  }
+
+  return Array.from(byHandle.values()).slice(0, limit);
+}
+
 export async function runCatalogSearches(
   admin,
   searchQueries,
-  { excludeHandle, limit = 15, targetGender = "unisex" } = {}
+  { excludeHandle, limit = 15, targetGender = "unisex", collectionHandles = [] } = {}
 ) {
   const byHandle = new Map();
   const gender =
@@ -289,11 +462,31 @@ export async function runCatalogSearches(
   const fetchFirst =
     gender !== "unisex" ? Math.min(40, Math.max(limit * 3, 24)) : Math.min(limit, 20);
 
+  const resolvedCollectionHandles = await resolveCollectionHandlesForCatalog(
+    admin,
+    collectionHandles,
+    excludeHandle
+  );
+
+  const fromCollections = await fetchCandidatesFromCollections(admin, resolvedCollectionHandles, {
+    excludeHandle,
+    limit,
+    targetGender: gender,
+  });
+  for (const c of fromCollections) {
+    byHandle.set(c.handle, c);
+  }
+
   for (const q of searchQueries) {
     const response = await admin.graphql(SEARCH_PRODUCTS, {
       variables: { query: q, first: fetchFirst },
     });
     const json = await response.json();
+    const errs = graphqlErrors(json);
+    if (errs.length) {
+      console.warn("[catalog-search] products graphql:", q, errs.map((e) => e.message).join("; "));
+      continue;
+    }
     const edges = json?.data?.products?.edges ?? [];
     for (const c of mapEdgesToCandidates(edges, excludeHandle, gender)) {
       if (!byHandle.has(c.handle)) {
@@ -302,6 +495,26 @@ export async function runCatalogSearches(
       if (byHandle.size >= limit) break;
     }
     if (byHandle.size >= limit) break;
+  }
+
+  if (byHandle.size === 0 && resolvedCollectionHandles.length) {
+    for (const collectionHandle of resolvedCollectionHandles) {
+      try {
+        const response = await admin.graphql(COLLECTION_PRODUCTS, {
+          variables: { handle: collectionHandle, first: fetchFirst },
+        });
+        const json = await response.json();
+        const edges = json?.data?.collectionByHandle?.products?.edges ?? [];
+        for (const c of mapEdgesToCandidates(edges, excludeHandle, gender, {
+          applyGenderFilter: false,
+        })) {
+          if (!byHandle.has(c.handle)) byHandle.set(c.handle, c);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (byHandle.size >= limit) break;
+    }
   }
 
   return Array.from(byHandle.values()).slice(0, limit);

@@ -5,6 +5,12 @@ import {
   getWidgetCatalogCorsHeaders,
 } from "../widget-catalog-auth.server";
 import { fetchProductDetailByHandle } from "../widget-catalog-search.server";
+import prisma from "../db.server";
+import {
+  getShopifyAdminForWidget,
+  noSessionDebugPayload,
+  publicIdMatchesShop,
+} from "../widget-shop-admin.server";
 
 export async function loader({ request }) {
   const cors = (data, status = 200) => jsonWithCors(data, request, { status });
@@ -27,15 +33,31 @@ export async function loader({ request }) {
     return cors({ product: null, error: v.reason || "unauthorized" }, 401);
   }
 
+  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
+    return cors(
+      { product: null, error: "shop_public_id_mismatch" },
+      400
+    );
+  }
+
+  const adminResult = await getShopifyAdminForWidget(prisma, unauthenticated, v.shopDomain);
+  if (!adminResult.ok) {
+    console.error("[api.widget.product-by-handle] no_session", adminResult);
+    return cors({
+      product: null,
+      error: "no_session",
+      debug: noSessionDebugPayload(adminResult),
+    });
+  }
+
   try {
-    const { admin } = await unauthenticated.admin(v.shopDomain);
-    const { product, error } = await fetchProductDetailByHandle(admin, v.handle);
+    const { product, error } = await fetchProductDetailByHandle(adminResult.admin, v.handle);
     if (error) {
       return cors({ product: null, error }, 200);
     }
     return cors({ product, error: null });
   } catch (err) {
     console.error("[api.widget.product-by-handle]", err);
-    return cors({ product: null, error: "no_session" });
+    return cors({ product: null, error: "catalog_search_failed" });
   }
 }

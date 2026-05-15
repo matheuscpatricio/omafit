@@ -14,6 +14,11 @@ import {
 } from "../widget-catalog-search.server";
 import prisma from "../db.server";
 import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server";
+import {
+  getShopifyAdminForWidget,
+  noSessionDebugPayload,
+  publicIdMatchesShop,
+} from "../widget-shop-admin.server";
 
 export async function action({ request }) {
   const corsHeaders = (data, status = 200) => jsonWithCors(data, request, { status });
@@ -45,6 +50,21 @@ export async function action({ request }) {
     return corsHeaders({ candidates: [], error: v.reason || "unauthorized" }, 401);
   }
 
+  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
+    return corsHeaders(
+      {
+        candidates: [],
+        error: "shop_public_id_mismatch",
+        debug: {
+          shop_domain: v.shopDomain,
+          public_id: v.publicId,
+          hint: "O public_id do widget não corresponde ao shop_domain enviado. Verifique widget_keys no Supabase.",
+        },
+      },
+      400
+    );
+  }
+
   const userMessage = String(params.user_message || "").trim();
   const excludeHandle = String(params.exclude_handle || "").trim();
   const productName = String(params.product_name || "").trim();
@@ -59,8 +79,18 @@ export async function action({ request }) {
     chartGenderScope,
   });
 
+  const adminResult = await getShopifyAdminForWidget(prisma, unauthenticated, v.shopDomain);
+  if (!adminResult.ok) {
+    console.error("[api.widget.catalog-search] no_session", adminResult);
+    return corsHeaders({
+      candidates: [],
+      error: "no_session",
+      debug: noSessionDebugPayload(adminResult),
+    });
+  }
+
   try {
-    const { admin } = await unauthenticated.admin(v.shopDomain);
+    const admin = adminResult.admin;
     const queries = buildCatalogSearchQueries({
       userMessage,
       productName,
@@ -105,7 +135,8 @@ export async function action({ request }) {
     console.error("[api.widget.catalog-search]", err);
     return corsHeaders({
       candidates: [],
-      error: "no_session",
+      error: "catalog_search_failed",
+      debug: { message: err?.message || String(err) },
     });
   }
 }

@@ -35,7 +35,9 @@ const UPPER_TERMS_PT_EN = [
   "hoodie",
 ];
 
-const SHOE_TERMS = ["sapato", "shoe", "tênis", "tenis", "sneaker", "bota", "boot", "sandália"];
+/** Heurística em título/productType/tags: calçado ou acessório (consultor sugere só vestuário). */
+const FOOTWEAR_OR_ACCESSORY_HINTS =
+  /\b(?:sapatos?|cal[cç]ados?|t[eê]nis|tenis|trainer|trainers|sneaker|sneakers|footwear|sand[aá]lias?|chinelos?|slides?|(?:ankle\s+)?boots?|\bheels?\b|stiletto|loafers?|oxfords?|moccasins?|clogs?|\bpumps\b|zapatos?|zapatillas?|botas?|chanclas?|calzado|[oó]culos(?:\s+de\s+sol)?|gafa(?:s)?(?:\s+de\s+sol)?|sunglass(?:es)?|eyewear|rel[oó]g(?:io|ios)|reloj(?:es)?|smartwatch|\bwatches?\b|carteira|cinto|cintur[oó]n|\bbelts?\b|bols[ao]s?|handbag|clutch|mochila|backpack|rucksack|chap[eé]u|chapeu|\bbon[eé]\b|gorros?|toucas?|beanie|bucket\s+hat|baseball\s+cap|cachecol|pa[nñ]uelo|(?:len[cç]o|scarf)(?:\s+de\s+pesco[cç]o)?|jewelry|jewellery|jo[ií]as|bijuteria|colar(?:es)?|necklaces?|pulseiras?|bracelets?|brincos?|earrings?|\ban[eé]is\b|\banillos?\b|headbands?|hair\s+clips?|necessaire)\b/i;
 
 /** Peças tipicamente associadas a um género no título/tipo (heurística). */
 const FEMALE_GARMENT_HINTS =
@@ -181,13 +183,21 @@ export function buildCatalogSearchQueries({
     }
   }
 
-  if (/sapato|shoe|tênis|tenis|bota|sand/i.test(msg)) {
-    for (const term of SHOE_TERMS) {
-      queries.push(term);
-    }
-  }
-
   return uniqueQueries(queries).slice(0, 10);
+}
+
+function joinCatalogSearchBlob(node) {
+  const tags = Array.isArray(node?.tags)
+    ? node.tags.map((t) => String(t || "").toLowerCase()).join(" ")
+    : "";
+  return [node?.title, node?.productType, tags].filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Exclui candidatos que parecem calçado ou acessório (modo consultor = só vestuário). */
+export function productLooksLikeFootwearOrAccessory(node) {
+  const blob = joinCatalogSearchBlob(node);
+  if (!blob.trim()) return false;
+  return FOOTWEAR_OR_ACCESSORY_HINTS.test(blob);
 }
 
 /**
@@ -350,13 +360,14 @@ function mapEdgesToCandidates(
   edges,
   excludeHandle,
   targetGender = "unisex",
-  { requireImage = true, applyGenderFilter = true } = {}
+  { requireImage = true, applyGenderFilter = true, excludeFootwearAndAccessories = true } = {}
 ) {
   const ex = String(excludeHandle || "").trim().toLowerCase();
   const list = [];
   for (const { node } of edges || []) {
     if (!node?.handle) continue;
     if (ex && node.handle.toLowerCase() === ex) continue;
+    if (excludeFootwearAndAccessories && productLooksLikeFootwearOrAccessory(node)) continue;
     if (applyGenderFilter && !productMatchesTargetGender(node, targetGender)) continue;
     const imageUrl = resolveCandidateImageUrl(node);
     if (requireImage && !imageUrl) continue;

@@ -9,7 +9,10 @@ import {
   buildCatalogSearchQueries,
   runCatalogSearches,
   titleLooksDark,
+  resolveCatalogSearchTargetGender,
 } from "../widget-catalog-search.server";
+import prisma from "../db.server";
+import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server";
 
 export async function action({ request }) {
   const corsHeaders = (data, status = 200) => jsonWithCors(data, request, { status });
@@ -47,6 +50,12 @@ export async function action({ request }) {
   const collectionType = String(params.collection_type || "upper").trim().toLowerCase();
   const safeCollection =
     collectionType === "lower" || collectionType === "full" ? collectionType : "upper";
+  const shopperGender = String(params.shopper_gender || "").trim();
+  const chartGenderScope = String(params.chart_gender_scope || "both").trim();
+  const targetGender = resolveCatalogSearchTargetGender({
+    shopperGender,
+    chartGenderScope,
+  });
 
   try {
     const { admin } = await unauthenticated.admin(v.shopDomain);
@@ -55,12 +64,22 @@ export async function action({ request }) {
       productName,
       collectionType: safeCollection,
       titleLooksDark: titleLooksDark(productName),
+      shopperGender,
+      chartGenderScope,
     });
 
-    const candidates = await runCatalogSearches(admin, queries, {
+    const candidatesRaw = await runCatalogSearches(admin, queries, {
       excludeHandle,
       limit: 15,
+      targetGender,
     });
+
+    const candidates = await rankCandidatesByLearnedBoost(
+      prisma,
+      v.shopDomain,
+      excludeHandle,
+      candidatesRaw
+    );
 
     return corsHeaders({ candidates, error: null });
   } catch (err) {

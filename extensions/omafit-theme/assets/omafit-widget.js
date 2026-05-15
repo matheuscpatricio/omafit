@@ -2281,6 +2281,8 @@
           passAttr('arGlassesEyeMidDebugVisual', 'data-ar-glasses-eye-mid-debug-visual');
           passAttr('arGlassesManualMindarRig', 'data-ar-glasses-manual-mindar-rig');
           passAttr('arOmafitCalibration', 'data-ar-omafit-calibration');
+          passAttr('arManifestJson', 'data-ar-manifest-json');
+          passAttr('arManifestUrl', 'data-ar-manifest-url');
         }
       } catch (e) {
         if (OMAFIT_DEBUG) console.warn('Omafit: propagar data-ar-* para iframe falhou', e);

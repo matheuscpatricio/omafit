@@ -37,6 +37,18 @@ const UPPER_TERMS_PT_EN = [
 
 const SHOE_TERMS = ["sapato", "shoe", "tênis", "tenis", "sneaker", "bota", "boot", "sandália"];
 
+/** Peças tipicamente associadas a um género no título/tipo (heurística). */
+const FEMALE_GARMENT_HINTS =
+  /\b(saia|skirt|vestido|dress|maxi dress|midi skirt|falda|vestid|blusa feminina|legging feminin)\b/i;
+const MALE_GARMENT_HINTS =
+  /\b(gravata|tie\b|terno masculino|smoking|suspensório|cueca|boxer masculino)\b/i;
+
+const FEMALE_TAG_HINTS =
+  /\b(women|woman|womens|feminino|feminina|fem|mulher|mulheres|mujer|mujeres|female|feminine|ladies|lady)\b/i;
+const MALE_TAG_HINTS =
+  /\b(men|man|mens|masculino|masculina|homem|homens|hombre|hombres|male|masculine)\b/i;
+const UNISEX_TAG_HINTS = /\b(unisex|unissex|neutro|neutral|gender[\s-]?neutral)\b/i;
+
 function uniqueQueries(arr) {
   const seen = new Set();
   const out = [];
@@ -49,15 +61,75 @@ function uniqueQueries(arr) {
   return out;
 }
 
+export function normalizeShopperGender(v) {
+  const s = String(v || "")
+    .trim()
+    .toLowerCase();
+  if (s === "m" || s === "man" || s === "men" || s === "homem" || s === "hombre" || s === "masculino") {
+    return "male";
+  }
+  if (s === "f" || s === "woman" || s === "women" || s === "mulher" || s === "mujer" || s === "feminino") {
+    return "female";
+  }
+  if (s === "unisex" || s === "neutro") return "unisex";
+  return "";
+}
+
+export function normalizeChartGenderScope(v) {
+  const s = String(v || "")
+    .trim()
+    .toLowerCase();
+  if (s === "male" || s === "female" || s === "both") return s;
+  return "both";
+}
+
+/**
+ * Género efectivo para filtrar candidatos: prioriza o escopo do lojista na tabela de medidas;
+ * senão o perfil escolhido no provador.
+ */
+export function resolveCatalogSearchTargetGender({ shopperGender, chartGenderScope }) {
+  const scope = normalizeChartGenderScope(chartGenderScope);
+  if (scope === "male" || scope === "female") return scope;
+  const shopper = normalizeShopperGender(shopperGender);
+  if (shopper === "male" || shopper === "female") return shopper;
+  return "unisex";
+}
+
+function lowerTermsForGender(collectionType, targetGender) {
+  let lowers = [...LOWER_TERMS_PT_EN];
+  let uppers = [...UPPER_TERMS_PT_EN];
+  if (targetGender === "male") {
+    lowers = lowers.filter((t) => !/\b(saia|skirt|legging)\b/i.test(t));
+  }
+  if (targetGender === "female") {
+    uppers = uppers.filter((t) => !/\b(moletom masculino)\b/i.test(t));
+  }
+  if (collectionType === "upper") return { lowers, uppers };
+  if (collectionType === "lower") return { lowers, uppers };
+  return { lowers, uppers };
+}
+
 export function buildCatalogSearchQueries({
   userMessage = "",
   productName = "",
   collectionType = "upper",
   titleLooksDark = false,
+  shopperGender = "",
+  chartGenderScope = "both",
 }) {
   const msg = String(userMessage || "").trim();
   const name = String(productName || "").trim();
+  const effectiveGender = resolveCatalogSearchTargetGender({
+    shopperGender,
+    chartGenderScope,
+  });
   const queries = [];
+
+  if (effectiveGender === "male") {
+    queries.push("tag:men", "tag:masculino", "tag:homem", "tag:male");
+  } else if (effectiveGender === "female") {
+    queries.push("tag:women", "tag:feminino", "tag:mulher", "tag:female");
+  }
 
   if (msg) {
     queries.push(msg);
@@ -69,19 +141,20 @@ export function buildCatalogSearchQueries({
 
   const addContrast = titleLooksDark || DARK_HINTS.test(name);
   const contrastSuffix = addContrast ? LIGHT_TERMS.slice(0, 4).join(" OR ") : "";
+  const { lowers, uppers } = lowerTermsForGender(collectionType, effectiveGender);
 
   if (collectionType === "upper") {
-    for (const term of LOWER_TERMS_PT_EN) {
+    for (const term of lowers) {
       queries.push(contrastSuffix ? `${term} (${contrastSuffix})` : term);
     }
     queries.push("bottom");
   } else if (collectionType === "lower") {
-    for (const term of UPPER_TERMS_PT_EN.slice(0, 6)) {
+    for (const term of uppers.slice(0, 6)) {
       queries.push(term);
     }
     queries.push("top");
   } else {
-    for (const term of [...LOWER_TERMS_PT_EN.slice(0, 3), ...UPPER_TERMS_PT_EN.slice(0, 3)]) {
+    for (const term of [...lowers.slice(0, 3), ...uppers.slice(0, 3)]) {
       queries.push(contrastSuffix ? `${term} ${contrastSuffix}` : term);
     }
   }
@@ -92,7 +165,35 @@ export function buildCatalogSearchQueries({
     }
   }
 
-  return uniqueQueries(queries).slice(0, 8);
+  return uniqueQueries(queries).slice(0, 10);
+}
+
+/**
+ * Sinal de género inferido do produto (tags, título, productType).
+ * @returns {"male"|"female"|"unisex"|"neutral"}
+ */
+export function detectProductGenderSignal(node) {
+  const tags = Array.isArray(node?.tags) ? node.tags : [];
+  const tagStr = tags.map((t) => String(t || "").toLowerCase()).join(" ");
+  const blob = [node?.title, node?.productType, tagStr].filter(Boolean).join(" ").toLowerCase();
+
+  if (UNISEX_TAG_HINTS.test(blob)) return "unisex";
+  const hasFemale = FEMALE_TAG_HINTS.test(blob) || FEMALE_GARMENT_HINTS.test(blob);
+  const hasMale = MALE_TAG_HINTS.test(blob) || MALE_GARMENT_HINTS.test(blob);
+  if (hasFemale && hasMale) return "unisex";
+  if (hasFemale) return "female";
+  if (hasMale) return "male";
+  return "neutral";
+}
+
+/** Exclui candidatos claramente do género oposto; neutros/unissex passam. */
+export function productMatchesTargetGender(node, targetGender) {
+  if (!targetGender || targetGender === "unisex") return true;
+  const signal = detectProductGenderSignal(node);
+  if (signal === "unisex" || signal === "neutral") return true;
+  if (targetGender === "male") return signal !== "female";
+  if (targetGender === "female") return signal !== "male";
+  return true;
 }
 
 export function titleLooksDark(title) {
@@ -156,12 +257,13 @@ const PRODUCT_BY_HANDLE = `#graphql
   }
 `;
 
-function mapEdgesToCandidates(edges, excludeHandle) {
+function mapEdgesToCandidates(edges, excludeHandle, targetGender = "unisex") {
   const ex = String(excludeHandle || "").trim().toLowerCase();
   const list = [];
   for (const { node } of edges || []) {
     if (!node?.handle) continue;
     if (ex && node.handle.toLowerCase() === ex) continue;
+    if (!productMatchesTargetGender(node, targetGender)) continue;
     const imageUrl = node.featuredImage?.url || "";
     if (!imageUrl) continue;
     list.push({
@@ -174,16 +276,26 @@ function mapEdgesToCandidates(edges, excludeHandle) {
   return list;
 }
 
-export async function runCatalogSearches(admin, searchQueries, { excludeHandle, limit = 15 }) {
+export async function runCatalogSearches(
+  admin,
+  searchQueries,
+  { excludeHandle, limit = 15, targetGender = "unisex" } = {}
+) {
   const byHandle = new Map();
+  const gender =
+    targetGender === "male" || targetGender === "female" || targetGender === "unisex"
+      ? targetGender
+      : "unisex";
+  const fetchFirst =
+    gender !== "unisex" ? Math.min(40, Math.max(limit * 3, 24)) : Math.min(limit, 20);
 
   for (const q of searchQueries) {
     const response = await admin.graphql(SEARCH_PRODUCTS, {
-      variables: { query: q, first: Math.min(limit, 20) },
+      variables: { query: q, first: fetchFirst },
     });
     const json = await response.json();
     const edges = json?.data?.products?.edges ?? [];
-    for (const c of mapEdgesToCandidates(edges, excludeHandle)) {
+    for (const c of mapEdgesToCandidates(edges, excludeHandle, gender)) {
       if (!byHandle.has(c.handle)) {
         byHandle.set(c.handle, c);
       }

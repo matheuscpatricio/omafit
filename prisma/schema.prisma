@@ -32,3 +32,18 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+/// Agregados por loja (shop = myshopify domain) para re-ranking de sugestões estilista (âncora PDP → produto sugerido).
+model WidgetSuggestionPairStat {
+  id               String   @id @default(cuid())
+  shop             String
+  anchorHandle     String
+  suggestedHandle  String
+  impressions      Int      @default(0)
+  stylistClicks    Int      @default(0)
+  atc              Int      @default(0)
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shop, anchorHandle, suggestedHandle])
+  @@index([shop, anchorHandle])
+}

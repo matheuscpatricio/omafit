@@ -490,7 +490,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-11-bracelet-bake-world-scale-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-14-ar-bracelet-radial-default-auto-v1";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13678,7 +13678,7 @@ async function runHandArSession({
         braceletRadialSegCount = 0;
         if (accessoryType === "bracelet") {
           omafitNormalizeBraceletTripoGlbScale(THREE, glbScene, glbRoot);
-          const radialMode = cfgAttr("arBraceletRadial", "on");
+          const radialMode = cfgAttr("arBraceletRadial", "auto");
           const radialShould = omafitBraceletRadialShouldRebuild(
             THREE,
             glbScene,
@@ -15351,7 +15351,7 @@ async function runHandArSession({
               braceletRadialSegCount = 0;
               if (accessoryType === "bracelet") {
                 omafitNormalizeBraceletTripoGlbScale(THREE, next, glbRoot);
-                const radialMode = cfgAttr("arBraceletRadial", "on");
+                const radialMode = cfgAttr("arBraceletRadial", "auto");
                 const radialShould = omafitBraceletRadialShouldRebuild(
                   THREE,
                   next,

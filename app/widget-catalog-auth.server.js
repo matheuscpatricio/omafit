@@ -99,6 +99,8 @@ export function verifyCatalogSearchSignature(params) {
     `shop_domain=${shopDomain}`,
     `timestamp=${timestamp}`,
     `user_message=${String(params.user_message || "")}`,
+    `shopper_gender=${String(params.shopper_gender || "")}`,
+    `chart_gender_scope=${String(params.chart_gender_scope || "")}`,
   ].join("|");
 
   const expected = hmacHex(secret, canonical);
@@ -107,6 +109,97 @@ export function verifyCatalogSearchSignature(params) {
   }
 
   return { ok: true, shopDomain, publicId };
+}
+
+const SUGGESTION_EVENT_TYPES = new Set(["impression", "stylist_click", "atc"]);
+
+/**
+ * Assinatura HMAC para POST /api/widget/suggestion-events (canonical distinta do catalog-search).
+ */
+export function buildSuggestionEventCanonical(params) {
+  const event = String(params.event || "").trim();
+  const shopDomain = String(params.shop_domain || "").trim();
+  const publicId = String(params.public_id || "").trim();
+  const timestamp = String(params.timestamp || "").trim();
+  const impressionId = String(params.impression_id || "").trim();
+  const anchorHandle = String(params.anchor_handle || "").trim();
+
+  if (!SUGGESTION_EVENT_TYPES.has(event)) {
+    return null;
+  }
+
+  if (event === "impression") {
+    const suggestedHandles = String(params.suggested_handles || "");
+    return [
+      "suggestion_event_v1",
+      `event=${event}`,
+      `anchor_handle=${anchorHandle}`,
+      `impression_id=${impressionId}`,
+      `public_id=${publicId}`,
+      `shop_domain=${shopDomain}`,
+      `suggested_handles=${suggestedHandles}`,
+      `timestamp=${timestamp}`,
+    ].join("|");
+  }
+
+  const suggestedHandle = String(params.suggested_handle || "").trim();
+  return [
+    "suggestion_event_v1",
+    `event=${event}`,
+    `anchor_handle=${anchorHandle}`,
+    `impression_id=${impressionId}`,
+    `public_id=${publicId}`,
+    `shop_domain=${shopDomain}`,
+    `suggested_handle=${suggestedHandle}`,
+    `timestamp=${timestamp}`,
+  ].join("|");
+}
+
+export function verifySuggestionEventSignature(params) {
+  const secret = getWidgetCatalogSecret();
+  const isProd = process.env.NODE_ENV === "production";
+
+  const shopDomain = String(params.shop_domain || "").trim();
+  const publicId = String(params.public_id || "").trim();
+  const timestamp = String(params.timestamp || "").trim();
+  const signature = String(params.signature || "").trim();
+  const event = String(params.event || "").trim();
+
+  if (!shopDomain || !publicId || !timestamp || !signature || !event) {
+    return { ok: false, reason: "missing_params" };
+  }
+
+  if (!SUGGESTION_EVENT_TYPES.has(event)) {
+    return { ok: false, reason: "bad_event" };
+  }
+
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) {
+    return { ok: false, reason: "bad_timestamp" };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ts) > MAX_SKEW_SEC) {
+    return { ok: false, reason: "timestamp_skew" };
+  }
+
+  if (!secret) {
+    if (isProd) {
+      return { ok: false, reason: "server_misconfigured" };
+    }
+    return { ok: true, shopDomain, publicId, event };
+  }
+
+  const canonical = buildSuggestionEventCanonical(params);
+  if (!canonical) {
+    return { ok: false, reason: "bad_event" };
+  }
+
+  const expected = hmacHex(secret, canonical);
+  if (!timingSafeEqual(expected, signature)) {
+    return { ok: false, reason: "bad_signature" };
+  }
+
+  return { ok: true, shopDomain, publicId, event };
 }
 
 export function verifyProductByHandleSignature(params) {

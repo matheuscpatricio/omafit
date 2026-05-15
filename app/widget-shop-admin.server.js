@@ -19,11 +19,10 @@ export function buildWidgetPublicId(shopDomain) {
   return `wgt_pub_${hash.substring(0, 24)}`;
 }
 
-export function publicIdMatchesShop(publicId, shopDomain) {
-  const shop = normalizeMyshopifyDomain(shopDomain);
-  if (!shop || !publicId) return false;
-  return buildWidgetPublicId(shop) === String(publicId).trim();
-}
+/**
+ * Nota: o public_id no widget vem de Supabase (widget_keys / shopify_shops), não só do hash do domínio.
+ * A verificação HMAC do pedido já inclui public_id + shop_domain no canonical assinado.
+ */
 
 /**
  * Variantes de domínio para procurar sessão offline (ordem de prioridade).

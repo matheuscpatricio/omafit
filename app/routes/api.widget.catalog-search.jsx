@@ -17,7 +17,6 @@ import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server"
 import {
   getShopifyAdminForWidget,
   noSessionDebugPayload,
-  publicIdMatchesShop,
 } from "../widget-shop-admin.server";
 
 export async function action({ request }) {
@@ -48,21 +47,6 @@ export async function action({ request }) {
   const v = verifyCatalogSearchSignature(params);
   if (!v.ok) {
     return corsHeaders({ candidates: [], error: v.reason || "unauthorized" }, 401);
-  }
-
-  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
-    return corsHeaders(
-      {
-        candidates: [],
-        error: "shop_public_id_mismatch",
-        debug: {
-          shop_domain: v.shopDomain,
-          public_id: v.publicId,
-          hint: "O public_id do widget não corresponde ao shop_domain enviado. Verifique widget_keys no Supabase.",
-        },
-      },
-      400
-    );
   }
 
   const userMessage = String(params.user_message || "").trim();

@@ -24,7 +24,7 @@ import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
-import { hasGrowthPlusPlan } from "../billing-growth-plus.server.js";
+import { hasGrowthPlusPlan } from "../billing-growth-plus.js";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);

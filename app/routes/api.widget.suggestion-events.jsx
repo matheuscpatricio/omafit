@@ -98,5 +98,8 @@ export async function action({ request }) {
 }
 
 export async function loader({ request }) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: getWidgetCatalogCorsHeaders(request) });
+  }
   return jsonWithCors({ error: "use_post" }, request, { status: 405 });
 }

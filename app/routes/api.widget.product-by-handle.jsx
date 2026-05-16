@@ -9,6 +9,7 @@ import prisma from "../db.server";
 import {
   getShopifyAdminForWidget,
   noSessionDebugPayload,
+  publicIdMatchesShop,
 } from "../widget-shop-admin.server";
 
 export async function loader({ request }) {
@@ -32,7 +33,8 @@ export async function loader({ request }) {
     return cors({ product: null, error: v.reason || "unauthorized" }, 401);
   }
 
-  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
+  const publicIdOk = await publicIdMatchesShop(v.publicId, v.shopDomain);
+  if (!publicIdOk) {
     return cors(
       { product: null, error: "shop_public_id_mismatch" },
       400

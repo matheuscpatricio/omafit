@@ -17,12 +17,14 @@ import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server"
 import {
   getShopifyAdminForWidget,
   noSessionDebugPayload,
+  publicIdMatchesShop,
 } from "../widget-shop-admin.server";
 import { shopHasStylistConsultantAccess } from "../shop-billing-plan.server";
 
 export async function action({ request }) {
   const corsHeaders = (data, status = 200) => jsonWithCors(data, request, { status });
 
+  try {
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: getWidgetCatalogCorsHeaders(request) });
   }
@@ -50,7 +52,8 @@ export async function action({ request }) {
     return corsHeaders({ candidates: [], error: v.reason || "unauthorized" }, 401);
   }
 
-  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
+  const publicIdOk = await publicIdMatchesShop(v.publicId, v.shopDomain);
+  if (!publicIdOk) {
     return corsHeaders(
       {
         candidates: [],
@@ -154,8 +157,22 @@ export async function action({ request }) {
       debug: { message: err?.message || String(err) },
     });
   }
+  } catch (err) {
+    console.error("[api.widget.catalog-search] unhandled", err);
+    return corsHeaders(
+      {
+        candidates: [],
+        error: "server_error",
+        debug: { message: err?.message || String(err) },
+      },
+      500,
+    );
+  }
 }
 
 export async function loader({ request }) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: getWidgetCatalogCorsHeaders(request) });
+  }
   return jsonWithCors({ error: "use_post" }, request, { status: 405 });
 }

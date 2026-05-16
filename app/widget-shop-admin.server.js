@@ -118,3 +118,63 @@ export function noSessionDebugPayload(result) {
     detail: result.message,
   };
 }
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  "";
+
+/**
+ * Confirma que o public_id do pedido pertence ao shop_domain (widget_keys / shopify_shops).
+ */
+export async function publicIdMatchesShop(publicId, shopDomain) {
+  const pid = String(publicId || "").trim();
+  const shop = normalizeMyshopifyDomain(shopDomain);
+  if (!pid || !shop) return false;
+
+  const allowed = new Set([buildWidgetPublicId(shop)]);
+
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return allowed.has(pid);
+  }
+
+  const headers = {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${SUPABASE_KEY}`,
+    "Content-Type": "application/json",
+  };
+
+  try {
+    const [wkRes, ssRes] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shop)}&select=public_id&limit=1`,
+        { headers },
+      ),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shop)}&select=public_id,id&limit=1`,
+        { headers },
+      ),
+    ]);
+
+    if (wkRes.ok) {
+      const rows = await wkRes.json().catch(() => []);
+      const row = rows?.[0];
+      if (row?.public_id) allowed.add(String(row.public_id).trim());
+    }
+
+    if (ssRes.ok) {
+      const rows = await ssRes.json().catch(() => []);
+      const row = rows?.[0];
+      if (row?.public_id) allowed.add(String(row.public_id).trim());
+      if (row?.id != null && String(row.id).trim()) {
+        allowed.add(`wgt_pub_${String(row.id).trim()}`);
+      }
+    }
+  } catch (e) {
+    console.warn("[publicIdMatchesShop] Supabase lookup failed:", e);
+  }
+
+  return allowed.has(pid);
+}

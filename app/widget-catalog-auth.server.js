@@ -10,29 +10,46 @@ const BUILTIN_WIDGET_CORS_ORIGINS = [
   "http://127.0.0.1:5173",
 ];
 
-/**
- * CORS para o iframe do widget (Netlify / localhost).
- * - WIDGET_CATALOG_CORS_ORIGINS: origens extra separadas por vírgula
- * - Lista vazia no env: só origens embutidas + * se não houver Origin
- * - WIDGET_CATALOG_HMAC_SECRET ou OMAFIT_WIDGET_HMAC_SECRET: assinatura dos pedidos do widget
- */
-export function getWidgetCatalogCorsHeaders(request) {
-  const origin = request.headers.get("Origin") || "";
+function isAllowedWidgetCatalogOrigin(origin) {
+  const o = String(origin || "").trim();
+  if (!o) return false;
+  if (BUILTIN_WIDGET_CORS_ORIGINS.includes(o)) return true;
   const fromEnv = (process.env.WIDGET_CATALOG_CORS_ORIGINS || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const allowList = [...new Set([...BUILTIN_WIDGET_CORS_ORIGINS, ...fromEnv])];
+  if (fromEnv.includes(o)) return true;
+  try {
+    const { hostname, protocol } = new URL(o);
+    if (protocol !== "https:" && protocol !== "http:") return false;
+    if (hostname === "omafit.netlify.app") return true;
+    if (hostname.endsWith(".netlify.app") && hostname.includes("omafit")) return true;
+    if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
+ * CORS para o iframe do widget (Netlify / localhost).
+ * - WIDGET_CATALOG_CORS_ORIGINS: origens extra separadas por vírgula
+ * - Preflight OPTIONS deve responder 204 no loader da rota (não 405)
+ * - WIDGET_CATALOG_HMAC_SECRET ou OMAFIT_WIDGET_HMAC_SECRET: assinatura dos pedidos do widget
+ */
+export function getWidgetCatalogCorsHeaders(request) {
+  const origin = request.headers.get("Origin") || "";
 
   let allowOrigin = "*";
-  if (origin && allowList.includes(origin)) {
+  if (origin && isAllowedWidgetCatalogOrigin(origin)) {
     allowOrigin = origin;
   }
 
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization",
+    "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
 }

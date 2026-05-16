@@ -2,24 +2,35 @@ import crypto from "crypto";
 
 const MAX_SKEW_SEC = 300;
 
+/** Origens do iframe do provador (sempre permitidas além de WIDGET_CATALOG_CORS_ORIGINS). */
+const BUILTIN_WIDGET_CORS_ORIGINS = [
+  "https://omafit.netlify.app",
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:5173",
+];
+
 /**
  * CORS para o iframe do widget (Netlify / localhost).
- * - WIDGET_CATALOG_CORS_ORIGINS: origens separadas por vírgula; vazio = "*"
+ * - WIDGET_CATALOG_CORS_ORIGINS: origens extra separadas por vírgula
+ * - Lista vazia no env: só origens embutidas + * se não houver Origin
  * - WIDGET_CATALOG_HMAC_SECRET ou OMAFIT_WIDGET_HMAC_SECRET: assinatura dos pedidos do widget
- *   (par com VITE_OMAFIT_WIDGET_HMAC_SECRET / VITE_WIDGET_CATALOG_HMAC_SECRET no frontend).
  */
 export function getWidgetCatalogCorsHeaders(request) {
   const origin = request.headers.get("Origin") || "";
-  const allowList = (process.env.WIDGET_CATALOG_CORS_ORIGINS || "")
+  const fromEnv = (process.env.WIDGET_CATALOG_CORS_ORIGINS || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const allowList = [...new Set([...BUILTIN_WIDGET_CORS_ORIGINS, ...fromEnv])];
 
-  const allow =
-    allowList.length === 0 ? "*" : allowList.includes(origin) ? origin : allowList[0] || "*";
+  let allowOrigin = "*";
+  if (origin && allowList.includes(origin)) {
+    allowOrigin = origin;
+  }
 
   return {
-    "Access-Control-Allow-Origin": allow,
+    "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     Vary: "Origin",

@@ -2374,7 +2374,9 @@
           billing_plan: shopBillingPlan,
           billingPlan: shopBillingPlan,
           stylist_mode_enabled: stylistModeEnabled,
-          stylistModeEnabled: stylistModeEnabled
+          stylistModeEnabled: stylistModeEnabled,
+          primaryColor: config.primaryColor || '#810707',
+          fontFamily: config.fontFamily || detectedFontFamily || ''
           }, OMAFIT_WIDGET_ORIGIN);
 
           // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)

@@ -2587,6 +2587,23 @@
       console.warn('[OmafitCart] Payload inválido: requestId obrigatório');
       return false;
     }
+
+    var bundle = p.cart_variant_bundle;
+    if (Array.isArray(bundle) && bundle.length > 0) {
+      var anyVid = bundle.some(function (row) {
+        var vid = Number(row && (row.variant_id !== undefined ? row.variant_id : row.id));
+        return Number.isFinite(vid) && vid >= 1;
+      });
+      if (!anyVid) {
+        console.warn('[OmafitCart] Payload inválido: cart_variant_bundle sem variant_id válido');
+        return false;
+      }
+      if (p.shop_domain !== undefined && typeof p.shop_domain !== 'string') {
+        return false;
+      }
+      return true;
+    }
+
     if (!p.product || typeof p.product.id === 'undefined' || !p.product.name) {
       console.warn('[OmafitCart] Payload inválido: product.id e product.name obrigatórios');
       return false;
@@ -2825,6 +2842,70 @@
       })
       .catch(function (err) {
         return { success: false, message: 'Erro de rede ao adicionar ao carrinho', debug: { reason: err && err.message } };
+      });
+  }
+
+  /** Vários itens num único POST (widget try-on em cadeia — PDP + produtos experimentados). */
+  function addBulkVariantsToCart(items) {
+    var cleaned = (items || [])
+      .map(function (it) {
+        var id = Number(it && it.id);
+        var qty = it.quantity === undefined ? 1 : Math.max(1, parseInt(it.quantity, 10) || 1);
+        return { id: id, quantity: qty };
+      })
+      .filter(function (row) {
+        return Number.isFinite(row.id) && row.id >= 1;
+      });
+
+    var uniq = [];
+    var seen = new Set();
+    cleaned.forEach(function (row) {
+      if (seen.has(row.id)) return;
+      seen.add(row.id);
+      uniq.push({ id: row.id, quantity: row.quantity });
+    });
+
+    if (!uniq.length) {
+      return Promise.resolve({ success: false, message: 'Nenhuma variante válida no pacote' });
+    }
+
+    var requestBody = {
+      items: uniq,
+      sections: OMAFIT_CART_SECTION_IDS,
+      sections_url: window.location.pathname || '/'
+    };
+
+    return fetch('/cart/add.js', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    })
+      .then(function (res) {
+        return res.text().then(function (body) {
+          console.log('[OmafitCart] bulk /cart/add.js status:', res.status);
+          var parsed = null;
+          try {
+            parsed = body ? JSON.parse(body) : {};
+          } catch (_) {
+            parsed = {};
+          }
+          if (res.ok) {
+            return { success: true, cart: parsed, variantIds: uniq.map(function (x) { return x.id; }) };
+          }
+          var msg =
+            (parsed && (parsed.description || parsed.message)) ||
+            ('Erro ao adicionar ao carrinho (HTTP ' + res.status + ')');
+          return { success: false, message: msg, status: res.status, body: parsed };
+        });
+      })
+      .catch(function (err) {
+        return {
+          success: false,
+          message: 'Erro de rede ao adicionar ao carrinho',
+          debug: { reason: err && err.message }
+        };
       });
   }
 
@@ -3083,11 +3164,71 @@
     }
     OMAFIT_PROCESSED_REQUEST_IDS.add(requestId);
 
+    var metadata = payload.metadata || {};
+    var shouldOpenDrawer = !!(payload.open_cart_drawer || metadata.open_cart_drawer);
+
+    const bundleRaw = payload.cart_variant_bundle;
+    if (Array.isArray(bundleRaw) && bundleRaw.length > 0) {
+      var bulkLines = bundleRaw
+        .map(function (row) {
+          var vid = Number(row.variant_id !== undefined ? row.variant_id : row.id);
+          var qty = row.quantity === undefined ? 1 : Math.max(1, parseInt(row.quantity, 10) || 1);
+          return { id: vid, quantity: qty };
+        })
+        .filter(function (row) {
+          return Number.isFinite(row.id) && row.id >= 1;
+        });
+
+      var uniqBulk = [];
+      var seenBulk = new Set();
+      bulkLines.forEach(function (row) {
+        if (seenBulk.has(row.id)) return;
+        seenBulk.add(row.id);
+        uniqBulk.push(row);
+      });
+
+      if (!uniqBulk.length) {
+        postResultToIframe(source, origin, {
+          requestId: requestId,
+          success: false,
+          message: 'Pacote de variantes inválido',
+          debug: { reason: 'bundle_resolve_empty' }
+        });
+        return;
+      }
+
+      var bulkAddResult = await addBulkVariantsToCart(uniqBulk);
+
+      if (bulkAddResult.success) {
+        var renderedBulk = renderThemeCartFromResponse(bulkAddResult.cart);
+        var updatedBulkCart = await fetchUpdatedCart();
+        if (!renderedBulk) {
+          await refreshThemeCartSections();
+        }
+        notifyThemeCartUpdate(updatedBulkCart || bulkAddResult.cart || null);
+        dispatchCartUpdatedEvents(updatedBulkCart || bulkAddResult.cart || null);
+        openCartDrawerIfRequested(shouldOpenDrawer);
+        postResultToIframe(source, origin, {
+          requestId: requestId,
+          success: true,
+          message: 'Adicionado ao carrinho',
+          cart: updatedBulkCart || bulkAddResult.cart,
+          variantIds: bulkAddResult.variantIds || uniqBulk.map(function (x) { return x.id; })
+        });
+      } else {
+        postResultToIframe(source, origin, {
+          requestId: requestId,
+          success: false,
+          message: bulkAddResult.message || 'Erro ao adicionar pacote ao carrinho',
+          debug: bulkAddResult.body ? { body: bulkAddResult.body } : bulkAddResult.debug
+        });
+      }
+      return;
+    }
+
     const selection = payload.selection || {};
     const quantity = payload.quantity === undefined ? 1 : Math.max(0, parseInt(payload.quantity, 10) || 1);
     const shopDomain = payload.shop_domain;
-    const metadata = payload.metadata || {};
-    const shouldOpenDrawer = !!(payload.open_cart_drawer || metadata.open_cart_drawer);
 
     console.log('[OmafitCart] Add-to-cart solicitado:', requestId, payload.product);
 

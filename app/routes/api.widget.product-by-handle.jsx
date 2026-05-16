@@ -32,6 +32,13 @@ export async function loader({ request }) {
     return cors({ product: null, error: v.reason || "unauthorized" }, 401);
   }
 
+  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
+    return cors(
+      { product: null, error: "shop_public_id_mismatch" },
+      400
+    );
+  }
+
   const adminResult = await getShopifyAdminForWidget(prisma, unauthenticated, v.shopDomain);
   if (!adminResult.ok) {
     console.error("[api.widget.product-by-handle] no_session", adminResult);

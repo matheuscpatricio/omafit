@@ -133,16 +133,21 @@ export function verifyCatalogSearchSignature(params) {
     return { ok: true, shopDomain, publicId };
   }
 
-  const canonicals = buildCatalogSearchCanonicalStrings(params, {
-    shopDomain,
-    publicId,
-    timestamp,
-  });
+  const canonical = [
+    `collection_handles=${String(params.collection_handles || "")}`,
+    `collection_type=${String(params.collection_type || "")}`,
+    `exclude_handle=${String(params.exclude_handle || "")}`,
+    `product_name=${String(params.product_name || "")}`,
+    `public_id=${publicId}`,
+    `shop_domain=${shopDomain}`,
+    `timestamp=${timestamp}`,
+    `user_message=${String(params.user_message || "")}`,
+    `shopper_gender=${String(params.shopper_gender || "")}`,
+    `chart_gender_scope=${String(params.chart_gender_scope || "")}`,
+  ].join("|");
 
-  const matches = canonicals.some((canonical) =>
-    timingSafeEqual(hmacHex(secret, canonical), signature)
-  );
-  if (!matches) {
+  const expected = hmacHex(secret, canonical);
+  if (!timingSafeEqual(expected, signature)) {
     return { ok: false, reason: "bad_signature" };
   }
 

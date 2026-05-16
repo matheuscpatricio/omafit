@@ -8,7 +8,7 @@ const SUPABASE_KEY =
   process.env.SUPABASE_ANON_KEY ||
   "";
 
-const GROWTH_PLUS_PLANS = new Set(["growth", "pro", "professional", "enterprise"]);
+import { hasGrowthPlusPlan } from "../billing-growth-plus.server.js";
 
 function supabaseHeaders(extra = {}) {
   return {
@@ -143,7 +143,12 @@ export async function action({ request }) {
     const payload = normalizePayload(body, session.shop, hasHeroAccess(billing.row?.plan));
     const updatedRows = await updateConfigByShopDomain(session.shop, payload);
     const config = updatedRows.length > 0 ? updatedRows[0] : await insertConfig(payload);
-    return Response.json({ config, billingPlan: billing.row?.plan || null });
+    const billingPlan = billing.row?.plan || null;
+    return Response.json({
+      config,
+      billingPlan,
+      stylist_mode_enabled: hasGrowthPlusPlan(billingPlan),
+    });
   } catch (err) {
     console.error("[api.widget-config] action", err);
     return Response.json({ error: err?.message || "Internal error" }, { status: 500 });

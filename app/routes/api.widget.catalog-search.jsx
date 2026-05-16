@@ -18,6 +18,7 @@ import {
   getShopifyAdminForWidget,
   noSessionDebugPayload,
 } from "../widget-shop-admin.server";
+import { shopHasStylistConsultantAccess } from "../shop-billing-plan.server";
 
 export async function action({ request }) {
   const corsHeaders = (data, status = 200) => jsonWithCors(data, request, { status });
@@ -47,6 +48,36 @@ export async function action({ request }) {
   const v = verifyCatalogSearchSignature(params);
   if (!v.ok) {
     return corsHeaders({ candidates: [], error: v.reason || "unauthorized" }, 401);
+  }
+
+  if (!publicIdMatchesShop(v.publicId, v.shopDomain)) {
+    return corsHeaders(
+      {
+        candidates: [],
+        error: "shop_public_id_mismatch",
+        debug: {
+          shop_domain: v.shopDomain,
+          public_id: v.publicId,
+          hint: "O public_id do widget não corresponde ao shop_domain enviado. Verifique widget_keys no Supabase.",
+        },
+      },
+      400
+    );
+  }
+
+  const stylistAllowed = await shopHasStylistConsultantAccess(v.shopDomain);
+  if (!stylistAllowed) {
+    return corsHeaders(
+      {
+        candidates: [],
+        error: "plan_required",
+        stylist_mode: false,
+        debug: {
+          hint: "Consultor stylist e busca de combinações exigem plano Growth ou superior.",
+        },
+      },
+      403
+    );
   }
 
   const userMessage = String(params.user_message || "").trim();

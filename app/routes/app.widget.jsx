@@ -24,6 +24,7 @@ import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
+import { hasGrowthPlusPlan } from "../billing-growth-plus.server.js";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -74,7 +75,8 @@ export default function WidgetPage() {
   const fileInputRef = useRef(null);
   const backgroundFileInputRef = useRef(null);
   const currentPlan = String(loaderData?.billingPlan || '').toLowerCase();
-  const hasHeroLayoutAccess = ['growth', 'pro', 'professional', 'enterprise'].includes(currentPlan);
+  const hasHeroLayoutAccess = hasGrowthPlusPlan(currentPlan);
+  const hasStylistConsultantAccess = hasGrowthPlusPlan(currentPlan);
 
   const [config, setConfig] = useState({
     link_text: '',
@@ -894,6 +896,25 @@ export default function WidgetPage() {
                     />
                   </BlockStack>
                 )}
+              </BlockStack>
+
+              <BlockStack gap="200">
+                <Text variant="bodyMd" fontWeight="semibold" as="span">
+                  {t("widget.stylistConsultantLabel")}
+                </Text>
+                <Text variant="bodySm" tone="subdued">
+                  {t("widget.stylistConsultantHelp")}
+                </Text>
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone={hasStylistConsultantAccess ? "success" : "attention"}>
+                    {t("widget.stylistConsultantPlanBadge")}
+                  </Badge>
+                  <Text variant="bodySm" tone={hasStylistConsultantAccess ? "success" : "subdued"}>
+                    {hasStylistConsultantAccess
+                      ? t("widget.stylistConsultantEnabled")
+                      : t("widget.stylistConsultantLocked")}
+                  </Text>
+                </InlineStack>
               </BlockStack>
 
               <Divider />

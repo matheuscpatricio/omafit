@@ -3,6 +3,11 @@
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
 
+  var OMAFIT_GROWTH_PLUS_PLANS = { growth: 1, pro: 1, professional: 1, enterprise: 1 };
+  function omafitHasGrowthPlusPlan(plan) {
+    return !!OMAFIT_GROWTH_PLUS_PLANS[String(plan || '').trim().toLowerCase()];
+  }
+
   /** Tipo/tags Shopify (Analytics/meta) ou JSON-LD — fallback quando o bloco AR não está no HTML. */
   function isLikelyEyewearFromShopifyDom() {
     var re =
@@ -1082,7 +1087,7 @@
       // Buscar shopify_shops e widget_keys para obter publicId válido
       const [shopResponse, widgetKeyResponse] = await Promise.all([
         fetch(
-          `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,id`,
+          `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,id,plan,billing_status`,
           {
             headers: {
               'apikey': supabaseAnonKey,
@@ -1105,7 +1110,9 @@
 
       let config = null;
       let validPublicId = publicId || 'wgt_pub_default';
-      
+      let shopBillingPlan = null;
+      let stylistModeEnabled = false;
+
       // Prioridade 1: Tentar obter publicId da tabela widget_keys (mais confiável)
       let isWidgetActive = true; // Default true para permitir funcionar na primeira instalação
       let widgetKeyFound = false;
@@ -1148,23 +1155,30 @@
         console.log('ℹ️ widget_keys não encontrado ou erro ao buscar. Status:', widgetKeyResponse.status, 'Permitindo funcionar (pode ser primeira instalação).');
       }
       
-      // Prioridade 2: Tentar obter publicId da tabela shopify_shops
-      if (validPublicId === (publicId || 'wgt_pub_default') && shopResponse.ok) {
+      // Prioridade 2: shopify_shops (plano + publicId se ainda não resolvido)
+      if (shopResponse.ok) {
         try {
           const shopDataText = await shopResponse.text();
           if (shopDataText && shopDataText.trim().length > 0) {
             const shopData = JSON.parse(shopDataText);
-            if (shopData && shopData.length > 0 && shopData[0].public_id) {
-              validPublicId = shopData[0].public_id;
-              console.log('✅ PublicId obtido de shopify_shops:', validPublicId);
-            } else if (shopData && shopData.length > 0 && shopData[0].id) {
-              // Se não tiver public_id, gerar baseado no ID
-              validPublicId = `wgt_pub_${shopData[0].id}`;
-              console.log('✅ PublicId gerado baseado no ID:', validPublicId);
+            if (shopData && shopData.length > 0) {
+              if (shopData[0].billing_status === 'active' && shopData[0].plan) {
+                shopBillingPlan = String(shopData[0].plan).trim().toLowerCase();
+                stylistModeEnabled = omafitHasGrowthPlusPlan(shopBillingPlan);
+              }
+              if (validPublicId === (publicId || 'wgt_pub_default')) {
+                if (shopData[0].public_id) {
+                  validPublicId = shopData[0].public_id;
+                  console.log('✅ PublicId obtido de shopify_shops:', validPublicId);
+                } else if (shopData[0].id) {
+                  validPublicId = `wgt_pub_${shopData[0].id}`;
+                  console.log('✅ PublicId gerado baseado no ID:', validPublicId);
+                }
+              }
             }
           }
         } catch (e) {
-          console.warn('⚠️ Erro ao obter publicId de shopify_shops:', e);
+          console.warn('⚠️ Erro ao obter dados de shopify_shops:', e);
         }
       }
       
@@ -2356,7 +2370,11 @@
           tryon_layout: omafitIframeTryonLayout,
           tryonLayout: omafitIframeTryonLayout,
           tryon_layout_background_image: omafitIframeTryonLayoutBackground,
-          tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
+          tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground,
+          billing_plan: shopBillingPlan,
+          billingPlan: shopBillingPlan,
+          stylist_mode_enabled: stylistModeEnabled,
+          stylistModeEnabled: stylistModeEnabled
           }, OMAFIT_WIDGET_ORIGIN);
 
           // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)

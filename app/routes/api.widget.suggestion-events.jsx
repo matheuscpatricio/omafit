@@ -10,6 +10,7 @@ import {
   recordStylistClick,
   recordAtc,
 } from "../widget-suggestion-learn.server";
+import { shopHasStylistConsultantAccess } from "../shop-billing-plan.server";
 
 function normHandle(h) {
   return String(h || "")
@@ -44,6 +45,11 @@ export async function action({ request }) {
   const v = verifySuggestionEventSignature(params);
   if (!v.ok) {
     return corsHeaders({ ok: false, error: v.reason || "unauthorized" }, 401);
+  }
+
+  const stylistAllowed = await shopHasStylistConsultantAccess(v.shopDomain);
+  if (!stylistAllowed) {
+    return corsHeaders({ ok: false, error: "plan_required", stylist_mode: false }, 403);
   }
 
   const event = String(params.event || "").trim();

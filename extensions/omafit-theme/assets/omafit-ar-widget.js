@@ -490,7 +490,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-18-bracelet-rigid-slot-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-18-bracelet-rigid-slot-v3";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13115,13 +13115,12 @@ async function runHandArSession({
     let bendLocalR = 0;
 
     if (accessoryType === "bracelet") {
-      if (!braceletProceduralRadial && !braceletIsRigidSlot) {
+      if (!braceletProceduralRadial) {
         /**
-         * Modo legado (correntes/chains com radial forçado off):
-         * Tenta alinhar o anel ao braço pelo menor eixo bbox e envolve a
-         * malha em cilindro se estiver muito achatada.
-         * Bangles e sólidos usam o modo "rigid slot" (braceletIsRigidSlot=true)
-         * que pula este bloco — malha preservada como veio do ingest/normalize.
+         * Rotação pelo menor eixo: alinha o anel ao braço (hole axis → Z).
+         * Necessária para TODOS os modos — o wrap e outros offsets dependem
+         * de Z = direção do braço. O rigid slot mantém esta etapa e apenas
+         * pula o wrap cilíndrico destrutivo.
          */
         const sx = size.x;
         const sy = size.y;
@@ -13149,15 +13148,21 @@ async function runHandArSession({
           bbox = new THREE.Box3().setFromObject(glbScene);
           bbox.getSize(size);
         }
-        const braceletDims = [size.x, size.y, size.z].sort((a, b) => a - b);
-        const braceletFlatRatio =
-          braceletDims[2] / Math.max(1e-6, braceletDims[1]);
-        if (braceletFlatRatio > 1.85) {
-          const wrapRadius = Math.max(1e-6, size.x * 0.5 * 1.1);
-          wrapBraceletCylinderNormalized(glbScene, wrapRadius);
-          glbScene.updateMatrixWorld(true);
-          bbox = new THREE.Box3().setFromObject(glbScene);
-          bbox.getSize(size);
+        /**
+         * Wrap cilíndrico: só para correntes/chains não-radial (modo legado).
+         * Rigid slot: malha preservada como veio do ingest — sem deformação.
+         */
+        if (!braceletIsRigidSlot) {
+          const braceletDims = [size.x, size.y, size.z].sort((a, b) => a - b);
+          const braceletFlatRatio =
+            braceletDims[2] / Math.max(1e-6, braceletDims[1]);
+          if (braceletFlatRatio > 1.85) {
+            const wrapRadius = Math.max(1e-6, size.x * 0.5 * 1.1);
+            wrapBraceletCylinderNormalized(glbScene, wrapRadius);
+            glbScene.updateMatrixWorld(true);
+            bbox = new THREE.Box3().setFromObject(glbScene);
+            bbox.getSize(size);
+          }
         }
       }
     } else {
@@ -13588,7 +13593,13 @@ async function runHandArSession({
     forceHoleAxisSceneUnit,
   ) {
     glbScene.matrixAutoUpdate = true;
-    glbScene.scale.set(1, 1, 1);
+    /**
+     * NÃO resetar glbScene.scale — a escala de normalização (~0.065) deve ser
+     * mantida. `transformDirection` ignora a escala da matriz (apenas aplica
+     * rotação), portanto o resultado da detecção do eixo é idêntico com ou
+     * sem escala. Resetar para (1,1,1) e não restaurar destruía a normalização
+     * no modo rigid-slot (o GLB aparecia à escala nativa ~1 m).
+     */
     glbScene.updateMatrixWorld(true);
     calibRot.updateMatrixWorld(true);
     if (

@@ -490,7 +490,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-14-ar-bracelet-radial-default-auto-v1";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-18-bracelet-rigid-slot-v1";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12655,6 +12655,14 @@ async function runHandArSession({
   const OMAFIT_BRACELET_TRIPO_TARGET_DIAMETER_M = 0.065;
 
   /**
+   * Threshold de elongação (maxDim / medianDim) para o modo `auto` do radial
+   * procedural. Abaixo deste valor a malha é sólida/redonda (bangle) e o
+   * radial fica desligado; acima é corrente/chain e o radial ativa.
+   * Valor 3.0: bangle típico tem elong ~1.0–1.8; corrente simples tem elong > 4.
+   */
+  const OMAFIT_BRACELET_RADIAL_AUTO_ELONG_THRESHOLD = 3.0;
+
+  /**
    * Normaliza escala da cena da pulseira quando o bbox é desproporcional.
    * Não altera landmarks nem tracking — só `glbScene.scale`.
    */
@@ -12711,8 +12719,11 @@ async function runHandArSession({
     tb.getSize(sz);
     const d = [sz.x, sz.y, sz.z].sort((a, b) => a - b);
     const elong = d[2] / Math.max(1e-6, d[1]);
-    /** Auto agressivo: com malha sólida já preferimos radial; ratio serve só debug. */
-    const should = solidCount >= 1;
+    /**
+     * Radial só para malhas alongadas (corrente/chain).
+     * Bangles e pulseiras sólidas têm elong ~1–1.8 → should=false.
+     */
+    const should = solidCount >= 1 && elong > OMAFIT_BRACELET_RADIAL_AUTO_ELONG_THRESHOLD;
     console.log("[omafit-ar] bracelet radial gate(auto)", {
       mode,
       solidCount,
@@ -13104,7 +13115,14 @@ async function runHandArSession({
     let bendLocalR = 0;
 
     if (accessoryType === "bracelet") {
-      if (!braceletProceduralRadial) {
+      if (!braceletProceduralRadial && !braceletIsRigidSlot) {
+        /**
+         * Modo legado (correntes/chains com radial forçado off):
+         * Tenta alinhar o anel ao braço pelo menor eixo bbox e envolve a
+         * malha em cilindro se estiver muito achatada.
+         * Bangles e sólidos usam o modo "rigid slot" (braceletIsRigidSlot=true)
+         * que pula este bloco — malha preservada como veio do ingest/normalize.
+         */
         const sx = size.x;
         const sy = size.y;
         const sz = size.z;
@@ -13379,6 +13397,28 @@ async function runHandArSession({
     return out;
   }
 
+  /**
+   * Determina se o GLB da pulseira deve usar o modo "rigid slot" (objeto rígido).
+   * Calcula elong = maxDim / medianDim do bbox normalizado. Se ≤ threshold, é
+   * bangle/sólido → rigid slot. Se > threshold, é corrente/chain (mas nesse
+   * caso o radial procedural já estaria ativo, então esta função raramente
+   * retorna false em prática).
+   *
+   * Precisa ser chamada APÓS omafitNormalizeBraceletTripoGlbScale (escala ~65mm).
+   */
+  function computeBraceletRigidSlotFromScene(scene) {
+    if (braceletProceduralRadial) return false;
+    scene.updateMatrixWorld(true);
+    const _rsBox = new THREE.Box3().setFromObject(scene);
+    const _rsSize = new THREE.Vector3();
+    _rsBox.getSize(_rsSize);
+    const _rsDims = [_rsSize.x, _rsSize.y, _rsSize.z].sort((a, b) => a - b);
+    const _rsElong = _rsDims[2] / Math.max(1e-6, _rsDims[1]);
+    const _rsResult = _rsElong <= OMAFIT_BRACELET_RADIAL_AUTO_ELONG_THRESHOLD;
+    console.log("[omafit-ar] bracelet rigid-slot", { rigidSlot: _rsResult, elong: Number(_rsElong.toFixed(3)) });
+    return _rsResult;
+  }
+
   function omafitPowerMaxUnitEigen3(C, vOut, tmp) {
     vOut.set(1, 0.17, 0.03);
     vOut.normalize();
@@ -13628,6 +13668,13 @@ async function runHandArSession({
   const braceletRadQuat = new THREE.Quaternion();
   const braceletRadScaleOne = new THREE.Vector3(1, 1, 1);
   let braceletIsBangle = false;
+  /**
+   * Modo "rigid slot": quando verdadeiro, o GLB é tratado como objeto rígido
+   * num slot fixo no pulso — sem rotação pelo menor eixo bbox, sem wrap
+   * cilíndrico, sem escala elíptica por frame. Ativo para bangles e pulseiras
+   * sólidas (elong ≤ OMAFIT_BRACELET_RADIAL_AUTO_ELONG_THRESHOLD).
+   */
+  let braceletIsRigidSlot = false;
   let braceletLinkRadial = null;
   let braceletVertexDeform = null;
   let braceletOcclusionMaterials = [];
@@ -13702,6 +13749,7 @@ async function runHandArSession({
             segments: braceletRadialSegCount,
             sizing: braceletProceduralRadial ? "procedural-wrist-only" : "glb-derived",
           });
+          braceletIsRigidSlot = computeBraceletRigidSlotFromScene(glbScene);
         }
         try {
           const triH = omafitCountGltfTriangles(glbScene);
@@ -14775,6 +14823,11 @@ async function runHandArSession({
       }
       const Wb = wristExpandMul;
       if (accessoryType === "bracelet" && braceletPlaceState) {
+        /**
+         * Rigid slot: chamar o step para suavizar a posição de wear (lerp),
+         * mas sobrescrever a escala com setScalar uniforme — sem deformação
+         * elíptica. O GLB é tratado como objeto rígido no slot do pulso.
+         */
         const sw = omafitBraceletWristScaleWearStep(THREE, braceletPlaceState, {
           clampDt,
           closeEnoughHand,
@@ -14794,7 +14847,11 @@ async function runHandArSession({
           wearBase: wearXYZ,
           slideZ: braceletSlideLag,
         });
-        glbRoot.scale.set(sw.sx, sw.sy, sw.sz);
+        if (braceletIsRigidSlot) {
+          glbRoot.scale.setScalar(suBase * Wb);
+        } else {
+          glbRoot.scale.set(sw.sx, sw.sy, sw.sz);
+        }
         wearPosition.position.set(sw.wearX, sw.wearY, sw.wearZ);
         wearPosition.updateMatrixWorld(true);
         if (braceletWristAlignGroup) {
@@ -15375,6 +15432,7 @@ async function runHandArSession({
                   segments: braceletRadialSegCount,
                   sizing: braceletProceduralRadial ? "procedural-wrist-only" : "glb-derived",
                 });
+                braceletIsRigidSlot = computeBraceletRigidSlotFromScene(next);
               }
               while (glbRoot.children.length) glbRoot.remove(glbRoot.children[0]);
               glbRoot.add(next);

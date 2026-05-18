@@ -365,6 +365,17 @@
       if ar_type_guess == 'watch' or ar_type_guess == 'bracelet'
         assign ar_preferred_camera = 'environment'
       endif
+
+      comment
+        Modo radial de pulseira: auto (padrão) | on (corrente/chain) | off (forçar desligado).
+        Prioridade: metafield omafit.ar_bracelet_radial > setting do bloco > 'auto'.
+      endcomment
+      assign ar_bracelet_radial_mf = product.metafields.omafit.ar_bracelet_radial | default: '' | strip | downcase
+      assign ar_bracelet_radial_setting = block.settings.ar_bracelet_radial_default | default: 'auto' | strip | downcase
+      assign ar_bracelet_radial = ar_bracelet_radial_setting
+      if ar_bracelet_radial_mf == 'on' or ar_bracelet_radial_mf == 'off' or ar_bracelet_radial_mf == 'auto'
+        assign ar_bracelet_radial = ar_bracelet_radial_mf
+      endif
     -%}
     <div
       id="omafit-ar-root"
@@ -433,6 +444,7 @@
       data-ar-glasses-pivot-rot-deg="0, 0, 0"
       data-ar-omafit-cal-source="{% if cal_present %}metafield:product{% else %}none{% endif %}"
       data-ar-omafit-calibration="{% if cal_present %}{{ cal_hash | json | escape }}{% endif %}"
+      data-ar-bracelet-radial="{{ ar_bracelet_radial }}"
     ></div>
     {%- liquid
       assign ar_script_url = 'omafit-ar-widget.js' | asset_url
@@ -441,7 +453,7 @@
         assign ar_cb_sep = '&'
       endif
     -%}
-    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}&oma_ar_asset=20260511bakeScale1"></script>
+    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}&oma_ar_asset=20260518rigidSlot1"></script>
   {% endif %}
 {% endif %}
 
@@ -468,6 +480,18 @@
         { "value": "unisex", "label": "Unissex" }
       ],
       "default": ""
+    },
+    {
+      "type": "select",
+      "id": "ar_bracelet_radial_default",
+      "label": "Pulseira: modo radial padrão",
+      "options": [
+        { "value": "auto", "label": "Auto (recomendado)" },
+        { "value": "off",  "label": "Sempre desligado" },
+        { "value": "on",   "label": "Sempre ligado" }
+      ],
+      "default": "auto",
+      "info": "Auto: radial só em correntes/chains (elong > 3). Off: nunca. On: sempre. Pode ser sobreposto por produto via metafield omafit.ar_bracelet_radial."
     },
     {
       "type": "checkbox",

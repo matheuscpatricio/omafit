@@ -528,6 +528,30 @@ export async function runCatalogSearches(
     }
   }
 
+  if (byHandle.size === 0) {
+    const broadQueries = uniqueQueries([
+      ...searchQueries.filter((q) => !String(q).startsWith("collection:")),
+      "published_status:published",
+    ]).slice(0, 8);
+    for (const q of broadQueries) {
+      try {
+        const response = await admin.graphql(SEARCH_PRODUCTS, {
+          variables: { query: q, first: fetchFirst },
+        });
+        const json = await response.json();
+        const edges = json?.data?.products?.edges ?? [];
+        for (const c of mapEdgesToCandidates(edges, excludeHandle, gender, {
+          applyGenderFilter: false,
+        })) {
+          if (!byHandle.has(c.handle)) byHandle.set(c.handle, c);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (byHandle.size >= limit) break;
+    }
+  }
+
   return Array.from(byHandle.values()).slice(0, limit);
 }
 
@@ -652,6 +676,8 @@ export async function fetchProductDetailByHandle(admin, handle) {
     }
   }
 
+  const collection_handles = await resolveCollectionHandlesForCatalog(admin, [], h);
+
   return {
     product: {
       id: p.legacyResourceId != null ? String(p.legacyResourceId) : String(p.id || ""),
@@ -661,6 +687,7 @@ export async function fetchProductDetailByHandle(admin, handle) {
       url: p.onlineStoreUrl || "",
       images,
       image_url: images[0] || "",
+      collection_handles,
       catalog: {
         sizes: Array.from(sizes),
         colors: Array.from(colors),

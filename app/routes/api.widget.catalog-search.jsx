@@ -11,6 +11,7 @@ import {
   titleLooksDark,
   resolveCatalogSearchTargetGender,
   parseCollectionHandlesInput,
+  resolveCollectionHandlesForCatalog,
 } from "../widget-catalog-search.server";
 import prisma from "../db.server";
 import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server";
@@ -109,6 +110,14 @@ export async function action({ request }) {
 
   try {
     const admin = adminResult.admin;
+    const resolvedCollectionHandles = await resolveCollectionHandlesForCatalog(
+      admin,
+      collectionHandles,
+      excludeHandle
+    );
+    const handlesForSearch =
+      resolvedCollectionHandles.length > 0 ? resolvedCollectionHandles : collectionHandles;
+
     const queries = buildCatalogSearchQueries({
       userMessage,
       productName,
@@ -116,14 +125,14 @@ export async function action({ request }) {
       titleLooksDark: titleLooksDark(productName),
       shopperGender,
       chartGenderScope,
-      collectionHandles,
+      collectionHandles: handlesForSearch,
     });
 
     const candidatesRaw = await runCatalogSearches(admin, queries, {
       excludeHandle,
       limit: 15,
       targetGender,
-      collectionHandles,
+      collectionHandles: handlesForSearch,
     });
 
     const candidates = await rankCandidatesByLearnedBoost(
@@ -139,12 +148,17 @@ export async function action({ request }) {
         exclude_handle: excludeHandle,
         collection_handles_param: collectionHandles,
         collection_handles_count: collectionHandles.length,
+        resolved_collection_handles: resolvedCollectionHandles,
+        resolved_collection_handles_count: resolvedCollectionHandles.length,
         search_queries_count: queries.length,
+        search_queries_sample: queries.slice(0, 5),
         target_gender: targetGender,
         hint:
-          collectionHandles.length === 0
-            ? "Sem collection_handles no pedido; o servidor tenta inferir coleções do produto âncora."
-            : "Verifique imagem destacada dos produtos e filtro de género.",
+          resolvedCollectionHandles.length === 0
+            ? "Nenhuma coleção Shopify ligada ao produto âncora (ou sessão sem acesso). Confira se o produto está em coleções na loja."
+            : collectionHandles.length === 0
+              ? "Sem collection_handles no pedido; o servidor inferiu coleções do produto âncora."
+              : "Verifique imagem destacada dos produtos e filtro de género.",
       };
     }
 

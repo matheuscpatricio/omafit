@@ -396,8 +396,12 @@ const OMAFIT_BRACELET_MATERIAL_OCCLUSION_ENABLED = true;
 const OMAFIT_WATCH_OCCLUDER_INVERT_SIDE = false;
 /** Relógio: evitar depender da label Left/Right (pode oscilar por mirror). */
 const OMAFIT_WATCH_USE_HANDEDNESS_LABEL = false;
-/** Pulseira: evitar sumiço no dorso desativando depth-occluder dedicado. */
-const OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED = false;
+/**
+ * Depth occluder cilíndrico para pulseira.
+ * Ativo para rigid slot (bangle sólido): escreve depth no cilindro do braço
+ * e esconde a metade posterior do anel — dá volume de "envolver o pulso".
+ */
+const OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED = true;
 /**
  * Amarra a escala ao *wrist width* 3D `distance(LM5, LM17)` (já unprojected):
  * factor ≈ `(span_m × k) / OMAFIT_BASE_KNUCKLE_SPAN_M` (equivalente ao teu
@@ -490,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-18-bracelet-rigid-slot-v3";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-18-bracelet-rigid-slot-v13";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -7032,6 +7036,33 @@ async function runArSession({
   ) {
     variantSource = window.__OMAFIT_AR_VARIANTS__;
   }
+  /**
+   * Iframe Netlify: se não há variantes do Liquid (sem `__OMAFIT_AR_VARIANTS__`),
+   * tenta ler `data-ar-variants-glb` do `#omafit-ar-root` — serializado pelo
+   * `omafit-widget.js` do tema com id, glbUrl (`g`) e calibration (`c`).
+   * Formato: JSON Array<{ id, g, c }> → mapeado para o schema interno.
+   */
+  if (!variantSource.length) {
+    try {
+      const arRoot = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+      const rawGlbVars = arRoot ? (arRoot.getAttribute("data-ar-variants-glb") || "").trim() : "";
+      if (rawGlbVars) {
+        const parsed = JSON.parse(rawGlbVars);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          variantSource = parsed.map((v) => ({
+            id: v.id,
+            title: String(v.t || v.id || "").trim() || String(v.id),
+            imageUrl: String(v.i || "").trim(),
+            glbUrl: String(v.g || "").trim(),
+            calibration: v.c || null,
+          }));
+          console.log("[omafit-ar] arVariantsGlb (iframe):", variantSource.length, "variantes com GLB");
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   const productHandleForFetch = omafitResolveProductHandleForVariantFetch();
   if (productHandleForFetch) {
     variantSource = await omafitEnrichVariantsFromStorefrontJs(productHandleForFetch, variantSource);
@@ -7053,14 +7084,21 @@ async function runArSession({
   const resolveVariantGlb = (v) =>
     String(v?.glbUrl ?? v?.glb_url ?? "").trim() || resolveBaseGlb(variantSource);
   /**
-   * Incluir TODAS as variantes com `id` — não filtrar por GLB próprio porque
-   * várias variantes podem partilhar o `baseGlb` (GLB ao nível do produto).
-   * O único requisito é ter um `id` válido.
+   * Filtro de variantes para a barra de miniaturas:
+   * - Se alguma variante tem glbUrl próprio (fluxo Liquid ou arVariantsGlb do iframe),
+   *   mostrar APENAS as variantes com glbUrl — evita exibir variantes sem AR.
+   * - Se nenhuma variante tem glbUrl (todas partilham o baseGlb do produto),
+   *   manter todas com id válido (comportamento legado: sem filtro).
    */
+  const anyHasOwnGlb = variantSource.some((v) => v && String(v?.glbUrl ?? v?.glb_url ?? "").trim());
   let arVariants = variantSource.filter((v) => {
     if (!v) return false;
     const id = v.id != null ? String(v.id).trim() : "";
-    return Boolean(id);
+    if (!id) return false;
+    if (anyHasOwnGlb) {
+      return Boolean(String(v?.glbUrl ?? v?.glb_url ?? "").trim());
+    }
+    return true;
   });
   /**
    * Iframe Netlify: não há `window.__OMAFIT_AR_VARIANTS__` do Liquid. Com
@@ -12538,12 +12576,42 @@ async function runHandArSession({
   const wearXYZ = parseXyzMeters(cfgAttr("arMindarWearPosition", "0 0 0"), 0, 0, 0);
   const userScale = Number(cfgAttr("arMindarModelScale", "1")) || 1;
 
-  /** Mantém `calibRot` identidade — sem rx/ry/rz de metafield / canonical-fix. */
-  const applyCalibRot = () => {
-    calibRot.rotation.set(0, 0, 0);
-    calibRot.quaternion.identity();
+  /**
+   * Aplica apenas a rotação de calibração do lojista ao `calibRot` (rx/ry/rz
+   * em graus, eixos **mundo**, composição Y→X→Z — mesma ordem que o preview do
+   * admin em `applyCalibrationToState`). Posição e escala ficam intactos.
+   * Sem cal (ou todos zero) repõe identidade.
+   */
+  const _calWorldAxes = {
+    X: new THREE.Vector3(1, 0, 0),
+    Y: new THREE.Vector3(0, 1, 0),
+    Z: new THREE.Vector3(0, 0, 1),
   };
-  applyCalibRot();
+  const applyCalibRot = (cal) => {
+    calibRot.quaternion.identity();
+    const rxDeg = Number((cal && cal.rx) ?? 0) || 0;
+    const ryDeg = Number((cal && cal.ry) ?? 0) || 0;
+    const rzDeg = Number((cal && cal.rz) ?? 0) || 0;
+    if (ryDeg) calibRot.rotateOnWorldAxis(_calWorldAxes.Y, ryDeg * Math.PI / 180);
+    if (rxDeg) calibRot.rotateOnWorldAxis(_calWorldAxes.X, rxDeg * Math.PI / 180);
+    if (rzDeg) calibRot.rotateOnWorldAxis(_calWorldAxes.Z, rzDeg * Math.PI / 180);
+  };
+
+  /** Lê calibração inicial do produto a partir de `data-ar-omafit-calibration`. */
+  const _initialHandCal = (() => {
+    try {
+      const raw = arCfg?.dataset?.arOmafitCalibration || embedCfg?.dataset?.arOmafitCalibration || "";
+      if (!raw) return null;
+      let v = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (v && typeof v === "object" && v.value !== undefined) {
+        try { v = typeof v.value === "string" ? JSON.parse(v.value) : v.value; } catch { /* noop */ }
+      }
+      if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+      if (typeof v.error === "string" && Object.keys(v).length <= 2) return null;
+      return v;
+    } catch { return null; }
+  })();
+  applyCalibRot(_initialHandCal);
 
   wearPosition.position.set(wearXYZ.x, wearXYZ.y, wearXYZ.z);
 
@@ -12668,6 +12736,14 @@ async function runHandArSession({
    */
   function omafitNormalizeBraceletTripoGlbScale(THREE, glbScene, glbRoot) {
     if (!glbScene || !THREE) return;
+    /**
+     * Sempre resetar a escala antes de medir — ignora escala baked no ficheiro
+     * e escala residual de uma variante anterior. Depois normalizar SEMPRE para
+     * OMAFIT_BRACELET_TRIPO_TARGET_DIAMETER_M (~65 mm), seja o GLB grande ou
+     * pequeno. Garante que todas as variantes partem da mesma base de referência
+     * antes do fitWristGlb, tornando o comportamento idêntico à primeira carga.
+     */
+    glbScene.scale.set(1, 1, 1);
     glbScene.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(glbScene);
     const size = new THREE.Vector3();
@@ -12677,15 +12753,10 @@ async function runHandArSession({
     const normalizationScale = THREE.MathUtils.clamp(
       OMAFIT_BRACELET_TRIPO_TARGET_DIAMETER_M / maxDim,
       0.01,
-      1,
+      10,
     );
-    const isGiant = maxDim > 0.25 || estimatedRadius > 0.12;
-    const needsNormalize =
-      isGiant || maxDim > OMAFIT_BRACELET_TRIPO_TARGET_DIAMETER_M;
-    if (needsNormalize && normalizationScale < 1 - 1e-9) {
-      glbScene.scale.multiplyScalar(normalizationScale);
-      glbScene.updateMatrixWorld(true);
-    }
+    glbScene.scale.setScalar(normalizationScale);
+    glbScene.updateMatrixWorld(true);
     try {
       const gr = glbRoot && glbRoot.scale ? glbRoot.scale.x : 1;
       console.log("[bracelet-normalization]", {
@@ -12694,8 +12765,6 @@ async function runHandArSession({
         finalScale: glbScene.scale.x,
         glbRootScale: gr,
         estimatedRadius,
-        isGiant,
-        needsNormalize,
       });
     } catch {
       /* ignore */
@@ -13350,8 +13419,17 @@ async function runHandArSession({
      * médio do anel no plano XY (eixo Z = braço após `fit`).
      */
     if (accessoryType === "bracelet") {
-      glbScene.rotation.set(0, 0, 0);
-      glbScene.quaternion.identity();
+      /**
+       * Rigid slot: preservar a rotação aplicada pelo menor-eixo bbox
+       * (alinha o furo ao Z do espaço local → `wristAlignStep` alinha Z ao braço).
+       * Resetar quaternion aqui (comportamento legado) apagava esse alinhamento.
+       *
+       * Modo legado (chains sem rigid slot): mantém reset para compatibilidade.
+       */
+      if (!braceletIsRigidSlot) {
+        glbScene.rotation.set(0, 0, 0);
+        glbScene.quaternion.identity();
+      }
       glbScene.updateMatrixWorld(true);
       bbox.setFromObject(glbScene);
       bbox.getCenter(center);
@@ -13365,14 +13443,22 @@ async function runHandArSession({
     /**
      * Ajuste fino de encaixe no espaço local do GLB:
      * - recentrado pelo interior já feito via `position.sub(center)`
-     * - Y proporcional à altura (encaixe no punho)
-     * - Z proporcional à profundidade (evita "flutuar na frente")
+     * - Y proporcional à altura (encaixe no punho) — apenas modo legado
+     * - Z proporcional à profundidade — apenas modo legado
+     *
+     * Rigid slot: offsets Y/Z foram calibrados para o fluxo com
+     * `quaternion.identity()` (eixos canónicos fixos). Com rotação preservada
+     * (menor-eixo bbox), os mesmos offsets vão para uma direcção arbitrária
+     * no plano do anel → um arco "sai" do pulso com diâmetro e orientação
+     * correctos. Solução: usar só `position.sub(center)` (duplo recentro).
      */
     if (accessoryType === "bracelet") {
-      glbScene.position.y -= size.y * OMAFIT_BRACELET_GLB_LOCAL_Y_SIZE_MUL;
-      glbScene.position.z -= size.z * OMAFIT_BRACELET_GLB_LOCAL_Z_SIZE_MUL;
-      glbScene.position.y += OMAFIT_BRACELET_GLB_MICRO_POS_Y_M;
-      glbScene.position.z += OMAFIT_BRACELET_GLB_MICRO_POS_Z_M;
+      if (!braceletIsRigidSlot) {
+        glbScene.position.y -= size.y * OMAFIT_BRACELET_GLB_LOCAL_Y_SIZE_MUL;
+        glbScene.position.z -= size.z * OMAFIT_BRACELET_GLB_LOCAL_Z_SIZE_MUL;
+        glbScene.position.y += OMAFIT_BRACELET_GLB_MICRO_POS_Y_M;
+        glbScene.position.z += OMAFIT_BRACELET_GLB_MICRO_POS_Z_M;
+      }
     } else {
       glbScene.position.y += OMAFIT_HAND_GLB_LOCAL_Y_BIND_M;
     }
@@ -13571,14 +13657,22 @@ async function runHandArSession({
     const thick = tmp3;
     omafitPowerMaxUnitEigen3(C, e2, ringOut);
     omafitPowerSecondUnitEigen3(C, e2, e1, ringOut);
+    /**
+     * `thick` = autovetor de MENOR variância = direção de menor extensão
+     * geométrica = eixo **normal ao plano do anel** = eixo do FURO.
+     *
+     * Anteriormente calculávamos `ringOut = cross(thick, X/Y)`, que devolvia
+     * um vetor tangente ao plano — ao tentar alinhar essa tangente com a
+     * direção do braço, o plano do anel ficava perpendicular ao pulso.
+     *
+     * Correção: retornar `thick` diretamente como eixo do furo.
+     * `wristAlignStep` vai alinhar thick com wristDir → anel envolve o pulso.
+     */
     thick.crossVectors(e2, e1);
     if (thick.lengthSq() < 1e-16) thick.set(0, 0, 1);
     else thick.normalize();
 
-    ringOut.crossVectors(thick, new THREE.Vector3(1, 0, 0));
-    if (ringOut.lengthSq() < 0.25) ringOut.crossVectors(thick, new THREE.Vector3(0, 1, 0));
-    if (ringOut.lengthSq() < 1e-16) ringOut.set(0, 0, 1);
-    else ringOut.normalize();
+    ringOut.copy(thick);
 
     return ringOut;
   }
@@ -13646,6 +13740,23 @@ async function runHandArSession({
    *  Usado no ajuste adaptativo por frame: targetInnerR_mundo / localInnerR
    *  dá o scale exacto para a face interna encostar à pele. */
   let localInnerR = 0.022;
+  /**
+   * Referência do localInnerR da PRIMEIRA variante carregada (pulseira).
+   * Usada nas trocas: se o GLB seguinte tiver localInnerR muito diferente
+   * (export com unidades distintas ou geometria de anel com outra espessura
+   * medida pelo computeLocalInnerRadius), normalizar para este valor de âncora
+   * garante que o baseScale — e portanto a escala final no pulso — fique igual.
+   * Null = ainda não inicializado (primeira carga vai setar).
+   */
+  let anchorLocalInnerR = null;
+  /**
+   * Snapshot da 1ª variante em modo rigid-slot: posição, rotação, escala local
+   * do `glbScene` + escala do `glbRoot` + baseScale/localInnerR/localRingR.
+   * Nas trocas de variante com GLB também rigid-slot, reaplica-se este pacote
+   * em vez de `fitWristGlb` — todas as variantes ficam iguais à primeira no
+   * slot (velocidade + consistência). Null se 1ª carga não for rigid ou for radial.
+   */
+  let braceletRigidTemplate = null;
   /** Sinaliza se o relógio foi geometricamente dobrado à volta dum cilindro
    *  (GLB plano detectado). Usado só para logging. */
   let didBendWatch = false;
@@ -13782,6 +13893,14 @@ async function runHandArSession({
         localRingR = fitRes.localRingR;
         localInnerR = fitRes.localInnerR || fitRes.localRingR * 0.9;
         didBendWatch = Boolean(fitRes.didBend);
+        /**
+         * Guardar raio interno da PRIMEIRA carga como âncora para trocas futuras.
+         * Só para pulseira: relógio/óculos não têm o problema de divergência
+         * de localInnerR entre variantes (geometrias mais padronizadas).
+         */
+        if (accessoryType === "bracelet" && anchorLocalInnerR === null && localInnerR > 1e-6) {
+          anchorLocalInnerR = localInnerR;
+        }
 
         watchVertexDeform = null;
         watchStrapRadial = null;
@@ -13791,7 +13910,12 @@ async function runHandArSession({
         if (accessoryType === "bracelet") {
           upgradeHandArLuxuryJewelryMaterials(THREE, glbScene);
           braceletIsBangle = detectBraceletBangle(THREE, glbScene);
-          if (!braceletIsBangle && !braceletProceduralRadial) {
+          /**
+           * Rigid slot: sem deformações de elo — a malha é usada como objeto
+           * rígido, sem reparent de meshes nem vertex deform que alteram a
+           * geometria e quebram a orientação no slot do pulso.
+           */
+          if (!braceletIsRigidSlot && !braceletIsBangle && !braceletProceduralRadial) {
             if (countHandArSolidMeshes(glbScene) === 1) {
               braceletVertexDeform = initBraceletLinkVertexDeformation(
                 THREE,
@@ -13811,6 +13935,7 @@ async function runHandArSession({
           if (debug) {
             console.log("[omafit-ar] bracelet", {
               bangle: braceletIsBangle,
+              rigidSlot: braceletIsRigidSlot,
               linkVertex: Boolean(braceletVertexDeform),
               linkGroup: Boolean(braceletLinkRadial),
             });
@@ -13855,6 +13980,26 @@ async function runHandArSession({
             braceletRingHoleTmpMat,
             braceletProceduralRadial ? braceletRadialHoleAxisScene : null,
           );
+          if (!braceletProceduralRadial && braceletIsRigidSlot) {
+            braceletRigidTemplate = {
+              quat: glbScene.quaternion.clone(),
+              pos: glbScene.position.clone(),
+              scl: glbScene.scale.clone(),
+              glbRootScale: glbRoot.scale.clone(),
+              baseScale,
+              localInnerR,
+              localRingR,
+            };
+            try {
+              console.log("[omafit-ar] bracelet rigid template captured (1st variant)", {
+                baseScale,
+                localInnerR_mm: (localInnerR * 1000).toFixed(1),
+                localRingR_mm: (localRingR * 1000).toFixed(1),
+              });
+            } catch {
+              /* ignore */
+            }
+          }
         } else if (accessoryType === "watch") {
           if (countHandArSolidMeshes(glbScene) === 1) {
             watchVertexDeform = initWatchSingleMeshStrapVertexDeformation(
@@ -13940,6 +14085,31 @@ async function runHandArSession({
         });
 
         glbRoot.visible = true;
+        /**
+         * Pré-carga em background dos GLBs das outras variantes.
+         * Dispara `fetch()` com `cache: "force-cache"` imediatamente após o
+         * primeiro GLB estar pronto — quando o utilizador clicar na miniatura,
+         * o browser já terá o ficheiro em disco/memória (sem bloquear o render).
+         * Apenas GLBs com URL diferente do actual são pré-carregados.
+         * Erros de rede são silenciosos (non-blocking).
+         */
+        try {
+          const rootArEl = typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+          const rawVarsPreload = rootArEl ? (rootArEl.getAttribute("data-ar-variants-glb") || "").trim() : "";
+          if (rawVarsPreload) {
+            const parsedPreload = JSON.parse(rawVarsPreload);
+            if (Array.isArray(parsedPreload)) {
+              const currentUrl = String(finalGlbUrl || "");
+              parsedPreload.forEach((vp) => {
+                const vpUrl = buildGlbLoaderUrl(String(vp?.g || "").trim(), versionHint);
+                if (!vpUrl || vpUrl === currentUrl) return;
+                fetch(vpUrl, { cache: "force-cache", mode: "cors" }).catch(() => {});
+              });
+            }
+          }
+        } catch {
+          /* pré-carga não-bloqueante: ignora qualquer erro */
+        }
         dbgBraceletAr("H3", "glb:before_resolve", "fit_complete", {
           baseScale: fitRes.baseScale,
           glbRootVisible: glbRoot.visible,
@@ -14656,12 +14826,23 @@ async function runHandArSession({
     }
     armOccluder.visible =
       accessoryType === "bracelet"
-        ? OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED && !braceletDorsumFacingCamera
+        /**
+         * Rigid slot: occluder sempre ativo — o cilindro está centrado no braço
+         * e usa BackSide, portanto oclui o lado posterior do anel em qualquer
+         * orientação da mão. O guarda `!braceletDorsumFacingCamera` era para
+         * o modo legado (corrente) onde o occluder causava artefactos ao virar.
+         */
+        ? OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED && (braceletIsRigidSlot || !braceletDorsumFacingCamera)
         : true;
     /** Z offset: centrar o cilindro atrás do pulso (−L/2). */
     armOccluder.position.z = -smoothForearmLength / 2;
     armOccluder.updateMatrix();
     armOccluder.updateMatrixWorld(true);
+    /**
+     * occPlane: reativado para rigid slot após orientação estabilizada (v6).
+     * O plano depth-only entre pele e parte posterior do anel faz a pulseira
+     * parecer envolver o punho — sem ele a metade traseira aparece à frente da pele.
+     */
     occPlane.visible = accessoryType === "bracelet";
     if (occPlane.visible) {
       // T/B/N: normal do plano deve apontar para DENTRO do braço.
@@ -14741,10 +14922,17 @@ async function runHandArSession({
         0.15,
       );
       const wristWidth = w5.distanceTo(w17);
+      /**
+       * Rigid slot: fade de material mais suave (máx 0.3) — o depth occluder
+       * cilíndrico já esconde o arco traseiro; a oclusão de material serve só
+       * para suavizar a transição lateral. Modo legado (chains): máx 0.7
+       * como antes, para compensar ausência do occluder cilíndrico.
+       */
+      const occStrMax = braceletIsRigidSlot ? 0.3 : 0.7;
       const occlusionStrength = THREE.MathUtils.clamp(
         wristWidth * 2.0,
-        0.3,
-        0.7,
+        0.15,
+        occStrMax,
       );
       const targetOpacity = 1.0 - braceletOcclusionSmooth * occlusionStrength;
       const fade = THREE.MathUtils.clamp(facing, 0.3, 1.0);
@@ -14771,9 +14959,10 @@ async function runHandArSession({
           const currentOpacity =
             typeof m.opacity === "number" ? m.opacity : opBase;
           const antiVanishOpacity = Math.max(targetOpacity, fade);
+          const opacityFloor = braceletIsRigidSlot ? 0.55 : 0.12;
           m.opacity = THREE.MathUtils.lerp(
             currentOpacity,
-            THREE.MathUtils.clamp(opBase * antiVanishOpacity, 0.12, opBase),
+            THREE.MathUtils.clamp(opBase * antiVanishOpacity, opacityFloor, opBase),
             0.15,
           );
         }
@@ -15123,6 +15312,22 @@ async function runHandArSession({
         wideWrist: isWideWrist,
       });
     }
+
+    /**
+     * Sombra de contacto pulseira: elipse proporcional à largura do punho.
+     * Aqui temos w5/w17/w0/w9 em escopo (landmarks em mundo desprojectado).
+     * X ≈ largura MCP5–MCP17 × 1.15; Z ≈ espessura punho–MCP9 × 0.85.
+     * Relógio usa escala fixa definida no init — não sobrescrever.
+     */
+    if (accessoryType === "bracelet") {
+      const csWristW = w5.distanceTo(w17);
+      const csThick = w0.distanceTo(w9);
+      contactShadow.scale.set(
+        THREE.MathUtils.clamp(csWristW * 1.15, 0.05, 0.16),
+        1,
+        THREE.MathUtils.clamp(csThick * 0.85, 0.035, 0.1),
+      );
+    }
   }
 
   function tick() {
@@ -15376,26 +15581,37 @@ async function runHandArSession({
   const prevSwitch = window.__omafitArSwitchGlb || null;
   window.__omafitArSwitchGlb = async (nextUrl, cal) => {
     try {
+      /**
+       * Repor sempre a posição base antes de aplicar cal — evita herdar
+       * wearPosition da variante anterior quando a nova não tem calibração.
+       * O bloco cal.scale × baseScale_antigo foi removido: a escala correcta
+       * é calculada pelo fitWristGlb depois de carregar o novo GLB (idêntico
+       * à primeira carga).
+       */
+      applyCalibRot(cal && typeof cal === "object" ? cal : null);
+      wearPosition.position.set(wearXYZ.x, wearXYZ.y, wearXYZ.z);
       if (cal && typeof cal === "object") {
-        applyCalibRot();
         if (Number.isFinite(Number(cal.wearX))) wearPosition.position.x = Number(cal.wearX);
         if (Number.isFinite(Number(cal.wearY))) wearPosition.position.y = Number(cal.wearY);
         if (Number.isFinite(Number(cal.wearZ))) wearPosition.position.z = Number(cal.wearZ);
-        if (Number.isFinite(Number(cal.scale)) && Number(cal.scale) > 0) {
-          const cu = baseScale * Number(cal.scale);
-          const Wcal =
-            (OMAFIT_BRACELET_EXPAND_THIN + OMAFIT_BRACELET_EXPAND_WIDE) / 2;
-          if (accessoryType === "bracelet") {
-            glbRoot.scale.set(
-              cu * Wcal * OMAFIT_BRACELET_ELLIPSE_X,
-              cu * Wcal * OMAFIT_BRACELET_ELLIPSE_DEPTH,
-              cu,
-            );
-          } else {
-            glbRoot.scale.setScalar(cu * Wcal);
-          }
-        }
       }
+      /**
+       * Reset do estado de suavização: evita que a nova variante comece com
+       * deslocamento de slide/wear acumulado da variante anterior.
+       */
+      if (accessoryType === "bracelet" && braceletPlaceState) {
+        resetOmafitBraceletWristPlacementState(braceletPlaceState);
+        /**
+         * Após reset, `smoothPosLerp` fica em (0,0,0). Isso faz a pulseira
+         * animar de (0,0,0) até o alvo real (wearXYZ) — visualmente "desce"
+         * ou "sobe" durante o lerp. Prime diretamente para wearXYZ para que a
+         * troca seja instantânea na posição correcta.
+         */
+        braceletPlaceState.smoothPosLerp.set(wearXYZ.x, wearXYZ.y, wearXYZ.z);
+        braceletPlaceState.wearLerpPrimed = true;
+      }
+      braceletSlideFast = 0;
+      braceletSlideLag = 0;
       if (nextUrl && typeof nextUrl === "string") {
         await new Promise((resolve) => {
           glbLoader.load(
@@ -15447,12 +15663,88 @@ async function runHandArSession({
               }
               while (glbRoot.children.length) glbRoot.remove(glbRoot.children[0]);
               glbRoot.add(next);
+              /**
+               * Resetar escala do glbRoot antes do fit — evita herdar escala
+               * de variante anterior caso fitWristGlb tenha algum path que não
+               * sobreponha a escala (salvaguarda explícita).
+               */
+              glbRoot.scale.set(1, 1, 1);
               upgradeHandArGlassMaterials(THREE, next);
-              const fitRes = fitWristGlb(next, glbRoot, accessoryType, cal?.scale);
-              baseScale = fitRes.baseScale;
-              localRingR = fitRes.localRingR;
-              localInnerR = fitRes.localInnerR || fitRes.localRingR * 0.9;
-              didBendWatch = Boolean(fitRes.didBend);
+              const useRigidTemplate =
+                accessoryType === "bracelet" &&
+                !braceletProceduralRadial &&
+                braceletIsRigidSlot &&
+                braceletRigidTemplate !== null;
+              let fitRes;
+              if (useRigidTemplate) {
+                next.quaternion.copy(braceletRigidTemplate.quat);
+                next.position.copy(braceletRigidTemplate.pos);
+                next.scale.copy(braceletRigidTemplate.scl);
+                glbRoot.scale.copy(braceletRigidTemplate.glbRootScale);
+                baseScale = braceletRigidTemplate.baseScale;
+                localRingR = braceletRigidTemplate.localRingR;
+                localInnerR = braceletRigidTemplate.localInnerR;
+                didBendWatch = false;
+                next.updateMatrixWorld(true);
+                const bboxT = new THREE.Box3().setFromObject(next);
+                const sizeT = new THREE.Vector3();
+                bboxT.getSize(sizeT);
+                const sortedT = [sizeT.x, sizeT.y, sizeT.z].sort((a, b) => a - b);
+                fitRes = {
+                  baseScale: braceletRigidTemplate.baseScale,
+                  localRingR: braceletRigidTemplate.localRingR,
+                  localInnerR: braceletRigidTemplate.localInnerR,
+                  didBend: false,
+                  size: sizeT,
+                  maxDim: sortedT[2] || sizeT.x,
+                  medianDim: sortedT[1] || sizeT.x,
+                };
+                try {
+                  console.log("[omafit-ar] bracelet switch: rigid template applied (matches 1st variant)", {
+                    baseScale,
+                    localInnerR_mm: (localInnerR * 1000).toFixed(1),
+                  });
+                } catch {
+                  /* ignore */
+                }
+              } else {
+                fitRes = fitWristGlb(next, glbRoot, accessoryType, userScale);
+                baseScale = fitRes.baseScale;
+                localRingR = fitRes.localRingR;
+                const rawInnerR = fitRes.localInnerR || fitRes.localRingR * 0.9;
+                /**
+                 * Normalização de escala por âncora (pulseira):
+                 * Se o localInnerR da nova variante divergir mais de ±25% da 1ª
+                 * carga, ajusta baseScale para que o tamanho no pulso seja igual.
+                 * Fórmula: baseScale_corrigido = fitRes.baseScale × (rawInnerR / anchorLocalInnerR)
+                 * → resulta em targetInnerR / anchorLocalInnerR (raio âncora, não o bruto).
+                 * O runtime usa baseScale × adaptMul para escalar por frame;
+                 * anchorLocalInnerR é usado como localInnerR para que o adaptMul
+                 * frame-a-frame também fique consistente entre variantes.
+                 */
+                if (
+                  accessoryType === "bracelet" &&
+                  anchorLocalInnerR !== null &&
+                  anchorLocalInnerR > 1e-6 &&
+                  rawInnerR > 1e-6
+                ) {
+                  const drift = rawInnerR / anchorLocalInnerR;
+                  if (drift < 0.75 || drift > 1.33) {
+                    baseScale = fitRes.baseScale * drift;
+                    console.log("[omafit-ar] bracelet innerR drift corrected", {
+                      rawInnerR_mm: (rawInnerR * 1000).toFixed(1),
+                      anchorLocalInnerR_mm: (anchorLocalInnerR * 1000).toFixed(1),
+                      drift: drift.toFixed(3),
+                      baseScaleOrig: fitRes.baseScale.toFixed(4),
+                      baseScaleCorrected: baseScale.toFixed(4),
+                    });
+                  }
+                  localInnerR = anchorLocalInnerR;
+                } else {
+                  localInnerR = rawInnerR;
+                }
+                didBendWatch = Boolean(fitRes.didBend);
+              }
               watchVertexDeform = null;
               watchStrapRadial = null;
               braceletIsBangle = false;
@@ -15461,7 +15753,7 @@ async function runHandArSession({
               if (accessoryType === "bracelet") {
                 upgradeHandArLuxuryJewelryMaterials(THREE, next);
                 braceletIsBangle = detectBraceletBangle(THREE, next);
-                if (!braceletIsBangle && !braceletProceduralRadial) {
+                if (!braceletIsRigidSlot && !braceletIsBangle && !braceletProceduralRadial) {
                   if (countHandArSolidMeshes(next) === 1) {
                     braceletVertexDeform = initBraceletLinkVertexDeformation(
                       THREE,
@@ -15486,6 +15778,14 @@ async function runHandArSession({
                   braceletRingHoleTmpMat,
                   braceletProceduralRadial ? braceletRadialHoleAxisScene : null,
                 );
+                braceletOcclusionMaterials = omafitCollectUniqueMaterials(next);
+                for (let mi = 0; mi < braceletOcclusionMaterials.length; mi++) {
+                  const bm = braceletOcclusionMaterials[mi];
+                  if (!bm || typeof bm !== "object") continue;
+                  bm.depthWrite = true;
+                  bm.depthTest = true;
+                  bm.side = THREE.DoubleSide;
+                }
               } else if (accessoryType === "watch") {
                 if (countHandArSolidMeshes(next) === 1) {
                   watchVertexDeform = initWatchSingleMeshStrapVertexDeformation(
@@ -15512,15 +15812,37 @@ async function runHandArSession({
               if (!handMicroUxDisabled) {
                 try {
                   omafitStoreMaterialOpacityBaseline(next);
-                  omafitApplyModelOpacityFactor(next, 0);
+                  /**
+                   * Troca de variante: NÃO aplicar opacidade 0.
+                   * Na 1ª carga a opacidade 0 faz sentido (modelo ainda não
+                   * trackava). Na troca o modelo anterior já estava visível —
+                   * começar em 0 torna o novo invisível por ~480 ms.
+                   * Usa apenas a animação de escala (0.9→1.0) como indicador
+                   * visual da troca. `preparedOpacity = false` desativa o
+                   * interpolador de opacidade em `omafitStepMicroUxIntro`.
+                   */
                   handMicroUx.introStartMs = performance.now();
                   handMicroUx.introComplete = false;
-                  handMicroUx.preparedOpacity = true;
+                  handMicroUx.preparedOpacity = false;
                   handMicroUxWrap.scale.setScalar(0.9);
                 } catch {
                   /* ignore */
                 }
               }
+              console.log("[omafit-ar] hand GLB fit (switch)", {
+                accessoryType,
+                baseScale,
+                rigidTemplate: Boolean(useRigidTemplate),
+                localInnerR_mm: ((localInnerR || 0) * 1000).toFixed(1),
+                localRingR_mm: ((localRingR || 0) * 1000).toFixed(1),
+                bbox: {
+                  x: fitRes.size.x.toFixed(4),
+                  y: fitRes.size.y.toFixed(4),
+                  z: fitRes.size.z.toFixed(4),
+                },
+                braceletIsRigidSlot,
+                userScale,
+              });
               resolve();
             },
             undefined,

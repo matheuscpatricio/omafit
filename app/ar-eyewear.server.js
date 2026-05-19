@@ -8,7 +8,28 @@ import {
   getArProductsMaxForPlan,
   normalizeShopifyPlanKey,
 } from "./billing-plans.server.js";
-import { detectAccessoryType } from "./ar-accessory-type.shared.js";
+import {
+  sanitizeArCalibrationInput,
+  defaultArCalibration,
+} from "./ar-calibration.shared.js";
+import {
+  detectAccessoryType,
+  normalizeAccessoryType,
+  AR_ACCESSORY_TYPE_DEFAULT,
+  AR_ACCESSORY_TYPES,
+} from "./ar-accessory-type.shared.js";
+
+export {
+  sanitizeArCalibrationInput,
+  defaultArCalibration,
+  buildCalibrationForRotationEditor,
+} from "./ar-calibration.shared.js";
+export {
+  AR_ACCESSORY_TYPES,
+  AR_ACCESSORY_TYPE_DEFAULT,
+  normalizeAccessoryType,
+  detectAccessoryType,
+} from "./ar-accessory-type.shared.js";
 
 const TABLE = "ar_eyewear_assets";
 
@@ -578,74 +599,6 @@ const AR_ACCESSORY_TYPE_METAFIELD = {
   key: "ar_accessory_type",
   type: "single_line_text_field",
 };
-
-export function sanitizeArCalibrationInput(raw) {
-  const src = raw && typeof raw === "object" ? raw : {};
-  const num = (v, def) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : def;
-  };
-  const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
-  return {
-    rx: clamp(num(src.rx, 0), -180, 180),
-    ry: clamp(num(src.ry, 0), -180, 180),
-    rz: clamp(num(src.rz, 0), -180, 180),
-    bridgeY: clamp(num(src.bridgeY, 0), -0.5, 0.5),
-    wearX: clamp(num(src.wearX, 0), -0.1, 0.1),
-    wearY: clamp(num(src.wearY, 0), -0.15, 0.15),
-    wearZ: clamp(num(src.wearZ, 0), -0.1, 0.1),
-    scale: clamp(num(src.scale, 1), 0.3, 3),
-  };
-}
-
-/**
- * Tipos de acessório AR suportados. Determina a stack de tracking e os
- * defaults de calibração. Fallback: `glasses` (retrocompatível com assets
- * antigos sem `accessory_type`).
- */
-export const AR_ACCESSORY_TYPES = Object.freeze([
-  "glasses",
-  "necklace",
-  "watch",
-  "bracelet",
-]);
-
-export const AR_ACCESSORY_TYPE_DEFAULT = "glasses";
-
-/**
- * Normaliza um valor qualquer para um tipo de acessório válido.
- * Retorna `null` se não reconhecido (útil para distinguir NULL na BD).
- */
-export function normalizeAccessoryType(value) {
-  const v = String(value || "").trim().toLowerCase();
-  if (AR_ACCESSORY_TYPES.includes(v)) return v;
-  return null;
-}
-
-/** Ver `ar-accessory-type.shared.js` — inclui categoria taxonómica + título. */
-export { detectAccessoryType };
-
-/**
- * Defaults de calibração por tipo. Cada tipo tem uma rotação/posição base
- * diferente para que o lojista parta de um ponto razoável (ex: colar já
- * começa com wearY negativo para descer ao pescoço).
- *
- * Os valores retornados JÁ passam por `sanitizeArCalibrationInput` (clamp).
- */
-const AR_CALIBRATION_DEFAULTS_BY_TYPE = {
-  glasses: {},
-  necklace: { wearY: -0.12 },
-  watch: { scale: 1, wearY: 0 },
-  bracelet: { scale: 1.1, wearY: 0 },
-};
-
-const DEFAULT_AR_CALIBRATION = sanitizeArCalibrationInput({});
-
-export function defaultArCalibration(accessoryType) {
-  const type = normalizeAccessoryType(accessoryType) || AR_ACCESSORY_TYPE_DEFAULT;
-  const overrides = AR_CALIBRATION_DEFAULTS_BY_TYPE[type] || {};
-  return sanitizeArCalibrationInput({ ...DEFAULT_AR_CALIBRATION, ...overrides });
-}
 
 export async function ensureArCalibrationMetafieldDefinition(admin) {
   const attempts = [

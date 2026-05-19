@@ -18,6 +18,23 @@
 
 const AR_ACCESSORY_TYPE_DEFAULT = "glasses";
 
+export const AR_ACCESSORY_TYPES = Object.freeze([
+  "glasses",
+  "necklace",
+  "watch",
+  "bracelet",
+]);
+
+/**
+ * Normaliza um valor qualquer para um tipo de acessório válido.
+ * Retorna `null` se não reconhecido (útil para distinguir NULL na BD).
+ */
+export function normalizeAccessoryType(value) {
+  const v = String(value || "").trim().toLowerCase();
+  if (AR_ACCESSORY_TYPES.includes(v)) return v;
+  return null;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Regexes (compartilhados com ar-eyewear-products.server.js)                 */
 /* -------------------------------------------------------------------------- */

@@ -8,7 +8,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "react-router-dom";
 import { redirect } from "react-router";
-import { Buffer } from "node:buffer";
 import {
   Page,
   Layout,
@@ -27,34 +26,14 @@ import {
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
 import {
-  getAssetById,
-  getShopArEyewearEnabled,
-  fetchProductArCalibrationContext,
-  ensureArCalibrationMetafieldDefinition,
-  ensureArAccessoryTypeMetafieldDefinition,
-  setProductArCalibrationMetafield,
-  setProductArAccessoryTypeMetafield,
-  setVariantArCalibrationMetafield,
   sanitizeArCalibrationInput,
   defaultArCalibration,
+  buildCalibrationForRotationEditor,
+} from "../ar-calibration.shared.js";
+import {
   detectAccessoryType,
   normalizeAccessoryType,
-  storageCreateSignedUrl,
-} from "../ar-eyewear.server.js";
-
-/** Só a rotação vem do metafield guardado; posição/escala usam sempre os defaults do tipo. */
-function buildCalibrationForRotationEditor(defaultCal, saved, accessoryType) {
-  const merged = sanitizeArCalibrationInput({
-    ...defaultCal,
-    rx: saved && Number.isFinite(Number(saved.rx)) ? Number(saved.rx) : defaultCal.rx,
-    ry: saved && Number.isFinite(Number(saved.ry)) ? Number(saved.ry) : defaultCal.ry,
-    rz: saved && Number.isFinite(Number(saved.rz)) ? Number(saved.rz) : defaultCal.rz,
-  });
-  if (accessoryType === "bracelet") {
-    return sanitizeArCalibrationInput({ ...merged, rx: 0, ry: 0 });
-  }
-  return merged;
-}
+} from "../ar-accessory-type.shared.js";
 import { useAppI18n } from "../contexts/AppI18n";
 import { getShopDomain } from "../utils/getShopDomain";
 import {
@@ -80,6 +59,16 @@ function tryResignIfPrivate(rawUrl) {
 }
 
 export async function loader({ request, params }) {
+  const { Buffer } = await import("node:buffer");
+  const {
+    getAssetById,
+    getShopArEyewearEnabled,
+    fetchProductArCalibrationContext,
+    ensureArAccessoryTypeMetafieldDefinition,
+    setProductArAccessoryTypeMetafield,
+    storageCreateSignedUrl,
+  } = await import("../ar-eyewear.server.js");
+
   const { admin, session } = await authenticate.admin(request);
   const billing = await ensureShopHasActiveBilling(admin, session.shop);
   if (!billing.active) {
@@ -210,6 +199,16 @@ export async function loader({ request, params }) {
 }
 
 export async function action({ request, params }) {
+  const {
+    getAssetById,
+    getShopArEyewearEnabled,
+    ensureArCalibrationMetafieldDefinition,
+    ensureArAccessoryTypeMetafieldDefinition,
+    setProductArCalibrationMetafield,
+    setProductArAccessoryTypeMetafield,
+    setVariantArCalibrationMetafield,
+  } = await import("../ar-eyewear.server.js");
+
   const { admin, session } = await authenticate.admin(request);
   if (!(await getShopArEyewearEnabled(session.shop))) {
     return Response.json({ error: "AR Eyewear disabled" }, { status: 403 });

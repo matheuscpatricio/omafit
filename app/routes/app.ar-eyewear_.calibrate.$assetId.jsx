@@ -709,7 +709,7 @@ function bendGeometryCylinderPreview(THREE, root, bendAxis, armAxis, dorsalAxis,
  * pulso padrão — igual comportamento ao widget para consistência
  * merchant/utilizador final.
  */
-function computeBraceletRigidSlotPreview(root) {
+function computeBraceletRigidSlotPreview(THREE, root) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
   const size = new THREE.Vector3();
@@ -761,7 +761,7 @@ function fitBraceletGlbPreview(THREE, glbScene, glbRoot, calScale) {
     bbox.getSize(size);
   }
 
-  const isRigidSlot = computeBraceletRigidSlotPreview(glbScene);
+  const isRigidSlot = computeBraceletRigidSlotPreview(THREE, glbScene);
 
   if (!isRigidSlot) {
     glbScene.rotation.set(0, 0, 0);

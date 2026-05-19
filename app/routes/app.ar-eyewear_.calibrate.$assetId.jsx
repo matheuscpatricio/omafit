@@ -29,6 +29,8 @@ import {
   sanitizeArCalibrationInput,
   defaultArCalibration,
   buildCalibrationForRotationEditor,
+  snapArRotationPresetDeg,
+  AR_ROTATION_PRESET_DEGREES,
 } from "../ar-calibration.shared.js";
 import {
   detectAccessoryType,
@@ -1137,6 +1139,71 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                     wrapFraction,
                     postBbox: { x: size.x, y: size.y, z: size.z },
                   });
+                } else {
+                  /**
+                   * === CANONIZAÇÃO DE ORIENTAÇÃO: RELÓGIOS ENROLADOS ===
+                   *
+                   * Relógios que já vêm enrolados (flatRatio <= 2.0) não passam
+                   * pelo bend cilíndrico, mas precisam de orientação previsível
+                   * para evitar aparecerem de cabeça para baixo no preview.
+                   *
+                   * Esta lógica espelha exatamente o widget (omafit-ar-widget.js
+                   * linhas ~13370-13430) para garantir que o preview mostre
+                   * EXATAMENTE o que o lojista verá no AR.
+                   *
+                   * Objetivo: alinhar consistentemente ao frame da âncora:
+                   *   - Eixo dorsal (MIN) → +Y local (face visível para cima)
+                   *   - Eixo arm (MED) → +Z local (direção do braço)
+                   *   - Eixo lateral (MAX) → +X local (ao redor do pulso)
+                   */
+                  const bboxCenter = new THREE.Vector3();
+                  box.getCenter(bboxCenter);
+
+                  // Detectar sentido dorsal (face do relógio aponta "para fora")
+                  const dorsalN = dorsal.vec.clone();
+                  if (bboxCenter.dot(dorsalN) < 0) dorsalN.negate();
+
+                  // Para relógios enrolados: eixo MAX = lateral (X)
+                  const lateralN = bend.vec.clone();
+                  const armN = arm.vec.clone();
+
+                  // Garantir base right-handed: lateral × dorsal = arm
+                  const expectedArm = new THREE.Vector3().crossVectors(lateralN, dorsalN);
+                  if (expectedArm.dot(armN) < 0) armN.negate();
+
+                  /**
+                   * Construir matriz de mudança de base:
+                   * Mapeia (lateral, dorsal, arm) do GLB → (X, Y, Z) da âncora
+                   *
+                   * M = [lateral | dorsal | arm]  (colunas)
+                   * Rotação: M^T (transposta = inversa para matriz ortonormal)
+                   */
+                  const M = new THREE.Matrix4().makeBasis(lateralN, dorsalN, armN);
+                  const invM = new THREE.Matrix4().copy(M).transpose();
+                  const q = new THREE.Quaternion().setFromRotationMatrix(invM);
+
+                  // Aplicar rotação apenas se não for identidade
+                  if (Math.abs(q.x) + Math.abs(q.y) + Math.abs(q.z) > 1e-6) {
+                    root.quaternion.premultiply(q);
+                    root.updateMatrixWorld(true);
+                    
+                    // Recalcular bbox e recentrar após rotação
+                    const newBox3 = new THREE.Box3().setFromObject(root);
+                    newBox3.getSize(size);
+                    const newCenter3 = new THREE.Vector3();
+                    newBox3.getCenter(newCenter3);
+                    root.position.sub(newCenter3);
+                  }
+
+                  console.log("[omafit-calibrate] watch orientation canonicalized (already wrapped)", {
+                    lateralAxis: bend.name,
+                    dorsalAxis: dorsal.name,
+                    armAxis: arm.name,
+                    armFlipped: armN.dot(arm.vec) < 0,
+                    flatRatio: Number(flatRatio.toFixed(3)),
+                    preBbox: { max: bend.size, mid: arm.size, min: dorsal.size },
+                    postBbox: { x: size.x, y: size.y, z: size.z },
+                  });
                 }
               }
 
@@ -1582,6 +1649,40 @@ function applyCalibrationToState(s, rotationCal, wearScaleCal) {
 }
 
 
+function RotationPresetSlider({ label, helpText, value, onChange }) {
+  const snapped = snapArRotationPresetDeg(value);
+  return (
+    <BlockStack gap="200">
+      <RangeSlider
+        output
+        label={label}
+        helpText={helpText}
+        min={-90}
+        max={90}
+        step={90}
+        value={snapped}
+        onChange={(v) => {
+          const raw = Array.isArray(v) ? v[0] : v;
+          onChange(snapArRotationPresetDeg(raw));
+        }}
+        suffix={`${snapped}°`}
+      />
+      <InlineStack gap="200" wrap={false}>
+        {AR_ROTATION_PRESET_DEGREES.map((deg) => (
+          <Button
+            key={deg}
+            size="slim"
+            variant={snapped === deg ? "primary" : "secondary"}
+            onClick={() => onChange(deg)}
+          >
+            {deg}°
+          </Button>
+        ))}
+      </InlineStack>
+    </BlockStack>
+  );
+}
+
 function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
   const isBracelet = accessoryType === "bracelet";
   const resetRotation = () => {
@@ -1617,16 +1718,11 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
             {t("arEyewear.calibrate.sliders.rotationReset")}
           </Button>
         </InlineStack>
-        <RangeSlider
-          output
+        <RotationPresetSlider
           label={tt("arEyewear.calibrate.sliders.roll.label")}
           helpText={tt("arEyewear.calibrate.sliders.roll.help")}
-          min={-180}
-          max={180}
-          step={1}
           value={cal.rz}
           onChange={setField("rz")}
-          suffix={`${cal.rz}°`}
         />
       </BlockStack>
     );
@@ -1642,38 +1738,23 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
           {t("arEyewear.calibrate.sliders.rotationReset") || "Reiniciar rotação"}
         </Button>
       </InlineStack>
-      <RangeSlider
-        output
+      <RotationPresetSlider
         label={tt("arEyewear.calibrate.sliders.tilt.label")}
         helpText={tt("arEyewear.calibrate.sliders.tilt.help")}
-        min={-180}
-        max={180}
-        step={1}
         value={cal.rx}
         onChange={setField("rx")}
-        suffix={`${cal.rx}°`}
       />
-      <RangeSlider
-        output
+      <RotationPresetSlider
         label={tt("arEyewear.calibrate.sliders.yaw.label")}
         helpText={tt("arEyewear.calibrate.sliders.yaw.help")}
-        min={-180}
-        max={180}
-        step={1}
         value={cal.ry}
         onChange={setField("ry")}
-        suffix={`${cal.ry}°`}
       />
-      <RangeSlider
-        output
+      <RotationPresetSlider
         label={tt("arEyewear.calibrate.sliders.roll.label")}
         helpText={tt("arEyewear.calibrate.sliders.roll.help")}
-        min={-180}
-        max={180}
-        step={1}
         value={cal.rz}
         onChange={setField("rz")}
-        suffix={`${cal.rz}°`}
       />
     </BlockStack>
   );

@@ -8,6 +8,29 @@ import {
   AR_ACCESSORY_TYPE_DEFAULT,
 } from "./ar-accessory-type.shared.js";
 
+/** Posições de rotação expostas no admin (graus). */
+export const AR_ROTATION_PRESET_DEGREES = Object.freeze([-90, 0, 90]);
+
+/**
+ * Arredonda para a posição pré-definida mais próxima (−90°, 0°, 90°).
+ * Usado nos sliders da página de calibração e ao guardar rotação.
+ */
+export function snapArRotationPresetDeg(deg) {
+  const n = Number(deg);
+  if (!Number.isFinite(n)) return 0;
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < AR_ROTATION_PRESET_DEGREES.length; i++) {
+    const p = AR_ROTATION_PRESET_DEGREES[i];
+    const d = Math.abs(n - p);
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
 export function sanitizeArCalibrationInput(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   const num = (v, def) => {
@@ -16,9 +39,9 @@ export function sanitizeArCalibrationInput(raw) {
   };
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
   return {
-    rx: clamp(num(src.rx, 0), -180, 180),
-    ry: clamp(num(src.ry, 0), -180, 180),
-    rz: clamp(num(src.rz, 0), -180, 180),
+    rx: snapArRotationPresetDeg(clamp(num(src.rx, 0), -180, 180)),
+    ry: snapArRotationPresetDeg(clamp(num(src.ry, 0), -180, 180)),
+    rz: snapArRotationPresetDeg(clamp(num(src.rz, 0), -180, 180)),
     bridgeY: clamp(num(src.bridgeY, 0), -0.5, 0.5),
     wearX: clamp(num(src.wearX, 0), -0.1, 0.1),
     wearY: clamp(num(src.wearY, 0), -0.15, 0.15),

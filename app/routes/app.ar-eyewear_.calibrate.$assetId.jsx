@@ -41,6 +41,20 @@ import {
   normalizeAccessoryType,
   storageCreateSignedUrl,
 } from "../ar-eyewear.server.js";
+
+/** Só a rotação vem do metafield guardado; posição/escala usam sempre os defaults do tipo. */
+function buildCalibrationForRotationEditor(defaultCal, saved, accessoryType) {
+  const merged = sanitizeArCalibrationInput({
+    ...defaultCal,
+    rx: saved && Number.isFinite(Number(saved.rx)) ? Number(saved.rx) : defaultCal.rx,
+    ry: saved && Number.isFinite(Number(saved.ry)) ? Number(saved.ry) : defaultCal.ry,
+    rz: saved && Number.isFinite(Number(saved.rz)) ? Number(saved.rz) : defaultCal.rz,
+  });
+  if (accessoryType === "bracelet") {
+    return sanitizeArCalibrationInput({ ...merged, rx: 0, ry: 0 });
+  }
+  return merged;
+}
 import { useAppI18n } from "../contexts/AppI18n";
 import { getShopDomain } from "../utils/getShopDomain";
 import {
@@ -308,15 +322,27 @@ export default function ArEyewearCalibratePage() {
     return data.productCalibration;
   }, [target, activeVariant, data.productCalibration]);
 
-  const [cal, setCal] = useState(initialCalibration);
+  const [cal, setCal] = useState(() =>
+    buildCalibrationForRotationEditor(
+      data.defaultCalibration,
+      initialCalibration,
+      data.accessoryType,
+    ),
+  );
   const lastInitialRef = useRef(initialCalibration);
 
   useEffect(() => {
     if (lastInitialRef.current !== initialCalibration) {
       lastInitialRef.current = initialCalibration;
-      setCal(initialCalibration);
+      setCal(
+        buildCalibrationForRotationEditor(
+          data.defaultCalibration,
+          initialCalibration,
+          data.accessoryType,
+        ),
+      );
     }
-  }, [initialCalibration]);
+  }, [initialCalibration, data.defaultCalibration, data.accessoryType]);
 
   // Log o estado inicial da calibração. Se o lojista reportar que o slider
   // "Inclinar lateralmente" se comporta como "Girar esquerda/direita", o
@@ -326,15 +352,11 @@ export default function ArEyewearCalibratePage() {
   useEffect(() => {
     if (typeof console !== "undefined") {
       // eslint-disable-next-line no-console
-      console.info("[omafit-calibrate] calibração inicial", {
+      console.info("[omafit-calibrate] calibração inicial (só rotação editável)", {
         target,
         rx: initialCalibration?.rx,
         ry: initialCalibration?.ry,
         rz: initialCalibration?.rz,
-        wearX: initialCalibration?.wearX,
-        wearY: initialCalibration?.wearY,
-        wearZ: initialCalibration?.wearZ,
-        scale: initialCalibration?.scale,
       });
     }
   }, [initialCalibration, target]);
@@ -344,17 +366,21 @@ export default function ArEyewearCalibratePage() {
 
   const setField = (field) => (val) => {
     const v = Array.isArray(val) ? val[0] : val;
-    setCal((prev) => ({ ...prev, [field]: Number(v) }));
+    setCal((prev) => sanitizeArCalibrationInput({ ...prev, [field]: Number(v) }));
   };
 
   const handleReset = () => {
-    setCal(data.defaultCalibration);
+    setCal(sanitizeArCalibrationInput({ ...data.defaultCalibration }));
   };
 
   const handleSave = () => {
+    const toSave =
+      data.accessoryType === "bracelet"
+        ? sanitizeArCalibrationInput({ ...cal, rx: 0, ry: 0 })
+        : sanitizeArCalibrationInput(cal);
     fetcher.submit(
       {
-        calibration: cal,
+        calibration: toSave,
         target,
         variantGid: target === "variant" ? variantGid : "",
       },
@@ -367,19 +393,16 @@ export default function ArEyewearCalibratePage() {
   };
 
   const hasChanges = useMemo(() => {
-    const a = cal;
-    const b = initialCalibration;
-    return (
-      a.rx !== b.rx ||
-      a.ry !== b.ry ||
-      a.rz !== b.rz ||
-      a.bridgeY !== b.bridgeY ||
-      a.wearX !== b.wearX ||
-      a.wearY !== b.wearY ||
-      a.wearZ !== b.wearZ ||
-      a.scale !== b.scale
+    const saved = buildCalibrationForRotationEditor(
+      data.defaultCalibration,
+      initialCalibration,
+      data.accessoryType,
     );
-  }, [cal, initialCalibration]);
+    if (data.accessoryType === "bracelet") {
+      return cal.rz !== saved.rz;
+    }
+    return cal.rx !== saved.rx || cal.ry !== saved.ry || cal.rz !== saved.rz;
+  }, [cal, initialCalibration, data.defaultCalibration, data.accessoryType]);
 
   return (
     <Page
@@ -426,6 +449,7 @@ export default function ArEyewearCalibratePage() {
                   <PreviewModel
                     src={data.glbPreviewUrl}
                     cal={cal}
+                    wearScaleCalibration={data.defaultCalibration}
                     accessoryType={data.accessoryType}
                   />
                   <div
@@ -441,7 +465,9 @@ export default function ArEyewearCalibratePage() {
                       pointerEvents: "none",
                     }}
                   >
-                    {t("arEyewear.calibrate.previewHint")}
+                    {data.accessoryType === "bracelet"
+                      ? t("arEyewear.calibrate.previewHintBracelet")
+                      : t("arEyewear.calibrate.previewHint")}
                   </div>
                 </div>
               </Card>
@@ -628,6 +654,16 @@ const PREVIEW_WORLD_MEDIAN_DIM_BRACELET = 0.062;
  * wrap + escalar o GLB. Coincidir com `OMAFIT_DEFAULT_WRIST_R_M` no widget.
  */
 const PREVIEW_DEFAULT_WRIST_R_M = 0.026;
+/** Espelha `OMAFIT_BRACELET_TRIPO_TARGET_DIAMETER_M` no widget. */
+const PREVIEW_BRACELET_TRIPO_TARGET_DIAMETER_M = 0.065;
+const PREVIEW_BRACELET_WRIST_GAP_M = 0.0025;
+const PREVIEW_BRACELET_RIGID_SLOT_ELONG_THRESHOLD = 3.0;
+const PREVIEW_BRACELET_GLB_LOCAL_Y_SIZE_MUL = 0.42;
+const PREVIEW_BRACELET_GLB_LOCAL_Z_SIZE_MUL = 0.5;
+const PREVIEW_BRACELET_GLB_MICRO_POS_Y_M = 0.005;
+const PREVIEW_BRACELET_GLB_MICRO_POS_Z_M = 0.003;
+/** Posição Y do preview pulseira (alinha com linha do pulso na silhueta). */
+const PREVIEW_BRACELET_WEAR_Y_M = -0.038;
 
 /**
  * Dobra (bending) vértices de uma mesh em torno de um cilindro virtual.
@@ -674,6 +710,116 @@ function bendGeometryCylinderPreview(THREE, root, bendAxis, armAxis, dorsalAxis,
  * pulso padrão — igual comportamento ao widget para consistência
  * merchant/utilizador final.
  */
+function computeBraceletRigidSlotPreview(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const dims = [size.x, size.y, size.z].sort((a, b) => a - b);
+  const elong = dims[2] / Math.max(1e-6, dims[1]);
+  return elong <= PREVIEW_BRACELET_RIGID_SLOT_ELONG_THRESHOLD;
+}
+
+/**
+ * Espelha `omafitNormalizeBraceletTripoGlbScale` + ramo pulseira de `fitWristGlb`.
+ * Mantém preview admin alinhado ao widget (rigid slot, recentro, escala no glbRoot).
+ */
+function fitBraceletGlbPreview(THREE, glbScene, glbRoot, calScale) {
+  glbScene.scale.set(1, 1, 1);
+  glbScene.updateMatrixWorld(true);
+  let bbox = new THREE.Box3().setFromObject(glbScene);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z, 1e-9);
+  const tripScale = THREE.MathUtils.clamp(
+    PREVIEW_BRACELET_TRIPO_TARGET_DIAMETER_M / maxDim,
+    0.01,
+    10,
+  );
+  glbScene.scale.setScalar(tripScale);
+  glbScene.updateMatrixWorld(true);
+  bbox = new THREE.Box3().setFromObject(glbScene);
+  bbox.getSize(size);
+
+  const sx = size.x;
+  const sy = size.y;
+  const sz = size.z;
+  let smallestAxis = "z";
+  if (sx <= sy && sx <= sz) smallestAxis = "x";
+  else if (sy <= sx && sy <= sz) smallestAxis = "y";
+
+  let rotApplied = false;
+  if (smallestAxis === "x") {
+    glbScene.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+    rotApplied = true;
+  } else if (smallestAxis === "y") {
+    glbScene.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+    rotApplied = true;
+  }
+  if (rotApplied) {
+    glbScene.updateMatrixWorld(true);
+    bbox = new THREE.Box3().setFromObject(glbScene);
+    bbox.getSize(size);
+  }
+
+  const isRigidSlot = computeBraceletRigidSlotPreview(glbScene);
+
+  if (!isRigidSlot) {
+    glbScene.rotation.set(0, 0, 0);
+    glbScene.quaternion.identity();
+    glbScene.updateMatrixWorld(true);
+    bbox = new THREE.Box3().setFromObject(glbScene);
+    bbox.getSize(size);
+  }
+
+  const sorted = [size.x, size.y, size.z].sort((a, b) => a - b);
+  const medianDim = sorted[1] || 1;
+  const localRingR = Math.max(medianDim / 2, 1e-6);
+  glbScene.updateMatrixWorld(true);
+  const currentBox = new THREE.Box3().setFromObject(glbScene);
+  const measuredInner = computeLocalInnerRadiusPreview(THREE, glbScene, currentBox);
+  const localInnerR =
+    measuredInner &&
+    measuredInner > localRingR * 0.5 &&
+    measuredInner < localRingR * 0.99
+      ? measuredInner
+      : Math.max(localRingR * 0.9, 1e-6);
+
+  const targetInnerR = PREVIEW_DEFAULT_WRIST_R_M + PREVIEW_BRACELET_WRIST_GAP_M;
+  const calcBaseScale = targetInnerR / localInnerR;
+  const finalMul =
+    Number.isFinite(Number(calScale)) && Number(calScale) > 0 ? Number(calScale) : 1;
+  glbRoot.scale.setScalar(calcBaseScale * finalMul);
+
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+  glbScene.position.sub(center);
+  if (!isRigidSlot) {
+    glbScene.rotation.set(0, 0, 0);
+    glbScene.quaternion.identity();
+    glbScene.updateMatrixWorld(true);
+    bbox.setFromObject(glbScene);
+    bbox.getCenter(center);
+    if (center.lengthSq() > 1e-14) glbScene.position.sub(center);
+    glbScene.updateMatrixWorld(true);
+    bbox.setFromObject(glbScene);
+    bbox.getSize(size);
+    glbScene.position.y -= size.y * PREVIEW_BRACELET_GLB_LOCAL_Y_SIZE_MUL;
+    glbScene.position.z -= size.z * PREVIEW_BRACELET_GLB_LOCAL_Z_SIZE_MUL;
+    glbScene.position.y += PREVIEW_BRACELET_GLB_MICRO_POS_Y_M;
+    glbScene.position.z += PREVIEW_BRACELET_GLB_MICRO_POS_Z_M;
+  }
+  glbScene.updateMatrixWorld(true);
+
+  return {
+    baseScale: calcBaseScale,
+    localInnerR,
+    localRingR,
+    isRigidSlot,
+    size: size.clone(),
+  };
+}
+
 function computeLocalInnerRadiusPreview(THREE, root, bbox) {
   const center = new THREE.Vector3();
   bbox.getCenter(center);
@@ -699,9 +845,13 @@ function computeLocalInnerRadiusPreview(THREE, root, bbox) {
   return distances[idx];
 }
 
-function PreviewModel({ src, cal, accessoryType = "glasses" }) {
+function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses" }) {
   const { t } = useAppI18n();
   const hostRef = useRef(null);
+  const wearScaleRef = useRef(wearScaleCalibration);
+  useEffect(() => {
+    wearScaleRef.current = wearScaleCalibration;
+  }, [wearScaleCalibration]);
   const stateRef = useRef({
     THREE: null,
     renderer: null,
@@ -709,6 +859,8 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
     camera: null,
     calibRot: null,
     wearPosition: null,
+    faceParent: null,
+    glbRoot: null,
     tripoOffsetGroup: null,
     model: null,
     placeholder: null,
@@ -839,9 +991,15 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
         s.scene = scene;
         s.camera = camera;
         s.wearPosition = wearPosition;
+        s.faceParent = faceParent;
         s.calibRot = calibRot;
+        s.glbRoot = null;
         s.placeholder = placeholder;
         s.baseScale = 1; // placeholder usa escala 1
+
+        if (accessoryType === "bracelet") {
+          wearPosition.position.set(0, PREVIEW_BRACELET_WEAR_Y_M, 0);
+        }
 
         renderer.setAnimationLoop(() => {
           const st = stateRef.current;
@@ -863,7 +1021,7 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
 
         // Aplicar calibração imediatamente ao placeholder — dá ao lojista
         // feedback visual dos sliders mesmo antes do GLB carregar.
-        applyCalibrationToState(s, calRef.current || cal);
+        applyCalibrationToState(s, calRef.current || cal, wearScaleCalibration);
 
         const loader = new GLTFLoader();
         loader.setCrossOrigin("anonymous");
@@ -923,45 +1081,6 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               }
               let size = new THREE.Vector3();
               box.getSize(size);
-
-              /**
-               * === PULSEIRA: auto-rotação pelo eixo MAIS CURTO ===
-               *
-               * Alinha o anel com +Z local do preview (equivalente ao antebraço
-               * no widget). Sem isto, algumas GLBs aparecem como "disco
-               * achatado" em cima do pulso.
-               */
-              if (accessoryType === "bracelet") {
-                const sx = size.x;
-                const sy = size.y;
-                const sz = size.z;
-                let smallestAxis = "z";
-                if (sx <= sy && sx <= sz) smallestAxis = "x";
-                else if (sy <= sx && sy <= sz) smallestAxis = "y";
-
-                let rotApplied = false;
-                if (smallestAxis === "x") {
-                  root.quaternion.setFromAxisAngle(
-                    new THREE.Vector3(0, 1, 0),
-                    -Math.PI / 2,
-                  );
-                  rotApplied = true;
-                } else if (smallestAxis === "y") {
-                  root.quaternion.setFromAxisAngle(
-                    new THREE.Vector3(1, 0, 0),
-                    Math.PI / 2,
-                  );
-                  rotApplied = true;
-                }
-                if (rotApplied) {
-                  root.updateMatrixWorld(true);
-                  const newBox = new THREE.Box3().setFromObject(root);
-                  newBox.getSize(size);
-                  const newCenter = new THREE.Vector3();
-                  newBox.getCenter(newCenter);
-                  root.position.sub(newCenter);
-                }
-              }
 
               /**
                * === RELÓGIO PLANO: dobra cilíndrica ===
@@ -1028,25 +1147,28 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                 root.position.sub(center);
               }
 
-              /**
-               * === ESCALA PELA SUPERFÍCIE INTERNA (v11.2) ===
-               *
-               * Tal como no widget: escalamos pelo RAIO INTERNO real do
-               * anel (superfície que toca a pele) em vez do raio do eixo.
-               * Isto garante que a face interna do produto encaixa
-               * exactamente no pulso médio + folga mínima.
-               *
-               * gap: 2 mm pulseira (conforto) / 1 mm relógio (strap firme).
-               * Fallback: se não conseguirmos medir inner radius (ex.:
-               * geometria degenerada), usa 0.9·localRingR (10% espessura).
-               */
               const sortedSizes = [size.x, size.y, size.z].sort((a, b) => a - b);
               const medianDim = sortedSizes[1] || 1e-4;
               const maxDim = Math.max(sortedSizes[2], 1e-4);
               let baseScale;
-              if (accessoryType === "bracelet" || accessoryType === "watch") {
+              let glbRoot = null;
+
+              if (accessoryType === "bracelet") {
+                glbRoot = new THREE.Group();
+                glbRoot.name = "glbRoot";
+                /** Escala de loja (`scale`) aplicada em `applyCalibrationToState`, não no fit. */
+                const fitB = fitBraceletGlbPreview(THREE, root, glbRoot, 1);
+                baseScale = fitB.baseScale;
+                glbRoot.add(root);
+                s.glbRoot = glbRoot;
+                console.log("[omafit-calibrate] bracelet fit (widget parity)", {
+                  rigidSlot: fitB.isRigidSlot,
+                  baseScale: fitB.baseScale,
+                  localInnerR_mm: (fitB.localInnerR * 1000).toFixed(1),
+                });
+              } else if (accessoryType === "watch") {
                 const localRingR =
-                  accessoryType === "watch" && didBendWatch
+                  didBendWatch
                     ? Math.max(bendLocalR, 1e-4)
                     : Math.max(medianDim / 2, 1e-4);
                 root.updateMatrixWorld(true);
@@ -1062,19 +1184,18 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                   measuredInner < localRingR * 0.99
                     ? measuredInner
                     : Math.max(localRingR * 0.9, 1e-4);
-                const gap = accessoryType === "bracelet" ? 0.0025 : 0.001;
-                baseScale = (PREVIEW_DEFAULT_WRIST_R_M + gap) / localInnerR;
+                baseScale = (PREVIEW_DEFAULT_WRIST_R_M + 0.001) / localInnerR;
+                root.scale.setScalar(baseScale);
                 console.log("[omafit-calibrate] wrist fit by inner radius", {
                   accessoryType,
                   localRingR_mm: (localRingR * 1000).toFixed(1),
                   localInnerR_mm: (localInnerR * 1000).toFixed(1),
-                  ringThickness_mm: ((localRingR - localInnerR) * 1000).toFixed(1),
                   didBendWatch,
                 });
               } else {
                 baseScale = PREVIEW_WORLD_MAX_DIM_FACE / Math.max(maxDim, 1e-4);
+                root.scale.setScalar(baseScale);
               }
-              root.scale.setScalar(baseScale);
 
               /**
                * Óculos: mesmo pipeline que o widget — contentor com
@@ -1111,6 +1232,9 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
                 tripOff.add(root);
                 s.tripoOffsetGroup = tripOff;
                 calibRot.add(tripOff);
+              } else if (accessoryType === "bracelet" && glbRoot) {
+                s.tripoOffsetGroup = null;
+                calibRot.add(glbRoot);
               } else {
                 s.tripoOffsetGroup = null;
                 calibRot.add(root);
@@ -1126,7 +1250,11 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
               const phMat = s.placeholder?.userData?.boxMaterial;
               if (phMat) phMat.opacity = 0.2;
 
-              applyCalibrationToState(stateRef.current, calRef.current || cal);
+              applyCalibrationToState(
+                stateRef.current,
+                calRef.current || cal,
+                wearScaleRef.current,
+              );
               setPhase("ready");
               console.log("[omafit-calibrate] GLB carregado:", {
                 src, maxDim, baseScale, sizeRaw: size.toArray(),
@@ -1201,17 +1329,18 @@ function PreviewModel({ src, cal, accessoryType = "glasses" }) {
       } catch { /* no-op */ }
       stateRef.current = {
         THREE: null, renderer: null, scene: null, camera: null,
-        calibRot: null, wearPosition: null, tripoOffsetGroup: null,
+        calibRot: null, wearPosition: null, faceParent: null, glbRoot: null,
+        tripoOffsetGroup: null,
         model: null, placeholder: null, bboxHelper: null,
         size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
       };
     };
-  }, [src, accessoryType, t]);
+  }, [src, accessoryType, t, wearScaleCalibration]);
 
   useEffect(() => {
     calRef.current = cal;
-    applyCalibrationToState(stateRef.current, cal);
-  }, [cal]);
+    applyCalibrationToState(stateRef.current, cal, wearScaleRef.current);
+  }, [cal, wearScaleCalibration]);
 
     return (
     <div ref={hostRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
@@ -1365,6 +1494,12 @@ function bakeGLBTransforms(THREE, root, onDone) {
 /**
  * Aplica a calibração ao estado do preview.
  *
+ * `rotationCal`: rx / ry / rz (graus) aplicados em `calibRot` com eixos de mundo
+ * (Y → X → Z), igual ao widget.
+ * `wearScaleCal`: posição `wear*` e `scale` na pré-visualização — na página de
+ * calibração usamos sempre os defaults do tipo (alinhado ao AR: só a rotação
+ * é personalizável pelo lojista).
+ *
  * Rotação: usa `rotateOnWorldAxis` em vez de Euler YXZ. Porquê?
  *
  *   Com Euler YXZ (convenção Three.js), `rotation.set(rx, ry, rz, "YXZ")`
@@ -1387,13 +1522,16 @@ function bakeGLBTransforms(THREE, root, onDone) {
  *   com os mesmos 3 valores produzem exactamente a mesma orientação — os
  *   produtos já guardados continuam a render igual.
  */
-function applyCalibrationToState(s, cal) {
+function applyCalibrationToState(s, rotationCal, wearScaleCal) {
   if (!s || !s.THREE || !s.calibRot) return;
   const THREE = s.THREE;
+  const rc = rotationCal && typeof rotationCal === "object" ? rotationCal : {};
+  const ws =
+    wearScaleCal && typeof wearScaleCal === "object" ? wearScaleCal : rc;
   const toRad = (d) => (Number(d) || 0) * Math.PI / 180;
-  const rxRad = toRad(cal.rx);
-  const ryRad = toRad(cal.ry);
-  const rzRad = toRad(cal.rz);
+  const rxRad = toRad(rc.rx);
+  const ryRad = toRad(rc.ry);
+  const rzRad = toRad(rc.rz);
 
   if (!s.worldAxes) {
     s.worldAxes = {
@@ -1410,14 +1548,16 @@ function applyCalibrationToState(s, cal) {
   s.calibRot.updateMatrixWorld(true);
 
   s.wearPosition.position.set(
-    Number(cal.wearX) || 0,
-    Number(cal.wearY) || 0,
-    Number(cal.wearZ) || 0,
+    Number(ws.wearX) || 0,
+    Number(ws.wearY) || 0,
+    Number(ws.wearZ) || 0,
   );
-  const sc = Number(cal.scale);
+  const sc = Number(ws.scale);
   const mul = Number.isFinite(sc) && sc > 0 ? sc : 1;
 
-  if (s.model) {
+  if (s.glbRoot) {
+    s.glbRoot.scale.setScalar(s.baseScale * mul);
+  } else if (s.model) {
     s.model.scale.setScalar(s.baseScale * mul);
   }
   if (s.placeholder) {
@@ -1432,7 +1572,9 @@ function applyCalibrationToState(s, cal) {
     const ay = new THREE.Vector3(0, 1, 0).applyQuaternion(s.calibRot.quaternion);
     const az = new THREE.Vector3(0, 0, 1).applyQuaternion(s.calibRot.quaternion);
     console.debug("[omafit-calibrate] apply", {
-      rxDeg: cal.rx, ryDeg: cal.ry, rzDeg: cal.rz,
+      rxDeg: rc.rx,
+      ryDeg: rc.ry,
+      rzDeg: rc.rz,
       calibRotXinWorld: [ax.x.toFixed(3), ax.y.toFixed(3), ax.z.toFixed(3)],
       calibRotYinWorld: [ay.x.toFixed(3), ay.y.toFixed(3), ay.z.toFixed(3)],
       calibRotZinWorld: [az.x.toFixed(3), az.y.toFixed(3), az.z.toFixed(3)],
@@ -1442,8 +1584,9 @@ function applyCalibrationToState(s, cal) {
 
 
 function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
+  const isBracelet = accessoryType === "bracelet";
   const resetRotation = () => {
-    setCal((prev) => ({ ...prev, rx: 0, ry: 0, rz: 0 }));
+    setCal((prev) => sanitizeArCalibrationInput({ ...prev, rx: 0, ry: 0, rz: 0 }));
   };
   /**
    * Tenta primeiro a key tipada (sibling `${leaf}ByType.<type>`) e só cai
@@ -1460,6 +1603,36 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
     if (typed && typed !== typedKey) return typed;
     return t(baseKey);
   };
+
+  if (isBracelet) {
+    return (
+      <BlockStack gap="300">
+        <Text as="p" tone="subdued">
+          {t("arEyewear.calibrate.braceletSlidersIntro")}
+        </Text>
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <Text as="h4" variant="headingSm">
+            {t("arEyewear.calibrate.sliders.rotationGroup")}
+          </Text>
+          <Button size="slim" onClick={resetRotation}>
+            {t("arEyewear.calibrate.sliders.rotationReset")}
+          </Button>
+        </InlineStack>
+        <RangeSlider
+          output
+          label={tt("arEyewear.calibrate.sliders.roll.label")}
+          helpText={tt("arEyewear.calibrate.sliders.roll.help")}
+          min={-180}
+          max={180}
+          step={1}
+          value={cal.rz}
+          onChange={setField("rz")}
+          suffix={`${cal.rz}°`}
+        />
+      </BlockStack>
+    );
+  }
+
   return (
     <BlockStack gap="300">
       <InlineStack align="space-between" blockAlign="center" gap="200">
@@ -1503,70 +1676,8 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
         onChange={setField("rz")}
         suffix={`${cal.rz}°`}
       />
-
-      {/*
-        Altura/Y: agora é o único controlo vertical (bridgeY removido do pipeline).
-        Range ±0.15 em unidades de âncora ≈ ±2.1 cm em mundo (1 unit ≈ 14 cm).
-        Isso dá margem para descer os óculos da ponte do nariz (landmark 168)
-        até à linha dos olhos sem precisar de outros controlos.
-      */}
-      <RangeSlider
-        output
-        label={tt("arEyewear.calibrate.sliders.nudgeY.label")}
-        helpText={tt("arEyewear.calibrate.sliders.nudgeY.help")}
-        min={-0.15}
-        max={0.15}
-        step={0.005}
-        value={cal.wearY}
-        onChange={setField("wearY")}
-        suffix={formatCm(cal.wearY)}
-      />
-      <RangeSlider
-        output
-        label={tt("arEyewear.calibrate.sliders.depth.label")}
-        helpText={tt("arEyewear.calibrate.sliders.depth.help")}
-        min={-0.05}
-        max={0.05}
-        step={0.001}
-        value={cal.wearZ}
-        onChange={setField("wearZ")}
-        suffix={formatCm(cal.wearZ)}
-      />
-      <RangeSlider
-        output
-        label={tt("arEyewear.calibrate.sliders.nudgeX.label")}
-        helpText={tt("arEyewear.calibrate.sliders.nudgeX.help")}
-        min={-0.05}
-        max={0.05}
-        step={0.001}
-        value={cal.wearX}
-        onChange={setField("wearX")}
-        suffix={formatCm(cal.wearX)}
-      />
-      <RangeSlider
-        output
-        label={tt("arEyewear.calibrate.sliders.scale.label")}
-        helpText={tt("arEyewear.calibrate.sliders.scale.help")}
-        min={0.5}
-        max={1.8}
-        step={0.01}
-        value={cal.scale}
-        onChange={setField("scale")}
-        suffix={`${Math.round(cal.scale * 100)}%`}
-      />
     </BlockStack>
   );
-}
-
-/**
- * Formata offsets expressos em unidades de âncora da MindAR (≈14 cm/unit em mundo).
- * Mostrar em cm é mais intuitivo para o lojista do que mm ou fracções.
- */
-function formatCm(n) {
-  const cm = n * 14;
-  const rounded = Math.round(cm * 10) / 10;
-  const sign = rounded > 0 ? "+" : "";
-  return `${sign}${rounded.toFixed(1)} cm`;
 }
 
 function FaceSilhouette() {

@@ -553,14 +553,13 @@ export async function setVariantArGlbMetafield(admin, variantId, glbUrl) {
 /**
  * Metafield de calibração do modelo 3D no widget AR.
  * namespace: omafit / key: ar_calibration / type: json / PRODUCT + PRODUCTVARIANT.
- * Valores (todos opcionais, clamped pelos sliders do admin):
- *   rx, ry, rz   → graus (defaults: 0, 0, 0 — GLB na sua orientação nativa;
- *                          lojista calibra visualmente no admin)
- *   bridgeY      → retido no schema por compatibilidade; IGNORADO pelo pipeline.
- *   wearX        → unidades de âncora (±0.1 ≈ ±1.4 cm) — offset horizontal.
- *   wearY        → unidades de âncora (±0.15 ≈ ±2.1 cm) — ÚNICO controlo vertical.
- *   wearZ        → unidades de âncora (±0.1 ≈ ±1.4 cm) — afastar/aproximar.
- *   scale        → multiplicador (default 1; a largura base já ≈ face-width).
+ * Valores (todos opcionais, clamped em `sanitizeArCalibrationInput`):
+ *   rx, ry, rz   → graus (defaults: 0, 0, 0) — **único ajuste exposto no admin**
+ *                  na página "Calibrar"; alinhado ao `calibRot` do widget.
+ *   bridgeY      → retido no schema por compatibilidade; ignorado pelo pipeline.
+ *   wearX, wearY, wearZ → defaults por tipo de acessório (pulseira/óculos/…);
+ *                          não editáveis no admin — repostos ao guardar.
+ *   scale        → default por tipo; não editável no admin.
  */
 const AR_CALIBRATION_METAFIELD = {
   namespace: "omafit",
@@ -655,7 +654,7 @@ export async function ensureArCalibrationMetafieldDefinition(admin) {
       namespace: AR_CALIBRATION_METAFIELD.namespace,
       key: AR_CALIBRATION_METAFIELD.key,
       description:
-        "Ajuste fino (rotação, altura, profundidade, tamanho) do modelo 3D exibido no provador AR Omafit.",
+        "Rotação fina (rx, ry, rz) do modelo 3D no provador AR Omafit. Posição e escala usam valores por defeito do tipo de acessório.",
       type: AR_CALIBRATION_METAFIELD.type,
       ownerType: "PRODUCT",
     },
@@ -664,7 +663,7 @@ export async function ensureArCalibrationMetafieldDefinition(admin) {
       namespace: AR_CALIBRATION_METAFIELD.namespace,
       key: AR_CALIBRATION_METAFIELD.key,
       description:
-        "Ajuste fino do modelo 3D por variante (sobrepõe a calibração do produto).",
+        "Rotação fina (rx, ry, rz) do modelo 3D por variante no provador AR Omafit. Posição e escala: valores por defeito do tipo.",
       type: AR_CALIBRATION_METAFIELD.type,
       ownerType: "PRODUCTVARIANT",
     },

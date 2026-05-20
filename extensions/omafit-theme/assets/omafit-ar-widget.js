@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-scale-slider-v31";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-nose-bridge-v32";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -9064,8 +9064,8 @@ async function runArSession({
         : glassesPivotConfig;
 
     /**
-     * Deslocamento horizontal/vertical do **centro interpupilar** vs âncora 168,
-     * somado a `wearPosition` cada frame (translação; não usar só quaternion para lateral).
+     * Translação do `glassesTrackingWrap` na **ponte nasal** (landmark 168), alinhada à
+     * origem canónica do GLB (entre as lentes) e à âncora MindAR. IPD (33/263) só para escala.
      * Opt-out: `data-ar-glasses-eye-midpoint-align="0"`. Inactivo: manual MindAR, estrutural,
      * geometria, `data-ar-glasses-cheek-orthogonal-basis="1"`.
      */
@@ -10668,53 +10668,44 @@ async function runArSession({
                   /**
                    * Rotação: 3×3 de `parentInv*faceWorld` (mesma pose que a malha 468 suavizada).
                    * (Evitar `faceWorld×lmBasis` no wrap: a composição alterava o eixo e a percepção
-                   * de escala/virado.) Translação: ponto interpupilar em mundo → local do wrap;
+                   * de escala/virado.) Translação: ponte nasal (LM 168) em mundo → local do wrap;
                    * +Z de profundidade: coluna 2 de `fa.basis` no referencial do pai.
                    * O bind glTF→MindAR fica no `glassesStaticBindWrap`.
                    */
                   fa.q.setFromRotationMatrix(fa.basis);
                   glassesTrackingWrap.quaternion.copy(fa.q);
-                  const okMid = (() => {
+                  const okBridge = (() => {
                     if (!lmLoc) return false;
-                    const smR0 = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
-                    if (
-                      smR0 &&
-                      Number.isFinite(smR0.x) &&
-                      Number.isFinite(smR0.y) &&
-                      Number.isFinite(smR0.z)
-                    ) {
-                      fa.eyeR.set(smR0.x, smR0.y, smR0.z);
-                    } else {
-                      const raw = lmLoc[OMAFIT_FACE_LM_EYE_R_OUT];
+                    const pickLm = (idx, out) => {
+                      const p = st.lmSmoother?.get(idx);
+                      if (
+                        p &&
+                        Number.isFinite(p.x) &&
+                        Number.isFinite(p.y) &&
+                        Number.isFinite(p.z)
+                      ) {
+                        out.set(p.x, p.y, p.z);
+                        return true;
+                      }
+                      const raw = lmLoc[idx];
                       if (!raw) return false;
                       if (typeof raw.length === "number" && raw.length >= 3) {
-                        fa.eyeR.set(raw[0], raw[1], raw[2]);
-                      } else if (typeof raw.x === "number") {
-                        fa.eyeR.set(raw.x, raw.y, Number.isFinite(raw.z) ? raw.z : 0);
-                      } else return false;
-                    }
-                    const smL0 = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
-                    if (
-                      smL0 &&
-                      Number.isFinite(smL0.x) &&
-                      Number.isFinite(smL0.y) &&
-                      Number.isFinite(smL0.z)
-                    ) {
-                      fa.eyeL.set(smL0.x, smL0.y, smL0.z);
-                    } else {
-                      const rawL = lmLoc[OMAFIT_FACE_LM_EYE_L_OUT];
-                      if (!rawL) return false;
-                      if (typeof rawL.length === "number" && rawL.length >= 3) {
-                        fa.eyeL.set(rawL[0], rawL[1], rawL[2]);
-                      } else if (typeof rawL.x === "number") {
-                        fa.eyeL.set(rawL.x, rawL.y, Number.isFinite(rawL.z) ? rawL.z : 0);
-                      } else return false;
-                    }
-                    fa.midMetric.addVectors(fa.eyeR, fa.eyeL).multiplyScalar(0.5);
+                        out.set(raw[0], raw[1], raw[2]);
+                        return true;
+                      }
+                      if (typeof raw.x === "number") {
+                        out.set(raw.x, raw.y, Number.isFinite(raw.z) ? raw.z : 0);
+                        return true;
+                      }
+                      return false;
+                    };
+                    if (!pickLm(OMAFIT_FACE_LM_EYE_R_OUT, fa.eyeR)) return false;
+                    if (!pickLm(OMAFIT_FACE_LM_EYE_L_OUT, fa.eyeL)) return false;
+                    if (!pickLm(OMAFIT_FACE_LM_NOSE_BRIDGE, fa.midMetric)) return false;
                     fa.midW.copy(fa.midMetric).applyMatrix4(fa.faceWorld);
                     return true;
                   })();
-                  if (okMid && st.glassesEyeMidpointAlign && faceAlignParent) {
+                  if (okBridge && st.glassesEyeMidpointAlign && faceAlignParent) {
                     glassesTrackingWrap.position.copy(fa.midW);
                     faceAlignParent.worldToLocal(glassesTrackingWrap.position);
                     const ce = fa.basis.elements;
@@ -10723,8 +10714,8 @@ async function runArSession({
                     fa.zFaceLocal.transformDirection(fa.parentInv);
                     const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
                     const calWearZ = Number.isFinite(initialFaceCal.wearZ) ? initialFaceCal.wearZ : 0;
-                    const df = Math.max(0, baseDepth + calWearZ);
-                    if (df > 0) {
+                    const df = baseDepth + calWearZ;
+                    if (Math.abs(df) > 1e-6) {
                       glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
                     }
                     
@@ -10761,24 +10752,25 @@ async function runArSession({
                     /* noop */
                   }
                   {
-                    // v22: ZERO offsets — posição pura do glassesTrackingWrap (ponto médio dos olhos)
                     glasses.position.set(0, 0, 0);
                     if (!st.positionLogged) {
                       st.positionLogged = true;
-                      console.log("[omafit-ar] glasses position v22 (ZERO offsets, eye-center aligned)", {
+                      console.log("[omafit-ar] glasses position v32 (ponte nasal 168, origem GLB entre lentes)", {
                         glassesTrackingWrapPosition: {
                           x: glassesTrackingWrap.position.x.toFixed(4),
                           y: glassesTrackingWrap.position.y.toFixed(4),
                           z: glassesTrackingWrap.position.z.toFixed(4),
                         },
                         glassesDepthForwardM: st.glassesDepthForwardM,
+                        calWearZ: Number.isFinite(initialFaceCal.wearZ) ? initialFaceCal.wearZ : 0,
                         glassesLocalPosition: {
                           x: glasses.position.x.toFixed(4),
                           y: glasses.position.y.toFixed(4),
                           z: glasses.position.z.toFixed(4),
                         },
-                        eyeLandmarks: { right: 33, left: 263 },
-                        hint: "v22: Alinhamento direto ao ponto médio dos olhos. Debug: ?omafit_ar_glasses_eye_debug=1",
+                        positionLandmark: OMAFIT_FACE_LM_NOSE_BRIDGE,
+                        scaleLandmarks: { right: OMAFIT_FACE_LM_EYE_R_OUT, left: OMAFIT_FACE_LM_EYE_L_OUT },
+                        hint: "Origem do wrap = ponte 168; IPD 33/263 só para escala. Debug: ?omafit_ar_glasses_eye_debug=1",
                       });
                     }
                   }

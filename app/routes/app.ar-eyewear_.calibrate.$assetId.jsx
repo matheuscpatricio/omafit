@@ -423,7 +423,7 @@ export default function ArEyewearCalibratePage() {
     }
     const hasRotationChanges = cal.rx !== saved.rx || cal.ry !== saved.ry || cal.rz !== saved.rz;
     if (data.accessoryType === "glasses") {
-      return hasRotationChanges || cal.wearZ !== saved.wearZ;
+      return hasRotationChanges || cal.wearZ !== saved.wearZ || cal.scale !== saved.scale;
     }
     return hasRotationChanges;
   }, [cal, initialCalibration, data.defaultCalibration, data.accessoryType]);
@@ -1732,6 +1732,30 @@ function DepthSlider({ label, helpText, value, onChange }) {
   );
 }
 
+/** Óculos: escala (tamanho do óculos) com multiplicador 0.5x a 2.0x. */
+function ScaleSlider({ label, helpText, value, onChange }) {
+  const clamped = Math.max(0.5, Math.min(2.0, Number(value) || 1));
+  const percentage = Math.round(clamped * 100);
+  return (
+    <BlockStack gap="200">
+      <RangeSlider
+        output
+        label={label}
+        helpText={helpText}
+        min={0.5}
+        max={2.0}
+        step={0.05}
+        value={clamped}
+        onChange={(v) => {
+          const raw = Array.isArray(v) ? v[0] : v;
+          onChange(Number(raw));
+        }}
+        suffix={`${percentage}%`}
+      />
+    </BlockStack>
+  );
+}
+
 function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
   const isBracelet = accessoryType === "bracelet";
   const isGlasses = accessoryType === "glasses";
@@ -1812,6 +1836,15 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
       {isGlasses && (
         <>
           <Divider />
+          <ScaleSlider
+            label={t("arEyewear.calibrate.sliders.scale.label") || "Tamanho do óculos"}
+            helpText={
+              t("arEyewear.calibrate.sliders.scale.help") ||
+              "Ajuste o tamanho do óculos. 100% é o tamanho automático baseado no rosto."
+            }
+            value={cal.scale}
+            onChange={setField("scale")}
+          />
           <DepthSlider
             label={t("arEyewear.calibrate.sliders.depth.label") || "Profundidade"}
             helpText={

@@ -651,8 +651,10 @@ export async function ensureArCalibrationMetafieldDefinition(admin) {
   return { ok: true };
 }
 
-async function setArCalibrationOnOwner(admin, ownerId, jsonValue) {
-  const value = JSON.stringify(sanitizeArCalibrationInput(jsonValue));
+async function setArCalibrationOnOwner(admin, ownerId, jsonValue, accessoryType) {
+  const value = JSON.stringify(
+    sanitizeArCalibrationInput(jsonValue, accessoryType),
+  );
   const response = await admin.graphql(METAFIELD_SET, {
     variables: {
       metafields: [
@@ -676,12 +678,32 @@ async function setArCalibrationOnOwner(admin, ownerId, jsonValue) {
   return json?.data?.metafieldsSet?.metafields?.[0] || null;
 }
 
-export async function setProductArCalibrationMetafield(admin, productId, jsonValue) {
-  return setArCalibrationOnOwner(admin, toProductGid(productId), jsonValue);
+export async function setProductArCalibrationMetafield(
+  admin,
+  productId,
+  jsonValue,
+  accessoryType,
+) {
+  return setArCalibrationOnOwner(
+    admin,
+    toProductGid(productId),
+    jsonValue,
+    accessoryType,
+  );
 }
 
-export async function setVariantArCalibrationMetafield(admin, variantId, jsonValue) {
-  return setArCalibrationOnOwner(admin, toVariantGid(variantId), jsonValue);
+export async function setVariantArCalibrationMetafield(
+  admin,
+  variantId,
+  jsonValue,
+  accessoryType,
+) {
+  return setArCalibrationOnOwner(
+    admin,
+    toVariantGid(variantId),
+    jsonValue,
+    accessoryType,
+  );
 }
 
 const GET_PRODUCT_AR_CALIBRATION = `#graphql
@@ -717,10 +739,15 @@ export async function fetchProductArCalibrationContext(admin, productId) {
   const json = await response.json();
   const product = json?.data?.product;
   if (!product) return null;
+  const accessoryType = detectAccessoryType({
+    productType: product.productType || "",
+    tags: Array.isArray(product.tags) ? product.tags : [],
+    categoryFullName: product.category?.fullName || "",
+  });
   const parseCal = (v) => {
     if (!v) return null;
     try {
-      return sanitizeArCalibrationInput(JSON.parse(String(v)));
+      return sanitizeArCalibrationInput(JSON.parse(String(v)), accessoryType);
     } catch {
       return null;
     }

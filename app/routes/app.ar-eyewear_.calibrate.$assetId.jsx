@@ -30,7 +30,11 @@ import {
   defaultArCalibration,
   buildCalibrationForRotationEditor,
   snapArRotationPresetDeg,
+  snapArRotationFineDeg,
   AR_ROTATION_PRESET_DEGREES,
+  AR_GLASSES_ROTATION_MIN_DEG,
+  AR_GLASSES_ROTATION_MAX_DEG,
+  AR_GLASSES_ROTATION_STEP_DEG,
 } from "../ar-calibration.shared.js";
 import {
   detectAccessoryType,
@@ -224,16 +228,26 @@ export async function action({ request, params }) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const calibration = sanitizeArCalibrationInput(body?.calibration);
+  const calibration = sanitizeArCalibrationInput(body?.calibration, row.accessory_type);
   const target = String(body?.target || "product").toLowerCase();
   const variantGid = body?.variantGid ? String(body.variantGid) : "";
 
   try {
     await ensureArCalibrationMetafieldDefinition(admin);
     if (target === "variant" && variantGid) {
-      await setVariantArCalibrationMetafield(admin, variantGid, calibration);
+      await setVariantArCalibrationMetafield(
+        admin,
+        variantGid,
+        calibration,
+        row.accessory_type,
+      );
     } else {
-      await setProductArCalibrationMetafield(admin, row.product_id, calibration);
+      await setProductArCalibrationMetafield(
+        admin,
+        row.product_id,
+        calibration,
+        row.accessory_type,
+      );
     }
     // Sincroniza o metafield `omafit.ar_accessory_type` com o tipo guardado
     // em BD (re-detecção feita no loader). Assim o Liquid serve sempre o
@@ -367,18 +381,20 @@ export default function ArEyewearCalibratePage() {
 
   const setField = (field) => (val) => {
     const v = Array.isArray(val) ? val[0] : val;
-    setCal((prev) => sanitizeArCalibrationInput({ ...prev, [field]: Number(v) }));
+    setCal((prev) =>
+      sanitizeArCalibrationInput({ ...prev, [field]: Number(v) }, data.accessoryType),
+    );
   };
 
   const handleReset = () => {
-    setCal(sanitizeArCalibrationInput({ ...data.defaultCalibration }));
+    setCal(sanitizeArCalibrationInput({ ...data.defaultCalibration }, data.accessoryType));
   };
 
   const handleSave = () => {
     const toSave =
       data.accessoryType === "bracelet"
-        ? sanitizeArCalibrationInput({ ...cal, rx: 0, ry: 0 })
-        : sanitizeArCalibrationInput(cal);
+        ? sanitizeArCalibrationInput({ ...cal, rx: 0, ry: 0 }, data.accessoryType)
+        : sanitizeArCalibrationInput(cal, data.accessoryType);
     fetcher.submit(
       {
         calibration: toSave,
@@ -1660,10 +1676,37 @@ function RotationPresetSlider({ label, helpText, value, onChange }) {
   );
 }
 
+/** Óculos: rotação fina −180°…180° em passos de 5°. */
+function RotationFineSlider({ label, helpText, value, onChange }) {
+  const snapped = snapArRotationFineDeg(value);
+  return (
+    <BlockStack gap="200">
+      <RangeSlider
+        output
+        label={label}
+        helpText={helpText}
+        min={AR_GLASSES_ROTATION_MIN_DEG}
+        max={AR_GLASSES_ROTATION_MAX_DEG}
+        step={AR_GLASSES_ROTATION_STEP_DEG}
+        value={snapped}
+        onChange={(v) => {
+          const raw = Array.isArray(v) ? v[0] : v;
+          onChange(snapArRotationFineDeg(raw));
+        }}
+        suffix={`${snapped}°`}
+      />
+    </BlockStack>
+  );
+}
+
 function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
   const isBracelet = accessoryType === "bracelet";
+  const isGlasses = accessoryType === "glasses";
+  const RotationSlider = isGlasses ? RotationFineSlider : RotationPresetSlider;
   const resetRotation = () => {
-    setCal((prev) => sanitizeArCalibrationInput({ ...prev, rx: 0, ry: 0, rz: 0 }));
+    setCal((prev) =>
+      sanitizeArCalibrationInput({ ...prev, rx: 0, ry: 0, rz: 0 }, accessoryType),
+    );
   };
   /**
    * Tenta primeiro a key tipada (sibling `${leaf}ByType.<type>`) e só cai
@@ -1715,19 +1758,19 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
           {t("arEyewear.calibrate.sliders.rotationReset") || "Reiniciar rotação"}
         </Button>
       </InlineStack>
-      <RotationPresetSlider
+      <RotationSlider
         label={tt("arEyewear.calibrate.sliders.tilt.label")}
         helpText={tt("arEyewear.calibrate.sliders.tilt.help")}
         value={cal.rx}
         onChange={setField("rx")}
       />
-      <RotationPresetSlider
+      <RotationSlider
         label={tt("arEyewear.calibrate.sliders.yaw.label")}
         helpText={tt("arEyewear.calibrate.sliders.yaw.help")}
         value={cal.ry}
         onChange={setField("ry")}
       />
-      <RotationPresetSlider
+      <RotationSlider
         label={tt("arEyewear.calibrate.sliders.roll.label")}
         helpText={tt("arEyewear.calibrate.sliders.roll.help")}
         value={cal.rz}

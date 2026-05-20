@@ -594,15 +594,13 @@ export default function ArEyewearCalibratePage() {
 
 /**
  * Preview 3D com Three.js puro — usa EXATAMENTE a mesma cadeia de transformações
- * que o widget da loja (mesma versão de three, mesma ordem Euler YXZ, mesmo eixo
- * de rotação por componente). Assim, o que o lojista vê aqui é o que o cliente
- * vai ver no AR.
+ * que o widget da loja v21 (glassesSimpleFaceOnly: bind Ry 180°, sem Tripo).
  *
  * Hierarquia mínima (idêntica ao widget):
  *   scene                                           (widget: anchor.group)
  *     → wearPosition(group, pos=wearX/Y/Z)
- *       → calibRot(group, Euler(rx, ry, rz, "YXZ"))
- *         → glb (bbox centrada na origem e escalado para ~face-width * cal.scale)
+ *       → calibRot(group, rotateOnWorldAxis Y→X→Z)
+ *         → glb (bind Ry 180°, bbox centrada, escalado para ~face-width * cal.scale)
  *
  * SEM `centerOffset`/`bridgeY`: todo o deslocamento vertical é controlado por
  * `wearY` em unidades de âncora. A versão anterior tinha `centerOffset` com
@@ -1264,40 +1262,23 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
               }
 
               /**
-               * Óculos: mesmo pipeline que o widget — contentor com
-               * quaternion canônico determinístico (PCA + rim heuristic).
-               * Se a confiança for baixa, fallback: Y-90° X 180° Z 0.
+               * Óculos: alinhado ao widget v21 (glassesSimpleFaceOnly) — bind simples
+               * Ry 180° sem contentor Tripo. Isto garante que o preview mostre EXACTAMENTE
+               * o que o widget renderiza, evitando divergência entre calibração admin e AR.
                */
               if (accessoryType === "glasses") {
                 root.rotation.set(0, 0, 0);
                 root.quaternion.identity();
+                const ax = new THREE.Vector3(1, 0, 0);
+                const ay = new THREE.Vector3(0, 1, 0);
+                const az = new THREE.Vector3(0, 0, 1);
+                // Bind fixo Ry 180° (paridade widget glassesSimpleFaceOnly)
+                root.rotateOnWorldAxis(ay, Math.PI);
+                root.updateMatrix();
                 root.updateMatrixWorld(true);
-                const tripOff = new THREE.Group();
-                tripOff.name = "omafit-ar-tripto-offset";
-                let canon = null;
-                try {
-                  canon = computeGlassesCanonicalOffsetQuat(THREE, root);
-                } catch (err) {
-                  console.warn("[omafit-calibrate] canonical quat falhou:", err?.message || err);
-                }
-                if (canon && canon.quat) {
-                  tripOff.quaternion.copy(canon.quat);
-                  tripOff.updateMatrix();
-                  console.log("[omafit-calibrate] canonical offset quat (auto, determinístico)", {
-                    widthAxis: canon.detected?.widthAxisIdx,
-                    heightAxis: canon.detected?.heightAxisIdx,
-                    depthAxis: canon.detected?.depthAxisIdx,
-                    depthFrontSign: canon.detected?.depthFrontSign,
-                    rimHeightSign: canon.rimHeightSign,
-                    confidence: canon.detected?.confidence,
-                  });
-                } else {
-                  omafitApplyGlassesTripoOffsetContainer(THREE, tripOff, -90, 180, 0);
-                  console.warn("[omafit-calibrate] canonical confiança baixa — fallback Y-90 X180");
-                }
-                tripOff.add(root);
-                s.tripoOffsetGroup = tripOff;
-                calibRot.add(tripOff);
+                console.log("[omafit-calibrate] glasses bind Ry 180° (widget parity v21)");
+                s.tripoOffsetGroup = null;
+                calibRot.add(root);
               } else if (accessoryType === "bracelet" && glbRoot) {
                 s.tripoOffsetGroup = null;
                 calibRot.add(glbRoot);

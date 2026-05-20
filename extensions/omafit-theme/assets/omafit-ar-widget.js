@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-18-bracelet-rigid-slot-v13";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-19-glasses-position-fix-v21";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -505,9 +505,9 @@ try {
 /**
  * Quando `true`, **não** cria malha facial 468 só-depth nem extensões temporais (óculos).
  * Serve para isolar problemas: óculos **dentro da cara** → provável Z; **invisível** → escala/rotação.
- * Manter `false` em produção.
+ * Temporariamente `true` até escala/posição estarem validadas; voltar a `false` depois.
  */
-const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = false;
+const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = true;
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -855,8 +855,8 @@ const OMAFIT_GLASSES_SCALE_IPD_MUL = 1.5;
 /** IPD em **espaço mundo da face**: `distanceTo` após `applyMatrix4(face.matrixWorld)` × este factor no mesh. */
 const OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL = 2;
 /** Clamp absoluto na escala uniforme do mesh (óculos após IPD×factor). */
-const OMAFIT_GLASSES_MESH_SCALE_ABS_MIN = 0.03;
-const OMAFIT_GLASSES_MESH_SCALE_ABS_MAX = 22;
+const OMAFIT_GLASSES_MESH_SCALE_ABS_MIN = 0.04;
+const OMAFIT_GLASSES_MESH_SCALE_ABS_MAX = 2.5;
 /**
  * Avanço +Z local (m) no espaço do rosto: `Vector3(0,0,m).applyQuaternion(model.quaternion)` + `position.add`.
  * Aplicado após `glasses.position` / `glasses.quaternion` vindos da faceMatrix.
@@ -6725,6 +6725,51 @@ async function startMindARFaceWithReliableCamera(mindarThree, videoIdealBlock) {
 }
 
 /**
+ * Depois do `_resize()` do MindAR, garante object-fit **cover** em pixels no
+ * `<video>` e no canvas WebGL com o **mesmo** rect (paridade hand path).
+ * Não usar `width/height:100%` no canvas — estica ao aspecto do contentor e
+ * o GLB sai do frustum; aqui escala pelo aspecto do stream e centra com overflow
+ * cortado pelo `overflow:hidden` do host.
+ * @returns {boolean}
+ */
+function omafitMindARFaceCoverLayout(mindarHost, mindarThree) {
+  if (!mindarHost) return false;
+  const rect = mindarHost.getBoundingClientRect();
+  const cw = Math.max(1, Math.round(rect.width));
+  const ch = Math.max(1, Math.round(rect.height));
+  const video = mindarHost.querySelector?.("video");
+  if (!video) return false;
+  const vw = Math.max(0, Number(video.videoWidth) || 0);
+  const vh = Math.max(0, Number(video.videoHeight) || 0);
+  if (vw < 2 || vh < 2) return false;
+  const scale = Math.max(cw / vw, ch / vh);
+  const dw = Math.ceil(vw * scale);
+  const dh = Math.ceil(vh * scale);
+  const left = Math.round((cw - dw) / 2);
+  const top = Math.round((ch - dh) / 2);
+  const patchEl = (el, zIndex) => {
+    if (!el) return;
+    Object.assign(el.style, {
+      position: "absolute",
+      width: `${dw}px`,
+      height: `${dh}px`,
+      left: `${left}px`,
+      top: `${top}px`,
+      right: "auto",
+      bottom: "auto",
+      margin: "0",
+      maxWidth: "none",
+      maxHeight: "none",
+    });
+    if (zIndex != null) el.style.zIndex = String(zIndex);
+  };
+  patchEl(video, 1);
+  patchEl(mindarThree?.renderer?.domElement, 2);
+  patchEl(mindarThree?.cssRenderer?.domElement, 3);
+  return true;
+}
+
+/**
  * MindAR coloca o `<video>` da câmara atrás do canvas (z-index -2). O fundo só
  * se vê se o WebGL limpar com **alpha 0**; caso contrário o canvas tapa o vídeo
  * com preto opaco — o GLB continua visível, mas o feed da câmara desaparece.
@@ -6760,9 +6805,14 @@ function fixMindARFaceVideoBehindCanvas(THREE, mindarThree, mindarHost, projecti
       video.style.pointerEvents = "none";
       void video.play?.().catch?.(() => {});
     }
+    try {
+      omafitMindARFaceCoverLayout(mindarHost, mindarThree);
+    } catch {
+      /* ignore */
+    }
     /**
-     * Canvas + vídeo com as mesmas dimensões intrínsecas, `camera.aspect` e
-     * FOV alinhado à webcam — ver `omafitSyncMindARFaceProjection`.
+     * Projeção: buffer WebGL = stream; CSS cover em pixels (acima) — ver
+     * `omafitSyncMindARFaceProjection` (não usar aspect do contentor no frustum).
      */
     try {
       if (THREE) {
@@ -6948,6 +6998,13 @@ async function runArSession({
   productId,
 }) {
   colContent.innerHTML = "";
+  const arSessionLayoutProfile = omafitResolveArDeviceRuntimeProfile({});
+  const arSessionIsDesktop = arSessionLayoutProfile.formFactor === "desktop";
+  let headerDisplayBeforeAr = "";
+  if (arSessionIsDesktop && header) {
+    headerDisplayBeforeAr = header.style.display || "";
+    header.style.display = "none";
+  }
   try {
     shell.__omafitArSidebarApi?.setStep?.("ar");
     shell.__omafitArHeroApi?.setBlur?.(true);
@@ -6959,6 +7016,28 @@ async function runArSession({
 
   mainRow.style.flexDirection = "column";
   mainRow.style.padding = "0";
+  /** Mesmo layout que pulseiras/relógios: área da câmara ocupa o popup acima da barra inferior. */
+  try {
+    shell.style.display = "flex";
+    shell.style.flexDirection = "column";
+    shell.style.minHeight = "0";
+    shell.style.height = "100%";
+  } catch {
+    /* ignore */
+  }
+  mainRow.style.flex = "1 1 0";
+  mainRow.style.minHeight = "0";
+  try {
+    const contentOuter = mainRow.parentElement;
+    if (contentOuter && contentOuter !== shell) {
+      contentOuter.style.flex = "1 1 0";
+      contentOuter.style.minHeight = "0";
+      contentOuter.style.display = "flex";
+      contentOuter.style.flexDirection = "column";
+    }
+  } catch {
+    /* ignore */
+  }
 
   const arWrap = el("div", {
     style: {
@@ -6970,7 +7049,7 @@ async function runArSession({
       justifyContent: "flex-start",
       width: "100%",
       boxSizing: "border-box",
-      background: "#111",
+      background: "#000",
       position: "relative",
     },
   });
@@ -6987,11 +7066,12 @@ async function runArSession({
    * depois do modal estabilizar (ver `lateMindarResizeTimerIds`).
    */
   const arFit = el("div", {
+    className: "omafit-ar-fit",
     style: {
       position: "relative",
       flex: "1 1 0",
       width: "100%",
-      minHeight: "min(520px, 62dvh)",
+      minHeight: "0",
       overflow: "hidden",
       background: "#000",
       boxSizing: "border-box",
@@ -7309,9 +7389,10 @@ async function runArSession({
    */
   colContent.style.overflow = "hidden";
   colContent.style.overflowX = "hidden";
-  colContent.style.flex = "1";
+  colContent.style.flex = "1 1 0";
   colContent.style.display = "flex";
   colContent.style.flexDirection = "column";
+  colContent.style.minHeight = "0";
   colContent.appendChild(arWrap);
   /**
    * Miniaturas + carrinho: irmãos de `arWrap` dentro de `colContent` (coluna
@@ -7347,6 +7428,9 @@ async function runArSession({
   let removeGlassesScreenRotPanel = null;
 
   const cleanup = () => {
+    if (arSessionIsDesktop && header) {
+      header.style.display = headerDisplayBeforeAr;
+    }
     try {
       arFit.style.transform = "";
       arFit.style.transformOrigin = "";
@@ -7766,6 +7850,25 @@ async function runArSession({
       if (typeof v.error === "string" && Object.keys(v).length <= 2) return null;
       return v;
     }
+    const _faceCalWorldAxes = {
+      X: new THREE.Vector3(1, 0, 0),
+      Y: new THREE.Vector3(0, 1, 0),
+      Z: new THREE.Vector3(0, 0, 1),
+    };
+    /** Rotação de calibração loja (Y→X→Z) num grupo Three.js — face path (óculos). */
+    function applyThreeGroupCalibRot(group, cal) {
+      if (!group) return;
+      group.quaternion.identity();
+      const rxDeg = Number((cal && cal.rx) ?? 0) || 0;
+      const ryDeg = Number((cal && cal.ry) ?? 0) || 0;
+      const rzDeg = Number((cal && cal.rz) ?? 0) || 0;
+      if (ryDeg) group.rotateOnWorldAxis(_faceCalWorldAxes.Y, (ryDeg * Math.PI) / 180);
+      if (rxDeg) group.rotateOnWorldAxis(_faceCalWorldAxes.X, (rxDeg * Math.PI) / 180);
+      if (rzDeg) group.rotateOnWorldAxis(_faceCalWorldAxes.Z, (rzDeg * Math.PI) / 180);
+    }
+    const initialFaceCal = parseOmafitCalibrationRaw(
+      arCfg?.dataset?.arOmafitCalibration || "",
+    );
     function applyOmafitCalibration(cal, el) {
       const target = el || arCfg;
       if (!target || !cal || typeof cal !== "object") return false;
@@ -7925,9 +8028,9 @@ async function runArSession({
     const glassesDepthForwardM =
       accessoryType === "glasses"
         ? (() => {
-            const v = Number(String(cfgAttr("arGlassesDepthForwardM", "0.025")).trim());
-            if (!Number.isFinite(v)) return 0.025;
-            return THREE.MathUtils.clamp(v, 0.015, 0.04);
+            const v = Number(String(cfgAttr("arGlassesDepthForwardM", "0.015")).trim());
+            if (!Number.isFinite(v)) return 0.015;
+            return THREE.MathUtils.clamp(v, 0, 0.08);
           })()
         : 0;
     /**
@@ -7938,8 +8041,8 @@ async function runArSession({
     const glassesNoseAlignOffsetXM =
       accessoryType === "glasses"
         ? (() => {
-            const v = Number(String(cfgAttr("arGlassesNoseAlignOffsetXM", "-0.03")).trim());
-            if (!Number.isFinite(v)) return -0.03;
+            const v = Number(String(cfgAttr("arGlassesNoseAlignOffsetXM", "0")).trim());
+            if (!Number.isFinite(v)) return 0;
             return THREE.MathUtils.clamp(v, -0.08, 0.04);
           })()
         : 0;
@@ -7951,14 +8054,15 @@ async function runArSession({
     /**
      * Offset estrutural empírico do mesh `glasses` após pose + bump Z frontal (faceMatrix); metros locais XYZ.
      * Defaults afinados ao GLB actual (centro / nariz / frente). Attr: `data-ar-glasses-empirical-align-m`.
+     * v21: reduzidos para posicionamento mais próximo do rosto (antes: -0.035 -0.04 0.02).
      */
     const glassesEmpiricalAlignM =
       accessoryType === "glasses"
         ? parseXyzMeters(
-            cfgAttr("arGlassesEmpiricalAlignM", "-0.035 -0.04 0.02"),
-            -0.035,
-            -0.04,
-            0.02,
+            cfgAttr("arGlassesEmpiricalAlignM", "0 -0.01 -0.005"),
+            0,
+            -0.01,
+            -0.005,
           )
         : { x: 0, y: 0, z: 0 };
     /** Multiplicador de estilo na largura anatómica (automático: IPD×equiv×factor/faceScale; antes era bochechas). */
@@ -8064,6 +8168,7 @@ async function runArSession({
       .toLowerCase();
     const faceProjectionOpts = {
       fovDeg: faceCameraFovDeg,
+      mirrorSelfie: !disableFaceMirror,
       strictVideoCanvasPixelMatch: faceProjectionStrict,
       lockWebcamFov63:
         accessoryType === "glasses" &&
@@ -8275,16 +8380,20 @@ async function runArSession({
      */
     arResizeObserver = new ResizeObserver(triggerMindarResize);
     arResizeObserver.observe(arWrap);
+    arResizeObserver.observe(arFit);
     arResizeObserver.observe(mindarHost);
     requestAnimationFrame(triggerMindarResize);
     requestAnimationFrame(() => requestAnimationFrame(triggerMindarResize));
-    /** Timers espalhados até 2.5s para cobrir:
+    /** Timers espalhados até 2.5s (desktop até 4.5s) para cobrir:
      *  - fade-in do modal (~350ms);
      *  - idle do layout (flexbox grid estabiliza);
      *  - iOS Safari que pode reflowar após o `<video>` receber metadata.
      *  Sem isto, o MindAR mede o container no momento errado e o vídeo
      *  fica com `top/left` fora → aparece "cortado do lado direito". */
-    for (const ms of [32, 96, 220, 500, 900, 1500, 2500]) {
+    const mindarResizeDelaysMs = arSessionIsDesktop
+      ? [32, 96, 220, 500, 900, 1500, 2500, 3500, 4500]
+      : [32, 96, 220, 500, 900, 1500, 2500];
+    for (const ms of mindarResizeDelaysMs) {
       lateMindarResizeTimerIds.push(
         setTimeout(() => {
           triggerMindarResize();
@@ -8729,6 +8838,11 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
+    /** Largura intrínseca do frame (eixo X) — normaliza escala IPD no loop. */
+    let glassesFrameWidthLocal = 1;
+    if (accessoryType === "glasses") {
+      glassesFrameWidthLocal = Math.max(sz.x, 0.001);
+    }
     if (!glassesCanonicalBlenderExport) {
       const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
       if (frontCenter) glasses.position.sub(frontCenter);
@@ -8946,7 +9060,6 @@ async function runArSession({
      */
     const glassesEyeMidpointAlign =
       accessoryType === "glasses" &&
-      !glassesSimpleFaceOnly &&
       !glassesManualMindarRig &&
       !glassesStructuralMindarRig &&
       !glassesGeometryAnchor &&
@@ -9352,8 +9465,8 @@ async function runArSession({
      *     se reduz a wearX/Y/Z em unidades de âncora (previsíveis).
      */
     /**
-     * `calibRot`: sempre identidade — rotação mundo (rx/ry/rz do metafield / canonical-fix)
-     * foi removida para não acumular com pose MindAR ou malha facial.
+     * `calibRot`: rotação de calibração do lojista (rx/ry/rz via `applyThreeGroupCalibRot`).
+     * Aplicada uma vez no load / troca de variante — não acumula com pose MindAR.
      *
      * `wearPosM`: `wearPosition.position.set`; óculos manual MindAR forçado a wear 0 nos attrs.
      * Óculos automáticos: escala interpupilar no mesh por frame.
@@ -9364,6 +9477,9 @@ async function runArSession({
     calibRot.rotation.order = "XYZ";
     calibRot.rotation.set(0, 0, 0);
     calibRot.quaternion.identity();
+    if (accessoryType === "glasses" && initialFaceCal) {
+      applyThreeGroupCalibRot(calibRot, initialFaceCal);
+    }
     calibRot.updateMatrix();
     calibRot.updateMatrixWorld(true);
     const glassesAnatomy =
@@ -9890,12 +10006,14 @@ async function runArSession({
       },
       faceProjectionOpts,
       projectionSyncLogged: false,
+      positionLogged: false,
       glassesNdcScreenLock,
       glassesNdcBlendFromMp,
       glassesLensDistortK,
       glassesNegateWearOffsetX,
       glassesEyeMidpointAlign,
       glassesSimpleFaceOnly,
+      glassesFrameWidthLocal,
       eyeMidWearSmoothed: glassesEyeMidpointAlign ? new THREE.Vector3(0, 0, 0) : null,
       eyeMidWearTarget: glassesEyeMidpointAlign ? new THREE.Vector3() : null,
       eyeMidWearZero: glassesEyeMidpointAlign ? new THREE.Vector3(0, 0, 0) : null,
@@ -10573,6 +10691,21 @@ async function runArSession({
                       glassesModelCenterOffsetM.y + glassesEmpiricalAlignM.y,
                       glassesModelCenterOffsetM.z + glassesEmpiricalAlignM.z,
                     );
+                    if (!st.positionLogged) {
+                      st.positionLogged = true;
+                      console.log("[omafit-ar] glasses position offsets v21", {
+                        glassesModelCenterOffsetM,
+                        glassesNoseAlignOffsetXM: nx0,
+                        glassesEmpiricalAlignM,
+                        glassesDepthForwardM: st.glassesDepthForwardM,
+                        finalPosition: {
+                          x: glasses.position.x.toFixed(4),
+                          y: glasses.position.y.toFixed(4),
+                          z: glasses.position.z.toFixed(4),
+                        },
+                        hint: "Ajustar via data-ar-glasses-empirical-align-m='x y z' (metros)",
+                      });
+                    }
                   }
                 } else {
                   /** Ramo legado (ex.: sem tracking wrap — GLB standardize): pose composta no alvo único. */
@@ -10653,7 +10786,11 @@ async function runArSession({
                         glassesTrackingWrap && st.glassesSimpleFaceOnly
                           ? OMAFIT_GLASSES_SCALE_IPD_MUL
                           : OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL;
-                      let scale = ipdMetric * ipdMul;
+                      const frameW =
+                        Number(st.glassesFrameWidthLocal) > 0
+                          ? st.glassesFrameWidthLocal
+                          : 1;
+                      let scale = (ipdMetric * ipdMul) / frameW;
                       scale = THREE.MathUtils.clamp(
                         scale,
                         OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,
@@ -11306,15 +11443,20 @@ async function runArSession({
       }
     }
 
-    /** 4.2) Diagnóstico: `calibRot` mantém-se identidade (sem rx/ry/rz de metafield). */
+    /** 4.2) Diagnóstico: `calibRot` com calibração loja (rx/ry/rz) quando disponível. */
     try {
       const dbgAxX = new THREE.Vector3(1, 0, 0).applyQuaternion(calibRot.quaternion);
       const dbgAxY = new THREE.Vector3(0, 1, 0).applyQuaternion(calibRot.quaternion);
       const dbgAxZ = new THREE.Vector3(0, 0, 1).applyQuaternion(calibRot.quaternion);
-      console.log("[omafit-ar] calibRot (identidade; sem rotação de calibração loja)", {
+      console.log("[omafit-ar] calibRot (óculos; calibração loja)", {
         glassesSimpleFaceOnly,
+        glassesEyeMidpointAlign,
         wearPosM: wearPosMEffective,
         accessoryMeshNormalizeScale,
+        glassesFrameWidthLocal,
+        calibrationApplied: initialFaceCal
+          ? { rx: initialFaceCal.rx, ry: initialFaceCal.ry, rz: initialFaceCal.rz }
+          : "none",
         glassesScaleIpdMul: OMAFIT_GLASSES_SCALE_IPD_MUL,
         glassesScaleIpdMetricMul: OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL,
         calibRotXinWorld: [
@@ -11464,7 +11606,14 @@ async function runArSession({
      */
     window.__omafitArSwitchGlb = async (nextUrl, cal) => {
       try {
-        if (cal && typeof cal === "object") applyOmafitCalibration(cal, arCfg);
+        if (cal && typeof cal === "object") {
+          applyOmafitCalibration(cal, arCfg);
+          if (accessoryType === "glasses") {
+            applyThreeGroupCalibRot(calibRot, cal);
+            calibRot.updateMatrix();
+            calibRot.updateMatrixWorld(true);
+          }
+        }
         try {
           const stSw = faceArEnhancementState;
           if (stSw?.microUx && !stSw.microUxDisabled) {

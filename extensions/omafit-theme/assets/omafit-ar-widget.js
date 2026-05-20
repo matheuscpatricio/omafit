@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-eye-center-v24";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-scale-slider-v31";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -10721,10 +10721,9 @@ async function runArSession({
                     fa.zFaceLocal.set(ce[8], ce[9], ce[10]);
                     if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
                     fa.zFaceLocal.transformDirection(fa.parentInv);
-                    const df = Math.max(
-                      0,
-                      Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0,
-                    );
+                    const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
+                    const calWearZ = Number.isFinite(initialFaceCal.wearZ) ? initialFaceCal.wearZ : 0;
+                    const df = Math.max(0, baseDepth + calWearZ);
                     if (df > 0) {
                       glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
                     }
@@ -10867,6 +10866,10 @@ async function runArSession({
                           ? st.glassesFrameWidthLocal
                           : 1;
                       let scale = (ipdMetric * ipdMul) / frameW;
+                      const calScale = Number.isFinite(initialFaceCal.scale) && initialFaceCal.scale > 0
+                        ? initialFaceCal.scale
+                        : 1;
+                      scale = scale * calScale;
                       scale = THREE.MathUtils.clamp(
                         scale,
                         OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,

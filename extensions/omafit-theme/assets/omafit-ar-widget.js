@@ -9077,6 +9077,17 @@ async function runArSession({
       !glassesGeometryAnchor &&
       !glassesCheekOrthogonalBasis &&
       !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesEyeMidpointAlign", "1")).trim());
+    
+    console.log("[omafit-ar] pipeline flags (v33-debug):", {
+      glassesSimpleFaceOnly,
+      glassesEyeMidpointAlign,
+      glassesStructuralMindarRig,
+      glassesGeometryAnchor,
+      glassesCheekOrthogonalBasis,
+      glassesGlbStandardize,
+      glassesCanonicalBlenderExport,
+      glassesManualMindarRig,
+    });
 
     const glassesManualTargetWidthFactor = glassesManualMindarRig
       ? (() => {

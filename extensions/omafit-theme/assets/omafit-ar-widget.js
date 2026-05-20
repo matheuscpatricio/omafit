@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-nose-bridge-v32";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-debug-v33";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -7869,6 +7869,7 @@ async function runArSession({
     const initialFaceCal = parseOmafitCalibrationRaw(
       arCfg?.dataset?.arOmafitCalibration || "",
     );
+    console.log("[omafit-ar] initialFaceCal (v33-debug):", JSON.stringify(initialFaceCal, null, 2));
     function applyOmafitCalibration(cal, el) {
       const target = el || arCfg;
       if (!target || !cal || typeof cal !== "object") return false;
@@ -10715,6 +10716,7 @@ async function runArSession({
                     const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
                     const calWearZ = Number.isFinite(initialFaceCal.wearZ) ? initialFaceCal.wearZ : 0;
                     const df = baseDepth + calWearZ;
+                    console.log("[omafit-ar] depth (v33-debug): baseDepth=", baseDepth, "calWearZ=", calWearZ, "df=", df, "initialFaceCal.wearZ=", initialFaceCal.wearZ);
                     if (Math.abs(df) > 1e-6) {
                       glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
                     }
@@ -10861,7 +10863,9 @@ async function runArSession({
                       const calScale = Number.isFinite(initialFaceCal.scale) && initialFaceCal.scale > 0
                         ? initialFaceCal.scale
                         : 1;
+                      const scaleBeforeCal = scale;
                       scale = scale * calScale;
+                      console.log("[omafit-ar] scale (v33-debug): scaleBeforeCal=", scaleBeforeCal, "calScale=", calScale, "scaleAfterCal=", scale, "initialFaceCal.scale=", initialFaceCal.scale);
                       scale = THREE.MathUtils.clamp(
                         scale,
                         OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,

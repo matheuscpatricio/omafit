@@ -35,6 +35,9 @@ import {
   AR_GLASSES_ROTATION_MIN_DEG,
   AR_GLASSES_ROTATION_MAX_DEG,
   AR_GLASSES_ROTATION_STEP_DEG,
+  AR_GLASSES_DEPTH_MIN_M,
+  AR_GLASSES_DEPTH_MAX_M,
+  AR_GLASSES_DEPTH_STEP_M,
 } from "../ar-calibration.shared.js";
 import {
   detectAccessoryType,
@@ -418,7 +421,11 @@ export default function ArEyewearCalibratePage() {
     if (data.accessoryType === "bracelet") {
       return cal.rz !== saved.rz;
     }
-    return cal.rx !== saved.rx || cal.ry !== saved.ry || cal.rz !== saved.rz;
+    const hasRotationChanges = cal.rx !== saved.rx || cal.ry !== saved.ry || cal.rz !== saved.rz;
+    if (data.accessoryType === "glasses") {
+      return hasRotationChanges || cal.wearZ !== saved.wearZ;
+    }
+    return hasRotationChanges;
   }, [cal, initialCalibration, data.defaultCalibration, data.accessoryType]);
 
   return (
@@ -1699,6 +1706,32 @@ function RotationFineSlider({ label, helpText, value, onChange }) {
   );
 }
 
+/** Óculos: profundidade (distância do rosto) em metros. */
+function DepthSlider({ label, helpText, value, onChange }) {
+  const clamped = Math.max(
+    AR_GLASSES_DEPTH_MIN_M,
+    Math.min(AR_GLASSES_DEPTH_MAX_M, Number(value) || 0),
+  );
+  return (
+    <BlockStack gap="200">
+      <RangeSlider
+        output
+        label={label}
+        helpText={helpText}
+        min={AR_GLASSES_DEPTH_MIN_M}
+        max={AR_GLASSES_DEPTH_MAX_M}
+        step={AR_GLASSES_DEPTH_STEP_M}
+        value={clamped}
+        onChange={(v) => {
+          const raw = Array.isArray(v) ? v[0] : v;
+          onChange(Number(raw));
+        }}
+        suffix={`${(clamped * 1000).toFixed(0)}mm`}
+      />
+    </BlockStack>
+  );
+}
+
 function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
   const isBracelet = accessoryType === "bracelet";
   const isGlasses = accessoryType === "glasses";
@@ -1776,6 +1809,20 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
         value={cal.rz}
         onChange={setField("rz")}
       />
+      {isGlasses && (
+        <>
+          <Divider />
+          <DepthSlider
+            label={t("arEyewear.calibrate.sliders.depth.label") || "Profundidade"}
+            helpText={
+              t("arEyewear.calibrate.sliders.depth.help") ||
+              "Ajuste a distância dos óculos em relação ao rosto. Valores negativos aproximam, positivos afastam."
+            }
+            value={cal.wearZ}
+            onChange={setField("wearZ")}
+          />
+        </>
+      )}
     </BlockStack>
   );
 }

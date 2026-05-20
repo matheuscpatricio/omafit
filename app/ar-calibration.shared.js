@@ -16,6 +16,11 @@ export const AR_GLASSES_ROTATION_MIN_DEG = -180;
 export const AR_GLASSES_ROTATION_MAX_DEG = 180;
 export const AR_GLASSES_ROTATION_STEP_DEG = 5;
 
+/** Óculos: intervalo e passo do slider de profundidade (distância do rosto, em metros). */
+export const AR_GLASSES_DEPTH_MIN_M = -0.05;
+export const AR_GLASSES_DEPTH_MAX_M = 0.05;
+export const AR_GLASSES_DEPTH_STEP_M = 0.005;
+
 /**
  * Arredonda para o múltiplo de 5° mais próximo e limita a [−180, 180].
  * Usado nos sliders de óculos e ao guardar calibração de eyewear.
@@ -68,6 +73,10 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
   const snapRot = (v) =>
     snapRotationDegForAccessoryType(clamp(num(v, 0), -180, 180), accessoryType);
+  const type = normalizeAccessoryType(accessoryType) || AR_ACCESSORY_TYPE_DEFAULT;
+  const wearZBounds = type === "glasses"
+    ? { min: AR_GLASSES_DEPTH_MIN_M, max: AR_GLASSES_DEPTH_MAX_M }
+    : { min: -0.1, max: 0.1 };
   return {
     rx: snapRot(src.rx),
     ry: snapRot(src.ry),
@@ -75,7 +84,7 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
     bridgeY: clamp(num(src.bridgeY, 0), -0.5, 0.5),
     wearX: clamp(num(src.wearX, 0), -0.1, 0.1),
     wearY: clamp(num(src.wearY, 0), -0.15, 0.15),
-    wearZ: clamp(num(src.wearZ, 0), -0.1, 0.1),
+    wearZ: clamp(num(src.wearZ, 0), wearZBounds.min, wearZBounds.max),
     scale: clamp(num(src.scale, 1), 0.3, 3),
   };
 }

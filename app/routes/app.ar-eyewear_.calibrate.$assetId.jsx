@@ -1262,21 +1262,17 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
               }
 
               /**
-               * Óculos: alinhado ao widget v21 (glassesSimpleFaceOnly) — bind simples
-               * Ry 180° sem contentor Tripo. Isto garante que o preview mostre EXACTAMENTE
-               * o que o widget renderiza, evitando divergência entre calibração admin e AR.
+               * Óculos: paridade widget v28 — bind Ry 180° no root (antes de calibRot).
+               * Calibração rx/ry/rz do lojista soma-se em calibRot (ajuste fino).
                */
               if (accessoryType === "glasses") {
                 root.rotation.set(0, 0, 0);
                 root.quaternion.identity();
-                const ax = new THREE.Vector3(1, 0, 0);
                 const ay = new THREE.Vector3(0, 1, 0);
-                const az = new THREE.Vector3(0, 0, 1);
-                // Bind fixo Ry 180° (paridade widget glassesSimpleFaceOnly)
                 root.rotateOnWorldAxis(ay, Math.PI);
                 root.updateMatrix();
                 root.updateMatrixWorld(true);
-                console.log("[omafit-calibrate] glasses bind Ry 180° (widget parity v21)");
+                console.log("[omafit-calibrate] glasses bind Ry 180° (widget parity v28)");
                 s.tripoOffsetGroup = null;
                 calibRot.add(root);
               } else if (accessoryType === "bracelet" && glbRoot) {

@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-19-glasses-position-fix-v21";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-eye-center-v24";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -8028,8 +8028,8 @@ async function runArSession({
     const glassesDepthForwardM =
       accessoryType === "glasses"
         ? (() => {
-            const v = Number(String(cfgAttr("arGlassesDepthForwardM", "0.015")).trim());
-            if (!Number.isFinite(v)) return 0.015;
+            const v = Number(String(cfgAttr("arGlassesDepthForwardM", "0.02")).trim());
+            if (!Number.isFinite(v)) return 0.02;
             return THREE.MathUtils.clamp(v, 0, 0.08);
           })()
         : 0;
@@ -8052,17 +8052,17 @@ async function runArSession({
         ? parseXyzMeters(cfgAttr("arGlassesModelCenterOffsetM", "0 0 0"), 0, 0, 0)
         : { x: 0, y: 0, z: 0 };
     /**
-     * Offset estrutural empírico do mesh `glasses` após pose + bump Z frontal (faceMatrix); metros locais XYZ.
-     * Defaults afinados ao GLB actual (centro / nariz / frente). Attr: `data-ar-glasses-empirical-align-m`.
-     * v21: reduzidos para posicionamento mais próximo do rosto (antes: -0.035 -0.04 0.02).
+     * v22: ZERO por default — alinhamento puro ao ponto médio dos olhos.
+     * Override só quando o GLB tem centro deslocado conhecido.
+     * Attr: `data-ar-glasses-empirical-align-m="x y z"` (metros).
      */
     const glassesEmpiricalAlignM =
       accessoryType === "glasses"
         ? parseXyzMeters(
-            cfgAttr("arGlassesEmpiricalAlignM", "0 -0.01 -0.005"),
+            cfgAttr("arGlassesEmpiricalAlignM", "0 0 0"),
             0,
-            -0.01,
-            -0.005,
+            0,
+            0,
           )
         : { x: 0, y: 0, z: 0 };
     /** Multiplicador de estilo na largura anatómica (automático: IPD×equiv×factor/faceScale; antes era bochechas). */
@@ -8238,6 +8238,17 @@ async function runArSession({
       accessoryType === "glasses" &&
       (glassesEyeMidDebugQuery ||
         /^(1|true|on|yes)$/i.test(String(cfgAttr("arGlassesEyeMidDebugVisual", "")).trim()));
+    
+    /** v22: Debug simples via query (?omafit_ar_glasses_eye_debug=1) para confirmar alinhamento. */
+    let glassesEyeDebugSimple = false;
+    try {
+      glassesEyeDebugSimple =
+        accessoryType === "glasses" &&
+        typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search || "").get("omafit_ar_glasses_eye_debug") === "1";
+    } catch {
+      /* ignore */
+    }
     const glassesForceBboxAlign168 =
       accessoryType === "glasses" &&
       (lm168DebugSphereEnabled ||
@@ -9888,6 +9899,56 @@ async function runArSession({
 
     let eyeMidDebugMesh = null;
     let glassesBboxCenterDebugMesh = null;
+    /** v23: esferas debug olhos/centro (?omafit_ar_glasses_eye_debug=1). */
+    let glassesEyeDebugSpheres = null;
+    if (glassesEyeDebugSimple) {
+      const geomEye = new THREE.SphereGeometry(0.006, 12, 12);
+      const matEye = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        transparent: true,
+        opacity: 0.85,
+        depthTest: false,
+        depthWrite: false,
+      });
+      glassesEyeDebugSpheres = {
+        right: new THREE.Mesh(geomEye, matEye),
+        left: new THREE.Mesh(geomEye.clone(), matEye.clone()),
+        center: new THREE.Mesh(
+          new THREE.SphereGeometry(0.008, 16, 16),
+          new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.9,
+            depthTest: false,
+            depthWrite: false,
+          }),
+        ),
+        scratchR: new THREE.Vector3(),
+        scratchL: new THREE.Vector3(),
+        scratchMid: new THREE.Vector3(),
+      };
+      for (const m of [
+        glassesEyeDebugSpheres.right,
+        glassesEyeDebugSpheres.left,
+        glassesEyeDebugSpheres.center,
+      ]) {
+        m.frustumCulled = false;
+        m.renderOrder = 1000;
+      }
+      glassesEyeDebugSpheres.right.name = "omafit-eye-debug-right";
+      glassesEyeDebugSpheres.left.name = "omafit-eye-debug-left";
+      glassesEyeDebugSpheres.center.name = "omafit-eye-debug-center";
+      anchor.group.add(glassesEyeDebugSpheres.right);
+      anchor.group.add(glassesEyeDebugSpheres.left);
+      anchor.group.add(glassesEyeDebugSpheres.center);
+      try {
+        console.log(
+          "[omafit-ar] glasses eye debug v23 — vermelho: olhos; verde: centro (?omafit_ar_glasses_eye_debug=1)",
+        );
+      } catch {
+        /* ignore */
+      }
+    }
     if (glassesEyeMidDebugVisualEnabled) {
       const rDbg = 0.009;
       const mkSphere = (color) => {
@@ -10147,6 +10208,7 @@ async function runArSession({
       glassesEyeMidDebugVisualEnabled,
       eyeMidDebugMesh,
       glassesBboxCenterDebugMesh,
+      glassesEyeDebugSpheres,
       eyeMidDebugScratch: glassesEyeMidDebugVisualEnabled
         ? {
             mid: new THREE.Vector3(),
@@ -10666,6 +10728,21 @@ async function runArSession({
                     if (df > 0) {
                       glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
                     }
+                    
+                    /** v23: Debug visual — esferas no espaço da âncora MindAR. */
+                    if (st.glassesEyeDebugSpheres && anchor?.group) {
+                      const d = st.glassesEyeDebugSpheres;
+                      const ag = anchor.group;
+                      d.scratchR.copy(fa.eyeR).applyMatrix4(fa.faceWorld);
+                      d.scratchL.copy(fa.eyeL).applyMatrix4(fa.faceWorld);
+                      d.scratchMid.copy(fa.midW);
+                      ag.worldToLocal(d.scratchR);
+                      ag.worldToLocal(d.scratchL);
+                      ag.worldToLocal(d.scratchMid);
+                      d.right.position.copy(d.scratchR);
+                      d.left.position.copy(d.scratchL);
+                      d.center.position.copy(d.scratchMid);
+                    }
                   } else {
                     glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
                   }
@@ -10685,25 +10762,24 @@ async function runArSession({
                     /* noop */
                   }
                   {
-                    const nx0 = Number.isFinite(glassesNoseAlignOffsetXM) ? glassesNoseAlignOffsetXM : 0;
-                    glasses.position.set(
-                      glassesModelCenterOffsetM.x + nx0 + glassesEmpiricalAlignM.x,
-                      glassesModelCenterOffsetM.y + glassesEmpiricalAlignM.y,
-                      glassesModelCenterOffsetM.z + glassesEmpiricalAlignM.z,
-                    );
+                    // v22: ZERO offsets — posição pura do glassesTrackingWrap (ponto médio dos olhos)
+                    glasses.position.set(0, 0, 0);
                     if (!st.positionLogged) {
                       st.positionLogged = true;
-                      console.log("[omafit-ar] glasses position offsets v21", {
-                        glassesModelCenterOffsetM,
-                        glassesNoseAlignOffsetXM: nx0,
-                        glassesEmpiricalAlignM,
+                      console.log("[omafit-ar] glasses position v22 (ZERO offsets, eye-center aligned)", {
+                        glassesTrackingWrapPosition: {
+                          x: glassesTrackingWrap.position.x.toFixed(4),
+                          y: glassesTrackingWrap.position.y.toFixed(4),
+                          z: glassesTrackingWrap.position.z.toFixed(4),
+                        },
                         glassesDepthForwardM: st.glassesDepthForwardM,
-                        finalPosition: {
+                        glassesLocalPosition: {
                           x: glasses.position.x.toFixed(4),
                           y: glasses.position.y.toFixed(4),
                           z: glasses.position.z.toFixed(4),
                         },
-                        hint: "Ajustar via data-ar-glasses-empirical-align-m='x y z' (metros)",
+                        eyeLandmarks: { right: 33, left: 263 },
+                        hint: "v22: Alinhamento direto ao ponto médio dos olhos. Debug: ?omafit_ar_glasses_eye_debug=1",
                       });
                     }
                   }

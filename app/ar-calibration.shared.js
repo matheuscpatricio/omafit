@@ -104,7 +104,11 @@ export function defaultArCalibration(accessoryType) {
   return sanitizeArCalibrationInput({ ...DEFAULT_AR_CALIBRATION, ...overrides }, type);
 }
 
-/** Só a rotação vem do metafield guardado; posição/escala usam sempre os defaults do tipo. */
+/**
+ * Rotação sempre vem do metafield guardado.
+ * Para óculos: scale e wearZ também vêm do metafield (v31).
+ * Para outros tipos: posição/escala usam defaults do tipo.
+ */
 export function buildCalibrationForRotationEditor(defaultCal, saved, accessoryType) {
   const type = normalizeAccessoryType(accessoryType) || AR_ACCESSORY_TYPE_DEFAULT;
   const merged = sanitizeArCalibrationInput(
@@ -113,6 +117,10 @@ export function buildCalibrationForRotationEditor(defaultCal, saved, accessoryTy
       rx: saved && Number.isFinite(Number(saved.rx)) ? Number(saved.rx) : defaultCal.rx,
       ry: saved && Number.isFinite(Number(saved.ry)) ? Number(saved.ry) : defaultCal.ry,
       rz: saved && Number.isFinite(Number(saved.rz)) ? Number(saved.rz) : defaultCal.rz,
+      ...(type === "glasses" && {
+        scale: saved && Number.isFinite(Number(saved.scale)) ? Number(saved.scale) : defaultCal.scale,
+        wearZ: saved && Number.isFinite(Number(saved.wearZ)) ? Number(saved.wearZ) : defaultCal.wearZ,
+      }),
     },
     type,
   );

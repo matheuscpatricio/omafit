@@ -10717,6 +10717,12 @@ async function runArSession({
                     fa.midW.copy(fa.midMetric).applyMatrix4(fa.faceWorld);
                     return true;
                   })();
+                  console.log("[omafit-ar] depth/scale conditions (v33-debug):", {
+                    okBridge,
+                    glassesEyeMidpointAlign: st.glassesEyeMidpointAlign,
+                    faceAlignParent: !!faceAlignParent,
+                    willApplyDepth: okBridge && st.glassesEyeMidpointAlign && faceAlignParent,
+                  });
                   if (okBridge && st.glassesEyeMidpointAlign && faceAlignParent) {
                     glassesTrackingWrap.position.copy(fa.midW);
                     faceAlignParent.worldToLocal(glassesTrackingWrap.position);

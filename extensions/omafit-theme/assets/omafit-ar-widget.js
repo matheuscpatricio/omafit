@@ -10615,6 +10615,16 @@ async function runArSession({
             }
           }
           if (accessoryType === "glasses") {
+            console.log("[omafit-ar] glasses animation loop conditions (v33-debug):", {
+              glassesManualMindarRig: st.glassesManualMindarRig,
+              glassesStructuralMindarRig: st.glassesStructuralMindarRig,
+              glassesGeometryAnchor: st.glassesGeometryAnchor,
+              glassesCheekOrthogonalBasis: st.glassesCheekOrthogonalBasis,
+              glasses: !!glasses,
+              anchor: !!anchor,
+              anchorGroup: !!anchor?.group,
+              willEnterBlock: !st.glassesManualMindarRig && !st.glassesStructuralMindarRig && !st.glassesGeometryAnchor && !st.glassesCheekOrthogonalBasis && glasses && anchor?.group,
+            });
             if (
               !st.glassesManualMindarRig &&
               !st.glassesStructuralMindarRig &&

@@ -9638,11 +9638,18 @@ async function runArSession({
       }
       const useGlassesTrackingWrap =
         accessoryType === "glasses" && !glassesManualMindarRig && !glassesGlbStandardize;
+      console.log("[omafit-ar] useGlassesTrackingWrap decision (v33-debug):", {
+        useGlassesTrackingWrap,
+        accessoryType,
+        glassesManualMindarRig,
+        glassesGlbStandardize,
+      });
       /** Pai do mesh: rotação de bind glTF→MindAR; o wrap de tracking aplica só a pose da face (não zera o bind a cada frame). */
       let glassesStaticBindWrap = null;
       if (useGlassesTrackingWrap) {
         glassesTrackingWrap = new GroupCtor();
         glassesTrackingWrap.name = "omafit-ar-glasses-tracking-wrap";
+        console.log("[omafit-ar] glassesTrackingWrap CREATED (v33-debug):", !!glassesTrackingWrap);
         glassesModelWrap.add(glassesTrackingWrap);
         glassesStaticBindWrap = new GroupCtor();
         glassesStaticBindWrap.name = "omafit-ar-glasses-static-bind";

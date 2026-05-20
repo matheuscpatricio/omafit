@@ -10684,6 +10684,7 @@ async function runArSession({
                    * +Z de profundidade: coluna 2 de `fa.basis` no referencial do pai.
                    * O bind glTF→MindAR fica no `glassesStaticBindWrap`.
                    */
+                  console.log("[omafit-ar] ENTERED simpleFaceOnly block (v33-debug) — about to check okBridge");
                   fa.q.setFromRotationMatrix(fa.basis);
                   glassesTrackingWrap.quaternion.copy(fa.q);
                   const okBridge = (() => {

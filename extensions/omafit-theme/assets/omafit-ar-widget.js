@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v34";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v35";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -3054,6 +3054,30 @@ function omafitNudgeFaceOccluderAlongLocalZ(THREE, matrix, occZ, scratch) {
   scratch.pos.add(scratch.nudge);
   scratch.mat.compose(scratch.pos, scratch.quat, scratch.sca);
   matrix.copy(scratch.mat);
+}
+
+/**
+ * Converte um ponto de `metricLandmarks` para espaço mundo usando só rotação +
+ * translação da malha facial (sem escala MindAR na âncora). Evita offsets
+ * gigantes no `glassesTrackingWrap` quando `face.matrixWorld` inclui escala >> 1.
+ */
+function omafitMetricLmToFaceWorldPoint(metricVec, faceWorldMat, out) {
+  const e = faceWorldMat.elements;
+  const tx = e[12];
+  const ty = e[13];
+  const tz = e[14];
+  const sx = Math.hypot(e[0], e[1], e[2]) || 1;
+  const sy = Math.hypot(e[4], e[5], e[6]) || 1;
+  const sz = Math.hypot(e[8], e[9], e[10]) || 1;
+  const x = metricVec.x;
+  const y = metricVec.y;
+  const z = metricVec.z;
+  out.set(
+    (e[0] / sx) * x + (e[4] / sy) * y + (e[8] / sz) * z + tx,
+    (e[1] / sx) * x + (e[5] / sy) * y + (e[9] / sz) * z + ty,
+    (e[2] / sx) * x + (e[6] / sy) * y + (e[10] / sz) * z + tz,
+  );
+  return out;
 }
 
 /**
@@ -10074,6 +10098,7 @@ async function runArSession({
       glassesNegateWearOffsetX,
       glassesEyeMidpointAlign,
       glassesSimpleFaceOnly,
+      anchorFaceLm: anchorIndex,
       glassesFrameWidthLocal,
       eyeMidWearSmoothed: glassesEyeMidpointAlign ? new THREE.Vector3(0, 0, 0) : null,
       eyeMidWearTarget: glassesEyeMidpointAlign ? new THREE.Vector3() : null,
@@ -10618,8 +10643,7 @@ async function runArSession({
               /** Pai do alinhamento facial: sempre `glassesModelWrap` (tracking wrap é filho). */
               const faceAlignParent =
                 st.glassesModelWrap || glassesModelWrap || glasses?.parent || null;
-              const facePoseSource = faceSrc || anchor?.group || null;
-              if (faceAlignParent && facePoseSource) {
+              if (faceSrc && faceAlignParent) {
                 if (!_omafitSimpleGlassesFaceAlignScratch) {
                   _omafitSimpleGlassesFaceAlignScratch = {
                     faceWorld: new THREE.Matrix4(),
@@ -10638,10 +10662,10 @@ async function runArSession({
                 const fa = _omafitSimpleGlassesFaceAlignScratch;
                 const lmLoc = lm;
                 if (!fa.faceForwardOff) fa.faceForwardOff = new THREE.Vector3();
-                facePoseSource.updateMatrixWorld(true);
+                faceSrc.updateMatrixWorld(true);
                 faceAlignParent.updateMatrixWorld(true);
                 /** `faceMatrix` MindAR: mesma matriz 4×4 suavizada que a malha (`m[12]..[14]` = translação). */
-                fa.faceWorld.copy(facePoseSource.matrixWorld);
+                fa.faceWorld.copy(faceSrc.matrixWorld);
                 fa.parentInv.copy(faceAlignParent.matrixWorld).invert();
                 fa.localMat.multiplyMatrices(fa.parentInv, fa.faceWorld);
                 wearPosition.position.set(wearPosMEffective.x, wearPosMEffective.y, wearPosMEffective.z);
@@ -10703,17 +10727,20 @@ async function runArSession({
                     if (!pickLm(OMAFIT_FACE_LM_EYE_R_OUT, fa.eyeR)) return false;
                     if (!pickLm(OMAFIT_FACE_LM_EYE_L_OUT, fa.eyeL)) return false;
                     if (!pickLm(OMAFIT_FACE_LM_NOSE_BRIDGE, fa.midMetric)) return false;
-                    fa.midW.copy(fa.midMetric).applyMatrix4(fa.faceWorld);
+                    omafitMetricLmToFaceWorldPoint(fa.midMetric, fa.faceWorld, fa.midW);
                     return true;
                   })();
-                  if (okBridge && st.glassesEyeMidpointAlign && faceAlignParent) {
-                    glassesTrackingWrap.position.copy(fa.midW);
-                    faceAlignParent.worldToLocal(glassesTrackingWrap.position);
+                  const skipBridgeTranslate =
+                    st.glassesSimpleFaceOnly &&
+                    st.anchorFaceLm === OMAFIT_FACE_LM_NOSE_BRIDGE;
+                  const applyGlassesDepthOffset = () => {
                     const ce = fa.basis.elements;
                     fa.zFaceLocal.set(ce[8], ce[9], ce[10]);
                     if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
                     fa.zFaceLocal.transformDirection(fa.parentInv);
-                    const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
+                    const baseDepth = Number.isFinite(st.glassesDepthForwardM)
+                      ? st.glassesDepthForwardM
+                      : 0;
                     const calWearZ =
                       initialFaceCal && Number.isFinite(initialFaceCal.wearZ)
                         ? initialFaceCal.wearZ
@@ -10722,6 +10749,15 @@ async function runArSession({
                     if (Math.abs(df) > 1e-6) {
                       glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
                     }
+                  };
+                  if (okBridge && st.glassesEyeMidpointAlign && faceAlignParent) {
+                    if (skipBridgeTranslate) {
+                      glassesTrackingWrap.position.set(0, 0, 0);
+                    } else {
+                      glassesTrackingWrap.position.copy(fa.midW);
+                      faceAlignParent.worldToLocal(glassesTrackingWrap.position);
+                    }
+                    applyGlassesDepthOffset();
                     
                     /** v23: Debug visual — esferas no espaço da âncora MindAR. */
                     if (st.glassesEyeDebugSpheres && anchor?.group) {
@@ -10738,19 +10774,11 @@ async function runArSession({
                       d.center.position.copy(d.scratchMid);
                     }
                   } else {
-                    glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
-                    const ce = fa.basis.elements;
-                    fa.zFaceLocal.set(ce[8], ce[9], ce[10]);
-                    if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
-                    fa.zFaceLocal.transformDirection(fa.parentInv);
-                    const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
-                    const calWearZ =
-                      initialFaceCal && Number.isFinite(initialFaceCal.wearZ)
-                        ? initialFaceCal.wearZ
-                        : 0;
-                    const df = baseDepth + calWearZ;
-                    if (Math.abs(df) > 1e-6) {
-                      glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
+                    if (skipBridgeTranslate) {
+                      glassesTrackingWrap.position.set(0, 0, 0);
+                      applyGlassesDepthOffset();
+                    } else {
+                      glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
                     }
                   }
                   glasses.rotation.order = "XYZ";
@@ -10772,7 +10800,8 @@ async function runArSession({
                     glasses.position.set(0, 0, 0);
                     if (!st.positionLogged) {
                       st.positionLogged = true;
-                      console.log("[omafit-ar] glasses position v34 (ponte nasal 168 + calibração scale/wearZ)", {
+                      console.log("[omafit-ar] glasses position v35 (ponte 168 + calibração scale/wearZ)", {
+                        skipBridgeTranslate,
                         glassesTrackingWrapPosition: {
                           x: glassesTrackingWrap.position.x.toFixed(4),
                           y: glassesTrackingWrap.position.y.toFixed(4),

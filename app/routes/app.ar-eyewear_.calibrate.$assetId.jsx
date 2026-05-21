@@ -52,6 +52,10 @@ import {
   computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
 } from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
+import {
+  computeGlassesPreviewBaseScale,
+  OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
+} from "../../extensions/omafit-theme/assets/omafit-glasses-calibration.js";
 
 function tryResignIfPrivate(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -645,9 +649,9 @@ export default function ArEyewearCalibratePage() {
  *   - Bbox wireframe (azul ciano) a envolver o GLB
  *   - URL completa do GLB loggada em caso de erro
  *
- * Escala do preview: `baseScale = 0.16 / maxDim` faz os óculos ocuparem
- * ~face-width no viewport (silhueta de ~240 px num viewport de 400 px, câmara
- * a z=0.45 com FOV 35° → ~0.168 unidades visíveis em mundo = face-width).
+ * Escala do preview: `computeGlassesPreviewBaseScale(larguraX)` — mesma fórmula
+ * IPD×factor/frameWidth que o widget (`omafit-glasses-calibration.js`). 100% no
+ * slider = IPD de referência 63 mm; `cal.scale` multiplica por cima.
  */
 /**
  * Tamanho do placeholder (cubo wireframe ciano) que aparece sempre no calibRot:
@@ -669,9 +673,8 @@ const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
  * NOTA: pulseiras usam MEDIANA do bbox (= diâmetro real do anel), não o
  * máximo. Ver `fitWristGlb` no widget para detalhe da heurística.
  */
+/** Legado colar/outros; óculos usam `computeGlassesPreviewBaseScale`. */
 const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
-/** Preview admin: alinha ~100% ao fit IPD×1.0 do widget (antes o widget usava ×1.5). */
-const PREVIEW_GLASSES_AUTO_SCALE_PARITY = 1;
 const PREVIEW_WORLD_MAX_DIM_WRIST = 0.072;
 const PREVIEW_WORLD_MEDIAN_DIM_BRACELET = 0.062;
 /**
@@ -1285,9 +1288,10 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                   didBendWatch,
                 });
               } else {
-                baseScale =
-                  (PREVIEW_WORLD_MAX_DIM_FACE / Math.max(maxDim, 1e-4)) *
-                  PREVIEW_GLASSES_AUTO_SCALE_PARITY;
+                baseScale = computeGlassesPreviewBaseScale(
+                  Math.max(size.x, 1e-4),
+                  OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
+                );
                 root.scale.setScalar(baseScale);
               }
 
@@ -1850,7 +1854,7 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
             label={t("arEyewear.calibrate.sliders.scale.label") || "Tamanho do óculos"}
             helpText={
               t("arEyewear.calibrate.sliders.scale.help") ||
-              "Ajuste o tamanho do óculos. 100% é o tamanho automático baseado no rosto."
+              "Multiplicador sobre o ajuste automático (IPD 63 mm = 100%). O mesmo valor aplica-se no provador AR da loja."
             }
             value={cal.scale}
             onChange={setField("scale")}
@@ -1859,7 +1863,7 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
             label={t("arEyewear.calibrate.sliders.depth.label") || "Profundidade"}
             helpText={
               t("arEyewear.calibrate.sliders.depth.help") ||
-              "Ajuste a distância dos óculos em relação ao rosto. Valores negativos aproximam, positivos afastam."
+              "Deslocamento em metros ao longo da frente da face (eixo profundidade). Negativo aproxima, positivo afasta — igual no widget."
             }
             value={cal.wearZ}
             onChange={setField("wearZ")}

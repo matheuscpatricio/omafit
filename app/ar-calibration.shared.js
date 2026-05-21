@@ -27,6 +27,12 @@ export const AR_GLASSES_SCALE_MAX = 2;
 export const AR_GLASSES_SCALE_STEP = 0.05;
 
 /**
+ * IPD de referência do preview (m) — deve coincidir com
+ * `OMAFIT_GLASSES_REFERENCE_IPD_M` em `omafit-glasses-calibration.js`.
+ */
+export const AR_GLASSES_REFERENCE_IPD_M = 0.063;
+
+/**
  * Arredonda para o múltiplo de 5° mais próximo e limita a [−180, 180].
  * Usado nos sliders de óculos e ao guardar calibração de eyewear.
  */

@@ -502,7 +502,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v38";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v39";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -9614,6 +9614,8 @@ async function runArSession({
     let glassesModelWrap = null;
     /** @type {THREE.Group | null} Pose facial (matrix da malha) — filho do model wrap; o GLB filho mantém só correcções estáticas. */
     let glassesTrackingWrap = null;
+    /** Calibração wearX/Y/Z (m) — filho do tracking wrap; tem de existir no âmbito de `faceArEnhancementState`. */
+    let glassesMerchantWear = null;
     let glassesPivot = null;
     /** Cópia da posição inicial do pivot (Z inclui `arGlassesZFitExtra` se aplicável) — repor antes do alinhamento debug 168. */
     let glassesPivotBaseLocalPos = null;
@@ -9685,7 +9687,6 @@ async function runArSession({
         accessoryType === "glasses" && !glassesManualMindarRig && !glassesGlbStandardize;
       /** Pai do mesh: rotação de bind glTF→MindAR; o wrap de tracking aplica só a pose da face (não zera o bind a cada frame). */
       let glassesStaticBindWrap = null;
-      let glassesMerchantWear = null;
       if (useGlassesTrackingWrap) {
         glassesTrackingWrap = new GroupCtor();
         glassesTrackingWrap.name = "omafit-ar-glasses-tracking-wrap";
@@ -10701,6 +10702,10 @@ async function runArSession({
                     midMetric: new THREE.Vector3(),
                     midW: new THREE.Vector3(),
                     zFaceLocal: new THREE.Vector3(),
+                    merchantWearScratch: new THREE.Vector3(),
+                    wearAxisX: new THREE.Vector3(1, 0, 0),
+                    wearAxisY: new THREE.Vector3(0, 1, 0),
+                    wearAxisZ: new THREE.Vector3(0, 0, 1),
                   };
                 }
                 const fa = _omafitSimpleGlassesFaceAlignScratch;
@@ -10789,12 +10794,6 @@ async function runArSession({
                   const applyGlassesMerchantWearOffset = () => {
                     const gw = st.glassesMerchantWear;
                     if (!gw || !st.glassesMerchantCal) return;
-                    if (!fa.merchantWearScratch) {
-                      fa.merchantWearScratch = new THREE.Vector3();
-                      fa.wearAxisX = new THREE.Vector3(1, 0, 0);
-                      fa.wearAxisY = new THREE.Vector3(0, 1, 0);
-                      fa.wearAxisZ = new THREE.Vector3(0, 0, 1);
-                    }
                     composeGlassesMerchantWearOffsetM(
                       fa.merchantWearScratch,
                       fa.wearAxisX,

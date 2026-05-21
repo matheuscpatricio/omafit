@@ -22,9 +22,11 @@ import {
 import {
   OMAFIT_GLASSES_DEPTH_FORWARD_DEFAULT_M,
   OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
-  composeGlassesMerchantWearOffsetM,
+  applyGlassesWearPositionMeters,
   computeGlassesAutoFitMeshScale,
   computeGlassesPreviewBaseScale,
+  normalizeGlassesMerchantCalibration,
+  resolveGlassesFrameWidthForFit,
 } from "./omafit-glasses-calibration.js";
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
@@ -502,7 +504,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v39";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v40";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -8882,10 +8884,14 @@ async function runArSession({
     if (!Number.isFinite(maxDim) || maxDim < 1e-9) {
       throw new Error("omafit-ar: dimensões do GLB inválidas (NaN ou zero).");
     }
-    /** Largura intrínseca do frame (eixo X) — normaliza escala IPD no loop. */
+    /** Largura do frame para fit IPD (m) — bbox bruta vs referência física ~145 mm. */
     let glassesFrameWidthLocal = 1;
+    let glassesFrameWidthRawLocal = 1;
+    let glassesMeshWidthNormMul = 1;
     if (accessoryType === "glasses") {
-      glassesFrameWidthLocal = Math.max(sz.x, 0.001);
+      glassesFrameWidthRawLocal = Math.max(sz.x, 0.001);
+      glassesFrameWidthLocal = resolveGlassesFrameWidthForFit(glassesFrameWidthRawLocal);
+      glassesMeshWidthNormMul = glassesFrameWidthLocal / glassesFrameWidthRawLocal;
     }
     if (!glassesCanonicalBlenderExport) {
       const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
@@ -9069,30 +9075,27 @@ async function runArSession({
       !glassesCheekOrthogonalBasis &&
       !glassesGlbStandardize;
 
-    /** Valores do metafield `omafit.ar_calibration` — mesma semântica que `applyCalibrationToState` no admin. */
-    const glassesMerchantCal = (() => {
-      const cal =
-        initialFaceCal && typeof initialFaceCal === "object" ? initialFaceCal : {};
-      const num = (k, def) => {
-        const n = Number(cal[k]);
-        return Number.isFinite(n) ? n : def;
-      };
-      const sc = num("scale", 1);
-      return {
-        scale: sc > 0 ? sc : 1,
-        wearX: num("wearX", 0),
-        wearY: num("wearY", 0),
-        wearZ: num("wearZ", 0),
-      };
-    })();
+    const readGlassesMerchantCal = () => {
+      const parsed = parseOmafitCalibrationRaw(
+        arCfg?.dataset?.arOmafitCalibration || "",
+      );
+      return normalizeGlassesMerchantCalibration(parsed || initialFaceCal);
+    };
+    if (accessoryType === "glasses") {
+      try {
+        console.log("[omafit-ar] merchant calibration loaded", readGlassesMerchantCal(), {
+          rawAttrLen: String(arCfg?.dataset?.arOmafitCalibration || "").length,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
 
     /**
-     * Modo simples: offsets de calibração (m) vão em `glassesMerchantWear` (eixos da face),
-     * não em `wearPosition` (unidades da âncora MindAR — distintas dos metros do admin).
+     * Modo simples: `wearPosition` recebe wearX/Y/Z em metros (convertidos para a âncora
+     * por frame), como no preview admin — ver `applyGlassesWearPositionMeters`.
      */
-    const wearPosMEffective = glassesSimpleFaceOnly
-      ? { x: 0, y: 0, z: 0 }
-      : wearPosM;
+    const wearPosMEffective = glassesSimpleFaceOnly ? null : wearPosM;
     const glassesLocalFineMEffective = glassesSimpleFaceOnly
       ? { x: 0, y: 0, z: 0 }
       : glassesLocalFineM;
@@ -9504,7 +9507,10 @@ async function runArSession({
       glbMaxDim: maxDim,
       accessoryMeshNormalizeScale,
       glassesSimpleFaceOnly,
-      wearPosM: wearPosMEffective,
+      merchantCalibration: readGlassesMerchantCal(),
+      glassesFrameWidthRawLocal,
+      glassesFrameWidthLocal,
+      glassesMeshWidthNormMul,
       glassesLocalFineM: glassesLocalFineMEffective,
       anchorIndex,
       disableFaceMirror,
@@ -9849,8 +9855,10 @@ async function runArSession({
     const wearPosition = new GroupCtor();
     if (accessoryType === "glasses" && glassesManualMindarRig) {
       wearPosition.position.set(0, 0, 0);
-    } else {
+    } else if (wearPosMEffective) {
       wearPosition.position.set(wearPosMEffective.x, wearPosMEffective.y, wearPosMEffective.z);
+    } else {
+      wearPosition.position.set(0, 0, 0);
     }
     /**
      * SEM espelho de cena por defeito. O MindAR já inverte o frame antes da
@@ -10138,9 +10146,11 @@ async function runArSession({
       glassesEyeMidpointAlign,
       glassesSimpleFaceOnly,
       anchorFaceLm: anchorIndex,
-      glassesMerchantCal,
+      readGlassesMerchantCal,
+      glassesFrameWidthRawLocal,
+      glassesMeshWidthNormMul,
       glassesAutoFitScaleRef: computeGlassesPreviewBaseScale(
-        glassesFrameWidthLocal,
+        glassesFrameWidthRawLocal,
         OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
       ),
       glassesLastMeshScale: null,
@@ -10717,15 +10727,27 @@ async function runArSession({
                 fa.faceWorld.copy(faceSrc.matrixWorld);
                 fa.parentInv.copy(faceAlignParent.matrixWorld).invert();
                 fa.localMat.multiplyMatrices(fa.parentInv, fa.faceWorld);
-                wearPosition.position.set(
-                  wearPosMEffective.x,
-                  wearPosMEffective.y,
-                  wearPosMEffective.z,
-                );
+                if (st.glassesSimpleFaceOnly && anchor?.group) {
+                  if (!fa.wearPosScratch) fa.wearPosScratch = new THREE.Vector3();
+                  const merchantCal = st.readGlassesMerchantCal
+                    ? st.readGlassesMerchantCal()
+                    : { scale: 1, wearX: 0, wearY: 0, wearZ: 0 };
+                  anchor.group.updateMatrixWorld(true);
+                  applyGlassesWearPositionMeters(
+                    fa.wearPosScratch,
+                    anchor.group.matrixWorld,
+                    merchantCal,
+                  );
+                  wearPosition.position.copy(fa.wearPosScratch);
+                } else if (wearPosMEffective) {
+                  wearPosition.position.set(
+                    wearPosMEffective.x,
+                    wearPosMEffective.y,
+                    wearPosMEffective.z,
+                  );
+                }
                 if (st.glassesMerchantWear) {
                   st.glassesMerchantWear.position.set(0, 0, 0);
-                  st.glassesMerchantWear.quaternion.identity();
-                  st.glassesMerchantWear.scale.set(1, 1, 1);
                 }
                 if (faceParentGroup) {
                   faceParentGroup.matrixAutoUpdate = true;
@@ -10791,23 +10813,6 @@ async function runArSession({
                   const skipBridgeTranslate =
                     st.glassesSimpleFaceOnly &&
                     st.anchorFaceLm === OMAFIT_FACE_LM_NOSE_BRIDGE;
-                  const applyGlassesMerchantWearOffset = () => {
-                    const gw = st.glassesMerchantWear;
-                    if (!gw || !st.glassesMerchantCal) return;
-                    composeGlassesMerchantWearOffsetM(
-                      fa.merchantWearScratch,
-                      fa.wearAxisX,
-                      fa.wearAxisY,
-                      fa.wearAxisZ,
-                      {
-                        wearX: st.glassesMerchantCal.wearX,
-                        wearY: st.glassesMerchantCal.wearY,
-                        wearZ: st.glassesMerchantCal.wearZ,
-                        depthForwardM: st.glassesDepthForwardM,
-                      },
-                    );
-                    gw.position.copy(fa.merchantWearScratch);
-                  };
                   const applyGlassesFrameDepthOffset = () => {
                     if (st.glassesSimpleFaceOnly) return;
                     const baseDepth = Number.isFinite(st.glassesDepthForwardM)
@@ -10862,15 +10867,19 @@ async function runArSession({
                       st.glassesSimpleFaceOnly && glassesTrackingWrap
                         ? OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE
                         : OMAFIT_GLASSES_SCALE_IPD_MUL;
+                    const merchantCal = st.readGlassesMerchantCal
+                      ? st.readGlassesMerchantCal()
+                      : { scale: 1, wearX: 0, wearY: 0, wearZ: 0 };
                     const calScale =
-                      st.glassesMerchantCal && Number(st.glassesMerchantCal.scale) > 0
-                        ? st.glassesMerchantCal.scale
+                      merchantCal && Number(merchantCal.scale) > 0
+                        ? merchantCal.scale
                         : 1;
                     let scale = computeGlassesAutoFitMeshScale({
                       frameWidthLocal: st.glassesFrameWidthLocal,
                       ipdMetricM: ipdMetric,
                       merchantScaleMul: calScale,
                       ipdMul,
+                      meshWidthNormMul: st.glassesMeshWidthNormMul,
                     });
                     scale = THREE.MathUtils.clamp(
                       scale,
@@ -10888,7 +10897,6 @@ async function runArSession({
                       faceAlignParent.worldToLocal(glassesTrackingWrap.position);
                     }
                     applyGlassesFrameDepthOffset();
-                    applyGlassesMerchantWearOffset();
 
                     /** v23: Debug visual — esferas no espaço da âncora MindAR. */
                     if (st.glassesEyeDebugSpheres && anchor?.group) {
@@ -10908,27 +10916,11 @@ async function runArSession({
                     if (skipBridgeTranslate) {
                       glassesTrackingWrap.position.set(0, 0, 0);
                       applyGlassesFrameDepthOffset();
-                      applyGlassesMerchantWearOffset();
                     } else {
                       glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
-                      applyGlassesMerchantWearOffset();
                     }
                   }
                   applyGlassesMerchantMeshScale();
-                  if (
-                    glasses &&
-                    st.glassesLastMeshScale == null &&
-                    st.glassesMerchantCal &&
-                    Number(st.glassesMerchantCal.scale) > 0
-                  ) {
-                    const fb = THREE.MathUtils.clamp(
-                      st.glassesMerchantCal.scale,
-                      OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,
-                      OMAFIT_GLASSES_MESH_SCALE_ABS_MAX,
-                    );
-                    st.glassesLastMeshScale = fb;
-                    glasses.scale.set(fb, fb, fb);
-                  }
                   glasses.rotation.order = "XYZ";
                   glasses.rotation.set(0, 0, 0);
                   try {
@@ -10948,17 +10940,21 @@ async function runArSession({
                     glasses.position.set(0, 0, 0);
                     if (!st.positionLogged) {
                       st.positionLogged = true;
-                      console.log("[omafit-ar] glasses calibration v38 (metros no merchantWear + IPD×scale)", {
+                      const merchantCalLog = st.readGlassesMerchantCal
+                        ? st.readGlassesMerchantCal()
+                        : null;
+                      console.log("[omafit-ar] glasses calibration v40 (wearPosition m + IPD×scale)", {
                         build: OMAFIT_AR_WIDGET_BUILD,
-                        merchantCal: st.glassesMerchantCal,
+                        merchantCal: merchantCalLog,
+                        frameWidthRaw: st.glassesFrameWidthRawLocal,
+                        frameWidthFit: st.glassesFrameWidthLocal,
+                        meshWidthNormMul: st.glassesMeshWidthNormMul,
                         autoFitScaleRef: st.glassesAutoFitScaleRef,
-                        merchantWearM: st.glassesMerchantWear
-                          ? {
-                              x: st.glassesMerchantWear.position.x.toFixed(4),
-                              y: st.glassesMerchantWear.position.y.toFixed(4),
-                              z: st.glassesMerchantWear.position.z.toFixed(4),
-                            }
-                          : null,
+                        wearPositionAnchor: {
+                          x: wearPosition.position.x.toFixed(4),
+                          y: wearPosition.position.y.toFixed(4),
+                          z: wearPosition.position.z.toFixed(4),
+                        },
                         meshScale: st.glassesLastMeshScale,
                         skipBridgeTranslate,
                         glassesTrackingWrapPosition: {
@@ -11733,12 +11729,20 @@ async function runArSession({
       console.log("[omafit-ar] calibRot (óculos; calibração loja)", {
         glassesSimpleFaceOnly,
         glassesEyeMidpointAlign,
-        wearPosM: wearPosMEffective,
+        wearPosM: wearPosMEffective || readGlassesMerchantCal(),
         accessoryMeshNormalizeScale,
         glassesFrameWidthLocal,
-        calibrationApplied: initialFaceCal
+        merchantCalibration: readGlassesMerchantCal(),
+        calibrationRotation: initialFaceCal
           ? { rx: initialFaceCal.rx, ry: initialFaceCal.ry, rz: initialFaceCal.rz }
           : "none",
+        frameWidthRaw: glassesFrameWidthRawLocal,
+        frameWidthFit: glassesFrameWidthLocal,
+        meshWidthNormMul: glassesMeshWidthNormMul,
+        autoFitScaleRef: computeGlassesPreviewBaseScale(
+          glassesFrameWidthRawLocal,
+          OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
+        ),
         glassesScaleIpdMul: OMAFIT_GLASSES_SCALE_IPD_MUL,
         glassesScaleIpdMetricMul: OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL,
         calibRotXinWorld: [
@@ -11894,6 +11898,15 @@ async function runArSession({
             applyThreeGroupCalibRot(calibRot, cal);
             calibRot.updateMatrix();
             calibRot.updateMatrixWorld(true);
+            try {
+              const stSw = faceArEnhancementState;
+              if (stSw?.readGlassesMerchantCal) {
+                const mc = stSw.readGlassesMerchantCal();
+                console.log("[omafit-ar] glasses merchant cal updated (variant)", mc);
+              }
+            } catch {
+              /* ignore */
+            }
           }
         }
         try {
@@ -12017,7 +12030,7 @@ async function runArSession({
         disableFaceMirror,
         mirrorSelfieLegacy: legacyMsRaw || null,
         mindarDisableMirrorExplicit: mindarDmExplicit,
-        wearPositionM: wearPosMEffective,
+        wearPositionM: readGlassesMerchantCal(),
         debugEnabled,
         accessoryMeshNormalizeScale,
         glassesScaleIpdMul: OMAFIT_GLASSES_SCALE_IPD_MUL,

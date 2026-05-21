@@ -55,6 +55,7 @@ import {
 import {
   computeGlassesPreviewBaseScale,
   OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
+  resolveGlassesFrameWidthForFit,
 } from "../../extensions/omafit-theme/assets/omafit-glasses-calibration.js";
 
 function tryResignIfPrivate(rawUrl) {
@@ -1288,11 +1289,17 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                   didBendWatch,
                 });
               } else {
+                const frameRawW = Math.max(size.x, 1e-4);
                 baseScale = computeGlassesPreviewBaseScale(
-                  Math.max(size.x, 1e-4),
+                  frameRawW,
                   OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
                 );
                 root.scale.setScalar(baseScale);
+                console.log("[omafit-calibrate] glasses auto-fit", {
+                  frameRawW,
+                  frameFitW: resolveGlassesFrameWidthForFit(frameRawW),
+                  baseScaleAt100: baseScale,
+                });
               }
 
               /**

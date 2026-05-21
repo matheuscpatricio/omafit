@@ -1043,7 +1043,7 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
 
         // Aplicar calibração imediatamente ao placeholder — dá ao lojista
         // feedback visual dos sliders mesmo antes do GLB carregar.
-        applyCalibrationToState(s, calRef.current || cal, wearScaleCalibration);
+        applyCalibrationToState(s, calRef.current || cal, calRef.current || cal);
 
         const loader = new GLTFLoader();
         loader.setCrossOrigin("anonymous");
@@ -1319,7 +1319,7 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
               applyCalibrationToState(
                 stateRef.current,
                 calRef.current || cal,
-                wearScaleRef.current,
+                calRef.current || cal,
               );
               setPhase("ready");
               console.log("[omafit-calibrate] GLB carregado:", {
@@ -1405,7 +1405,7 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
 
   useEffect(() => {
     calRef.current = cal;
-    applyCalibrationToState(stateRef.current, cal, wearScaleRef.current);
+    applyCalibrationToState(stateRef.current, cal, cal);
   }, [cal, wearScaleCalibration]);
 
     return (

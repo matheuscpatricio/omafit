@@ -38,6 +38,9 @@ import {
   AR_GLASSES_DEPTH_MIN_M,
   AR_GLASSES_DEPTH_MAX_M,
   AR_GLASSES_DEPTH_STEP_M,
+  AR_GLASSES_SCALE_MIN,
+  AR_GLASSES_SCALE_MAX,
+  AR_GLASSES_SCALE_STEP,
 } from "../ar-calibration.shared.js";
 import {
   detectAccessoryType,
@@ -667,6 +670,8 @@ const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
  * máximo. Ver `fitWristGlb` no widget para detalhe da heurística.
  */
 const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
+/** Preview admin: alinha ~100% ao fit IPD×1.0 do widget (antes o widget usava ×1.5). */
+const PREVIEW_GLASSES_AUTO_SCALE_PARITY = 1;
 const PREVIEW_WORLD_MAX_DIM_WRIST = 0.072;
 const PREVIEW_WORLD_MEDIAN_DIM_BRACELET = 0.062;
 /**
@@ -1280,7 +1285,9 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                   didBendWatch,
                 });
               } else {
-                baseScale = PREVIEW_WORLD_MAX_DIM_FACE / Math.max(maxDim, 1e-4);
+                baseScale =
+                  (PREVIEW_WORLD_MAX_DIM_FACE / Math.max(maxDim, 1e-4)) *
+                  PREVIEW_GLASSES_AUTO_SCALE_PARITY;
                 root.scale.setScalar(baseScale);
               }
 
@@ -1732,9 +1739,12 @@ function DepthSlider({ label, helpText, value, onChange }) {
   );
 }
 
-/** Óculos: escala (tamanho do óculos) com multiplicador 0.5x a 2.0x. */
+/** Óculos: escala (tamanho do óculos) — 100% = fit automático IPD no widget. */
 function ScaleSlider({ label, helpText, value, onChange }) {
-  const clamped = Math.max(0.5, Math.min(2.0, Number(value) || 1));
+  const clamped = Math.max(
+    AR_GLASSES_SCALE_MIN,
+    Math.min(AR_GLASSES_SCALE_MAX, Number(value) || 1),
+  );
   const percentage = Math.round(clamped * 100);
   return (
     <BlockStack gap="200">
@@ -1742,9 +1752,9 @@ function ScaleSlider({ label, helpText, value, onChange }) {
         output
         label={label}
         helpText={helpText}
-        min={0.5}
-        max={2.0}
-        step={0.05}
+        min={AR_GLASSES_SCALE_MIN}
+        max={AR_GLASSES_SCALE_MAX}
+        step={AR_GLASSES_SCALE_STEP}
         value={clamped}
         onChange={(v) => {
           const raw = Array.isArray(v) ? v[0] : v;

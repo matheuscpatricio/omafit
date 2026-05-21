@@ -124,7 +124,8 @@ import {
  *    que a malha no mundo —; `ipd = leftEye.distanceTo(rightEye)`.
  *    Pipeline **mínimo** (`glassesTrackingWrap` + `glassesSimpleFaceOnly`): pose só no wrapper
  *    (`position` + quaternion da malha facial); mesh **sem** base rotation (`model.rotation.set(0,0,0)`).
- *    Escala uniforme **ipd × 1,5** (`OMAFIT_GLASSES_SCALE_IPD_MUL`). Ramo legado (ex. GLB standardize sem wrap):
+ *    Escala uniforme **ipd × 1,0** no modo simples (`OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE`);
+ *    legado **ipd × 1,5** (`OMAFIT_GLASSES_SCALE_IPD_MUL`). Ramo standardize sem wrap:
  *    **ipd × 2** (`OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL`), com bump Z / q_base opcionais.
  *    Modo geometria: o mesmo `s` reparte-se entre mesh e escala do pivot.
  *
@@ -494,7 +495,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v36";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v37";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -852,6 +853,11 @@ const OMAFIT_FACE_IPD_SMOOTH = 0.2;
 const OMAFIT_GLASSES_IPD_CHEEK_EQUIV = 2.1;
 /** Óculos (legado referência): factor antigo só em comentários / outros ramos não usados aqui. */
 const OMAFIT_GLASSES_SCALE_IPD_MUL = 1.5;
+/**
+ * Modo simples (ponte 168 + tracking wrap): factor IPD→largura do frame. **1,0** =
+ * armação ≈ IPD; 1,5 deixava o GLB grande por defeito e o slider de escala não compensava.
+ */
+const OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE = 1;
 /** IPD em **espaço mundo da face**: `distanceTo` após `applyMatrix4(face.matrixWorld)` × este factor no mesh. */
 const OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL = 2;
 /** Clamp absoluto na escala uniforme do mesh (óculos após IPD×factor). */
@@ -8047,13 +8053,14 @@ async function runArSession({
     /**
      * Avanço em **profundidade** (m) na frente do rosto, em série com o Z de `mid(33,263)−168`
      * em `metricLandmarks` no `wearPosition` (auto) ou somado ao mesh Z (manual). Sempre **≥0**;
-     * clamp **[0.015, 0.04]**; default **0.025**. Attr: `data-ar-glasses-depth-forward-m`.
+     * clamp **[0, 0.04]**; default **0,008** m (antes 0,02 — demasiado longe do rosto).
+     * Attr: `data-ar-glasses-depth-forward-m`.
      */
     const glassesDepthForwardM =
       accessoryType === "glasses"
         ? (() => {
-            const v = Number(String(cfgAttr("arGlassesDepthForwardM", "0.02")).trim());
-            if (!Number.isFinite(v)) return 0.02;
+            const v = Number(String(cfgAttr("arGlassesDepthForwardM", "0.008")).trim());
+            if (!Number.isFinite(v)) return 0.008;
             return THREE.MathUtils.clamp(v, 0, 0.08);
           })()
         : 0;
@@ -10811,7 +10818,10 @@ async function runArSession({
                         : 1;
                     const ipdMetric = ipdLandmark / faceScale;
                     if (!(Number.isFinite(ipdMetric) && ipdMetric > 0)) return;
-                    const ipdMul = OMAFIT_GLASSES_SCALE_IPD_MUL;
+                    const ipdMul =
+                      st.glassesSimpleFaceOnly && glassesTrackingWrap
+                        ? OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE
+                        : OMAFIT_GLASSES_SCALE_IPD_MUL;
                     const frameW =
                       Number(st.glassesFrameWidthLocal) > 0 ? st.glassesFrameWidthLocal : 1;
                     const calScale =

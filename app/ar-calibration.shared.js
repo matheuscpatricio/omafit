@@ -17,9 +17,14 @@ export const AR_GLASSES_ROTATION_MAX_DEG = 180;
 export const AR_GLASSES_ROTATION_STEP_DEG = 5;
 
 /** Óculos: intervalo e passo do slider de profundidade (distância do rosto, em metros). */
-export const AR_GLASSES_DEPTH_MIN_M = -0.05;
+export const AR_GLASSES_DEPTH_MIN_M = -0.08;
 export const AR_GLASSES_DEPTH_MAX_M = 0.05;
 export const AR_GLASSES_DEPTH_STEP_M = 0.005;
+
+/** Óculos: intervalo do slider de escala (1 = ajuste automático IPD no widget). */
+export const AR_GLASSES_SCALE_MIN = 0.25;
+export const AR_GLASSES_SCALE_MAX = 2;
+export const AR_GLASSES_SCALE_STEP = 0.05;
 
 /**
  * Arredonda para o múltiplo de 5° mais próximo e limita a [−180, 180].
@@ -85,7 +90,10 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
     wearX: clamp(num(src.wearX, 0), -0.1, 0.1),
     wearY: clamp(num(src.wearY, 0), -0.15, 0.15),
     wearZ: clamp(num(src.wearZ, 0), wearZBounds.min, wearZBounds.max),
-    scale: clamp(num(src.scale, 1), 0.3, 3),
+    scale:
+      type === "glasses"
+        ? clamp(num(src.scale, 1), AR_GLASSES_SCALE_MIN, AR_GLASSES_SCALE_MAX)
+        : clamp(num(src.scale, 1), 0.3, 3),
   };
 }
 

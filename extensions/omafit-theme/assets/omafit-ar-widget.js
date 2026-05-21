@@ -494,7 +494,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-debug-v33";
+const OMAFIT_AR_WIDGET_BUILD = "2026-05-20-glasses-calibration-v34";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -7869,7 +7869,6 @@ async function runArSession({
     const initialFaceCal = parseOmafitCalibrationRaw(
       arCfg?.dataset?.arOmafitCalibration || "",
     );
-    console.log("[omafit-ar] initialFaceCal (v33-debug):", JSON.stringify(initialFaceCal, null, 2));
     function applyOmafitCalibration(cal, el) {
       const target = el || arCfg;
       if (!target || !cal || typeof cal !== "object") return false;
@@ -9078,17 +9077,6 @@ async function runArSession({
       !glassesCheekOrthogonalBasis &&
       !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesEyeMidpointAlign", "1")).trim());
     
-    console.log("[omafit-ar] pipeline flags (v33-debug):", {
-      glassesSimpleFaceOnly,
-      glassesEyeMidpointAlign,
-      glassesStructuralMindarRig,
-      glassesGeometryAnchor,
-      glassesCheekOrthogonalBasis,
-      glassesGlbStandardize,
-      glassesCanonicalBlenderExport,
-      glassesManualMindarRig,
-    });
-
     const glassesManualTargetWidthFactor = glassesManualMindarRig
       ? (() => {
           const v = Number(String(cfgAttr("arGlassesManualTargetWidthFactor", "1.1")).trim());
@@ -9638,18 +9626,11 @@ async function runArSession({
       }
       const useGlassesTrackingWrap =
         accessoryType === "glasses" && !glassesManualMindarRig && !glassesGlbStandardize;
-      console.log("[omafit-ar] useGlassesTrackingWrap decision (v33-debug):", {
-        useGlassesTrackingWrap,
-        accessoryType,
-        glassesManualMindarRig,
-        glassesGlbStandardize,
-      });
       /** Pai do mesh: rotação de bind glTF→MindAR; o wrap de tracking aplica só a pose da face (não zera o bind a cada frame). */
       let glassesStaticBindWrap = null;
       if (useGlassesTrackingWrap) {
         glassesTrackingWrap = new GroupCtor();
         glassesTrackingWrap.name = "omafit-ar-glasses-tracking-wrap";
-        console.log("[omafit-ar] glassesTrackingWrap CREATED (v33-debug):", !!glassesTrackingWrap);
         glassesModelWrap.add(glassesTrackingWrap);
         glassesStaticBindWrap = new GroupCtor();
         glassesStaticBindWrap.name = "omafit-ar-glasses-static-bind";
@@ -10615,23 +10596,12 @@ async function runArSession({
             }
           }
           if (accessoryType === "glasses") {
-            console.log("[omafit-ar] glasses animation loop conditions (v33-debug):", {
-              glassesManualMindarRig: st.glassesManualMindarRig,
-              glassesStructuralMindarRig: st.glassesStructuralMindarRig,
-              glassesGeometryAnchor: st.glassesGeometryAnchor,
-              glassesCheekOrthogonalBasis: st.glassesCheekOrthogonalBasis,
-              glasses: !!glasses,
-              anchor: !!anchor,
-              anchorGroup: !!anchor?.group,
-              willEnterBlock: !st.glassesManualMindarRig && !st.glassesStructuralMindarRig && !st.glassesGeometryAnchor && !st.glassesCheekOrthogonalBasis && glasses && anchor?.group,
-            });
             if (
               !st.glassesManualMindarRig &&
               !st.glassesStructuralMindarRig &&
               !st.glassesGeometryAnchor &&
               !st.glassesCheekOrthogonalBasis &&
-              glasses &&
-              anchor?.group
+              glasses
             ) {
               const fms = mindarThree.faceMeshes;
               let faceSrc = null;
@@ -10646,8 +10616,10 @@ async function runArSession({
                 if (!faceSrc) faceSrc = fms[0];
               }
               /** Pai do alinhamento facial: sempre `glassesModelWrap` (tracking wrap é filho). */
-              const faceAlignParent = glassesModelWrap || glasses.parent;
-              if (faceSrc && faceAlignParent) {
+              const faceAlignParent =
+                st.glassesModelWrap || glassesModelWrap || glasses?.parent || null;
+              const facePoseSource = faceSrc || anchor?.group || null;
+              if (faceAlignParent && facePoseSource) {
                 if (!_omafitSimpleGlassesFaceAlignScratch) {
                   _omafitSimpleGlassesFaceAlignScratch = {
                     faceWorld: new THREE.Matrix4(),
@@ -10666,10 +10638,10 @@ async function runArSession({
                 const fa = _omafitSimpleGlassesFaceAlignScratch;
                 const lmLoc = lm;
                 if (!fa.faceForwardOff) fa.faceForwardOff = new THREE.Vector3();
-                faceSrc.updateMatrixWorld(true);
+                facePoseSource.updateMatrixWorld(true);
                 faceAlignParent.updateMatrixWorld(true);
                 /** `faceMatrix` MindAR: mesma matriz 4×4 suavizada que a malha (`m[12]..[14]` = translação). */
-                fa.faceWorld.copy(faceSrc.matrixWorld);
+                fa.faceWorld.copy(facePoseSource.matrixWorld);
                 fa.parentInv.copy(faceAlignParent.matrixWorld).invert();
                 fa.localMat.multiplyMatrices(fa.parentInv, fa.faceWorld);
                 wearPosition.position.set(wearPosMEffective.x, wearPosMEffective.y, wearPosMEffective.z);
@@ -10701,7 +10673,6 @@ async function runArSession({
                    * +Z de profundidade: coluna 2 de `fa.basis` no referencial do pai.
                    * O bind glTF→MindAR fica no `glassesStaticBindWrap`.
                    */
-                  console.log("[omafit-ar] ENTERED simpleFaceOnly block (v33-debug) — about to check okBridge");
                   fa.q.setFromRotationMatrix(fa.basis);
                   glassesTrackingWrap.quaternion.copy(fa.q);
                   const okBridge = (() => {
@@ -10735,12 +10706,6 @@ async function runArSession({
                     fa.midW.copy(fa.midMetric).applyMatrix4(fa.faceWorld);
                     return true;
                   })();
-                  console.log("[omafit-ar] depth/scale conditions (v33-debug):", {
-                    okBridge,
-                    glassesEyeMidpointAlign: st.glassesEyeMidpointAlign,
-                    faceAlignParent: !!faceAlignParent,
-                    willApplyDepth: okBridge && st.glassesEyeMidpointAlign && faceAlignParent,
-                  });
                   if (okBridge && st.glassesEyeMidpointAlign && faceAlignParent) {
                     glassesTrackingWrap.position.copy(fa.midW);
                     faceAlignParent.worldToLocal(glassesTrackingWrap.position);
@@ -10749,9 +10714,11 @@ async function runArSession({
                     if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
                     fa.zFaceLocal.transformDirection(fa.parentInv);
                     const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
-                    const calWearZ = Number.isFinite(initialFaceCal.wearZ) ? initialFaceCal.wearZ : 0;
+                    const calWearZ =
+                      initialFaceCal && Number.isFinite(initialFaceCal.wearZ)
+                        ? initialFaceCal.wearZ
+                        : 0;
                     const df = baseDepth + calWearZ;
-                    console.log("[omafit-ar] depth (v33-debug): baseDepth=", baseDepth, "calWearZ=", calWearZ, "df=", df, "initialFaceCal.wearZ=", initialFaceCal.wearZ);
                     if (Math.abs(df) > 1e-6) {
                       glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
                     }
@@ -10772,6 +10739,19 @@ async function runArSession({
                     }
                   } else {
                     glassesTrackingWrap.position.setFromMatrixPosition(fa.basis);
+                    const ce = fa.basis.elements;
+                    fa.zFaceLocal.set(ce[8], ce[9], ce[10]);
+                    if (fa.zFaceLocal.lengthSq() > 1e-12) fa.zFaceLocal.normalize();
+                    fa.zFaceLocal.transformDirection(fa.parentInv);
+                    const baseDepth = Number.isFinite(st.glassesDepthForwardM) ? st.glassesDepthForwardM : 0;
+                    const calWearZ =
+                      initialFaceCal && Number.isFinite(initialFaceCal.wearZ)
+                        ? initialFaceCal.wearZ
+                        : 0;
+                    const df = baseDepth + calWearZ;
+                    if (Math.abs(df) > 1e-6) {
+                      glassesTrackingWrap.position.addScaledVector(fa.zFaceLocal, df);
+                    }
                   }
                   glasses.rotation.order = "XYZ";
                   glasses.rotation.set(0, 0, 0);
@@ -10792,14 +10772,17 @@ async function runArSession({
                     glasses.position.set(0, 0, 0);
                     if (!st.positionLogged) {
                       st.positionLogged = true;
-                      console.log("[omafit-ar] glasses position v32 (ponte nasal 168, origem GLB entre lentes)", {
+                      console.log("[omafit-ar] glasses position v34 (ponte nasal 168 + calibração scale/wearZ)", {
                         glassesTrackingWrapPosition: {
                           x: glassesTrackingWrap.position.x.toFixed(4),
                           y: glassesTrackingWrap.position.y.toFixed(4),
                           z: glassesTrackingWrap.position.z.toFixed(4),
                         },
                         glassesDepthForwardM: st.glassesDepthForwardM,
-                        calWearZ: Number.isFinite(initialFaceCal.wearZ) ? initialFaceCal.wearZ : 0,
+                        calWearZ:
+                          initialFaceCal && Number.isFinite(initialFaceCal.wearZ)
+                            ? initialFaceCal.wearZ
+                            : 0,
                         glassesLocalPosition: {
                           x: glasses.position.x.toFixed(4),
                           y: glasses.position.y.toFixed(4),
@@ -10895,12 +10878,13 @@ async function runArSession({
                           ? st.glassesFrameWidthLocal
                           : 1;
                       let scale = (ipdMetric * ipdMul) / frameW;
-                      const calScale = Number.isFinite(initialFaceCal.scale) && initialFaceCal.scale > 0
-                        ? initialFaceCal.scale
-                        : 1;
-                      const scaleBeforeCal = scale;
+                      const calScale =
+                        initialFaceCal &&
+                        Number.isFinite(initialFaceCal.scale) &&
+                        initialFaceCal.scale > 0
+                          ? initialFaceCal.scale
+                          : 1;
                       scale = scale * calScale;
-                      console.log("[omafit-ar] scale (v33-debug): scaleBeforeCal=", scaleBeforeCal, "calScale=", calScale, "scaleAfterCal=", scale, "initialFaceCal.scale=", initialFaceCal.scale);
                       scale = THREE.MathUtils.clamp(
                         scale,
                         OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,

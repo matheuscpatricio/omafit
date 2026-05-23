@@ -21,10 +21,15 @@ export const AR_GLASSES_DEPTH_MIN_M = -0.08;
 export const AR_GLASSES_DEPTH_MAX_M = 0.05;
 export const AR_GLASSES_DEPTH_STEP_M = 0.005;
 
-/** Óculos: intervalo do slider de escala (1 = ajuste automático IPD no widget). */
+/** Óculos: intervalo do slider de escala (1 = largura de referência da armação ~145 mm). */
 export const AR_GLASSES_SCALE_MIN = 0.25;
 export const AR_GLASSES_SCALE_MAX = 2;
 export const AR_GLASSES_SCALE_STEP = 0.05;
+
+/** Colar: ajuste fino de tamanho (1 = arco automático ~36 cm; intervalo estreito). */
+export const AR_NECKLACE_SCALE_MIN = 0.88;
+export const AR_NECKLACE_SCALE_MAX = 1.12;
+export const AR_NECKLACE_SCALE_STEP = 0.02;
 
 /**
  * IPD de referência do preview (m) — deve coincidir com
@@ -99,7 +104,9 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
     scale:
       type === "glasses"
         ? clamp(num(src.scale, 1), AR_GLASSES_SCALE_MIN, AR_GLASSES_SCALE_MAX)
-        : clamp(num(src.scale, 1), 0.3, 3),
+        : type === "necklace"
+          ? clamp(num(src.scale, 1), AR_NECKLACE_SCALE_MIN, AR_NECKLACE_SCALE_MAX)
+          : clamp(num(src.scale, 1), 0.3, 3),
   };
 }
 
@@ -135,11 +142,23 @@ export function buildCalibrationForRotationEditor(defaultCal, saved, accessoryTy
         scale: saved && Number.isFinite(Number(saved.scale)) ? Number(saved.scale) : defaultCal.scale,
         wearZ: saved && Number.isFinite(Number(saved.wearZ)) ? Number(saved.wearZ) : defaultCal.wearZ,
       }),
+      ...(type === "necklace" && {
+        scale: saved && Number.isFinite(Number(saved.scale)) ? Number(saved.scale) : defaultCal.scale,
+        rx: saved && Number.isFinite(Number(saved.rx)) ? Number(saved.rx) : defaultCal.rx,
+        ry: saved && Number.isFinite(Number(saved.ry)) ? Number(saved.ry) : defaultCal.ry,
+        rz: saved && Number.isFinite(Number(saved.rz)) ? Number(saved.rz) : defaultCal.rz,
+      }),
     },
     type,
   );
   if (type === "bracelet") {
     return sanitizeArCalibrationInput({ ...merged, rx: 0, ry: 0 }, type);
+  }
+  if (type === "necklace") {
+    return sanitizeArCalibrationInput(
+      { ...merged, wearX: 0, wearY: 0, wearZ: 0 },
+      type,
+    );
   }
   return merged;
 }

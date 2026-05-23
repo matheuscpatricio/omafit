@@ -424,6 +424,9 @@
       data-ar-mindar-anchor="{{ ar_anchor_default }}"
       data-ar-mindar-disable-mirror=""
       data-ar-mindar-model-scale="{{ cal_scale }}"
+      {%- if ar_type_guess == 'necklace' and cal_present -%}
+      data-ar-necklace-scale-mul="{{ cal_scale }}"
+      {%- endif -%}
       data-ar-mindar-wear-yxz=""
       data-ar-mindar-wear-position="{{ cal_wear_position }}"
       data-ar-mindar-no-wear-default=""
@@ -453,7 +456,7 @@
         assign ar_cb_sep = '&'
       endif
     -%}
-    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}&oma_ar_asset=20260518rigidSlot8"></script>
+    <script type="module" src="{{ ar_script_url }}{{ ar_cb_sep }}omafit_ar_cb={{ block.id }}&t={{ 'now' | date: '%s' }}&oma_ar_asset=20260520arWidgetV79"></script>
   {% endif %}
 {% endif %}
 

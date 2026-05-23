@@ -41,6 +41,9 @@ import {
   AR_GLASSES_SCALE_MIN,
   AR_GLASSES_SCALE_MAX,
   AR_GLASSES_SCALE_STEP,
+  AR_NECKLACE_SCALE_MIN,
+  AR_NECKLACE_SCALE_MAX,
+  AR_NECKLACE_SCALE_STEP,
 } from "../ar-calibration.shared.js";
 import {
   detectAccessoryType,
@@ -53,10 +56,21 @@ import {
   omafitApplyGlassesTripoOffsetContainer,
 } from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
 import {
-  computeGlassesPreviewBaseScale,
-  OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
+  applyGlassesMerchantCalibRotation,
+  OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+  resolveGlassesCalibScaleBase,
   resolveGlassesFrameWidthForFit,
+  resolveGlassesMerchantMeshScale,
 } from "../../extensions/omafit-theme/assets/omafit-glasses-calibration.js";
+import {
+  applyNecklaceAutoBind,
+  applyNecklaceMerchantCalibRotation,
+  applyNecklacePreviewStaticOrient,
+  computeNecklacePreviewBaseScale,
+  normalizeNecklaceMerchantCalibration,
+  omafitApplyNecklaceTripoBind,
+  omafitNecklaceArcSpanFromBbox,
+} from "../../extensions/omafit-theme/assets/omafit-necklace-calibration.js";
 
 function tryResignIfPrivate(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -405,7 +419,12 @@ export default function ArEyewearCalibratePage() {
     const toSave =
       data.accessoryType === "bracelet"
         ? sanitizeArCalibrationInput({ ...cal, rx: 0, ry: 0 }, data.accessoryType)
-        : sanitizeArCalibrationInput(cal, data.accessoryType);
+        : data.accessoryType === "necklace"
+          ? sanitizeArCalibrationInput(
+              { scale: cal.scale, rx: 0, ry: 0, rz: 0 },
+              data.accessoryType,
+            )
+          : sanitizeArCalibrationInput(cal, data.accessoryType);
     fetcher.submit(
       {
         calibration: toSave,
@@ -432,6 +451,9 @@ export default function ArEyewearCalibratePage() {
     const hasRotationChanges = cal.rx !== saved.rx || cal.ry !== saved.ry || cal.rz !== saved.rz;
     if (data.accessoryType === "glasses") {
       return hasRotationChanges || cal.wearZ !== saved.wearZ || cal.scale !== saved.scale;
+    }
+    if (data.accessoryType === "necklace") {
+      return cal.scale !== saved.scale;
     }
     return hasRotationChanges;
   }, [cal, initialCalibration, data.defaultCalibration, data.accessoryType]);
@@ -499,7 +521,9 @@ export default function ArEyewearCalibratePage() {
                   >
                     {data.accessoryType === "bracelet"
                       ? t("arEyewear.calibrate.previewHintBracelet")
-                      : t("arEyewear.calibrate.previewHint")}
+                      : data.accessoryType === "necklace"
+                        ? t("arEyewear.calibrate.previewHintNecklace")
+                        : t("arEyewear.calibrate.previewHint")}
                   </div>
                 </div>
               </Card>
@@ -1262,6 +1286,36 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                   baseScale: fitB.baseScale,
                   localInnerR_mm: (fitB.localInnerR * 1000).toFixed(1),
                 });
+              } else if (accessoryType === "necklace") {
+                let tripBind = applyNecklaceAutoBind(THREE, root);
+                if (!tripBind) tripBind = omafitApplyNecklaceTripoBind(THREE, root);
+                root.updateMatrixWorld(true);
+                const boxNeck = new THREE.Box3().setFromObject(root);
+                boxNeck.getSize(size);
+                const centerNeck = new THREE.Vector3();
+                boxNeck.getCenter(centerNeck);
+                root.position.sub(centerNeck);
+                root.updateMatrixWorld(true);
+                boxNeck.setFromObject(root);
+                boxNeck.getSize(size);
+                const neckSpanM = omafitNecklaceArcSpanFromBbox(size);
+                baseScale = computeNecklacePreviewBaseScale(neckSpanM);
+                const neckBind = new THREE.Group();
+                neckBind.name = "omafit-calibrate-necklace-bind";
+                const neckOrient = new THREE.Group();
+                neckOrient.name = "omafit-calibrate-necklace-orient";
+                applyNecklacePreviewStaticOrient(THREE, neckOrient);
+                neckOrient.add(root);
+                neckBind.add(neckOrient);
+                root.scale.setScalar(baseScale);
+                s.necklaceBindGroup = neckBind;
+                s.necklaceOrientGroup = neckOrient;
+                console.log("[omafit-calibrate] necklace auto-fit (widget parity)", {
+                  tripBind: tripBind?.bind,
+                  bindAuto: tripBind?.auto ?? null,
+                  neckSpanM,
+                  baseScaleAt100: baseScale,
+                });
               } else if (accessoryType === "watch") {
                 const localRingR =
                   didBendWatch
@@ -1290,15 +1344,18 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                 });
               } else {
                 const frameRawW = Math.max(size.x, 1e-4);
-                baseScale = computeGlassesPreviewBaseScale(
-                  frameRawW,
-                  OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
-                );
+                /** Paridade AR v46: export canónico → base 1; slider = multiplicador directo. */
+                baseScale = resolveGlassesCalibScaleBase({
+                  bboxWidthLocal: frameRawW,
+                  canonicalBlenderExport: true,
+                  simpleFaceOnly: true,
+                });
                 root.scale.setScalar(baseScale);
                 console.log("[omafit-calibrate] glasses auto-fit", {
                   frameRawW,
                   frameFitW: resolveGlassesFrameWidthForFit(frameRawW),
                   baseScaleAt100: baseScale,
+                  formula: "canonical: meshScale = merchantScale",
                 });
               }
 
@@ -1309,16 +1366,21 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
               if (accessoryType === "glasses") {
                 root.rotation.set(0, 0, 0);
                 root.quaternion.identity();
-                const ay = new THREE.Vector3(0, 1, 0);
-                root.rotateOnWorldAxis(ay, Math.PI);
+                root.rotateOnWorldAxis(
+                  new THREE.Vector3(0, 1, 0),
+                  OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+                );
                 root.updateMatrix();
                 root.updateMatrixWorld(true);
-                console.log("[omafit-calibrate] glasses bind Ry 180° (widget parity v28)");
+                console.log("[omafit-calibrate] glasses bind Ry 180° (shared canonical bind)");
                 s.tripoOffsetGroup = null;
                 calibRot.add(root);
               } else if (accessoryType === "bracelet" && glbRoot) {
                 s.tripoOffsetGroup = null;
                 calibRot.add(glbRoot);
+              } else if (accessoryType === "necklace" && s.necklaceBindGroup) {
+                s.tripoOffsetGroup = null;
+                calibRot.add(s.necklaceBindGroup);
               } else {
                 s.tripoOffsetGroup = null;
                 calibRot.add(root);
@@ -1334,11 +1396,15 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
               const phMat = s.placeholder?.userData?.boxMaterial;
               if (phMat) phMat.opacity = 0.2;
 
-              applyCalibrationToState(
-                stateRef.current,
-                calRef.current || cal,
-                calRef.current || cal,
-              );
+              const rotCal =
+                accessoryType === "necklace"
+                  ? normalizeNecklaceMerchantCalibration(calRef.current || cal)
+                  : calRef.current || cal;
+              const wearScaleCal =
+                accessoryType === "necklace"
+                  ? { ...(wearScaleRef.current || {}), scale: (calRef.current || cal).scale }
+                  : calRef.current || cal;
+              applyCalibrationToState(stateRef.current, rotCal, wearScaleCal);
               setPhase("ready");
               console.log("[omafit-calibrate] GLB carregado:", {
                 src, maxDim, baseScale, sizeRaw: size.toArray(),
@@ -1423,8 +1489,16 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
 
   useEffect(() => {
     calRef.current = cal;
-    applyCalibrationToState(stateRef.current, cal, cal);
-  }, [cal, wearScaleCalibration]);
+    const rotCal =
+      accessoryType === "necklace"
+        ? normalizeNecklaceMerchantCalibration(cal)
+        : cal;
+    const wearScaleCal =
+      accessoryType === "necklace"
+        ? { ...(wearScaleRef.current || {}), scale: cal.scale }
+        : cal;
+    applyCalibrationToState(stateRef.current, rotCal, wearScaleCal);
+  }, [cal, wearScaleCalibration, accessoryType]);
 
     return (
     <div ref={hostRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
@@ -1612,22 +1686,15 @@ function applyCalibrationToState(s, rotationCal, wearScaleCal) {
   const rc = rotationCal && typeof rotationCal === "object" ? rotationCal : {};
   const ws =
     wearScaleCal && typeof wearScaleCal === "object" ? wearScaleCal : rc;
-  const toRad = (d) => (Number(d) || 0) * Math.PI / 180;
-  const rxRad = toRad(rc.rx);
-  const ryRad = toRad(rc.ry);
-  const rzRad = toRad(rc.rz);
-
-  if (!s.worldAxes) {
-    s.worldAxes = {
-      X: new THREE.Vector3(1, 0, 0),
-      Y: new THREE.Vector3(0, 1, 0),
-      Z: new THREE.Vector3(0, 0, 1),
-    };
+  if (s.necklaceBindGroup) {
+    applyNecklaceMerchantCalibRotation(THREE, s.necklaceBindGroup, rc);
+    s.necklaceBindGroup.updateMatrix();
+    s.necklaceBindGroup.updateMatrixWorld(true);
+    s.calibRot.quaternion.identity();
+    s.calibRot.rotation.set(0, 0, 0);
+  } else {
+    applyGlassesMerchantCalibRotation(THREE, s.calibRot, rc);
   }
-  s.calibRot.quaternion.identity();
-  if (ryRad) s.calibRot.rotateOnWorldAxis(s.worldAxes.Y, ryRad);
-  if (rxRad) s.calibRot.rotateOnWorldAxis(s.worldAxes.X, rxRad);
-  if (rzRad) s.calibRot.rotateOnWorldAxis(s.worldAxes.Z, rzRad);
   s.calibRot.updateMatrix();
   s.calibRot.updateMatrixWorld(true);
 
@@ -1639,10 +1706,10 @@ function applyCalibrationToState(s, rotationCal, wearScaleCal) {
   const sc = Number(ws.scale);
   const mul = Number.isFinite(sc) && sc > 0 ? sc : 1;
 
-  if (s.glbRoot) {
-    s.glbRoot.scale.setScalar(s.baseScale * mul);
-  } else if (s.model) {
-    s.model.scale.setScalar(s.baseScale * mul);
+  const target = s.glbRoot || s.model;
+  if (target) {
+    /** Igual ao widget v41: `glassesModelWrap.scale = autoFitBase × scale` do slider. */
+    target.scale.setScalar(s.baseScale * mul);
   }
   if (s.placeholder) {
     s.placeholder.scale.setScalar(mul);
@@ -1777,9 +1844,37 @@ function ScaleSlider({ label, helpText, value, onChange }) {
   );
 }
 
+/** Colar: só "Tamanho" (escala fina sobre o fit automático ~36 cm). */
+function NecklaceScaleSlider({ label, helpText, value, onChange }) {
+  const clamped = Math.max(
+    AR_NECKLACE_SCALE_MIN,
+    Math.min(AR_NECKLACE_SCALE_MAX, Number(value) || 1),
+  );
+  const percentage = Math.round(clamped * 100);
+  return (
+    <BlockStack gap="200">
+      <RangeSlider
+        output
+        label={label}
+        helpText={helpText}
+        min={AR_NECKLACE_SCALE_MIN}
+        max={AR_NECKLACE_SCALE_MAX}
+        step={AR_NECKLACE_SCALE_STEP}
+        value={clamped}
+        onChange={(v) => {
+          const raw = Array.isArray(v) ? v[0] : v;
+          onChange(Number(raw));
+        }}
+        suffix={`${percentage}%`}
+      />
+    </BlockStack>
+  );
+}
+
 function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses" }) {
   const isBracelet = accessoryType === "bracelet";
   const isGlasses = accessoryType === "glasses";
+  const isNecklace = accessoryType === "necklace";
   const RotationSlider = isGlasses ? RotationFineSlider : RotationPresetSlider;
   const resetRotation = () => {
     setCal((prev) =>
@@ -1801,6 +1896,48 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
     if (typed && typed !== typedKey) return typed;
     return t(baseKey);
   };
+
+  if (isNecklace) {
+    return (
+      <BlockStack gap="300">
+        <Text as="p" tone="subdued">
+          {t("arEyewear.calibrate.necklaceSlidersIntro")}
+        </Text>
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <Text as="h4" variant="headingSm">
+            {t("arEyewear.calibrate.sliders.rotationGroup")}
+          </Text>
+          <Button size="slim" onClick={resetRotation}>
+            {t("arEyewear.calibrate.sliders.rotationReset")}
+          </Button>
+        </InlineStack>
+        <RotationPresetSlider
+          label={tt("arEyewear.calibrate.sliders.tilt.label")}
+          helpText={tt("arEyewear.calibrate.sliders.tilt.help")}
+          value={cal.rx}
+          onChange={setField("rx")}
+        />
+        <RotationPresetSlider
+          label={tt("arEyewear.calibrate.sliders.pan.label")}
+          helpText={tt("arEyewear.calibrate.sliders.pan.help")}
+          value={cal.ry}
+          onChange={setField("ry")}
+        />
+        <RotationPresetSlider
+          label={tt("arEyewear.calibrate.sliders.roll.label")}
+          helpText={tt("arEyewear.calibrate.sliders.roll.help")}
+          value={cal.rz}
+          onChange={setField("rz")}
+        />
+        <NecklaceScaleSlider
+          label={t("arEyewear.calibrate.sliders.scale.label")}
+          helpText={tt("arEyewear.calibrate.sliders.scale.help")}
+          value={cal.scale}
+          onChange={setField("scale")}
+        />
+      </BlockStack>
+    );
+  }
 
   if (isBracelet) {
     return (

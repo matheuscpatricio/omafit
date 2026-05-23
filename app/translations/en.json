@@ -498,8 +498,8 @@
       "howToStep4": "Click \"Save rotation\" when you are happy. Visitors will see that orientation in your online try-on.",
       "previewHint": "For glasses, align the piece with the eyes on the silhouette — that reference keeps results consistent.",
       "previewHintBracelet": "Line up the bracelet with the dashed wrist line on the silhouette. The control below uses the same rotation as your storefront try-on.",
-      "previewHintNecklace": "The necklace is auto-sized to about 36 cm on the neck. Use \"Size\" only for a small tweak — slightly larger or smaller.",
-      "necklaceSlidersIntro": "Only size can be adjusted here. 100% is the automatic fit in try-on; you can nudge it up or down a little. Position and rotation are fixed in AR.",
+      "previewHintNecklace": "The necklace is auto-sized on the neck. Use rotation (5° steps) and size (65%–145%) to match the storefront try-on.",
+      "necklaceSlidersIntro": "Rotation in 5° steps (−180° to 180°). Size: 100% is the automatic try-on fit; you can go down to 65% or up to 145%.",
       "braceletSlidersIntro": "Only wrist rotation can be adjusted here. Choose −90°, 0°, or 90° with the slider or buttons. Position and size are automatic in the AR try-on.",
       "targetLabel": "Apply this look to…",
       "targetHelp": "Choose \"Whole product\" when every colour or size should share the same placement. Choose \"Only this variant\" when each option needs its own fine-tuning.",
@@ -600,7 +600,7 @@
           "helpByType": {
             "watch": "Scales the watch — very small sizes disappear; very large sizes look less believable.",
             "bracelet": "Scales the bracelet — very large values can look heavy on the wrist.",
-            "necklace": "Fine-tune around the automatic size (~36 cm on the neck). 100% is default; stay within about 88%–112%."
+            "necklace": "Multiplier on the automatic try-on size. 100% is default; from 65% (smaller) to 145% (larger), in 1% steps."
           }
         }
       }

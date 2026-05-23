@@ -1911,19 +1911,19 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
             {t("arEyewear.calibrate.sliders.rotationReset")}
           </Button>
         </InlineStack>
-        <RotationPresetSlider
+        <RotationFineSlider
           label={tt("arEyewear.calibrate.sliders.tilt.label")}
           helpText={tt("arEyewear.calibrate.sliders.tilt.help")}
           value={cal.rx}
           onChange={setField("rx")}
         />
-        <RotationPresetSlider
+        <RotationFineSlider
           label={tt("arEyewear.calibrate.sliders.pan.label")}
           helpText={tt("arEyewear.calibrate.sliders.pan.help")}
           value={cal.ry}
           onChange={setField("ry")}
         />
-        <RotationPresetSlider
+        <RotationFineSlider
           label={tt("arEyewear.calibrate.sliders.roll.label")}
           helpText={tt("arEyewear.calibrate.sliders.roll.help")}
           value={cal.rz}

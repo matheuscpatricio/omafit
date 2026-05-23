@@ -26,10 +26,10 @@ export const AR_GLASSES_SCALE_MIN = 0.25;
 export const AR_GLASSES_SCALE_MAX = 2;
 export const AR_GLASSES_SCALE_STEP = 0.05;
 
-/** Colar: ajuste fino de tamanho (1 = arco automático ~36 cm; intervalo estreito). */
-export const AR_NECKLACE_SCALE_MIN = 0.88;
-export const AR_NECKLACE_SCALE_MAX = 1.12;
-export const AR_NECKLACE_SCALE_STEP = 0.02;
+/** Colar: multiplicador sobre o fit automático (1 = arco ~30 cm no provador). */
+export const AR_NECKLACE_SCALE_MIN = 0.65;
+export const AR_NECKLACE_SCALE_MAX = 1.45;
+export const AR_NECKLACE_SCALE_STEP = 0.01;
 
 /**
  * IPD de referência do preview (m) — deve coincidir com
@@ -76,7 +76,7 @@ export function snapArRotationPresetDeg(deg) {
 
 function snapRotationDegForAccessoryType(deg, accessoryType) {
   const type = normalizeAccessoryType(accessoryType) || AR_ACCESSORY_TYPE_DEFAULT;
-  if (type === "glasses") return snapArRotationFineDeg(deg);
+  if (type === "glasses" || type === "necklace") return snapArRotationFineDeg(deg);
   return snapArRotationPresetDeg(deg);
 }
 

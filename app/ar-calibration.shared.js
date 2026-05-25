@@ -112,7 +112,8 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
 
 const AR_CALIBRATION_DEFAULTS_BY_TYPE = {
   glasses: {},
-  necklace: { wearY: -0.12 },
+  /** rz −90° = inclinar lateralmente (roll) — alinhamento correcto no provador. */
+  necklace: { wearY: -0.12, rz: -90 },
   watch: { scale: 1, wearY: 0 },
   bracelet: { scale: 1.1, wearY: 0 },
 };

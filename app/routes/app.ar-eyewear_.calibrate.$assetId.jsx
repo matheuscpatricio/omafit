@@ -66,6 +66,7 @@ import {
   applyNecklaceAutoBind,
   applyNecklaceMerchantCalibRotation,
   applyNecklacePreviewStaticOrient,
+  omafitNecklaceMerchantCalibQuaternion,
   computeNecklacePreviewBaseScale,
   normalizeNecklaceMerchantCalibration,
   omafitApplyNecklaceTripoBind,
@@ -419,12 +420,7 @@ export default function ArEyewearCalibratePage() {
     const toSave =
       data.accessoryType === "bracelet"
         ? sanitizeArCalibrationInput({ ...cal, rx: 0, ry: 0 }, data.accessoryType)
-        : data.accessoryType === "necklace"
-          ? sanitizeArCalibrationInput(
-              { scale: cal.scale, rx: 0, ry: 0, rz: 0 },
-              data.accessoryType,
-            )
-          : sanitizeArCalibrationInput(cal, data.accessoryType);
+        : sanitizeArCalibrationInput(cal, data.accessoryType);
     fetcher.submit(
       {
         calibration: toSave,
@@ -453,7 +449,10 @@ export default function ArEyewearCalibratePage() {
       return hasRotationChanges || cal.wearZ !== saved.wearZ || cal.scale !== saved.scale;
     }
     if (data.accessoryType === "necklace") {
-      return cal.scale !== saved.scale;
+      return (
+        hasRotationChanges ||
+        cal.scale !== saved.scale
+      );
     }
     return hasRotationChanges;
   }, [cal, initialCalibration, data.defaultCalibration, data.accessoryType]);
@@ -1300,13 +1299,13 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
                 boxNeck.getSize(size);
                 const neckSpanM = omafitNecklaceArcSpanFromBbox(size);
                 baseScale = computeNecklacePreviewBaseScale(neckSpanM);
-                const neckBind = new THREE.Group();
-                neckBind.name = "omafit-calibrate-necklace-bind";
                 const neckOrient = new THREE.Group();
                 neckOrient.name = "omafit-calibrate-necklace-orient";
                 applyNecklacePreviewStaticOrient(THREE, neckOrient);
-                neckOrient.add(root);
-                neckBind.add(neckOrient);
+                const neckBind = new THREE.Group();
+                neckBind.name = "omafit-calibrate-necklace-bind";
+                neckOrient.add(neckBind);
+                neckBind.add(root);
                 root.scale.setScalar(baseScale);
                 s.necklaceBindGroup = neckBind;
                 s.necklaceOrientGroup = neckOrient;
@@ -1378,9 +1377,9 @@ function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses
               } else if (accessoryType === "bracelet" && glbRoot) {
                 s.tripoOffsetGroup = null;
                 calibRot.add(glbRoot);
-              } else if (accessoryType === "necklace" && s.necklaceBindGroup) {
+              } else if (accessoryType === "necklace" && s.necklaceOrientGroup) {
                 s.tripoOffsetGroup = null;
-                calibRot.add(s.necklaceBindGroup);
+                calibRot.add(s.necklaceOrientGroup);
               } else {
                 s.tripoOffsetGroup = null;
                 calibRot.add(root);
@@ -1687,7 +1686,9 @@ function applyCalibrationToState(s, rotationCal, wearScaleCal) {
   const ws =
     wearScaleCal && typeof wearScaleCal === "object" ? wearScaleCal : rc;
   if (s.necklaceBindGroup) {
-    applyNecklaceMerchantCalibRotation(THREE, s.necklaceBindGroup, rc);
+    s.necklaceBindGroup.quaternion.copy(
+      omafitNecklaceMerchantCalibQuaternion(THREE, rc),
+    );
     s.necklaceBindGroup.updateMatrix();
     s.necklaceBindGroup.updateMatrixWorld(true);
     s.calibRot.quaternion.identity();
@@ -1877,8 +1878,12 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
   const isNecklace = accessoryType === "necklace";
   const RotationSlider = isGlasses ? RotationFineSlider : RotationPresetSlider;
   const resetRotation = () => {
+    const def = defaultArCalibration(accessoryType);
     setCal((prev) =>
-      sanitizeArCalibrationInput({ ...prev, rx: 0, ry: 0, rz: 0 }, accessoryType),
+      sanitizeArCalibrationInput(
+        { ...prev, rx: def.rx, ry: def.ry, rz: def.rz },
+        accessoryType,
+      ),
     );
   };
   /**

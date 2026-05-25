@@ -39,6 +39,9 @@ export const OMAFIT_NECKLACE_ORIENT_SLERP = 0.22;
 /** Confiança mínima da largura do arco para auto-bind por vértices. */
 export const OMAFIT_NECKLACE_AUTO_BIND_MIN_WIDTH_CONF = 0.38;
 
+/** Roll padrão (°) — «Inclinar lateralmente» na calibração admin. */
+export const OMAFIT_NECKLACE_DEFAULT_MERCHANT_RZ_DEG = -90;
+
 function snapNecklaceMerchantRotationDeg(deg) {
   const n = Number(deg);
   if (!Number.isFinite(n)) return 0;
@@ -61,10 +64,14 @@ export function clampNecklaceMerchantScaleMul(n) {
 export function normalizeNecklaceMerchantCalibration(cal) {
   const src = cal && typeof cal === "object" ? cal : {};
   const sc = Number(src.scale);
+  const rzRaw =
+    cal && typeof cal === "object" && "rz" in src
+      ? src.rz
+      : OMAFIT_NECKLACE_DEFAULT_MERCHANT_RZ_DEG;
   return {
     rx: snapNecklaceMerchantRotationDeg(src.rx),
     ry: snapNecklaceMerchantRotationDeg(src.ry),
-    rz: snapNecklaceMerchantRotationDeg(src.rz),
+    rz: snapNecklaceMerchantRotationDeg(rzRaw),
     scale: clampNecklaceMerchantScaleMul(
       Number.isFinite(sc) && sc > 0 ? sc : OMAFIT_NECKLACE_MERCHANT_SCALE_DEFAULT,
     ),
@@ -72,11 +79,33 @@ export function normalizeNecklaceMerchantCalibration(cal) {
 }
 
 export function resolveNecklaceMerchantScaleMul(cal, attrMul) {
+  const norm = normalizeNecklaceMerchantCalibration(cal);
+  const fromCal = Number(cal && typeof cal === "object" ? cal.scale : NaN);
+  if (Number.isFinite(fromCal) && fromCal > 0) {
+    return norm.scale;
+  }
   const fromAttr = Number(attrMul);
   if (Number.isFinite(fromAttr) && fromAttr > 0) {
     return clampNecklaceMerchantScaleMul(fromAttr);
   }
-  return normalizeNecklaceMerchantCalibration(cal).scale;
+  return norm.scale;
+}
+
+/**
+ * Quaternion de calibração loja (YXZ local) — paridade com preview admin e provador.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {object} cal
+ */
+export function omafitNecklaceMerchantCalibQuaternion(THREE, cal) {
+  const norm = normalizeNecklaceMerchantCalibration(cal);
+  const e = new THREE.Euler(
+    (norm.rx * Math.PI) / 180,
+    (norm.ry * Math.PI) / 180,
+    (norm.rz * Math.PI) / 180,
+    "YXZ",
+  );
+  return new THREE.Quaternion().setFromEuler(e);
 }
 
 /**
@@ -196,13 +225,48 @@ export function computeNecklaceAutoBindQuat(THREE, detected, heightSign = 1) {
 }
 
 /**
+ * Eixos para colar: maior dim = arco (X), menor = espessura (Z frente), média = altura/pingente (Y).
+ *
+ * @returns {import("./omafit-glasses-orient.js").GlassesAxesDetect | null}
+ */
+export function detectNecklaceAxes(THREE, root) {
+  const base = detectGlassesAxes(THREE, root);
+  if (!base?.sizes) return null;
+  const axes = [
+    { idx: 0, size: base.sizes.x, offset: base.centroidOffset?.x ?? 0 },
+    { idx: 1, size: base.sizes.y, offset: base.centroidOffset?.y ?? 0 },
+    { idx: 2, size: base.sizes.z, offset: base.centroidOffset?.z ?? 0 },
+  ].sort((a, b) => b.size - a.size);
+  const widthAxis = axes[0];
+  const heightAxis = axes[1];
+  const depthAxis = axes[2];
+  if (!widthAxis || !heightAxis || !depthAxis) return null;
+  const widthConfidence =
+    widthAxis.size > heightAxis.size * 1.12 ? 1 : 0.55;
+  return {
+    widthAxisIdx: widthAxis.idx,
+    heightAxisIdx: heightAxis.idx,
+    depthAxisIdx: depthAxis.idx,
+    depthFrontSign: depthAxis.offset >= 0 ? 1 : -1,
+    sizes: base.sizes,
+    centroidOffset: base.centroidOffset,
+    confidence: {
+      width: widthConfidence,
+      depth: Math.min(1, Math.abs(depthAxis.offset) * 2),
+      depthAgreement: true,
+    },
+    vertexCount: base.vertexCount,
+  };
+}
+
+/**
  * Bind determinístico por vértices (previsível multi-GLB).
  *
  * @returns {{ bind: string, detected: object, signs: object } | null}
  */
 export function applyNecklaceAutoBind(THREE, root) {
   if (!THREE || !root) return null;
-  const detected = detectGlassesAxes(THREE, root);
+  const detected = detectNecklaceAxes(THREE, root);
   if (!detected) return null;
   if (detected.confidence.width < OMAFIT_NECKLACE_AUTO_BIND_MIN_WIDTH_CONF) {
     return null;
@@ -279,7 +343,11 @@ export function omafitApplyNecklaceTripoBind(THREE, root) {
 }
 
 /**
- * Base ortonormal (paridade óculos): X = 454−234, down = queixo−nariz, Z = X×down.
+ * Base ortonormal (paridade óculos / MindAR selfie):
+ *   X = 454−234 (com espelho opcional no X), down = queixo−nariz,
+ *   Z = X×down, Y = Z×X (pingente em −Y local do mesh).
+ *
+ * @param {boolean} [mirrorSelfieX] negar X dos landmarks (vídeo frontal espelhado)
  */
 export function omafitNecklaceNeckBasisVectors(
   THREE,
@@ -287,6 +355,7 @@ export function omafitNecklaceNeckBasisVectors(
   smoother,
   idx,
   scratch,
+  mirrorSelfieX = false,
 ) {
   if (!THREE || !lm || !scratch?.pick) return false;
   const chin = scratch.chin || new THREE.Vector3();
@@ -297,6 +366,13 @@ export function omafitNecklaceNeckBasisVectors(
   if (!scratch.pick(idx.nose, nose)) return false;
   if (!scratch.pick(idx.cheekL, L)) return false;
   if (!scratch.pick(idx.cheekR, R)) return false;
+  const mx = mirrorSelfieX ? -1 : 1;
+  if (mx < 0) {
+    chin.x *= -1;
+    nose.x *= -1;
+    L.x *= -1;
+    R.x *= -1;
+  }
 
   const lateral = scratch.lateral.subVectors(L, R);
   if (lateral.lengthSq() < 1e-12) return false;
@@ -310,7 +386,9 @@ export function omafitNecklaceNeckBasisVectors(
   if (fwd.lengthSq() < 1e-12) return false;
   fwd.normalize();
 
-  scratch.hangNeg.copy(down).negate();
+  scratch.hangNeg.crossVectors(fwd, lateral);
+  if (scratch.hangNeg.lengthSq() < 1e-12) return false;
+  scratch.hangNeg.normalize();
   return true;
 }
 
@@ -324,9 +402,20 @@ export function omafitApplyNecklaceNeckBasisOrientation(
   scratch,
   shortestPath,
   slerpAlpha = OMAFIT_NECKLACE_ORIENT_SLERP,
+  merchantCal = null,
+  mirrorSelfieX = false,
 ) {
   if (!THREE || !anchorGroup || !orientGroup || !scratch) return false;
-  if (!omafitNecklaceNeckBasisVectors(THREE, lm, smoother, idx, scratch)) {
+  if (
+    !omafitNecklaceNeckBasisVectors(
+      THREE,
+      lm,
+      smoother,
+      idx,
+      scratch,
+      mirrorSelfieX,
+    )
+  ) {
     return false;
   }
 
@@ -334,14 +423,24 @@ export function omafitApplyNecklaceNeckBasisOrientation(
   if (!scratch.qTarget) scratch.qTarget = new THREE.Quaternion();
   if (!scratch.qAnchor) scratch.qAnchor = new THREE.Quaternion();
   if (!scratch.qOrient) scratch.qOrient = new THREE.Quaternion();
+  if (!scratch.qMerchant) scratch.qMerchant = new THREE.Quaternion();
 
-  scratch.basisM4.makeBasis(scratch.lateral, scratch.hangNeg, scratch.fwd);
+  if (!scratch.fwdNeg) scratch.fwdNeg = new THREE.Vector3();
+  scratch.fwdNeg.copy(scratch.fwd).negate();
+  scratch.basisM4.makeBasis(scratch.lateral, scratch.hangNeg, scratch.fwdNeg);
   scratch.qTarget.setFromRotationMatrix(scratch.basisM4);
 
   anchorGroup.updateMatrixWorld(true);
   anchorGroup.getWorldQuaternion(scratch.qAnchor);
   scratch.qAnchor.invert();
   scratch.qOrient.copy(scratch.qAnchor).multiply(scratch.qTarget);
+  scratch.qMerchant.identity();
+  if (merchantCal) {
+    scratch.qMerchant.copy(
+      omafitNecklaceMerchantCalibQuaternion(THREE, merchantCal),
+    );
+    scratch.qOrient.multiply(scratch.qMerchant);
+  }
 
   if (typeof shortestPath === "function") {
     shortestPath(orientGroup.quaternion, scratch.qOrient);

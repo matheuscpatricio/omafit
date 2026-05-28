@@ -18,7 +18,9 @@ import {
   Thumbnail,
   Divider,
   Box,
+  Icon,
 } from "@shopify/polaris";
+import { SearchIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
 import { getShopDomain } from "../utils/getShopDomain";
@@ -95,6 +97,37 @@ function resolveAccessoryTypeForAsset(asset, productById) {
   });
 }
 
+/**
+ * Rótulo do card em "Pedidos e progresso": nome do produto e, se o catálogo
+ * tiver mais de uma variante, o título da variante do envio entre aspas.
+ */
+function resolveSubmissionProductDisplay(asset, productById, productNameById, unknownLabel) {
+  const pid = String(asset?.product_id ?? "").trim();
+  const productName =
+    asset?.product_name ||
+    productNameById.get(pid) ||
+    unknownLabel;
+
+  const product = pid ? productById.get(pid) : null;
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  if (variants.length <= 1) {
+    return { productName, variantLabel: null };
+  }
+
+  const variantId = String(asset?.variant_id ?? "").trim();
+  if (!variantId) {
+    return { productName, variantLabel: null };
+  }
+
+  const variant = variants.find((v) => String(v?.id ?? "").trim() === variantId);
+  const variantLabel = String(variant?.title ?? "").trim();
+  if (!variantLabel) {
+    return { productName, variantLabel: null };
+  }
+
+  return { productName, variantLabel };
+}
+
 export default function ArEyewearPage() {
   const { t } = useAppI18n();
   const [searchParams] = useSearchParams();
@@ -118,6 +151,8 @@ export default function ArEyewearPage() {
   const [confirmingShop, setConfirmingShop] = useState(false);
   const [actionId, setActionId] = useState(null);
   const [publishFeedback, setPublishFeedback] = useState(null);
+  const [submissionsSearch, setSubmissionsSearch] = useState("");
+  const [submissionsStatusFilter, setSubmissionsStatusFilter] = useState("all");
 
   const loadAssets = useCallback(async () => {
     setAssetsLoading(true);
@@ -278,6 +313,41 @@ export default function ArEyewearPage() {
     for (const p of products || []) map.set(String(p.id || ""), p);
     return map;
   }, [products]);
+
+  const submissionsStatusOptions = useMemo(
+    () => [
+      { label: t("arEyewear.submissionsFilterAll"), value: "all" },
+      { label: t("arEyewear.status.published"), value: "published" },
+      { label: t("arEyewear.status.pending_review"), value: "pending_review" },
+      { label: t("arEyewear.status.queued"), value: "queued" },
+      { label: t("arEyewear.status.processing"), value: "processing" },
+      { label: t("arEyewear.status.uploaded"), value: "uploaded" },
+      { label: t("arEyewear.status.failed"), value: "failed" },
+      { label: t("arEyewear.status.rejected"), value: "rejected" },
+    ],
+    [t],
+  );
+
+  const filteredAssets = useMemo(() => {
+    const q = submissionsSearch.trim().toLowerCase();
+    return (assets || []).filter((a) => {
+      if (submissionsStatusFilter !== "all" && a.status !== submissionsStatusFilter) {
+        return false;
+      }
+      if (!q) return true;
+      const display = resolveSubmissionProductDisplay(
+        a,
+        productById,
+        productNameById,
+        "",
+      );
+      const haystack = [display.productName, display.variantLabel, String(a.product_id || "")]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [assets, submissionsSearch, submissionsStatusFilter, productNameById, productById]);
 
   return (
     <Page
@@ -497,6 +567,32 @@ export default function ArEyewearPage() {
                   {t("arEyewear.refresh")}
                 </Button>
               </InlineStack>
+              {!assetsLoading && assets.length > 0 ? (
+                <InlineStack gap="200" wrap>
+                  <Box minWidth="240px">
+                    <TextField
+                      label={t("arEyewear.submissionsSearchLabel")}
+                      labelHidden
+                      value={submissionsSearch}
+                      onChange={setSubmissionsSearch}
+                      autoComplete="off"
+                      placeholder={t("arEyewear.submissionsSearchPlaceholder")}
+                      prefix={<Icon source={SearchIcon} />}
+                      clearButton
+                      onClearButtonClick={() => setSubmissionsSearch("")}
+                    />
+                  </Box>
+                  <Box minWidth="220px">
+                    <Select
+                      label={t("arEyewear.submissionsFilterLabel")}
+                      labelHidden
+                      options={submissionsStatusOptions}
+                      value={submissionsStatusFilter}
+                      onChange={setSubmissionsStatusFilter}
+                    />
+                  </Box>
+                </InlineStack>
+              ) : null}
               {assetsLoading ? (
                 <InlineStack align="center" blockAlign="center">
                   <Spinner size="small" />
@@ -506,16 +602,34 @@ export default function ArEyewearPage() {
                 <Text as="p" tone="subdued">
                   {t("arEyewear.empty")}
                 </Text>
+              ) : filteredAssets.length === 0 ? (
+                <Text as="p" tone="subdued">
+                  {t("arEyewear.submissionsEmptyFiltered")}
+                </Text>
               ) : (
                 <BlockStack gap="300">
-                  {assets.map((a) => {
+                  {filteredAssets.map((a) => {
                     const displayAccessoryType = resolveAccessoryTypeForAsset(a, productById);
+                    const productDisplay = resolveSubmissionProductDisplay(
+                      a,
+                      productById,
+                      productNameById,
+                      t("arEyewear.productUnknown"),
+                    );
                     return (
                     <Card key={a.id} padding="400">
                       <BlockStack gap="300">
                         <InlineStack align="space-between" blockAlign="center" wrap>
                           <Text as="p" fontWeight="semibold">
-                            {a.product_name || productNameById.get(String(a.product_id || "")) || t("arEyewear.productUnknown")}
+                            {productDisplay.productName}
+                            {productDisplay.variantLabel ? (
+                              <>
+                                {' '}
+                                <Text as="span" variant="bodyMd" fontWeight="regular">
+                                  &quot;{productDisplay.variantLabel}&quot;
+                                </Text>
+                              </>
+                            ) : null}
                           </Text>
                           <InlineStack gap="200" wrap>
                             <Badge tone="attention">

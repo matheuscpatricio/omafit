@@ -22,6 +22,7 @@ import {
   setProductArAccessoryTypeMetafield,
   ensureArAccessoryTypeMetafieldDefinition,
   enrichAssetsWithFreshAccessoryType,
+  resolveWearableClass,
 } from "../ar-eyewear.server";
 
 const BUCKET_UPLOADS = "ar-eyewear-uploads";
@@ -130,6 +131,12 @@ export async function action({ request }) {
     const accessoryType =
       manualAccessoryType ||
       (await detectAndPersistAccessoryType(admin, productId));
+    const lensProfile = String(form.get("lensProfile") || "").trim() || null;
+    const wearableClass = resolveWearableClass({
+      wearableClass: form.get("wearableClass"),
+      accessoryType,
+      lensProfile,
+    });
     // Se o lojista escolheu manualmente o tipo (override), persistir também
     // no metafield para que o Liquid sirva o valor certo ao widget.
     if (manualAccessoryType) {
@@ -178,6 +185,9 @@ export async function action({ request }) {
       status: "uploaded",
       frame_width_mm: Number.isFinite(frameWidthMm) ? frameWidthMm : null,
       accessory_type: accessoryType,
+      wearable_class: wearableClass,
+      lens_profile: lensProfile,
+      generation_provider: "rodin",
     });
 
     const id = row.id;

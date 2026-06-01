@@ -1,0 +1,8 @@
+{
+  "glasses_canonical": "glasses_canonical.py",
+  "bracelet_bangle": "bracelet_bangle.py",
+  "bracelet_chain": "bracelet_chain.py",
+  "bracelet_cuff": "bracelet_cuff.py",
+  "watch_round": "watch_round.py",
+  "necklace_chain": "necklace_chain.py"
+}

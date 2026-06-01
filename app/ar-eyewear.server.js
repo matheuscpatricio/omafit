@@ -30,6 +30,12 @@ export {
   normalizeAccessoryType,
   detectAccessoryType,
 } from "./ar-accessory-type.shared.js";
+export {
+  AR_WEARABLE_CLASSES,
+  resolveWearableClass,
+  normalizeWearableClass,
+  listWearableClassOptions,
+} from "./ar-wearable-class.shared.js";
 
 const TABLE = "ar_eyewear_assets";
 
@@ -531,6 +537,76 @@ export async function setProductArGlbMetafield(admin, productId, glbUrl) {
     lastErr = errs.map((e) => e.message).join("; ");
   }
   throw new Error(lastErr || "metafieldsSet failed");
+}
+
+/**
+ * Manifest AR v1 (URL JSON) — vitrine / iframe (`data-ar-manifest-url`).
+ */
+export async function setProductArManifestUrlMetafield(admin, productId, manifestUrl) {
+  const url = String(manifestUrl || "").trim();
+  if (!url) return null;
+  const ownerId = toProductGid(productId);
+  const tryTypes = ["url", "single_line_text_field"];
+  let lastErr = "";
+  for (const type of tryTypes) {
+    const response = await admin.graphql(METAFIELD_SET, {
+      variables: {
+        metafields: [
+          {
+            ownerId,
+            namespace: "omafit",
+            key: "ar_manifest_url",
+            type,
+            value: url,
+          },
+        ],
+      },
+    });
+    const json = await response.json();
+    const errs = json?.data?.metafieldsSet?.userErrors || [];
+    if (!errs.length) {
+      return json?.data?.metafieldsSet?.metafields?.[0] || null;
+    }
+    lastErr = errs.map((e) => e.message).join("; ");
+  }
+  throw new Error(lastErr || "metafieldsSet (ar_manifest_url) failed");
+}
+
+export async function ensureArManifestUrlMetafieldDefinition(admin) {
+  const attempts = [
+    {
+      name: "Omafit AR — manifest URL",
+      namespace: "omafit",
+      key: "ar_manifest_url",
+      description: "URL do manifest AR v1 (JSON) gerado no ingest Rodin.",
+      type: "url",
+      ownerType: "PRODUCT",
+    },
+    {
+      name: "Omafit AR — manifest URL",
+      namespace: "omafit",
+      key: "ar_manifest_url",
+      description: "URL do manifest AR v1 (JSON) gerado no ingest Rodin.",
+      type: "single_line_text_field",
+      ownerType: "PRODUCT",
+    },
+  ];
+  for (const definition of attempts) {
+    try {
+      const response = await admin.graphql(METAFIELD_DEF_CREATE, {
+        variables: { definition },
+      });
+      const json = await response.json();
+      const userErrors = json?.data?.metafieldDefinitionCreate?.userErrors || [];
+      const isDup = userErrors.some((e) =>
+        /duplicate|already exists|taken/i.test(String(e?.message || "")),
+      );
+      if (!userErrors.length || isDup) return { ok: true };
+    } catch (e) {
+      console.warn("[ar-eyewear] ensureArManifestUrlMetafieldDefinition:", e?.message || e);
+    }
+  }
+  return { ok: false };
 }
 
 export function toVariantGid(variantId) {

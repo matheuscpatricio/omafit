@@ -64,14 +64,23 @@ function statusTone(status) {
   }
 }
 
-function imageSelectOptions(images, t) {
-  return [
-    { label: t("arEyewear.selectPlaceholder"), value: "" },
-    ...images.map((im, i) => ({
-      label: `${i + 1}. ${(im.altText || t("arEyewear.imageLabel", { n: i + 1 })).slice(0, 42)}${(im.altText || "").length > 42 ? "…" : ""}`,
-      value: im.url,
-    })),
-  ];
+const MAX_GENERATION_IMAGES = 5;
+
+function defaultGenerationImageUrls(product, variantId) {
+  const imgs = product?.images || [];
+  const urls = imgs.map((i) => i.url).filter(Boolean);
+  if (!variantId) return urls[0] ? [urls[0]] : [];
+  const v = (product?.variants || []).find((x) => String(x.id) === String(variantId));
+  if (v?.imageUrl) return [v.imageUrl];
+  return urls[0] ? [urls[0]] : [];
+}
+
+function toggleGenerationImageUrl(current, url, max = MAX_GENERATION_IMAGES) {
+  if (current.includes(url)) {
+    return current.filter((u) => u !== url);
+  }
+  if (current.length >= max) return current;
+  return [...current, url];
 }
 
 const AR_TYPES = ["glasses", "necklace", "watch", "bracelet"];
@@ -143,7 +152,7 @@ export default function ArEyewearPage() {
   const [products, setProducts] = useState([]);
   const [productFilter, setProductFilter] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [generationImageUrl, setGenerationImageUrl] = useState("");
+  const [generationImageUrls, setGenerationImageUrls] = useState([]);
 
   const [productId, setProductId] = useState("");
   const [variantId, setVariantId] = useState("");
@@ -217,15 +226,17 @@ export default function ArEyewearPage() {
   const selectShopProduct = (p) => {
     setSelectedProduct(p);
     setProductId(String(p.id || ""));
-    const imgs = p.images || [];
-    setGenerationImageUrl(imgs[0]?.url || "");
     const vars = p.variants || [];
-    if (vars.length === 1) {
-      setVariantId(String(vars[0].id || ""));
-    } else if (vars.length > 1) {
-      setVariantId(String(vars[0].id || ""));
-    } else {
-      setVariantId("");
+    const nextVariantId =
+      vars.length >= 1 ? String(vars[0].id || "") : "";
+    setVariantId(nextVariantId);
+    setGenerationImageUrls(defaultGenerationImageUrls(p, nextVariantId));
+  };
+
+  const handleVariantChange = (id) => {
+    setVariantId(id);
+    if (selectedProduct) {
+      setGenerationImageUrls(defaultGenerationImageUrls(selectedProduct, id));
     }
   };
 
@@ -239,8 +250,12 @@ export default function ArEyewearPage() {
       setError(t("arEyewear.errorVariantRequired"));
       return;
     }
-    if (!generationImageUrl) {
+    if (generationImageUrls.length === 0) {
       setError(t("arEyewear.errorSelectImage"));
+      return;
+    }
+    if (generationImageUrls.length > MAX_GENERATION_IMAGES) {
+      setError(t("arEyewear.errorMaxImages", { max: MAX_GENERATION_IMAGES }));
       return;
     }
     setConfirmingShop(true);
@@ -252,7 +267,7 @@ export default function ArEyewearPage() {
         credentials: "include",
         body: JSON.stringify({
           productId: productId.trim(),
-          imageFrontUrl: generationImageUrl,
+          imageUrls: generationImageUrls,
           variantId: variantId.trim() || undefined,
           frameWidthMm: frameWidthMm.trim() || undefined,
         }),
@@ -260,7 +275,7 @@ export default function ArEyewearPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
       setSelectedProduct(null);
-      setGenerationImageUrl("");
+      setGenerationImageUrls([]);
       setVariantId("");
       setFrameWidthMm("");
       await loadAssets();
@@ -294,8 +309,6 @@ export default function ArEyewearPage() {
       setActionId(null);
     }
   };
-
-  const imgOpts = selectedProduct ? imageSelectOptions(selectedProduct.images || [], t) : [];
 
   const hasQueuedJobs = useMemo(
     () =>
@@ -478,20 +491,6 @@ export default function ArEyewearPage() {
                       {t("arEyewear.detection.hint")}
                     </Text>
                   </Banner>
-                  <InlineStack gap="200" wrap>
-                    {(selectedProduct.images || []).slice(0, 8).map((im, idx) => (
-                      <Thumbnail key={`${im.url}-${idx}`} source={im.url} alt={im.altText || ""} size="large" />
-                    ))}
-                  </InlineStack>
-                  {(selectedProduct.images || []).length === 0 ? (
-                    <Banner tone="warning">{t("arEyewear.needOneImage")}</Banner>
-                  ) : null}
-                  <Select
-                    label={t("arEyewear.selectGenerationImage")}
-                    options={imgOpts}
-                    value={generationImageUrl}
-                    onChange={setGenerationImageUrl}
-                  />
                   {(selectedProduct.variants || []).length > 1 ? (
                     <Select
                       label={t("arEyewear.variantSelect")}
@@ -500,9 +499,61 @@ export default function ArEyewearPage() {
                         value: String(v.id || ""),
                       }))}
                       value={variantId}
-                      onChange={setVariantId}
+                      onChange={handleVariantChange}
                       helpText={t("arEyewear.variantSelectHelp")}
                     />
+                  ) : null}
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {t("arEyewear.generationImagesCount", {
+                      count: generationImageUrls.length,
+                      max: MAX_GENERATION_IMAGES,
+                    })}
+                  </Text>
+                  <InlineStack gap="200" wrap>
+                    {(selectedProduct.images || []).map((im, idx) => {
+                      const selected = generationImageUrls.includes(im.url);
+                      const order = selected ? generationImageUrls.indexOf(im.url) + 1 : 0;
+                      const atMax =
+                        generationImageUrls.length >= MAX_GENERATION_IMAGES && !selected;
+                      return (
+                        <button
+                          key={`${im.url}-${idx}`}
+                          type="button"
+                          onClick={() =>
+                            setGenerationImageUrls((prev) =>
+                              toggleGenerationImageUrl(prev, im.url),
+                            )
+                          }
+                          disabled={atMax}
+                          style={{
+                            cursor: atMax ? "not-allowed" : "pointer",
+                            opacity: atMax ? 0.5 : 1,
+                            border: selected
+                              ? "2px solid var(--p-color-border-emphasis)"
+                              : "2px solid transparent",
+                            borderRadius: "var(--p-border-radius-200)",
+                            padding: 4,
+                            background: "none",
+                          }}
+                          aria-pressed={selected}
+                          aria-label={t("arEyewear.imageLabel", { n: idx + 1 })}
+                        >
+                          <BlockStack gap="100" inlineAlign="center">
+                            <Thumbnail
+                              source={im.url}
+                              alt={im.altText || ""}
+                              size="large"
+                            />
+                            {selected ? (
+                              <Badge tone="success">{String(order)}</Badge>
+                            ) : null}
+                          </BlockStack>
+                        </button>
+                      );
+                    })}
+                  </InlineStack>
+                  {(selectedProduct.images || []).length === 0 ? (
+                    <Banner tone="warning">{t("arEyewear.needOneImage")}</Banner>
                   ) : null}
                   {detectedAccessoryType === "glasses" ? (
                     <TextField
@@ -516,7 +567,10 @@ export default function ArEyewearPage() {
                   <Button
                     variant="primary"
                     loading={confirmingShop}
-                    disabled={(selectedProduct.images || []).length === 0}
+                    disabled={
+                      (selectedProduct.images || []).length === 0 ||
+                      generationImageUrls.length === 0
+                    }
                     onClick={submitFromShopify}
                   >
                     {t("arEyewear.confirmGenerationImage")}
@@ -653,6 +707,20 @@ export default function ArEyewearPage() {
                             </a>
                           </Text>
                         )}
+                        {a.ar_manifest_draft_url ? (
+                          <Text as="p" tone="subdued" variant="bodySm">
+                            <a href={a.ar_manifest_draft_url} target="_blank" rel="noreferrer">
+                              Manifest AR
+                            </a>
+                            {a.wearable_class ? ` · ${a.wearable_class}` : ""}
+                            {a.generation_stage ? ` · ${a.generation_stage}` : ""}
+                          </Text>
+                        ) : a.wearable_class ? (
+                          <Text as="p" tone="subdued" variant="bodySm">
+                            {a.wearable_class}
+                            {a.generation_stage ? ` · ${a.generation_stage}` : ""}
+                          </Text>
+                        ) : null}
                         <InlineStack gap="200" wrap>
                           {a.status === "pending_review" && (
                             <Button

@@ -1,6 +1,6 @@
 /**
  * GET /api/ar-eyewear/products — produtos óculos (tipo, taxonomia, tags, título) + imagens
- * POST /api/ar-eyewear/products — JSON: confirmar 1 URL (imagem para geração 3D) e enfileirar job
+ * POST /api/ar-eyewear/products — JSON: 1–5 URLs (imageUrls[]) da variante/produto e enfileirar job
  */
 import { authenticate } from "../shopify.server";
 import { Buffer } from "node:buffer";
@@ -18,11 +18,33 @@ import {
   detectAndPersistAccessoryType,
   setProductArAccessoryTypeMetafield,
   ensureArAccessoryTypeMetafieldDefinition,
+  resolveWearableClass,
 } from "../ar-eyewear.server";
 import { fetchEyewearProductsForShop } from "../ar-eyewear-products.server";
 
 const BUCKET_UPLOADS = "ar-eyewear-uploads";
 const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_GENERATION_IMAGES = 5;
+
+function parseGenerationImageUrls(body) {
+  const legacy = String(body.imageFrontUrl || "").trim();
+  const raw = body.imageUrls;
+  let urls = [];
+  if (Array.isArray(raw)) {
+    urls = raw.map((u) => String(u || "").trim()).filter(Boolean);
+  } else if (legacy) {
+    urls = [legacy];
+  }
+  const seen = new Set();
+  const out = [];
+  for (const u of urls) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    out.push(u);
+    if (out.length >= MAX_GENERATION_IMAGES) break;
+  }
+  return out;
+}
 
 function extFromType(type) {
   if (type === "image/png") return "png";
@@ -111,18 +133,12 @@ export async function action({ request }) {
 
     const body = await request.json();
     const productId = String(body.productId || "").trim();
-    const imageFrontUrl = String(body.imageFrontUrl || "").trim();
+    const generationImageUrls = parseGenerationImageUrls(body);
     const variantId = String(body.variantId || "").trim() || null;
     console.log("[api.ar-eyewear.products] action:start", {
       productId,
       variantId: variantId || null,
-      imageHost: (() => {
-        try {
-          return new URL(imageFrontUrl || "https://invalid").host;
-        } catch {
-          return "invalid";
-        }
-      })(),
+      imageCount: generationImageUrls.length,
     });
     const frameWidthMmRaw = body.frameWidthMm;
     const frameWidthMm =
@@ -139,6 +155,12 @@ export async function action({ request }) {
     const accessoryType =
       manualAccessoryType ||
       (await detectAndPersistAccessoryType(admin, productId));
+    const lensProfile = String(body.lensProfile || "").trim() || null;
+    const wearableClass = resolveWearableClass({
+      wearableClass: body.wearableClass,
+      accessoryType,
+      lensProfile,
+    });
     if (manualAccessoryType) {
       try {
         await ensureArAccessoryTypeMetafieldDefinition(admin);
@@ -154,8 +176,19 @@ export async function action({ request }) {
         );
       }
     }
-    if (!imageFrontUrl) {
-      return Response.json({ error: "URL da imagem para geração 3D é obrigatória (imageFrontUrl)" }, { status: 400 });
+    if (generationImageUrls.length === 0) {
+      return Response.json(
+        { error: "Selecione pelo menos 1 imagem (imageUrls, máx. 5)" },
+        { status: 400 },
+      );
+    }
+    for (const u of generationImageUrls) {
+      if (!isAllowedShopifyImageUrl(u)) {
+        return Response.json(
+          { error: "Todas as imagens devem ser URLs do CDN Shopify (cdn.shopify.com)" },
+          { status: 400 },
+        );
+      }
     }
 
     try {
@@ -177,42 +210,34 @@ export async function action({ request }) {
       status: "uploaded",
       frame_width_mm: Number.isFinite(frameWidthMm) ? frameWidthMm : null,
       accessory_type: accessoryType,
+      wearable_class: wearableClass,
+      lens_profile: lensProfile,
+      generation_provider: "rodin",
     });
 
     const id = row.id;
     const base = `${session.shop.replace(/[^\w.-]+/g, "_")}/${id}`;
 
     try {
-      console.log("[api.ar-eyewear.products] fetchShopifyCdnImage:start", { assetId: id });
-      const d1 = await fetchShopifyCdnImage(imageFrontUrl);
-      console.log("[api.ar-eyewear.products] fetchShopifyCdnImage:ok", {
-        assetId: id,
-        bytes: d1.buf?.length,
-        type: d1.type,
-      });
-
-      console.log("[api.ar-eyewear.products] storageUpload:front:start", { assetId: id });
-      const u1 = await storageUpload(
-        BUCKET_UPLOADS,
-        `${base}/front.${extFromType(d1.type)}`,
-        d1.buf,
-        d1.type,
-      );
-      console.log("[api.ar-eyewear.products] storageUpload:front:ok", {
-        assetId: id,
-        publicUrlHost: (() => {
-          try {
-            return new URL(u1.publicUrl || "").host;
-          } catch {
-            return "?";
-          }
-        })(),
-      });
+      const publicUrls = [];
+      for (let i = 0; i < generationImageUrls.length; i++) {
+        const srcUrl = generationImageUrls[i];
+        console.log("[api.ar-eyewear.products] fetchShopifyCdnImage", { assetId: id, index: i });
+        const d = await fetchShopifyCdnImage(srcUrl);
+        const u = await storageUpload(
+          BUCKET_UPLOADS,
+          `${base}/view-${String(i).padStart(2, "0")}.${extFromType(d.type)}`,
+          d.buf,
+          d.type,
+        );
+        publicUrls.push(u.publicUrl);
+      }
 
       await patchAsset(id, {
-        image_front_url: u1.publicUrl,
-        image_three_quarter_url: null,
-        image_profile_url: null,
+        image_front_url: publicUrls[0] || null,
+        image_three_quarter_url: publicUrls[1] || null,
+        image_profile_url: publicUrls[2] || null,
+        image_urls: publicUrls,
         status: "queued",
         error_message: null,
       });

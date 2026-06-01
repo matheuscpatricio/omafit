@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "rodin": {
+      "model": "fal-ai/hyper3d/rodin/v2.5",
+      "material": "PBR",
+      "geometry_file_format": "glb",
+      "tier": "Gen-2.5-Medium",
+      "quality_mesh_option": "500K Triangle"
+    },
+    "generation_provider": "rodin"
+  },
+  "classes": {
+    "glasses_clear": {
+      "category": "glasses",
+      "rodin": {
+        "prompt": "Eyewear glasses frame with clear lenses, product photo, centered, full frame visible, PBR materials",
+        "negative_prompt": "deformed, broken, floating parts, human face",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "glasses_canonical",
+        "params": { "target_width_m": 0.14, "lens_type": "clear_fake" }
+      },
+      "manifest_defaults": {
+        "attachmentSpace": "face_bridge",
+        "meshPolicy": { "fittingMode": "strict" },
+        "materialProfile": { "lensType": "clear_fake", "renderMode": "lite" }
+      }
+    },
+    "glasses_sun": {
+      "category": "glasses",
+      "rodin": {
+        "prompt": "Sunglasses with dark tinted lenses, product photo, centered, full frame visible",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "glasses_canonical",
+        "params": { "target_width_m": 0.14, "lens_type": "tinted" }
+      },
+      "manifest_defaults": {
+        "attachmentSpace": "face_bridge",
+        "meshPolicy": { "fittingMode": "strict" },
+        "materialProfile": { "lensType": "tinted", "renderMode": "lite" }
+      }
+    },
+    "glasses_premium": {
+      "category": "glasses",
+      "rodin": {
+        "prompt": "Premium eyewear with realistic clear glass lenses, multiview product",
+        "min_images": 3,
+        "material": "PBR",
+        "tier": "Gen-2.5-High"
+      },
+      "blender": {
+        "recipe": "glasses_canonical",
+        "params": { "target_width_m": 0.14, "lens_type": "clear_physical" }
+      },
+      "manifest_defaults": {
+        "attachmentSpace": "face_bridge",
+        "meshPolicy": { "fittingMode": "strict" },
+        "materialProfile": { "lensType": "clear_physical", "renderMode": "pmrem" }
+      }
+    },
+    "bracelet_bangle": {
+      "category": "bracelet",
+      "rodin": {
+        "prompt": "Round rigid bangle bracelet, top and side product views, jewelry",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "bracelet_bangle",
+        "params": { "inner_diameter_mm": 62 }
+      },
+      "manifest_defaults": {
+        "wearableClass": "bracelet_bangle",
+        "attachmentSpace": "wrist_local",
+        "meshPolicy": {
+          "runtimeMode": "template_certified",
+          "fittingMode": "strict",
+          "deformationPolicy": "rigid"
+        },
+        "certifiedTemplate": { "id": "bracelet_bangle_round_v1", "version": 1 },
+        "fitProxy": {
+          "innerDiameterMm": 62,
+          "ringHoleAxisLocal": [0, 0, 1],
+          "ringCenterLocal": [0, 0, 0]
+        }
+      }
+    },
+    "bracelet_chain": {
+      "category": "bracelet",
+      "rodin": {
+        "prompt": "Flexible chain bracelet jewelry, product photo",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "bracelet_chain",
+        "params": { "inner_radius_mm": 31 }
+      },
+      "manifest_defaults": {
+        "wearableClass": "bracelet_chain",
+        "attachmentSpace": "wrist_local",
+        "meshPolicy": {
+          "runtimeMode": "template_certified",
+          "fittingMode": "strict",
+          "deformationPolicy": "rigid",
+          "braceletTopology": "chain"
+        },
+        "certifiedTemplate": { "id": "bracelet_chain_soft_v1", "version": 1 },
+        "fitProxy": {
+          "innerRadiusMm": 31,
+          "ringHoleAxisLocal": [0, 0, 1],
+          "ringCenterLocal": [0, 0, 0]
+        }
+      }
+    },
+    "bracelet_cuff_open": {
+      "category": "bracelet",
+      "rodin": {
+        "prompt": "Open cuff bracelet jewelry, product photo",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "bracelet_cuff",
+        "params": { "inner_diameter_mm": 58 }
+      },
+      "manifest_defaults": {
+        "wearableClass": "bracelet_cuff_open",
+        "attachmentSpace": "wrist_local",
+        "meshPolicy": {
+          "runtimeMode": "template_certified",
+          "fittingMode": "strict",
+          "deformationPolicy": "rigid"
+        },
+        "certifiedTemplate": { "id": "bracelet_cuff_open_v1", "version": 1 },
+        "fitProxy": {
+          "innerDiameterMm": 58,
+          "ringHoleAxisLocal": [0, 0, 1],
+          "ringCenterLocal": [0, 0, 0]
+        }
+      }
+    },
+    "watch_round": {
+      "category": "watch",
+      "rodin": {
+        "prompt": "Wrist watch with round dial, side and front product views",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "watch_round",
+        "params": { "case_width_mm": 42 }
+      },
+      "manifest_defaults": {
+        "attachmentSpace": "wrist_local",
+        "meshPolicy": { "fittingMode": "hybrid", "deformationPolicy": "rigid" }
+      }
+    },
+    "necklace_chain": {
+      "category": "necklace",
+      "rodin": {
+        "prompt": "Necklace chain with pendant, flat lay product photo",
+        "min_images": 2,
+        "material": "PBR"
+      },
+      "blender": {
+        "recipe": "necklace_chain",
+        "params": { "arc_span_m": 0.18 }
+      },
+      "manifest_defaults": {
+        "attachmentSpace": "neck_base",
+        "meshPolicy": { "fittingMode": "hybrid" },
+        "materialProfile": { "renderMode": "pmrem" }
+      }
+    }
+  }
+}

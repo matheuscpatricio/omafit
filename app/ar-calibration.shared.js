@@ -27,7 +27,7 @@ export const AR_GLASSES_SCALE_MAX = 2;
 export const AR_GLASSES_SCALE_STEP = 0.05;
 
 /** Colar: multiplicador sobre o fit automático (1 = arco ~30 cm no provador). */
-export const AR_NECKLACE_SCALE_MIN = 0.65;
+export const AR_NECKLACE_SCALE_MIN = 0.45;
 export const AR_NECKLACE_SCALE_MAX = 1.45;
 export const AR_NECKLACE_SCALE_STEP = 0.01;
 

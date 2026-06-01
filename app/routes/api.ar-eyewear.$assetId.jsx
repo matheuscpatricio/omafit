@@ -8,7 +8,9 @@ import {
   patchAsset,
   scheduleInvokeArEyewearGenerate,
   ensureArGlbMetafieldDefinition,
+  ensureArManifestUrlMetafieldDefinition,
   setProductArGlbMetafield,
+  setProductArManifestUrlMetafield,
   setVariantArGlbMetafield,
   supersedeOtherPublishedAssets,
   getShopArEyewearEnabled,
@@ -86,6 +88,7 @@ export async function action({ request, params }) {
         return Response.json({ error: "No glb_draft_url" }, { status: 400 });
       }
       await ensureArGlbMetafieldDefinition(admin);
+      await ensureArManifestUrlMetafieldDefinition(admin);
       /**
        * Metafield no produto: o tema Liquid só renderiza o bloco AR se
        * `product.metafields.omafit.ar_glb_url` estiver preenchido — por isso
@@ -95,6 +98,14 @@ export async function action({ request, params }) {
        * por variante (miniaturas / `__OMAFIT_AR_VARIANTS__`).
        */
       await setProductArGlbMetafield(admin, row.product_id, draftUrl);
+      const manifestUrl = String(row.ar_manifest_draft_url || "").trim();
+      if (manifestUrl) {
+        try {
+          await setProductArManifestUrlMetafield(admin, row.product_id, manifestUrl);
+        } catch (mErr) {
+          console.warn("[ar-eyewear] setProductArManifestUrlMetafield:", mErr?.message || mErr);
+        }
+      }
       let variantMetafieldOk = false;
       if (row.variant_id) {
         try {

@@ -2,7 +2,7 @@
  * Geração Rodin no servidor da app (fila `queued` sem worker Python separado).
  */
 import { fal } from "@fal-ai/client";
-import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
+import { postprocessRodinGlassesGlbBuffer } from "./ar-eyewear-glasses-postprocess.server.js";
 import { resolveWearableClass } from "./ar-wearable-class.shared.js";
 import { glassesLensProfileManifestMaterial } from "./ar-glasses-lens-profile.shared.js";
 import {
@@ -195,12 +195,18 @@ export function buildArManifestJson({
 
 /**
  * @param {object} params
+ * @param {string} params.shopDomain
+ * @param {string} params.assetId
+ * @param {Record<string, unknown>} params.presetRodin
+ * @param {string[]} params.imageUrls
+ * @param {{ recipe?: string, params?: Record<string, unknown> } | null} [params.glbPostprocess]
  */
 export async function generateGlbDraftViaRodinFal({
   shopDomain,
   assetId,
   presetRodin,
   imageUrls,
+  glbPostprocess = null,
 }) {
   const apiKey = (process.env.FAL_API_KEY || "").trim();
   if (!apiKey) throw new Error("FAL_API_KEY não configurada no servidor");
@@ -240,9 +246,23 @@ export async function generateGlbDraftViaRodinFal({
   let glbBuf = Buffer.from(await glbRes.arrayBuffer());
   if (glbBuf.length < 1000) throw new Error("GLB Rodin inválido (muito pequeno)");
   try {
-    glbBuf = Buffer.from(await canonicalizeArEyewearGlbBuffer(glbBuf));
+    const recipe = String(glbPostprocess?.recipe || "").trim();
+    if (recipe) {
+      glbBuf = await postprocessRodinGlassesGlbBuffer(glbBuf, {
+        recipe,
+        params:
+          glbPostprocess?.params && typeof glbPostprocess.params === "object"
+            ? glbPostprocess.params
+            : {},
+      });
+    } else {
+      const { canonicalizeArEyewearGlbBuffer } = await import(
+        "./ar-eyewear-glb-canonicalize.server.js"
+      );
+      glbBuf = Buffer.from(await canonicalizeArEyewearGlbBuffer(glbBuf));
+    }
   } catch (e) {
-    console.warn("[ar-eyewear] Rodin canonicalize ignorado:", e?.message || e);
+    console.warn("[ar-eyewear] Rodin GLB pós-processo ignorado:", e?.message || e);
   }
   const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;
   const uploaded = await storageUpload("ar-eyewear-glb", storagePath, glbBuf, "model/gltf-binary");
@@ -308,6 +328,12 @@ export async function invokeArEyewearRodinPipeline(assetId, shopDomain) {
     assetId: id,
     presetRodin: preset.rodin,
     imageUrls,
+    glbPostprocess: blenderCfg.recipe
+      ? {
+          recipe: String(blenderCfg.recipe),
+          params: recipeParams,
+        }
+      : null,
   });
 
   const storageBase = `${resolvedShop.replace(/[^\w.-]+/g, "_")}/${id}`;

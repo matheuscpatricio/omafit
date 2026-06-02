@@ -1,0 +1,122 @@
+/**
+ * Pós-processo óculos no Node — mesma receita que o worker `ar-mesh-generate`
+ * (`run_recipe.py glasses_canonical`). Evita divergência de rotação/escala entre
+ * `AR_MESH_WORKER_EXTERNAL=0` (Rodin no Node) e fila Python.
+ */
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OMAFIT_ROOT = path.join(__dirname, "..");
+const RUN_RECIPE_SCRIPT = path.join(
+  OMAFIT_ROOT,
+  "workers",
+  "ar-mesh-generate",
+  "postprocess",
+  "run_recipe.py",
+);
+
+/**
+ * @param {string} bin
+ * @param {string} recipe
+ * @param {string} inp
+ * @param {string} out
+ * @param {Record<string, unknown>} params
+ * @returns {Promise<void>}
+ */
+function runRecipeSubprocess(bin, recipe, inp, out, params) {
+  const paramsJson = JSON.stringify(params || {});
+  const timeoutMs = Math.max(
+    30_000,
+    Number(process.env.AR_MESH_RUN_RECIPE_TIMEOUT_MS || 180_000) || 180_000,
+  );
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      bin,
+      [RUN_RECIPE_SCRIPT, recipe, inp, out, paramsJson],
+      {
+        cwd: path.dirname(RUN_RECIPE_SCRIPT),
+        env: {
+          ...process.env,
+          PYTHONPATH: path.dirname(RUN_RECIPE_SCRIPT),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stderr = "";
+    proc.stderr?.on("data", (c) => {
+      stderr += String(c);
+    });
+    const timer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      reject(new Error(`run_recipe timeout (${timeoutMs}ms)`));
+    }, timeoutMs);
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else {
+        reject(
+          new Error(
+            `run_recipe exit ${code}: ${stderr.slice(-1200) || "(sem stderr)"}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+function resolvePythonBin() {
+  const override = String(process.env.AR_MESH_PYTHON || "").trim();
+  if (override) return override;
+  return process.platform === "win32" ? "python" : "python3";
+}
+
+/**
+ * @param {Buffer} glbBuf
+ * @param {{
+ *   recipe?: string,
+ *   params?: Record<string, unknown>,
+ * }} [opts]
+ * @returns {Promise<Buffer>}
+ */
+export async function postprocessRodinGlassesGlbBuffer(glbBuf, opts = {}) {
+  const recipe = String(opts.recipe || "glasses_canonical").trim() || "glasses_canonical";
+  const params = opts.params && typeof opts.params === "object" ? opts.params : {};
+  const useSubprocess =
+    !/^(0|false|no)$/i.test(String(process.env.AR_MESH_NODE_RUN_RECIPE || "1").trim());
+
+  if (useSubprocess) {
+    const tmp = await mkdtemp(path.join(tmpdir(), "omafit-glasses-pp-"));
+    const inp = path.join(tmp, "rodin_raw.glb");
+    const out = path.join(tmp, "canonical.glb");
+    try {
+      await writeFile(inp, glbBuf);
+      await runRecipeSubprocess(resolvePythonBin(), recipe, inp, out, params);
+      const outBuf = await readFile(out);
+      if (outBuf.length < 1000) throw new Error("GLB pós-processado inválido (muito pequeno)");
+      console.log("[ar-eyewear] glasses_canonical via run_recipe.py (paridade worker)", {
+        recipe,
+        target_width_m: params.target_width_m,
+        lens_type: params.lens_type,
+      });
+      return Buffer.from(outBuf);
+    } catch (e) {
+      console.warn(
+        "[ar-eyewear] run_recipe falhou — fallback canonicalizeArEyewearGlbBuffer:",
+        e?.message || e,
+      );
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  return canonicalizeArEyewearGlbBuffer(glbBuf);
+}

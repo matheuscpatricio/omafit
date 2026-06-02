@@ -343,6 +343,7 @@ export function computeGlassesCanonicalOffsetQuat(THREE, glasses) {
  */
 export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
   if (!THREE || !glasses) return false;
+  if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) return false;
   glasses.updateMatrixWorld(true);
   const sz = new THREE.Vector3();
   const box = new THREE.Box3().setFromObject(glasses);
@@ -359,6 +360,31 @@ export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
   glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
   glasses.updateMatrixWorld(true);
   return true;
+}
+
+/**
+ * GLB já no contrato widget/worker: +X largura, +Y topo, Z fino (profundidade).
+ *
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {boolean}
+ */
+export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
+  if (!THREE || !glasses) return false;
+  glasses.updateMatrixWorld(true);
+  const sz = new THREE.Vector3();
+  const box = new THREE.Box3().setFromObject(glasses);
+  if (typeof box.isEmpty === "function" && box.isEmpty()) return false;
+  box.getSize(sz);
+  const dims = [
+    { v: sz.x, i: 0 },
+    { v: sz.y, i: 1 },
+    { v: sz.z, i: 2 },
+  ].sort((a, b) => a.v - b.v);
+  if (dims[2].i !== 0) return false;
+  if (dims[0].i === 2 && dims[1].i === 1) return dims[1].v > dims[0].v * 1.05;
+  if (dims[0].i === 1 && dims[1].i === 2) return dims[1].v > dims[0].v * 1.05;
+  return false;
 }
 
 /**

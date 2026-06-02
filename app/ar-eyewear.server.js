@@ -249,6 +249,26 @@ export async function storageUpload(bucket, path, body, contentType) {
   return { path, publicUrl };
 }
 
+/**
+ * Orientação EXIF + JPEG estável para imagens de referência Rodin (evita input invertido).
+ * @param {Buffer} buf
+ * @param {string} mimeType
+ */
+export async function normalizeArReferenceImageBuffer(buf, mimeType) {
+  const type = String(mimeType || "image/jpeg").toLowerCase();
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(buf, { failOn: "none" })
+      .rotate()
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer();
+    return { buf: out, type: "image/jpeg" };
+  } catch (e) {
+    console.warn("[ar-eyewear] normalizeArReferenceImageBuffer:", e?.message || e);
+    return { buf, type: type || "image/jpeg" };
+  }
+}
+
 /** URL assinada para bucket privado (1h). */
 export async function storageCreateSignedUrl(bucket, path, expiresIn = 3600) {
   const { url, key } = getSupabaseConfig();

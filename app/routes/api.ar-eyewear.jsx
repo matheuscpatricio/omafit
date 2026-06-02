@@ -15,6 +15,7 @@ import {
   patchAsset,
   storageUpload,
   scheduleInvokeArEyewearGenerate,
+  normalizeArReferenceImageBuffer,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
   normalizeAccessoryType,
@@ -51,7 +52,8 @@ async function validateImage(file) {
   if (buf.length > MAX_BYTES) {
     return { ok: false, error: `Arquivo muito grande (máx ${MAX_BYTES / 1024 / 1024}MB)` };
   }
-  return { ok: true, buf, type };
+  const normalized = await normalizeArReferenceImageBuffer(buf, type);
+  return { ok: true, buf: normalized.buf, type: normalized.type };
 }
 
 async function validateImageOptional(file) {

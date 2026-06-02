@@ -11,6 +11,7 @@ import {
   getAssetById,
   patchAsset,
   storageUpload,
+  normalizeArReferenceImageBuffer,
   scheduleInvokeArEyewearGenerate,
   isArEyewearConfigured,
   arEyewearSupabaseConfigError,
@@ -95,7 +96,7 @@ async function fetchShopifyCdnImage(url) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(type)) {
     throw new Error("Formato de imagem não suportado (use JPG, PNG ou WebP)");
   }
-  return { buf, type };
+  return normalizeArReferenceImageBuffer(buf, type);
 }
 
 export async function loader({ request }) {

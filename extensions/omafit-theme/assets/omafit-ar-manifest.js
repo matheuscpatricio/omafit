@@ -162,6 +162,7 @@ export function omafitIsGlassesLensMaterial(meshName, materialName) {
   }
   if (mat === "lens_glass" || mat.includes("lens_glass")) return true;
   if (/\b(lens_glass|lens_left|lens_right|lentes?)\b/i.test(mat)) return true;
+  if (/\b(omafit_lens|lens_glass)\b/i.test(mn)) return true;
   if (/\b(lens|lentes)\b/i.test(mn) && !/\b(frame|temple|bridge)\b/i.test(mn)) return true;
   return false;
 }
@@ -207,12 +208,20 @@ export function omafitGlassesAllowsPhysicalLenses(manifest, cfgAttr) {
 export function omafitResolveGlassesRenderFlags(manifest, cfgAttr, deviceTier = "medium") {
   const physicalLenses = omafitGlassesAllowsPhysicalLenses(manifest, cfgAttr);
   if (!physicalLenses) {
+    const mp =
+      manifest?.materialProfile && typeof manifest.materialProfile === "object"
+        ? manifest.materialProfile
+        : {};
+    const attrLens = String(cfgAttr("arGlassesLensType", "") || "").trim().toLowerCase();
+    const lensType = String(mp.lensType || attrLens || "clear_fake")
+      .trim()
+      .toLowerCase();
     const attrPmrem = /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim());
     return {
       pmremOn: attrPmrem,
       stripTransmission: true,
-      lensType: null,
-      renderMode: "lite",
+      lensType,
+      renderMode: String(mp.renderMode || "lite").trim().toLowerCase() || "lite",
       physicalLenses: false,
     };
   }

@@ -404,6 +404,64 @@ def _scale_scene_to_width_x(scene, target_width_m: float) -> None:
     scene.apply_scale(s)
 
 
+def _split_monolithic_glasses_lens(scene) -> bool:
+    """
+    GLB Rodin monolítico (1 mesh): separa a shell frontal (−Z) como `lens_glass`.
+    Sem isto o runtime não consegue aplicar translúcido/transmissão só nas lentes.
+    Desligar: AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return False
+
+    import trimesh
+
+    meshes = [(n, g) for n, g in scene.geometry.items() if isinstance(g, trimesh.Trimesh)]
+    if len(meshes) != 1:
+        return False
+    orig_name, geom = meshes[0]
+    if len(geom.faces) < 32:
+        return False
+    try:
+        z = np.asarray(geom.triangles_center[:, 2], dtype=float)
+    except Exception:
+        return False
+    z_min = float(z.min())
+    z_max = float(z.max())
+    depth = z_max - z_min
+    if depth <= 1e-8:
+        return False
+    frac_raw = os.environ.get("AR_POSTPROCESS_LENS_FRONT_FRAC", "0.28")
+    try:
+        frac = float(frac_raw)
+    except (TypeError, ValueError):
+        frac = 0.28
+    frac = max(0.08, min(0.45, frac))
+    thresh = z_min + depth * frac
+    front_idx = np.where(z <= thresh)[0]
+    back_idx = np.where(z > thresh)[0]
+    if len(front_idx) < 12 or len(back_idx) < 12:
+        return False
+    try:
+        lens_geom = geom.submesh([front_idx], append=True)
+        frame_geom = geom.submesh([back_idx], append=True)
+    except Exception:
+        return False
+    if lens_geom is None or frame_geom is None:
+        return False
+    del scene.geometry[orig_name]
+    scene.geometry["omafit_frame"] = frame_geom
+    scene.geometry["omafit_lens"] = lens_geom
+    for g, mat_name in ((frame_geom, "frame_metal"), (lens_geom, "lens_glass")):
+        if getattr(g, "visual", None) is None:
+            g.visual = trimesh.visual.ColorVisuals(mesh=g)
+        g.visual.name = mat_name
+    return True
+
+
 def _rename_materials_for_glasses(scene) -> None:
     """Garante nomes frame_* e lens_glass para o widget AR."""
     import trimesh
@@ -412,6 +470,8 @@ def _rename_materials_for_glasses(scene) -> None:
     if not geoms:
         return
     if len(geoms) == 1:
+        if _split_monolithic_glasses_lens(scene):
+            return
         name, geom = geoms[0]
         scene.geometry[name].visual.name = "frame_metal"
         return

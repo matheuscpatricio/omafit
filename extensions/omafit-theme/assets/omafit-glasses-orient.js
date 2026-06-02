@@ -388,6 +388,24 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
 }
 
 /**
+ * Paridade preview admin ↔ widget: detecta frame worker ou aplica remap Rodin.
+ *
+ * @param {any} THREE
+ * @param {any} root
+ * @returns {{ workerFrameCanonical: boolean, remapped: boolean }}
+ */
+export function prepareGlassesGlbWorkerParity(THREE, root) {
+  if (!THREE || !root) return { workerFrameCanonical: false, remapped: false };
+  let workerFrameCanonical = omafitGlassesGlbIsWidgetCanonicalFrame(THREE, root);
+  let remapped = false;
+  if (!workerFrameCanonical) {
+    remapped = omafitRemapRodinGlbToWidgetFrame(THREE, root);
+    workerFrameCanonical = remapped || workerFrameCanonical;
+  }
+  return { workerFrameCanonical, remapped };
+}
+
+/**
  * @typedef {{
  *  widthAxisIdx: 0|1|2,
  *  heightAxisIdx: 0|1|2,

@@ -1,9 +1,6 @@
 /**
  * Geração Rodin no servidor da app (fila `queued` sem worker Python separado).
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { fal } from "@fal-ai/client";
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
 import { resolveWearableClass } from "./ar-wearable-class.shared.js";
@@ -13,16 +10,14 @@ import {
   storageUpload,
   hasArEyewearFalConfigured,
 } from "./ar-eyewear.server.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PRESETS_PATH = join(__dirname, "../workers/ar-mesh-generate/presets/wearable-classes.json");
+import wearableClassesCatalog from "../shared/wearable-classes.json";
 
 /** @type {Record<string, unknown> | null} */
 let presetsCatalogCache = null;
 
 function loadPresetsCatalog() {
   if (!presetsCatalogCache) {
-    presetsCatalogCache = JSON.parse(readFileSync(PRESETS_PATH, "utf8"));
+    presetsCatalogCache = wearableClassesCatalog;
   }
   return presetsCatalogCache;
 }

@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-_PRESETS_PATH = Path(__file__).resolve().parent / "wearable-classes.json"
+# Fonte única com a app Node (`shared/wearable-classes.json`, import no bundle).
+_PRESETS_PATH = Path(__file__).resolve().parents[3] / "shared" / "wearable-classes.json"
 _CACHE: dict[str, Any] | None = None
 
 ACCESSORY_DEFAULT_CLASS = {

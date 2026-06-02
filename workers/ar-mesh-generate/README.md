@@ -11,7 +11,7 @@ Worker Docker que consome `ar_eyewear_assets` (`status=queued`), gera malha via 
 
 ## Presets
 
-Ver [`presets/wearable-classes.json`](presets/wearable-classes.json).
+Ver [`shared/wearable-classes.json`](../../shared/wearable-classes.json) (fonte única; app Node e worker Python).
 
 ## Compose (omafit-widget)
 

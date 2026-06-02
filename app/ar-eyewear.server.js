@@ -1291,11 +1291,16 @@ export function hasArEyewearFalConfigured() {
   return Boolean((process.env.FAL_API_KEY || "").trim());
 }
 
-/** Providers consumidos pelo worker `ar-mesh-generate` (fila status=queued). */
+/** Providers Rodin / worker queue (não usar fluxo Tripo legado no Node). */
 export function isArEyewearWorkerQueueProvider(generationProvider) {
   const p = String(generationProvider || "rodin").trim().toLowerCase();
   if (!p) return true;
   return p === "rodin" || p === "hyper3d" || p === "triposr";
+}
+
+/** Só a fila externa Python consome jobs; a app não gera Rodin no Node. */
+export function isArEyewearExternalWorkerOnly() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.AR_MESH_WORKER_EXTERNAL || "").trim());
 }
 
 /**
@@ -1320,10 +1325,15 @@ export function scheduleInvokeArEyewearGenerate(assetId, shopDomain) {
       const row = id ? await getAssetById(id) : null;
       const provider = String(row?.generation_provider || "rodin").trim().toLowerCase();
       if (isArEyewearWorkerQueueProvider(provider)) {
-        console.log("[ar-eyewear] scheduleInvokeArEyewearGenerate:skip (worker queue)", {
-          assetId: id,
-          generation_provider: provider || "rodin",
-        });
+        if (isArEyewearExternalWorkerOnly()) {
+          console.log("[ar-eyewear] scheduleInvokeArEyewearGenerate:skip (worker externo)", {
+            assetId: id,
+            generation_provider: provider || "rodin",
+          });
+          return;
+        }
+        const { invokeArEyewearRodinPipeline } = await import("./ar-eyewear-rodin.server.js");
+        await invokeArEyewearRodinPipeline(id, shop);
         return;
       }
       await invokeArEyewearGenerate(id, shop);

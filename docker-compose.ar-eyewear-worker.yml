@@ -1,16 +1,23 @@
-# Worker AR óculos isolado (EC2 sem o compose do try-on).
-# Na raiz do repo omafit: copie .env com SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY
+# Worker AR (Rodin + pós-processo Blender). Na raiz do repo omafit:
 #
 #   docker compose -f docker-compose.ar-eyewear-worker.yml up --build -d
+#
+# Para usar só o worker Python (app com AR_MESH_WORKER_EXTERNAL=1):
+#   AR_MESH_WORKER_EXTERNAL=1 no Railway/Shopify app
+#
+# Por defeito a app Shopify gera Rodin no Node quando FAL_API_KEY está definida.
 
 services:
-  ar-eyewear-tripo:
+  ar-mesh-generate:
     build:
-      context: ./workers/ar-eyewear-tripo
+      context: ./workers/ar-mesh-generate
       dockerfile: Dockerfile.stub
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      WORKER_STUB: ${AR_EYEWEAR_WORKER_STUB:-1}
-      POLL_SECONDS: ${AR_EYEWEAR_POLL_SECONDS:-10}
+      WORKER_STUB: ${AR_MESH_WORKER_STUB:-0}
+      POLL_SECONDS: ${AR_MESH_WORKER_POLL_SECONDS:-10}
+      FAL_API_KEY: ${FAL_API_KEY:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}

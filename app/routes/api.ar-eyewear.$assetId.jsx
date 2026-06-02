@@ -76,9 +76,7 @@ export async function action({ request, params }) {
         worker_claimed_at: null,
         generation_stage: null,
       });
-      if (!workerQueue) {
-        scheduleInvokeArEyewearGenerate(id, session.shop);
-      }
+      scheduleInvokeArEyewearGenerate(id, session.shop);
       return Response.json({ asset: queued, queued: true }, { status: 202 });
     }
 

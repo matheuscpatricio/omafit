@@ -315,6 +315,14 @@ export default function ArEyewearPage() {
       (assets || []).some((a) => a.status === "queued" || a.status === "processing"),
     [assets],
   );
+
+  useEffect(() => {
+    if (!hasQueuedJobs) return undefined;
+    const timer = setInterval(() => {
+      loadAssets();
+    }, 12000);
+    return () => clearInterval(timer);
+  }, [hasQueuedJobs, loadAssets]);
   const productNameById = useMemo(() => {
     const map = new Map();
     for (const p of products || []) map.set(String(p.id || ""), p.title || "");
@@ -743,7 +751,8 @@ export default function ArEyewearPage() {
                           )}
                           {(a.status === "failed" ||
                             a.status === "rejected" ||
-                            a.status === "processing") && (
+                            a.status === "processing" ||
+                            a.status === "queued") && (
                             <Button
                               loading={actionId === `${a.id}-requeue`}
                               onClick={() => doAction(a.id, "requeue")}

@@ -2,6 +2,10 @@
  * Resolve wearableClass para o worker Rodin (presets em workers/ar-mesh-generate).
  */
 import { normalizeAccessoryType } from "./ar-accessory-type.shared.js";
+import {
+  normalizeGlassesLensProfile,
+  wearableClassForGlassesLensProfile,
+} from "./ar-glasses-lens-profile.shared.js";
 
 /** @type {Record<string, string>} */
 export const AR_ACCESSORY_DEFAULT_WEARABLE_CLASS = {
@@ -48,6 +52,8 @@ export function resolveWearableClass({
   const base = AR_ACCESSORY_DEFAULT_WEARABLE_CLASS[acc] || "glasses_clear";
 
   if (acc === "glasses" && lensProfile) {
+    const merchant = normalizeGlassesLensProfile(lensProfile);
+    if (merchant) return wearableClassForGlassesLensProfile(merchant);
     const lp = String(lensProfile).trim().toLowerCase();
     if (lp === "sun" || lp === "sunglasses" || lp === "tinted") return "glasses_sun";
     if (lp === "premium" || lp === "physical" || lp === "clear_physical" || lp === "pmrem") {

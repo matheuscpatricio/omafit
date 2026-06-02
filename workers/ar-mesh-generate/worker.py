@@ -1012,11 +1012,14 @@ def process_job(row: dict):
     blender_cfg = preset.get("blender") or {}
     recipe = str(blender_cfg.get("recipe") or "glasses_canonical")
     recipe_params = dict(blender_cfg.get("params") or {})
-    lens_type = str(recipe_params.get("lens_type") or "").strip()
-    lens_profile_manifest = None
-    if lens_type:
-        render_mode = "pmrem" if lens_type == "clear_physical" else "lite"
-        lens_profile_manifest = {"lensType": lens_type, "renderMode": render_mode}
+    from presets import lens_profile_manifest_material
+
+    lens_profile_manifest = lens_profile_manifest_material(row.get("lens_profile"))
+    if not lens_profile_manifest:
+        lens_type = str(recipe_params.get("lens_type") or "").strip()
+        if lens_type:
+            render_mode = "pmrem" if lens_type == "clear_physical" else "lite"
+            lens_profile_manifest = {"lensType": lens_type, "renderMode": render_mode}
 
     tmp = Path("/tmp") / f"ar_job_{row_id}_{uuid.uuid4().hex}"
     tmp.mkdir(parents=True, exist_ok=True)

@@ -140,12 +140,82 @@ export async function omafitLoadArManifestFromCfg(cfgAttr, category) {
 }
 
 /**
+ * Lente identificável no GLB (ingest `lens_glass`) — exclui armação/hastes.
+ * @param {string} [meshName]
+ * @param {string} [materialName]
+ */
+export function omafitIsGlassesLensMaterial(meshName, materialName) {
+  const mn = String(meshName || "").toLowerCase();
+  const mat = String(materialName || "").toLowerCase();
+  if (
+    /\b(frame_metal|frame_|temple|haste|shaft|stem|bridge|bezel|rim|brow|topbar|earpiece|varilla|arma[cç]ao|metal)\b/i.test(
+      mat,
+    )
+  ) {
+    return false;
+  }
+  if (
+    /\b(temple|haste|shaft|stem|bridge|bezel|rim|earpiece|varilla)\b/i.test(mn) &&
+    !/\blens\b/i.test(mn)
+  ) {
+    return false;
+  }
+  if (mat === "lens_glass" || mat.includes("lens_glass")) return true;
+  if (/\b(lens_glass|lens_left|lens_right|lentes?)\b/i.test(mat)) return true;
+  if (/\b(lens|lentes)\b/i.test(mn) && !/\b(frame|temple|bridge)\b/i.test(mn)) return true;
+  return false;
+}
+
+/**
+ * Transmissão física (KHR + PMREM) só para produtos/classes opt-in — não todos os óculos.
+ * @param {Record<string, unknown> | null} manifest
+ * @param {(k: string, fb?: string) => string} cfgAttr
+ */
+export function omafitGlassesAllowsPhysicalLenses(manifest, cfgAttr) {
+  const forceOff = /^(0|false|off|no|lite|clear_fake)$/i.test(
+    String(cfgAttr("arGlassesPhysicalLenses", "") || cfgAttr("arGlassesLensType", "")).trim(),
+  );
+  if (forceOff) return false;
+  const forceOn = /^(1|on|true|yes|clear_physical|physical|pmrem)$/i.test(
+    String(cfgAttr("arGlassesPhysicalLenses", "") || cfgAttr("arGlassesLensType", "")).trim(),
+  );
+  if (forceOn) return true;
+  const mp =
+    manifest?.materialProfile && typeof manifest.materialProfile === "object"
+      ? manifest.materialProfile
+      : {};
+  const lensType = String(mp.lensType || "").trim().toLowerCase();
+  if (lensType === "opaque" || lensType === "none" || lensType === "off") return false;
+  if (lensType === "clear_physical") return true;
+  if (lensType === "clear_fake" || lensType === "tinted" || lensType === "mirror") return false;
+  const wc = String(
+    manifest?.wearableClass || cfgAttr("arWearableClass", "") || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (wc === "glasses_premium") return true;
+  const renderMode = String(mp.renderMode || "").trim().toLowerCase();
+  return renderMode === "pmrem";
+}
+
+/**
  * Resolve PMREM e strip de transmission para óculos a partir do manifest + attrs.
  * @param {Record<string, unknown> | null} manifest
  * @param {(k: string, fb?: string) => string} cfgAttr
  * @param {"low"|"medium"|"high"|string} [deviceTier]
  */
 export function omafitResolveGlassesRenderFlags(manifest, cfgAttr, deviceTier = "medium") {
+  const physicalLenses = omafitGlassesAllowsPhysicalLenses(manifest, cfgAttr);
+  if (!physicalLenses) {
+    const attrPmrem = /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim());
+    return {
+      pmremOn: attrPmrem,
+      stripTransmission: true,
+      lensType: null,
+      renderMode: "lite",
+      physicalLenses: false,
+    };
+  }
   const mp = manifest?.materialProfile && typeof manifest.materialProfile === "object"
     ? manifest.materialProfile
     : {};
@@ -194,7 +264,7 @@ export function omafitResolveGlassesRenderFlags(manifest, cfgAttr, deviceTier = 
     }
   }
 
-  return { pmremOn, stripTransmission, lensType, renderMode };
+  return { pmremOn, stripTransmission, lensType, renderMode, physicalLenses: true };
 }
 
 /**

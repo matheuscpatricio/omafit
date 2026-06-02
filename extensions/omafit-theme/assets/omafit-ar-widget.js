@@ -73,6 +73,8 @@ import {
   omafitLoadArManifestFromCfg,
   omafitResolveGlassesRenderFlags,
   omafitResolveOcclusionFlags,
+  omafitGlassesAllowsPhysicalLenses,
+  omafitIsGlassesLensMaterial,
 } from "./omafit-ar-manifest.js";
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
@@ -581,7 +583,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-01-ar-occlusion-lenses-v162";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-02-ar-lenses-opt-in-v163";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2567,18 +2569,18 @@ function upgradeHandArGlassMaterials(THREE, root) {
  * Lentes + armação (óculos, path MindAR): vidro físico com IBL + metais com envMap.
  * `envTexture` = `scene.environment` (PMREM).
  */
-function upgradeFaceArEyewearRendering(THREE, root, envTexture) {
+function upgradeFaceArEyewearRendering(THREE, root, envTexture, opts = {}) {
   if (!root || typeof root.traverse !== "function" || !envTexture) return;
+  const physicalLenses = opts.physicalLenses === true;
   root.traverse((obj) => {
     if (!obj.isMesh || !obj.material) return;
+    const meshName = String(obj.name || "");
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     const next = mats.map((m) => {
       if (!m) return m;
-      const name = String(m.name || "").toLowerCase();
+      const matName = String(m.name || "");
       const isLens =
-        /lens|lentes|glass|vidro|cristal|crystal|mica|shield|visor|transparent/i.test(name) ||
-        (m.transmission !== undefined && Number(m.transmission) > 0.02) ||
-        (m.transparent && Number(m.opacity) < 0.97);
+        physicalLenses && omafitIsGlassesLensMaterial(meshName, matName);
       if (isLens) {
         const pm = new THREE.MeshPhysicalMaterial({
           color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
@@ -9822,6 +9824,9 @@ async function runArSession({
     const necklaceNeckOccFromManifest =
       accessoryType === "necklace" &&
       (arOcclusionFlags.neckCylinderFromManifest || arOcclusionFlags.depthOccluderEnabled);
+    const glassesPhysicalLenses =
+      accessoryType === "glasses" &&
+      omafitGlassesAllowsPhysicalLenses(arManifest, cfgAttr);
     /** Micro-interacções (entrada, anel de tracking, snap). `data-ar-micro-ux="0"` desliga. */
     const microUxDisabled = /^(0|false|off|no)$/i.test(String(cfgAttr("arMicroUx", "1")).trim());
 
@@ -10382,11 +10387,17 @@ async function runArSession({
           if ("emissiveIntensity" in mat) mat.emissiveIntensity = 1;
         }
         /**
-         * KHR_materials_transmission: em modo lite/low remove transmissão; em
-         * `clear_physical` + PMREM mantém transmissão do GLB (manifest/tier).
+         * Transmissão só em meshes de lente e só em óculos opt-in (`glasses_premium` /
+         * manifest `clear_physical`). Armação e óculos standard: transmission=0.
          */
+        const isLensMesh =
+          accessoryType === "glasses" &&
+          omafitIsGlassesLensMaterial(child.name, mat.name);
         const shouldStripTransmission =
-          accessoryType !== "glasses" || arGlassesRenderFlags.stripTransmission !== false;
+          accessoryType !== "glasses" ||
+          !isLensMesh ||
+          !glassesPhysicalLenses ||
+          arGlassesRenderFlags.stripTransmission !== false;
         if (shouldStripTransmission && "transmission" in mat && Number(mat.transmission) > 0.02) {
           mat.transmission = 0;
           if ("thickness" in mat) mat.thickness = 0;
@@ -13673,6 +13684,7 @@ async function runArSession({
       try {
         const pmremOn =
           (accessoryType === "glasses" &&
+            glassesPhysicalLenses &&
             (arGlassesRenderFlags.pmremOn ||
               /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim()))) ||
           (accessoryType === "necklace" &&
@@ -13722,7 +13734,9 @@ async function runArSession({
           /* ignore */
         }
         if (accessoryType === "glasses") {
-          upgradeFaceArEyewearRendering(THREE, glasses, pmremRT.texture);
+          upgradeFaceArEyewearRendering(THREE, glasses, pmremRT.texture, {
+            physicalLenses: glassesPhysicalLenses,
+          });
           try {
             omafitEnhanceFaceGlbPbrResponse(THREE, glasses);
           } catch {

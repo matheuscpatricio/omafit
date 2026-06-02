@@ -4,6 +4,7 @@
 import { fal } from "@fal-ai/client";
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
 import { resolveWearableClass } from "./ar-wearable-class.shared.js";
+import { glassesLensProfileManifestMaterial } from "./ar-glasses-lens-profile.shared.js";
 import {
   getAssetById,
   patchAsset,
@@ -285,13 +286,15 @@ export async function invokeArEyewearRodinPipeline(assetId, shopDomain) {
   const preset = getClassPreset(wearableClass);
   const blenderCfg = preset.blender || {};
   const recipeParams = blenderCfg.params || {};
-  const lensType = String(recipeParams.lens_type || "").trim();
-  let lensProfileManifest = null;
-  if (lensType) {
-    lensProfileManifest = {
-      lensType,
-      renderMode: lensType === "clear_physical" ? "pmrem" : "lite",
-    };
+  let lensProfileManifest = glassesLensProfileManifestMaterial(row.lens_profile);
+  if (!lensProfileManifest) {
+    const lensType = String(recipeParams.lens_type || "").trim();
+    if (lensType) {
+      lensProfileManifest = {
+        lensType,
+        renderMode: lensType === "clear_physical" ? "pmrem" : "lite",
+      };
+    }
   }
 
   console.log("[ar-eyewear] invokeArEyewearRodinPipeline:start", {

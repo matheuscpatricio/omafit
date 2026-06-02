@@ -26,6 +26,12 @@ import { ensureShopHasActiveBilling } from "../billing-access.server";
 import { getShopDomain } from "../utils/getShopDomain";
 import { useAppI18n } from "../contexts/AppI18n";
 import { detectAccessoryType } from "../ar-accessory-type.shared.js";
+import {
+  listGlassesLensProfileOptions,
+  glassesLensProfileLabel,
+  normalizeGlassesLensProfile,
+} from "../ar-glasses-lens-profile.shared.js";
+import { canEditGlassesLensProfile } from "../ar-eyewear-update-lens-profile.server.js";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -157,11 +163,16 @@ export default function ArEyewearPage() {
   const [productId, setProductId] = useState("");
   const [variantId, setVariantId] = useState("");
   const [frameWidthMm, setFrameWidthMm] = useState("");
+  /** @type {"opaque"|"translucent"|"transparent"} */
+  const [glassesLensProfile, setGlassesLensProfile] = useState("opaque");
   const [confirmingShop, setConfirmingShop] = useState(false);
   const [actionId, setActionId] = useState(null);
   const [publishFeedback, setPublishFeedback] = useState(null);
   const [submissionsSearch, setSubmissionsSearch] = useState("");
   const [submissionsStatusFilter, setSubmissionsStatusFilter] = useState("all");
+  /** @type {Record<string, "opaque"|"translucent"|"transparent">} */
+  const [lensProfileDraftByAsset, setLensProfileDraftByAsset] = useState({});
+  const [lensProfileSaveId, setLensProfileSaveId] = useState(null);
 
   const loadAssets = useCallback(async () => {
     setAssetsLoading(true);
@@ -231,7 +242,17 @@ export default function ArEyewearPage() {
       vars.length >= 1 ? String(vars[0].id || "") : "";
     setVariantId(nextVariantId);
     setGenerationImageUrls(defaultGenerationImageUrls(p, nextVariantId));
+    setGlassesLensProfile("opaque");
   };
+
+  const glassesLensProfileOptions = useMemo(
+    () =>
+      listGlassesLensProfileOptions().map((o) => ({
+        value: o.value,
+        label: t(o.labelKey),
+      })),
+    [t],
+  );
 
   const handleVariantChange = (id) => {
     setVariantId(id);
@@ -270,6 +291,8 @@ export default function ArEyewearPage() {
           imageUrls: generationImageUrls,
           variantId: variantId.trim() || undefined,
           frameWidthMm: frameWidthMm.trim() || undefined,
+          lensProfile:
+            detectedAccessoryType === "glasses" ? glassesLensProfile : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -283,6 +306,36 @@ export default function ArEyewearPage() {
       setError(e.message || t("arEyewear.errorSubmit"));
     } finally {
       setConfirmingShop(false);
+    }
+  };
+
+  const saveLensProfile = async (asset) => {
+    const id = asset.id;
+    const value =
+      lensProfileDraftByAsset[id] ??
+      normalizeGlassesLensProfile(asset.lens_profile) ??
+      "opaque";
+    setLensProfileSaveId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/ar-eyewear/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ intent: "update_lens_profile", lensProfile: value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setLensProfileDraftByAsset((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await loadAssets();
+    } catch (e) {
+      setError(e.message || t("arEyewear.lensProfile.saveError"));
+    } finally {
+      setLensProfileSaveId(null);
     }
   };
 
@@ -564,13 +617,22 @@ export default function ArEyewearPage() {
                     <Banner tone="warning">{t("arEyewear.needOneImage")}</Banner>
                   ) : null}
                   {detectedAccessoryType === "glasses" ? (
-                    <TextField
-                      label={t("arEyewear.frameWidth")}
-                      value={frameWidthMm}
-                      onChange={setFrameWidthMm}
-                      autoComplete="off"
-                      helpText={t("arEyewear.frameWidthHelp")}
-                    />
+                    <BlockStack gap="300">
+                      <Select
+                        label={t("arEyewear.lensProfile.label")}
+                        options={glassesLensProfileOptions}
+                        value={glassesLensProfile}
+                        onChange={setGlassesLensProfile}
+                        helpText={t("arEyewear.lensProfile.help")}
+                      />
+                      <TextField
+                        label={t("arEyewear.frameWidth")}
+                        value={frameWidthMm}
+                        onChange={setFrameWidthMm}
+                        autoComplete="off"
+                        helpText={t("arEyewear.frameWidthHelp")}
+                      />
+                    </BlockStack>
                   ) : null}
                   <Button
                     variant="primary"
@@ -698,6 +760,11 @@ export default function ArEyewearPage() {
                               {t(`arEyewear.accessoryType.${displayAccessoryType}`) ||
                                 displayAccessoryType}
                             </Badge>
+                            {displayAccessoryType === "glasses" && a.lens_profile ? (
+                              <Badge>
+                                {glassesLensProfileLabel(a.lens_profile, t)}
+                              </Badge>
+                            ) : null}
                             <Badge tone={statusTone(a.status)}>
                               {t(`arEyewear.status.${a.status}`)}
                             </Badge>
@@ -728,6 +795,49 @@ export default function ArEyewearPage() {
                             {a.wearable_class}
                             {a.generation_stage ? ` · ${a.generation_stage}` : ""}
                           </Text>
+                        ) : null}
+                        {displayAccessoryType === "glasses" &&
+                        canEditGlassesLensProfile(a.status) ? (
+                          <BlockStack gap="200">
+                            <Select
+                              label={t("arEyewear.lensProfile.editLabel")}
+                              options={glassesLensProfileOptions}
+                              value={
+                                lensProfileDraftByAsset[a.id] ??
+                                normalizeGlassesLensProfile(a.lens_profile) ??
+                                "opaque"
+                              }
+                              onChange={(v) =>
+                                setLensProfileDraftByAsset((prev) => ({
+                                  ...prev,
+                                  [a.id]: v,
+                                }))
+                              }
+                              helpText={t("arEyewear.lensProfile.editHelp")}
+                            />
+                            <InlineStack gap="200" wrap>
+                              <Button
+                                size="slim"
+                                loading={lensProfileSaveId === a.id}
+                                disabled={
+                                  lensProfileSaveId === a.id ||
+                                  (lensProfileDraftByAsset[a.id] ??
+                                    normalizeGlassesLensProfile(a.lens_profile) ??
+                                    "opaque") ===
+                                    (normalizeGlassesLensProfile(a.lens_profile) ??
+                                      "opaque")
+                                }
+                                onClick={() => saveLensProfile(a)}
+                              >
+                                {t("arEyewear.lensProfile.save")}
+                              </Button>
+                              {a.status === "pending_review" && a.glb_draft_url ? (
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {t("arEyewear.lensProfile.manifestHint")}
+                                </Text>
+                              ) : null}
+                            </InlineStack>
+                          </BlockStack>
                         ) : null}
                         <InlineStack gap="200" wrap>
                           {a.status === "pending_review" && (

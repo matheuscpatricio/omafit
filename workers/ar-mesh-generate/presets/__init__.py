@@ -42,11 +42,27 @@ def resolve_wearable_class(
     base = ACCESSORY_DEFAULT_CLASS.get(acc, "glasses_clear")
     if acc == "glasses" and lens_profile:
         lp = str(lens_profile).strip().lower()
-        if lp in ("sun", "sunglasses", "tinted"):
-            return "glasses_sun"
-        if lp in ("premium", "physical", "clear_physical", "pmrem"):
+        if lp in ("opaque", "solid", "dark", "escuro", "none", "off", "sun", "sunglasses", "tinted"):
+            return "glasses_clear"
+        if lp in ("translucent", "translucido", "clear", "clear_fake", "lite"):
+            return "glasses_clear"
+        if lp in ("transparent", "transparente", "premium", "physical", "clear_physical", "pmrem"):
             return "glasses_premium"
     return base
+
+
+def lens_profile_manifest_material(lens_profile: str | None) -> dict[str, Any] | None:
+    """Manifest runtime a partir da escolha do lojista (admin)."""
+    lp = str(lens_profile or "").strip().lower()
+    if not lp:
+        return None
+    if lp in ("opaque", "solid", "dark", "escuro", "none", "off", "sun", "sunglasses", "tinted"):
+        return {"lensType": "opaque", "renderMode": "lite"}
+    if lp in ("translucent", "translucido", "clear", "clear_fake", "lite"):
+        return {"lensType": "clear_fake", "renderMode": "lite"}
+    if lp in ("transparent", "transparente", "premium", "physical", "clear_physical", "pmrem"):
+        return {"lensType": "clear_physical", "renderMode": "pmrem"}
+    return None
 
 
 def get_class_preset(wearable_class: str) -> dict[str, Any]:

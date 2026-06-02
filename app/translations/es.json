@@ -421,6 +421,18 @@
     "publishDoneVariantFailed": "El modelo quedó disponible en el producto, pero no pudimos vincularlo a la variante. Revise la configuración de la tienda o el soporte Omafit — al cambiar de variante, la prueba virtual puede no actualizar el modelo.",
     "frameWidth": "Ancho del marco (mm, opcional)",
     "frameWidthHelp": "Ayuda a escalar el modelo.",
+    "lensProfile": {
+      "label": "Tipo de lente en el probador",
+      "help": "Define el efecto de cristal solo en este producto. La montura sigue opaca; el efecto se aplica solo a las lentes del modelo 3D.",
+      "opaque": "Oscuro / opaco — sin efecto de cristal",
+      "translucent": "Translúcido — ligera transparencia (estable en móvil)",
+      "transparent": "Transparente — cristal realista (móviles recientes)",
+      "editLabel": "Cambiar tipo de lente",
+      "editHelp": "Puede cambiarlo antes de publicar en la tienda. En cola, se aplica en el siguiente procesamiento.",
+      "save": "Guardar tipo de lente",
+      "saveError": "No se pudo guardar el tipo de lente",
+      "manifestHint": "Se actualiza el manifest del probador; no hace falta regenerar el modelo 3D."
+    },
     "photoFront": "Foto frontal",
     "photoThreeQuarter": "Foto tres cuartos (45°)",
     "photoProfile": "Foto de perfil",

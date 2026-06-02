@@ -421,6 +421,18 @@
     "publishDoneVariantFailed": "The model is live on the product, but we could not link it to the variant. Check your store settings or Omafit support — switching variants in the try-on may not update the model.",
     "frameWidth": "Frame width (mm, optional)",
     "frameWidthHelp": "Helps post-processing scale the mesh.",
+    "lensProfile": {
+      "label": "Lens look in try-on",
+      "help": "Sets the glass effect for this product only. Frames stay opaque; only lens meshes get the effect in 3D.",
+      "opaque": "Dark / opaque — no glass effect",
+      "translucent": "Translucent — light transparency (stable on mobile)",
+      "transparent": "Transparent — realistic glass (recent phones)",
+      "editLabel": "Change lens type",
+      "editHelp": "You can change this before publishing to the store. For queued jobs, the choice applies on the next run.",
+      "save": "Save lens type",
+      "saveError": "Could not save lens type",
+      "manifestHint": "The try-on manifest is updated; you do not need to regenerate the 3D model."
+    },
     "photoFront": "Front photo",
     "photoThreeQuarter": "Three-quarter (45°) photo",
     "photoProfile": "Profile photo",

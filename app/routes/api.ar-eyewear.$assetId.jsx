@@ -1,8 +1,9 @@
 /**
  * GET /api/ar-eyewear/:assetId — detalhe (somente mesma loja)
- * POST /api/ar-eyewear/:assetId — JSON { intent: publish | reject | requeue }
+ * POST /api/ar-eyewear/:assetId — JSON { intent: publish | reject | requeue | update_lens_profile, lensProfile? }
  */
 import { authenticate } from "../shopify.server";
+import { updateGlassesLensProfileOnAsset } from "../ar-eyewear-update-lens-profile.server.js";
 import {
   getAssetById,
   patchAsset,
@@ -78,6 +79,23 @@ export async function action({ request, params }) {
       });
       scheduleInvokeArEyewearGenerate(id, session.shop);
       return Response.json({ asset: queued, queued: true }, { status: 202 });
+    }
+
+    if (intent === "update_lens_profile") {
+      const lensProfile = body.lensProfile ?? body.lens_profile;
+      try {
+        const updated = await updateGlassesLensProfileOnAsset(
+          row,
+          lensProfile,
+          session.shop,
+        );
+        return Response.json({ asset: updated });
+      } catch (lensErr) {
+        return Response.json(
+          { error: lensErr?.message || "Não foi possível atualizar o tipo de lente." },
+          { status: 400 },
+        );
+      }
     }
 
     if (intent === "publish") {

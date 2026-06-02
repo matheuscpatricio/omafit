@@ -1,4 +1,4 @@
-# redeploy-trigger: 2026-05-20 (sem alteração de runtime)
+# redeploy-trigger: 2026-06-01 (presets Rodin em shared/ no bundle)
 # Estágio 1: build (precisa de devDependencies: vite, react-router, etc.)
 # Espelho oficial em ECR Public — evita auth.docker.io (IPv6 / rede inacessível em alguns CI).
 # @see https://gallery.ecr.aws/docker/library/node

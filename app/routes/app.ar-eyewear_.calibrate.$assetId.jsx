@@ -38,6 +38,7 @@ import {
   AR_GLASSES_DEPTH_MIN_M,
   AR_GLASSES_DEPTH_MAX_M,
   AR_GLASSES_DEPTH_STEP_M,
+  AR_GLASSES_SCALE_DEFAULT,
   AR_GLASSES_SCALE_MIN,
   AR_GLASSES_SCALE_MAX,
   AR_GLASSES_SCALE_STEP,
@@ -675,7 +676,7 @@ export default function ArEyewearCalibratePage() {
  *
  * Escala do preview: `computeGlassesPreviewBaseScale(larguraX)` — mesma fórmula
  * IPD×factor/frameWidth que o widget (`omafit-glasses-calibration.js`). 100% no
- * slider = IPD de referência 63 mm; `cal.scale` multiplica por cima.
+ * slider: 50% = escala padrão da loja (`AR_GLASSES_SCALE_DEFAULT`); 100% = o dobro.
  */
 /**
  * Tamanho do placeholder (cubo wireframe ciano) que aparece sempre no calibRot:
@@ -1818,11 +1819,11 @@ function DepthSlider({ label, helpText, value, onChange }) {
   );
 }
 
-/** Óculos: escala (tamanho do óculos) — 100% = fit automático IPD no widget. */
+/** Óculos: escala (tamanho) — 50% = padrão da loja; 100% = 2× o padrão. */
 function ScaleSlider({ label, helpText, value, onChange }) {
   const clamped = Math.max(
     AR_GLASSES_SCALE_MIN,
-    Math.min(AR_GLASSES_SCALE_MAX, Number(value) || 1),
+    Math.min(AR_GLASSES_SCALE_MAX, Number(value) || AR_GLASSES_SCALE_DEFAULT),
   );
   const percentage = Math.round(clamped * 100);
   return (
@@ -2003,7 +2004,7 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
             label={t("arEyewear.calibrate.sliders.scale.label") || "Tamanho do óculos"}
             helpText={
               t("arEyewear.calibrate.sliders.scale.help") ||
-              "Multiplicador sobre o ajuste automático (IPD 63 mm = 100%). O mesmo valor aplica-se no provador AR da loja."
+              "50% = tamanho padrão no provador; 100% = o dobro. O mesmo valor aplica-se na loja."
             }
             value={cal.scale}
             onChange={setField("scale")}

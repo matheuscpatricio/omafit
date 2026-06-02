@@ -21,10 +21,13 @@ export const AR_GLASSES_DEPTH_MIN_M = -0.08;
 export const AR_GLASSES_DEPTH_MAX_M = 0.05;
 export const AR_GLASSES_DEPTH_STEP_M = 0.005;
 
-/** Óculos: intervalo do slider de escala (1 = largura de referência da armação ~145 mm). */
+/** Óculos: intervalo do slider de escala (valor interno × auto-fit IPD). */
 export const AR_GLASSES_SCALE_MIN = 0.25;
 export const AR_GLASSES_SCALE_MAX = 2;
 export const AR_GLASSES_SCALE_STEP = 0.05;
+
+/** Escala inicial / loja sem calibração guardada (= 50% no slider de tamanho). */
+export const AR_GLASSES_SCALE_DEFAULT = 0.5;
 
 /** Colar: multiplicador sobre o fit automático (1 = arco ~30 cm no provador). */
 export const AR_NECKLACE_SCALE_MIN = 0.45;
@@ -103,7 +106,7 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
     wearZ: clamp(num(src.wearZ, 0), wearZBounds.min, wearZBounds.max),
     scale:
       type === "glasses"
-        ? clamp(num(src.scale, 1), AR_GLASSES_SCALE_MIN, AR_GLASSES_SCALE_MAX)
+        ? clamp(num(src.scale, AR_GLASSES_SCALE_DEFAULT), AR_GLASSES_SCALE_MIN, AR_GLASSES_SCALE_MAX)
         : type === "necklace"
           ? clamp(num(src.scale, 1), AR_NECKLACE_SCALE_MIN, AR_NECKLACE_SCALE_MAX)
           : clamp(num(src.scale, 1), 0.3, 3),
@@ -111,7 +114,7 @@ export function sanitizeArCalibrationInput(raw, accessoryType) {
 }
 
 const AR_CALIBRATION_DEFAULTS_BY_TYPE = {
-  glasses: {},
+  glasses: { scale: AR_GLASSES_SCALE_DEFAULT },
   /** rz −90° = inclinar lateralmente (roll) — alinhamento correcto no provador. */
   necklace: { wearY: -0.12, rz: -90 },
   watch: { scale: 1, wearY: 0 },

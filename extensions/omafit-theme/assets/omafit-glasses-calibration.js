@@ -5,8 +5,8 @@
  *   - `app/ar-calibration.shared.js` (sanitização / defaults)
  *
  * Semântica (previsível para o lojista):
- *   - Export canónico Blender + AR simples: `scale` = 1 → GLB como exportado (origem na ponte);
- *     2 = o dobro. Sem factor `fitW/bbox` (isso encolhia ~4× no AR).
+ *   - `scale` multiplica o auto-fit (admin + loja). Padrão = 0,5 (50% no slider).
+ *     Export canónico + face simples: 1 = GLB como exportado × `scale` do lojista.
  *   - GLB não canónico / bbox gigante: `scale` × (`fitW` / largura bbox).
  *   - `wearZ` = 0 → sem deslocamento extra em profundidade (metros).
  *     Negativo aproxima, positivo afasta (mesmo eixo que o preview estático).
@@ -53,6 +53,9 @@ export const OMAFIT_GLASSES_OVERSIZED_BBOX_WIDTH_M = 0.28;
 /** Modo simples (ponte 168): largura do frame ≈ IPD × este factor. */
 export const OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE = 1;
 
+/** Paridade `AR_GLASSES_SCALE_DEFAULT` em `app/ar-calibration.shared.js` (50% no slider). */
+export const OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE = 0.5;
+
 /** Profundidade técnica opcional (m) fora do modo simples; no simples usar só `wearZ`. */
 export const OMAFIT_GLASSES_DEPTH_FORWARD_DEFAULT_M = 0;
 
@@ -91,9 +94,9 @@ export function normalizeGlassesMerchantCalibration(cal) {
     const n = Number(src[k]);
     return Number.isFinite(n) ? n : def;
   };
-  const sc = num("scale", 1);
+  const sc = num("scale", OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE);
   return {
-    scale: sc > 0 ? sc : 1,
+    scale: sc > 0 ? sc : OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
     wearX: num("wearX", 0),
     wearY: num("wearY", 0),
     wearZ: num("wearZ", 0),

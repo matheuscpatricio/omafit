@@ -7,6 +7,7 @@ import {
   getAssetById,
   patchAsset,
   scheduleInvokeArEyewearGenerate,
+  isArEyewearWorkerQueueProvider,
   ensureArGlbMetafieldDefinition,
   ensureArManifestUrlMetafieldDefinition,
   setProductArGlbMetafield,
@@ -67,12 +68,17 @@ export async function action({ request, params }) {
     }
 
     if (intent === "requeue") {
+      const provider = String(row.generation_provider || "rodin").trim().toLowerCase();
+      const workerQueue = isArEyewearWorkerQueueProvider(provider);
       const queued = await patchAsset(id, {
-        status: "processing",
+        status: workerQueue ? "queued" : "processing",
         error_message: null,
         worker_claimed_at: null,
+        generation_stage: null,
       });
-      scheduleInvokeArEyewearGenerate(id, session.shop);
+      if (!workerQueue) {
+        scheduleInvokeArEyewearGenerate(id, session.shop);
+      }
       return Response.json({ asset: queued, queued: true }, { status: 202 });
     }
 

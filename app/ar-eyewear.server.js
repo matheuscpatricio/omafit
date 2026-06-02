@@ -39,6 +39,17 @@ export {
 
 const TABLE = "ar_eyewear_assets";
 
+const AR_SCHEMA_MIGRATION_HINT =
+  "Execute supabase_migrate_ar_rodin_pipeline.sql no Supabase SQL Editor (colunas wearable_class, lens_profile, image_urls, etc.).";
+
+function enrichSupabaseDbError(message, status, bodyText) {
+  const base = `Insert failed: ${status} ${bodyText.slice(0, 300)}`;
+  if (bodyText.includes("PGRST204") || /Could not find the '.*' column/.test(bodyText)) {
+    return `${base} — ${AR_SCHEMA_MIGRATION_HINT}`;
+  }
+  return base;
+}
+
 /** Estados finais que libertam o “slot” de produto AR (permite novo envio do mesmo product_id). */
 const AR_EYEWEAR_TERMINAL_STATUSES = new Set(["failed", "rejected"]);
 
@@ -273,7 +284,7 @@ export async function insertAssetRow(payload) {
   });
   if (!res.ok) {
     const t = await res.text().catch(() => "");
-    throw new Error(`Insert failed: ${res.status} ${t.slice(0, 300)}`);
+    throw new Error(enrichSupabaseDbError("Insert", res.status, t));
   }
   const rows = await res.json();
   return Array.isArray(rows) ? rows[0] : rows;
@@ -1280,6 +1291,13 @@ export function hasArEyewearFalConfigured() {
   return Boolean((process.env.FAL_API_KEY || "").trim());
 }
 
+/** Providers consumidos pelo worker `ar-mesh-generate` (fila status=queued). */
+export function isArEyewearWorkerQueueProvider(generationProvider) {
+  const p = String(generationProvider || "rodin").trim().toLowerCase();
+  if (!p) return true;
+  return p === "rodin" || p === "hyper3d" || p === "triposr";
+}
+
 /**
  * Gera GLB via FAL e atualiza o asset.
  *
@@ -1298,7 +1316,18 @@ export function scheduleInvokeArEyewearGenerate(assetId, shopDomain) {
   const id = String(assetId || "").trim();
   const shop = String(shopDomain || "").trim();
   setImmediate(() => {
-    void invokeArEyewearGenerate(id, shop).catch(async (genErr) => {
+    void (async () => {
+      const row = id ? await getAssetById(id) : null;
+      const provider = String(row?.generation_provider || "rodin").trim().toLowerCase();
+      if (isArEyewearWorkerQueueProvider(provider)) {
+        console.log("[ar-eyewear] scheduleInvokeArEyewearGenerate:skip (worker queue)", {
+          assetId: id,
+          generation_provider: provider || "rodin",
+        });
+        return;
+      }
+      await invokeArEyewearGenerate(id, shop);
+    })().catch(async (genErr) => {
       if (!id) return;
       try {
         await patchAsset(id, {

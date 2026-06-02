@@ -12,6 +12,8 @@
 
 Execute [`supabase_create_ar_eyewear_assets.sql`](supabase_create_ar_eyewear_assets.sql).
 
+**Pipeline Rodin / multiview (obrigatório para gerar GLB desde mar/2026):** execute também [`supabase_migrate_ar_rodin_pipeline.sql`](supabase_migrate_ar_rodin_pipeline.sql) no SQL Editor. Sem isso o admin devolve `PGRST204` (coluna `lens_profile` em falta).
+
 ### 2. Storage
 
 Crie buckets (públicos recomendados para URLs estáveis no PDP):

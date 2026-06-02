@@ -69,6 +69,11 @@ import {
   omafitMetaMaybeWarnDrawCalls,
   omafitMetaMindarFilterPreset,
 } from "./omafit-ar-meta-perf.js";
+import {
+  omafitLoadArManifestFromCfg,
+  omafitResolveGlassesRenderFlags,
+  omafitResolveOcclusionFlags,
+} from "./omafit-ar-manifest.js";
 /**
  * MindAR óculos no tema (via bloco Omafit embed) — etapa "info" alinhada ao TryOnWidget + link como omafit-widget.js.
  * Fluxo: (1) modal info → (2) AR com câmera (MindAR.js face tracking + Three.js).
@@ -576,7 +581,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-05-27-ar-widget-v140-necklace-torso-freeze-validated";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-01-ar-occlusion-lenses-v162";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -9793,6 +9798,30 @@ async function runArSession({
 
     const perfModeResolved = String(cfgAttr("arPerformanceProfile", "auto")).trim().toLowerCase();
     const arDeviceProfile = omafitResolveArDeviceRuntimeProfile({ perfMode: perfModeResolved });
+    let arManifest = null;
+    let arOcclusionFlags = omafitResolveOcclusionFlags(null, accessoryType, cfgAttr);
+    let arGlassesRenderFlags = {
+      pmremOn: /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim()),
+      stripTransmission: true,
+      lensType: null,
+      renderMode: "auto",
+    };
+    try {
+      arManifest = await omafitLoadArManifestFromCfg(cfgAttr, accessoryType);
+      arOcclusionFlags = omafitResolveOcclusionFlags(arManifest, accessoryType, cfgAttr);
+      if (accessoryType === "glasses") {
+        arGlassesRenderFlags = omafitResolveGlassesRenderFlags(
+          arManifest,
+          cfgAttr,
+          arDeviceProfile?.tier || "medium",
+        );
+      }
+    } catch (manifestLoadErr) {
+      console.warn("[omafit-ar] manifest load:", manifestLoadErr?.message || manifestLoadErr);
+    }
+    const necklaceNeckOccFromManifest =
+      accessoryType === "necklace" &&
+      (arOcclusionFlags.neckCylinderFromManifest || arOcclusionFlags.depthOccluderEnabled);
     /** Micro-interacções (entrada, anel de tracking, snap). `data-ar-micro-ux="0"` desliga. */
     const microUxDisabled = /^(0|false|off|no)$/i.test(String(cfgAttr("arMicroUx", "1")).trim());
 
@@ -10213,7 +10242,8 @@ async function runArSession({
       if (
         accessoryType === "necklace" &&
         anchor.group &&
-        /^(1|true|yes|on)$/.test(necklaceNeckOccAttr)
+        (necklaceNeckOccFromManifest ||
+          /^(1|true|yes|on)$/.test(necklaceNeckOccAttr))
       ) {
         try {
           neckOccGeomState = {};
@@ -10352,10 +10382,12 @@ async function runArSession({
           if ("emissiveIntensity" in mat) mat.emissiveIntensity = 1;
         }
         /**
-         * KHR_materials_transmission: sem PMREM / pipeline de transmissão do renderer,
-         * o modelo pode renderizar como totalmente transparente no AR “lite”.
+         * KHR_materials_transmission: em modo lite/low remove transmissão; em
+         * `clear_physical` + PMREM mantém transmissão do GLB (manifest/tier).
          */
-        if ("transmission" in mat && Number(mat.transmission) > 0.02) {
+        const shouldStripTransmission =
+          accessoryType !== "glasses" || arGlassesRenderFlags.stripTransmission !== false;
+        if (shouldStripTransmission && "transmission" in mat && Number(mat.transmission) > 0.02) {
           mat.transmission = 0;
           if ("thickness" in mat) mat.thickness = 0;
         }
@@ -13518,8 +13550,14 @@ async function runArSession({
               bot.y - anchorVec.y,
               bot.z - anchorVec.z,
             );
-            const rTop = Math.max(0.026, jawW * 0.36);
-            const rBot = Math.max(0.032, jawW * 0.44);
+            const rTop = Math.max(
+              arOcclusionFlags.neckRadiusTopMinM,
+              jawW * arOcclusionFlags.neckRadiusTopMul,
+            );
+            const rBot = Math.max(
+              arOcclusionFlags.neckRadiusBottomMinM,
+              jawW * arOcclusionFlags.neckRadiusBottomMul,
+            );
             omafitUpdateNeckCylinderOccluder(THREE, neckOccluderMesh, neckOccGeomState, va, vb, rTop, rBot);
           }
         }
@@ -13635,7 +13673,8 @@ async function runArSession({
       try {
         const pmremOn =
           (accessoryType === "glasses" &&
-            /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim())) ||
+            (arGlassesRenderFlags.pmremOn ||
+              /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim()))) ||
           (accessoryType === "necklace" &&
             !/^(0|false|off|no)$/i.test(String(cfgAttr("arNecklacePmrem", "1")).trim()));
         if (!pmremOn) {
@@ -14560,6 +14599,22 @@ async function runHandArSession({
 
   const perfModeHand = String(cfgAttr("arPerformanceProfile", "auto")).trim().toLowerCase();
   const handArProfile = omafitResolveArDeviceRuntimeProfile({ perfMode: perfModeHand });
+  let handArManifest = null;
+  let handOcclusionFlags = omafitResolveOcclusionFlags(null, accessoryType, cfgAttr);
+  try {
+    handArManifest = await omafitLoadArManifestFromCfg(cfgAttr, accessoryType);
+    handOcclusionFlags = omafitResolveOcclusionFlags(handArManifest, accessoryType, cfgAttr);
+  } catch (handManifestErr) {
+    console.warn("[omafit-ar] manifest (mão):", handManifestErr?.message || handManifestErr);
+  }
+  const braceletDepthOccluderEnabled =
+    OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED && handOcclusionFlags.depthOccluderEnabled;
+  const braceletMaterialOcclusionEnabled =
+    OMAFIT_BRACELET_MATERIAL_OCCLUSION_ENABLED && handOcclusionFlags.materialOcclusionEnabled;
+  const handOccluderRadiusScale =
+    Number(handOcclusionFlags.wristRadiusScale) > 0
+      ? Number(handOcclusionFlags.wristRadiusScale)
+      : OMAFIT_HAND_OCCLUDER_RADIUS_SCALE;
   const handMicroUxDisabled = /^(0|false|off|no)$/i.test(String(cfgAttr("arMicroUx", "1")).trim());
 
   function parseEulerDegComponents(raw, defX, defY, defZ) {
@@ -17729,7 +17784,7 @@ async function runHandArSession({
     } else {
       occluderR = Math.max(
         0.011,
-        smoothWristRadius * OMAFIT_HAND_OCCLUDER_RADIUS_SCALE,
+        smoothWristRadius * handOccluderRadiusScale,
       );
     }
     const braceletOccShrink = accessoryType === "bracelet" ? 0.92 : 1;
@@ -17781,7 +17836,7 @@ async function runHandArSession({
          * orientação da mão. O guarda `!braceletDorsumFacingCamera` era para
          * o modo legado (corrente) onde o occluder causava artefactos ao virar.
          */
-        ? OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED && (braceletIsRigidSlot || !braceletDorsumFacingCamera)
+        ? braceletDepthOccluderEnabled && (braceletIsRigidSlot || !braceletDorsumFacingCamera)
         : true;
     /** Z offset: centrar o cilindro atrás do pulso (−L/2). */
     armOccluder.position.z = -smoothForearmLength / 2;
@@ -17846,7 +17901,7 @@ async function runHandArSession({
      * - lado traseiro mais ocluído
      */
     if (
-      OMAFIT_BRACELET_MATERIAL_OCCLUSION_ENABLED &&
+      braceletMaterialOcclusionEnabled &&
       accessoryType === "bracelet" &&
       braceletOcclusionMaterials.length > 0
     ) {
@@ -17877,7 +17932,9 @@ async function runHandArSession({
        * para suavizar a transição lateral. Modo legado (chains): máx 0.7
        * como antes, para compensar ausência do occluder cilíndrico.
        */
-      const occStrMax = braceletIsRigidSlot ? 0.3 : 0.7;
+      const occStrMax = braceletIsRigidSlot
+        ? Math.min(0.3, handOcclusionFlags.materialOcclusionStrength || 0.3)
+        : Math.min(0.7, handOcclusionFlags.materialOcclusionStrength || 0.7);
       const occlusionStrength = THREE.MathUtils.clamp(
         wristWidth * 2.0,
         0.15,
@@ -18413,7 +18470,7 @@ async function runHandArSession({
        *  invisível a escrever depth no meio do ecrã quando a mão desaparece. */
       armOccluder.visible =
         accessoryType === "bracelet"
-          ? OMAFIT_BRACELET_DEPTH_OCCLUDER_ENABLED && armOccluder.visible
+          ? braceletDepthOccluderEnabled && armOccluder.visible
           : true;
       occPlane.visible = accessoryType === "bracelet" && occPlane.visible;
       if (braceletAxisDebugLine) braceletAxisDebugLine.visible = accessoryType === "bracelet";

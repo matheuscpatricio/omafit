@@ -48,6 +48,9 @@ def build_ar_manifest(
         "wearAnchor",
         "scaleProfile",
         "materialProfile",
+        "occlusionProxy",
+        "occlusionPolicy",
+        "deviceTierPolicy",
     ):
         if key in defaults and defaults[key] is not None:
             manifest[key] = defaults[key]

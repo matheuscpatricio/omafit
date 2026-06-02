@@ -26,7 +26,8 @@
       "manifest_defaults": {
         "attachmentSpace": "face_bridge",
         "meshPolicy": { "fittingMode": "strict" },
-        "materialProfile": { "lensType": "clear_fake", "renderMode": "lite" }
+        "materialProfile": { "lensType": "clear_fake", "renderMode": "lite" },
+        "occlusionPolicy": { "mode": "depth", "updateMode": "tracked", "maxHz": 45 }
       }
     },
     "glasses_sun": {
@@ -43,7 +44,8 @@
       "manifest_defaults": {
         "attachmentSpace": "face_bridge",
         "meshPolicy": { "fittingMode": "strict" },
-        "materialProfile": { "lensType": "tinted", "renderMode": "lite" }
+        "materialProfile": { "lensType": "tinted", "renderMode": "lite" },
+        "occlusionPolicy": { "mode": "depth", "updateMode": "tracked", "maxHz": 45 }
       }
     },
     "glasses_premium": {
@@ -61,7 +63,12 @@
       "manifest_defaults": {
         "attachmentSpace": "face_bridge",
         "meshPolicy": { "fittingMode": "strict" },
-        "materialProfile": { "lensType": "clear_physical", "renderMode": "pmrem" }
+        "materialProfile": { "lensType": "clear_physical", "renderMode": "pmrem" },
+        "occlusionPolicy": { "mode": "depth", "updateMode": "tracked", "maxHz": 45 },
+        "deviceTierPolicy": {
+          "low": { "disableTransmission": true, "disableFaceDepthOccluder": false },
+          "high": { "enablePmremForGlasses": true }
+        }
       }
     },
     "bracelet_bangle": {
@@ -88,7 +95,13 @@
           "innerDiameterMm": 62,
           "ringHoleAxisLocal": [0, 0, 1],
           "ringCenterLocal": [0, 0, 0]
-        }
+        },
+        "occlusionProxy": {
+          "type": "wrist_cylinder",
+          "radiusScale": 0.93,
+          "radiusFromFitProxy": true
+        },
+        "occlusionPolicy": { "mode": "depth", "updateMode": "tracked", "maxHz": 45 }
       }
     },
     "bracelet_chain": {
@@ -116,7 +129,9 @@
           "innerRadiusMm": 31,
           "ringHoleAxisLocal": [0, 0, 1],
           "ringCenterLocal": [0, 0, 0]
-        }
+        },
+        "occlusionProxy": { "type": "none" },
+        "occlusionPolicy": { "mode": "material", "updateMode": "tracked", "maxHz": 30 }
       }
     },
     "bracelet_cuff_open": {
@@ -143,7 +158,13 @@
           "innerDiameterMm": 58,
           "ringHoleAxisLocal": [0, 0, 1],
           "ringCenterLocal": [0, 0, 0]
-        }
+        },
+        "occlusionProxy": {
+          "type": "wrist_cylinder",
+          "radiusScale": 0.93,
+          "radiusFromFitProxy": true
+        },
+        "occlusionPolicy": { "mode": "depth", "updateMode": "tracked", "maxHz": 45 }
       }
     },
     "watch_round": {
@@ -174,9 +195,24 @@
         "params": { "arc_span_m": 0.18 }
       },
       "manifest_defaults": {
+        "wearableClass": "necklace_chain",
         "attachmentSpace": "neck_base",
         "meshPolicy": { "fittingMode": "hybrid" },
-        "materialProfile": { "renderMode": "pmrem" }
+        "materialProfile": { "renderMode": "pmrem" },
+        "occlusionProxy": {
+          "type": "neck_cylinder",
+          "arcSpanM": 0.18,
+          "radiusTopMul": 0.36,
+          "radiusBottomMul": 0.44,
+          "radiusTopMinM": 0.026,
+          "radiusBottomMinM": 0.032
+        },
+        "occlusionPolicy": {
+          "mode": "depth",
+          "suppressFaceDepthOcclusion": true,
+          "updateMode": "tracked",
+          "maxHz": 45
+        }
       }
     }
   }

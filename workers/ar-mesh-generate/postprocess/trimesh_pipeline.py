@@ -485,8 +485,32 @@ def process_glasses_canonical(inp: Path, out: Path, params: dict | None = None) 
         pass
     _scale_scene_to_width_x(scene, target_w)
     _rename_materials_for_glasses(scene)
+    _assert_lens_glass_present(scene)
     apply_lens_type_materials(scene, lens_type)
     scene.export(str(out))
+
+
+def _assert_lens_glass_present(scene) -> None:
+    """Certify ingest: malha de lente identificável para o runtime AR."""
+    import trimesh
+
+    mesh_count = sum(
+        1 for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)
+    )
+    if mesh_count < 2:
+        # GLB monolítico (Rodin): runtime usa materialProfile lite/clear_fake.
+        return
+
+    for geom in scene.geometry.values():
+        if not isinstance(geom, trimesh.Trimesh):
+            continue
+        vis = getattr(geom, "visual", None)
+        name = str(getattr(vis, "name", "") or "").lower()
+        if "lens_glass" in name or (name.startswith("lens") and "glass" in name):
+            return
+    raise ValueError(
+        "ingest_qa: falta mesh lens_glass após canonicalização — verifique _rename_materials_for_glasses"
+    )
 
 
 def process_bracelet_scale(inp: Path, out: Path, params: dict | None = None) -> None:

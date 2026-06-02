@@ -222,6 +222,7 @@ export async function loader({ request, params }) {
       accessory_type: accessoryType,
     },
     accessoryType,
+    wearableClass: String(row.wearable_class || "").trim() || null,
     productTitle: productContext?.title || row.product_name || "",
     productImageUrl: productContext?.featuredImageUrl || "",
     glbPreviewUrl,
@@ -523,7 +524,11 @@ export default function ArEyewearCalibratePage() {
                       ? t("arEyewear.calibrate.previewHintBracelet")
                       : data.accessoryType === "necklace"
                         ? t("arEyewear.calibrate.previewHintNecklace")
-                        : t("arEyewear.calibrate.previewHint")}
+                        : data.wearableClass === "glasses_premium"
+                          ? t("arEyewear.calibrate.previewHintGlassesPremium")
+                          : data.wearableClass === "glasses_clear"
+                            ? t("arEyewear.calibrate.previewHintGlassesClear")
+                            : t("arEyewear.calibrate.previewHint")}
                   </div>
                 </div>
               </Card>

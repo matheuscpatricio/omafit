@@ -175,6 +175,9 @@ export function buildArManifestJson({
     "wearAnchor",
     "scaleProfile",
     "materialProfile",
+    "occlusionProxy",
+    "occlusionPolicy",
+    "deviceTierPolicy",
   ]) {
     if (defaults[key] != null) manifest[key] = defaults[key];
   }

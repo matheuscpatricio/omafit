@@ -52,6 +52,21 @@ Variáveis: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
 - Upload: **8 MB** por imagem; tipos `image/jpeg`, `image/png`, `image/webp`.
 - Um worker simples: para várias instâncias, adicionar claim atômico no Postgres.
 
+## Oclusão e lentes (manifest v1)
+
+| `wearableClass` | `occlusionProxy` | Lentes (`materialProfile`) |
+|-----------------|------------------|----------------------------|
+| `bracelet_bangle`, `bracelet_cuff_open` | `wrist_cylinder` (depth) | — |
+| `bracelet_chain` | `none` (material conservador) | — |
+| `necklace_chain` | `neck_cylinder` + suprimir face 468 | PMREM joia |
+| `glasses_clear` | face/temple depth | `clear_fake`, lite |
+| `glasses_sun` | idem | `tinted`, lite |
+| `glasses_premium` | idem | `clear_physical`, PMREM em tier high |
+
+Ingest óculos: o worker exige mesh `lens_glass` após canonicalização (`trimesh_pipeline._assert_lens_glass_present`).
+
+QA detalhada: no repo **omafit-widget**, `docs/ar-qa-occlusion-lenses.md`. Release: `docs/AR_RELEASE_CHECKLIST.md` neste repo.
+
 ## Testes manuais
 
 | Ambiente | Verificação |

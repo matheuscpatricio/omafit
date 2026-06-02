@@ -151,6 +151,12 @@ export function omafitIsGlassesLensMaterial(meshName, materialName) {
   if (mat === "lens_glass" || mat.includes("lens_glass")) return true;
   if (/\b(lens_glass|lens_left|lens_right|lentes?)\b/i.test(mat)) return true;
   if (
+    /\b(glass|vidro|cristal|crystal|visor|shield|mica)\b/i.test(mat) &&
+    !/\b(frame_metal|frame_|temple|haste|metal|bridge|bezel|rim)\b/i.test(mat)
+  ) {
+    return true;
+  }
+  if (
     /\b(frame_metal|frame_|temple|haste|shaft|stem|bridge|bezel|rim|brow|topbar|earpiece|varilla|arma[cç]ao|metal)\b/i.test(
       mat,
     )

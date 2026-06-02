@@ -334,6 +334,34 @@ export function computeGlassesCanonicalOffsetQuat(THREE, glasses) {
 }
 
 /**
+ * GLB pós worker Rodin (X largo, Y fino, Z médio) → contrato MindAR/widget:
+ * +X largura, +Y topo do aro, −Z frente (espessura em Z).
+ *
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {boolean}
+ */
+export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
+  if (!THREE || !glasses) return false;
+  glasses.updateMatrixWorld(true);
+  const sz = new THREE.Vector3();
+  const box = new THREE.Box3().setFromObject(glasses);
+  if (typeof box.isEmpty === "function" && box.isEmpty()) return false;
+  box.getSize(sz);
+  const dims = [
+    { v: sz.x, i: 0 },
+    { v: sz.y, i: 1 },
+    { v: sz.z, i: 2 },
+  ].sort((a, b) => a.v - b.v);
+  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
+  if (dims[1].v <= dims[0].v * 1.05) return false;
+  const ax = new THREE.Vector3(1, 0, 0);
+  glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
+  glasses.updateMatrixWorld(true);
+  return true;
+}
+
+/**
  * @typedef {{
  *  widthAxisIdx: 0|1|2,
  *  heightAxisIdx: 0|1|2,

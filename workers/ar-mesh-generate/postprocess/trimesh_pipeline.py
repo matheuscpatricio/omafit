@@ -239,14 +239,45 @@ def _hard_canonical_orientation(scene):
     return True
 
 
+def _remap_glasses_worker_frame_to_widget(scene):
+    """
+    Após hard-canonical (X largo, Y fino, Z médio), alinha ao contrato do provador:
+    +X largura, +Y topo do aro, −Z frente das lentes (espessura em Z).
+
+    Sem isto, o widget aplica Ry(180) assumindo −Z frente e o óculos fica virado
+  para a esquerda / de cabeça para baixo.
+    Desligar: AR_POSTPROCESS_REMAP_WIDGET_FRAME=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_REMAP_WIDGET_FRAME", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return False
+
+    import trimesh
+
+    combined = _scene_concat_meshes(scene)
+    if combined is None:
+        return False
+    ext = np.asarray(combined.bounding_box.extents, dtype=float)
+    if ext.shape != (3,) or np.any(ext <= 1e-9):
+        return False
+    order = np.argsort(ext)
+    if int(order[0]) != 1 or int(order[1]) != 2 or int(order[2]) != 0:
+        return False
+    scene.apply_transform(
+        trimesh.transformations.rotation_matrix(-math.pi / 2.0, [1.0, 0.0, 0.0])
+    )
+    return True
+
+
 def _fix_sign_conventions(scene):
     """
-    Após canonical (X=largura, Y=espessura fina, Z=altura no rosto), resolve sinais:
-      (a) ponte em +Z — base central tem mais spread no eixo fino (Y) que o topo
-      (b) topo (+Z) mais estreito em X que a base (ponte vs aro inferior)
-      (c) hastes externas apontam para +Y (frente) quando aplicável
-
-    A heurística antiga usava Y como “cima”, mas Y é o eixo fino — invertia GLBs Rodin.
+    After extent-based rotation (X widest, Y thinnest, Z middle), resolve the
+    sign ambiguity of Y and Z axes using vertex distribution heuristics:
+      (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
+      (b) temple tips at outer |X| extend toward +Z (behind face)
     Disable: AR_POSTPROCESS_SIGN_FIX=0
     """
     if str(os.environ.get("AR_POSTPROCESS_SIGN_FIX", "1")).strip() in ("0", "false", "no"):
@@ -267,62 +298,53 @@ def _fix_sign_conventions(scene):
     if np.any(half_ext < 1e-9):
         return
 
-    ext = np.asarray(half_ext, dtype=float) * 2.0
-    order = np.argsort(ext)
-    i_thin = int(order[0])
-    i_vert = int(order[1])
-    i_wide = int(order[2])
-    # Frame pós hard-canonical: X largura, Y espessura, Z altura no rosto
-    if i_thin == 1 and i_wide == 0:
-        i_vert = 2
-
-    hw = float(half_ext[0])
-    hh = float(half_ext[1])
-    hd = float(half_ext[2])
+    hw, hh, hd = float(half_ext[0]), float(half_ext[1]), float(half_ext[2])
     cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
 
-    flip_vert = False
-    flip_forward = False
+    flip_y = False
+    flip_z = False
 
+    # Y-sign signal 1: Z-spread at center band (nose pads protrude more in Z than bridge)
     center_mask = np.abs(verts[:, 0] - cx) < hw * 0.35
     cb = verts[center_mask]
     if len(cb) > 8:
-        top_c = cb[cb[:, i_vert] > center[i_vert]]
-        bot_c = cb[cb[:, i_vert] <= center[i_vert]]
+        top_c = cb[cb[:, 1] > cy]
+        bot_c = cb[cb[:, 1] < cy]
         if len(top_c) > 2 and len(bot_c) > 2:
-            top_thin = float(top_c[:, i_thin].max() - top_c[:, i_thin].min())
-            bot_thin = float(bot_c[:, i_thin].max() - bot_c[:, i_thin].min())
-            if top_thin > bot_thin * 1.08:
-                flip_vert = True
+            top_zs = float(top_c[:, 2].max() - top_c[:, 2].min())
+            bot_zs = float(bot_c[:, 2].max() - bot_c[:, 2].min())
+            if top_zs > bot_zs * 1.08:
+                flip_y = True
 
-    if not flip_vert and len(verts) > 20:
-        sorted_v = verts[verts[:, i_vert].argsort()]
-        sn = max(8, int(len(sorted_v) * 0.08))
-        b_slice = sorted_v[:sn]
-        t_slice = sorted_v[-sn:]
+    # Y-sign signal 2: X-spread at Y extremes — bridge (top) is narrower
+    # in X than bottom rim; if the top 8% of vertices by Y is wider → upside down
+    if not flip_y and len(verts) > 20:
+        sorted_y = verts[verts[:, 1].argsort()]
+        sn = max(8, int(len(sorted_y) * 0.08))
+        b_slice = sorted_y[:sn]
+        t_slice = sorted_y[-sn:]
         t_x_sp = float(t_slice[:, 0].max() - t_slice[:, 0].min())
         b_x_sp = float(b_slice[:, 0].max() - b_slice[:, 0].min())
         if t_x_sp > b_x_sp * 1.08:
-            flip_vert = True
+            flip_y = True
 
     outer_mask = np.abs(verts[:, 0] - cx) > hw * 0.6
     outer = verts[outer_mask]
     if len(outer) > 4:
-        fwd_vals = outer[:, i_thin] - center[i_thin]
-        abs_fwd = np.abs(fwd_vals)
-        top_n = max(4, int(len(fwd_vals) * 0.15))
-        idx = np.argpartition(abs_fwd, -top_n)[-top_n:]
-        mef = float(fwd_vals[idx].mean())
-        thin_half = float(half_ext[i_thin])
-        if mef < -thin_half * 0.12:
-            flip_forward = True
+        z_vals = outer[:, 2] - cz
+        abs_z = np.abs(z_vals)
+        top_n = max(4, int(len(z_vals) * 0.15))
+        idx = np.argpartition(abs_z, -top_n)[-top_n:]
+        mez = float(z_vals[idx].mean())
+        if mez < -hd * 0.12:
+            flip_z = True
 
-    if flip_vert and flip_forward:
+    if flip_y and flip_z:
         scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
-    elif flip_vert:
-        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
-    elif flip_forward:
+    elif flip_y:
         scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 0.0, 1.0]))
+    elif flip_z:
+        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0]))
 
 
 def _lay_down_tallest_extent(scene):
@@ -487,6 +509,7 @@ def process_glasses_canonical(inp: Path, out: Path, params: dict | None = None) 
         _canonical_axes_smallest_y_largest_x(scene)
         _align_elongation_xz_to_positive_x(scene)
         _snap_to_best_right_angle(scene)
+    _remap_glasses_worker_frame_to_widget(scene)
     _fix_sign_conventions(scene)
     try:
         b = scene.bounds

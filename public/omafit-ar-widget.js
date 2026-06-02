@@ -2,6 +2,7 @@ import {
   applyGlassesAutoBind,
   computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
+  omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
 import {
   omafitCenterObject3OnBboxOrigin,
@@ -596,7 +597,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-02-ar-glasses-position-v164";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-02-ar-glasses-frame-yup-v165";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -9934,6 +9935,8 @@ async function runArSession({
       /^(1|true|yes|on)$/.test(
         String(cfgAttr("arGlassesCanonicalBlenderExport", "0")).trim().toLowerCase(),
       );
+    /** GLB Rodin/worker remapeado para +Y topo, −Z frente (paridade export canónico). */
+    let glassesWorkerFrameRemapped = false;
     /**
      * Rig estrutural MindAR (`data-ar-glasses-structural-mindar-rig="1"`) — definido cedo
      * para o pipeline de standardização GLB e outros flags o poderem referenciar.
@@ -10859,6 +10862,28 @@ async function runArSession({
     }
     glasses.updateMatrix();
     glasses.updateMatrixWorld(true);
+
+    if (
+      accessoryType === "glasses" &&
+      !glassesCanonicalBlenderExport &&
+      !glassesGlbStandardize &&
+      !glassesManualMindarRig
+    ) {
+      try {
+        if (omafitRemapRodinGlbToWidgetFrame(THREE, glasses)) {
+          glassesWorkerFrameRemapped = true;
+          console.log(
+            "[omafit-ar] glasses worker/Rodin frame remap Rx(-90°) → +Y topo, −Z frente",
+            { build: OMAFIT_AR_WIDGET_BUILD },
+          );
+        }
+      } catch (remapErr) {
+        console.warn(
+          "[omafit-ar] glasses worker frame remap:",
+          remapErr?.message || remapErr,
+        );
+      }
+    }
 
     if (glassesGlbStandardize) {
       const { root: stdRoot } = omafitStandardizeGlassesGlbRootForAr(THREE, glasses, {
@@ -11901,7 +11926,10 @@ async function runArSession({
         glasses.updateMatrix();
         glassesStaticBindWrap.position.set(0, 0, 0);
         glassesStaticBindWrap.scale.set(1, 1, 1);
-        if (glassesCanonicalBlenderExport && glassesSimpleFaceOnly) {
+        if (
+          glassesSimpleFaceOnly &&
+          (glassesCanonicalBlenderExport || glassesWorkerFrameRemapped)
+        ) {
           /**
            * Paridade preview admin (`OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD`): GLB
            * trimesh/Rodin tem frente em −Z; MindAR usa +Z para a câmara.
@@ -12378,6 +12406,7 @@ async function runArSession({
       glassesFrameWidthRawLocal,
       glassesMeshWidthNormMul,
       glassesCanonicalBlenderExport: !!glassesCanonicalBlenderExport,
+      glassesWorkerFrameRemapped: !!glassesWorkerFrameRemapped,
       glassesCalibAutoScaleBase: resolveGlassesCalibScaleBase({
         bboxWidthLocal: glassesFrameWidthRawLocal,
         canonicalBlenderExport: glassesCanonicalBlenderExport,
@@ -13319,7 +13348,7 @@ async function runArSession({
                    * Outros GLBs simples (não canónicos): mantém rotação da face no wrap.
                    * Translação: ponte 168 / wear em metros nos eixos de `fa.localMat`.
                    */
-                  if (st.glassesCanonicalBlenderExport) {
+                  if (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped) {
                     glassesTrackingWrap.quaternion.identity();
                   } else {
                     fa.q.setFromRotationMatrix(fa.basis);
@@ -13418,13 +13447,18 @@ async function runArSession({
                         glassesCalibAutoScaleBase: st.glassesCalibAutoScaleBase,
                         meshScale: displayScale,
                         trackingWrapRotationMode:
-                          st.glassesCanonicalBlenderExport && st.glassesSimpleFaceOnly
+                          st.glassesSimpleFaceOnly &&
+                          (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
                             ? "identity (paridade preview)"
                             : "faceBasis",
-                        canonicalBindRy: st.glassesCanonicalBlenderExport && st.glassesSimpleFaceOnly
+                        canonicalBindRy:
+                          st.glassesSimpleFaceOnly &&
+                          (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
                           ? "Ry180 staticBindWrap (paridade preview)"
                           : "legacy",
-                        formula: st.glassesCanonicalBlenderExport && st.glassesSimpleFaceOnly
+                        formula:
+                          st.glassesSimpleFaceOnly &&
+                          (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
                           ? "meshScale = merchantScale; rot = anchor×calibRot(rx/ry/rz)"
                           : "meshScale = (fitW/bboxX) × merchantScale",
                         anchorUnitsPerMeter: anchorU,

@@ -30,8 +30,8 @@ import {
   listGlassesLensProfileOptions,
   glassesLensProfileLabel,
   normalizeGlassesLensProfile,
+  canEditGlassesLensProfile,
 } from "../ar-glasses-lens-profile.shared.js";
-import { canEditGlassesLensProfile } from "../ar-eyewear-update-lens-profile.server.js";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);

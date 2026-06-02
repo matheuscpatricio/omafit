@@ -82,3 +82,18 @@ export function glassesLensProfileLabel(lensProfile, t) {
   if (!lp) return "";
   return t(`arEyewear.lensProfile.${lp}`) || lp;
 }
+
+/** Estados em que o lojista pode alterar o tipo de lente (antes de publicar). */
+export const AR_LENS_PROFILE_EDITABLE_STATUSES = new Set([
+  "pending_review",
+  "uploaded",
+  "failed",
+  "rejected",
+]);
+
+/**
+ * @param {string | null | undefined} status
+ */
+export function canEditGlassesLensProfile(status) {
+  return AR_LENS_PROFILE_EDITABLE_STATUSES.has(String(status || "").trim());
+}

@@ -5,6 +5,7 @@ import { normalizeAccessoryType } from "./ar-accessory-type.shared.js";
 import {
   normalizeGlassesLensProfile,
   glassesLensProfileManifestMaterial,
+  canEditGlassesLensProfile,
 } from "./ar-glasses-lens-profile.shared.js";
 import { resolveWearableClass } from "./ar-wearable-class.shared.js";
 import {
@@ -12,21 +13,6 @@ import {
   getClassPreset,
 } from "./ar-eyewear-rodin.server.js";
 import { patchAsset, storageUpload } from "./ar-eyewear.server.js";
-
-/** Estados em que o lojista pode alterar o tipo de lente (antes de publicar). */
-export const AR_LENS_PROFILE_EDITABLE_STATUSES = new Set([
-  "pending_review",
-  "uploaded",
-  "failed",
-  "rejected",
-]);
-
-/**
- * @param {string | null | undefined} status
- */
-export function canEditGlassesLensProfile(status) {
-  return AR_LENS_PROFILE_EDITABLE_STATUSES.has(String(status || "").trim());
-}
 
 /**
  * @param {Record<string, unknown>} row

@@ -598,7 +598,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-02-ar-glasses-pbr-parity-v168";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-02-ar-glasses-lens-light-v169";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2372,24 +2372,30 @@ function omafitApplyGlassesLensAppearance(THREE, root, opts = {}) {
           m.isMeshPhysicalMaterial === true
             ? m.clone()
             : new THREE.MeshPhysicalMaterial({
-                color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
+                color: new THREE.Color(0.98, 0.99, 1.0),
               });
         if (m.isMeshPhysicalMaterial !== true) {
           if (m.map) pm.map = m.map;
           if (m.normalMap) pm.normalMap = m.normalMap;
           if (m.alphaMap) pm.alphaMap = m.alphaMap;
+        } else {
+          pm.color = new THREE.Color(0.98, 0.99, 1.0);
         }
-        pm.transmission = lensType === "tinted" ? 0.4 : 0.9;
-        pm.thickness = lensType === "tinted" ? 0.22 : 0.48;
+        pm.transmission = lensType === "tinted" ? 0.45 : 0.88;
+        pm.thickness = lensType === "tinted" ? 0.18 : 0.35;
         pm.ior = 1.5;
-        pm.roughness = lensType === "tinted" ? 0.1 : 0.04;
+        pm.roughness = lensType === "tinted" ? 0.08 : 0.03;
         pm.metalness = 0;
         pm.transparent = true;
         pm.opacity = 1;
         pm.side = THREE.DoubleSide;
+        if ("attenuationColor" in pm) {
+          pm.attenuationColor = new THREE.Color(0.98, 0.99, 1.0);
+        }
+        if ("attenuationDistance" in pm) pm.attenuationDistance = 2.5;
         if (envTexture) {
           pm.envMap = envTexture;
-          pm.envMapIntensity = 1.12;
+          pm.envMapIntensity = 0.65;
         }
         pm.toneMapped = true;
         pm.depthWrite = false;
@@ -2418,15 +2424,15 @@ function omafitApplyGlassesLensAppearance(THREE, root, opts = {}) {
         out.transparent = true;
         out.opacity = 0.52;
       } else {
-        out.color = out.color || new THREE.Color(0xffffff);
-        out.color.setRGB(0.93, 0.95, 0.97);
+        /** Translúcido lite — alinhado ao ingest worker (alpha ~0.28), sem parecer preto no vídeo. */
+        out.color = new THREE.Color(0.97, 0.98, 0.99);
         out.transparent = true;
-        out.opacity = 0.34;
+        out.opacity = 0.26;
         out.metalness = 0;
-        out.roughness = 0.06;
+        out.roughness = 0.04;
       }
       out.side = THREE.DoubleSide;
-      out.depthWrite = true;
+      out.depthWrite = false;
       if ("transmission" in out) {
         out.transmission = 0;
         if ("thickness" in out) out.thickness = 0;
@@ -2750,27 +2756,31 @@ function upgradeFaceArEyewearRendering(THREE, root, envTexture, opts = {}) {
     const next = mats.map((m) => {
       if (!m) return m;
       const matName = String(m.name || "");
+      const isLensMesh = omafitIsGlassesLensMaterial(meshName, matName);
       const isLens =
-        physicalLenses && omafitIsGlassesLensMaterial(meshName, matName);
+        physicalLenses && isLensMesh;
       if (isLens) {
         const pm = new THREE.MeshPhysicalMaterial({
-          color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
-          transmission: 0.9,
-          thickness: 0.5,
+          color: new THREE.Color(0.98, 0.99, 1.0),
+          transmission: 0.88,
+          thickness: 0.35,
           ior: 1.5,
-          roughness: 0.05,
+          roughness: 0.03,
           metalness: 0,
           transparent: true,
           opacity: 1,
           side: m.side != null ? m.side : THREE.DoubleSide,
           envMap: envTexture,
-          envMapIntensity: 1.15,
-          specularIntensity: 0.5,
-          attenuationDistance: 1,
-          clearcoat: 0.06,
-          clearcoatRoughness: 0.08,
+          envMapIntensity: 0.65,
+          specularIntensity: 0.35,
+          attenuationDistance: 2.5,
+          clearcoat: 0.04,
+          clearcoatRoughness: 0.06,
         });
-        if ("reflectivity" in pm) pm.reflectivity = 0.5;
+        if ("attenuationColor" in pm) {
+          pm.attenuationColor = new THREE.Color(0.98, 0.99, 1.0);
+        }
+        if ("reflectivity" in pm) pm.reflectivity = 0.35;
         if (m.map) pm.map = m.map;
         if (m.normalMap) pm.normalMap = m.normalMap;
         if (m.alphaMap) pm.alphaMap = m.alphaMap;
@@ -2778,6 +2788,9 @@ function upgradeFaceArEyewearRendering(THREE, root, envTexture, opts = {}) {
         pm.toneMapped = true;
         pm.needsUpdate = true;
         return pm;
+      }
+      if (isLensMesh) {
+        return m;
       }
       if (m.isMeshStandardMaterial === true || m.isMeshPhysicalMaterial === true) {
         const o = m.clone();
@@ -5730,9 +5743,11 @@ float omafitTmp=(1.0-smoothstep(0.05,0.14,abs(vViewPosition.x)))*smoothstep(-0.0
 diffuseColor.rgb*=mix(1.0,${1 - intensity},0.55*omafitCav+0.35*omafitTmp);`;
   root.traverse((ch) => {
     if (!ch.isMesh) return;
+    const meshName = String(ch.name || "");
     const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
     for (const mat of mats) {
       if (!mat || mat.userData?.omafitCavityPatched) continue;
+      if (omafitIsGlassesLensMaterial(meshName, mat.name)) continue;
       if (!("roughness" in mat) || typeof mat.onBeforeCompile !== "function") continue;
       mat.userData = mat.userData || {};
       mat.userData.omafitCavityPatched = true;
@@ -10962,6 +10977,21 @@ async function runArSession({
         omafitPatchGlassesMaterialsLocalCavityAo(THREE, glasses, glassesCavityAoIntensity);
       } catch (e) {
         console.warn("[omafit-ar] cavity AO patch:", e?.message || e);
+      }
+      try {
+        const resolvedLensType =
+          String(
+            glassesRenderFlags.lensType ||
+              cfgAttr("arGlassesLensType", "clear_fake") ||
+              "clear_fake",
+          ).trim() || "clear_fake";
+        omafitApplyGlassesLensAppearance(THREE, glasses, {
+          lensType: resolvedLensType,
+          physicalLenses: glassesPhysicalLenses,
+          stripTransmission: glassesRenderFlags.stripTransmission !== false,
+        });
+      } catch {
+        /* ignore */
       }
     }
     if (accessoryType === "glasses" || accessoryType === "necklace") {

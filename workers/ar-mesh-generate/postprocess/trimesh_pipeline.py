@@ -539,9 +539,9 @@ def apply_lens_type_materials(scene, lens_type: str) -> None:
             if hasattr(mat, "alphaMode"):
                 mat.alphaMode = "BLEND"
         else:
-            # clear_fake — visível sem PMREM
+            # clear_fake — visível sem PMREM (paridade preview admin)
             if hasattr(mat, "baseColorFactor"):
-                mat.baseColorFactor = [0.92, 0.94, 0.96, 0.28]
+                mat.baseColorFactor = [0.96, 0.97, 0.99, 0.38]
             if hasattr(mat, "alphaMode"):
                 mat.alphaMode = "BLEND"
             if hasattr(mat, "transmission"):

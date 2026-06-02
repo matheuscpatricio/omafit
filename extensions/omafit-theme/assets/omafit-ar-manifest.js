@@ -147,6 +147,9 @@ export async function omafitLoadArManifestFromCfg(cfgAttr, category) {
 export function omafitIsGlassesLensMaterial(meshName, materialName) {
   const mn = String(meshName || "").toLowerCase();
   const mat = String(materialName || "").toLowerCase();
+  if (/\b(omafit_lens|lens_glass)\b/i.test(mn)) return true;
+  if (mat === "lens_glass" || mat.includes("lens_glass")) return true;
+  if (/\b(lens_glass|lens_left|lens_right|lentes?)\b/i.test(mat)) return true;
   if (
     /\b(frame_metal|frame_|temple|haste|shaft|stem|bridge|bezel|rim|brow|topbar|earpiece|varilla|arma[cç]ao|metal)\b/i.test(
       mat,
@@ -160,9 +163,6 @@ export function omafitIsGlassesLensMaterial(meshName, materialName) {
   ) {
     return false;
   }
-  if (mat === "lens_glass" || mat.includes("lens_glass")) return true;
-  if (/\b(lens_glass|lens_left|lens_right|lentes?)\b/i.test(mat)) return true;
-  if (/\b(omafit_lens|lens_glass)\b/i.test(mn)) return true;
   if (/\b(lens|lentes)\b/i.test(mn) && !/\b(frame|temple|bridge)\b/i.test(mn)) return true;
   return false;
 }

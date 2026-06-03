@@ -16,6 +16,11 @@ import {
 import prisma from "../db.server";
 import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server";
 import {
+  filterCandidatesByStylistParams,
+  scoreCandidatesForStylist,
+} from "../widget-stylist-filters.server.js";
+import { resolveStoreProfileForShop } from "../widget-store-profile.server.js";
+import {
   getShopifyAdminForWidget,
   noSessionDebugPayload,
   publicIdMatchesShop,
@@ -110,6 +115,20 @@ export async function action({ request }) {
 
   try {
     const admin = adminResult.admin;
+
+    const storeProfile = await resolveStoreProfileForShop(prisma, v.shopDomain, admin);
+    if (
+      storeProfile?.audience &&
+      storeProfile.audience !== "mixed" &&
+      (!String(params.store_audience || "").trim() ||
+        String(params.store_audience).trim() === "unknown")
+    ) {
+      params.store_audience = storeProfile.audience;
+    }
+    if (!String(params.price_band || "").trim() && storeProfile?.price_band) {
+      params.price_band = storeProfile.price_band;
+    }
+
     const resolvedCollectionHandles = await resolveCollectionHandlesForCatalog(
       admin,
       collectionHandles,
@@ -117,6 +136,9 @@ export async function action({ request }) {
     );
     const handlesForSearch =
       resolvedCollectionHandles.length > 0 ? resolvedCollectionHandles : collectionHandles;
+
+    const effectiveSearchGender =
+      String(params.effective_search_gender || "").trim() || targetGender;
 
     const queries = buildCatalogSearchQueries({
       userMessage,
@@ -126,23 +148,43 @@ export async function action({ request }) {
       shopperGender,
       chartGenderScope,
       collectionHandles: handlesForSearch,
+      searchTermsBoost: String(params.search_terms_boost || ""),
     });
 
     const candidatesRaw = await runCatalogSearches(admin, queries, {
       excludeHandle,
       limit: 15,
-      targetGender,
+      targetGender: effectiveSearchGender,
       collectionHandles: handlesForSearch,
     });
 
-    const candidates = await rankCandidatesByLearnedBoost(
+    const boosted = await rankCandidatesByLearnedBoost(
       prisma,
       v.shopDomain,
       excludeHandle,
       candidatesRaw
     );
 
-    const payload = { candidates, error: null };
+    const filtered = filterCandidatesByStylistParams(boosted, {
+      ...params,
+      exclude_handle: excludeHandle,
+      effective_search_gender: effectiveSearchGender,
+    });
+
+    const scoredTop = scoreCandidatesForStylist(filtered, {
+      ...params,
+      product_name: productName,
+      collection_type: safeCollection,
+    });
+
+    const candidates = scoredTop.length ? scoredTop : filtered.slice(0, 3);
+
+    const payload = {
+      candidates,
+      error: null,
+      scored_top: scoredTop,
+      store_profile: storeProfile,
+    };
     if (candidates.length === 0) {
       payload.debug = {
         exclude_handle: excludeHandle,

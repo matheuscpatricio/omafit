@@ -47,3 +47,13 @@ model WidgetSuggestionPairStat {
   @@unique([shop, anchorHandle, suggestedHandle])
   @@index([shop, anchorHandle])
 }
+
+/// Perfil comercial da loja para o consultor stylist (Growth+).
+model WidgetStoreProfile {
+  shop                String   @id
+  audience            String   @default("mixed")
+  priceBand           String   @default("unknown")
+  primaryCategories   String   @default("")
+  source              String   @default("inferred")
+  updatedAt           DateTime @updatedAt
+}

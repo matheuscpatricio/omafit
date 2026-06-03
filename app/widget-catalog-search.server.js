@@ -136,6 +136,7 @@ export function buildCatalogSearchQueries({
   shopperGender = "",
   chartGenderScope = "both",
   collectionHandles = [],
+  searchTermsBoost = "",
 }) {
   const msg = String(userMessage || "").trim();
   const name = String(productName || "").trim();
@@ -160,6 +161,13 @@ export function buildCatalogSearchQueries({
     const words = msg.split(/\s+/).filter((w) => w.length > 2).slice(0, 6).join(" ");
     if (words && words !== msg) {
       queries.push(words);
+    }
+  }
+
+  const boostRaw = String(searchTermsBoost || "").trim();
+  if (boostRaw) {
+    for (const term of boostRaw.split(/[,;|]/).map((t) => t.trim()).filter(Boolean).slice(0, 6)) {
+      queries.push(term);
     }
   }
 
@@ -242,6 +250,12 @@ const SEARCH_PRODUCTS = `#graphql
           productType
           tags
           onlineStoreUrl
+          priceRangeV2 {
+            minVariantPrice {
+              amount
+              currencyCode
+            }
+          }
           featuredImage {
             url
           }
@@ -249,6 +263,13 @@ const SEARCH_PRODUCTS = `#graphql
             edges {
               node {
                 url
+              }
+            }
+          }
+          variants(first: 8) {
+            edges {
+              node {
+                availableForSale
               }
             }
           }
@@ -269,6 +290,12 @@ const COLLECTION_PRODUCTS = `#graphql
             productType
             tags
             onlineStoreUrl
+            priceRangeV2 {
+              minVariantPrice {
+                amount
+                currencyCode
+              }
+            }
             featuredImage {
               url
             }
@@ -276,6 +303,13 @@ const COLLECTION_PRODUCTS = `#graphql
               edges {
                 node {
                   url
+                }
+              }
+            }
+            variants(first: 8) {
+              edges {
+                node {
+                  availableForSale
                 }
               }
             }
@@ -356,6 +390,12 @@ const PRODUCT_BY_HANDLE = `#graphql
   }
 `;
 
+function productHasAvailableVariant(node) {
+  const edges = node?.variants?.edges;
+  if (!Array.isArray(edges) || edges.length === 0) return undefined;
+  return edges.some((e) => Boolean(e?.node?.availableForSale));
+}
+
 function mapEdgesToCandidates(
   edges,
   excludeHandle,
@@ -371,11 +411,20 @@ function mapEdgesToCandidates(
     if (applyGenderFilter && !productMatchesTargetGender(node, targetGender)) continue;
     const imageUrl = resolveCandidateImageUrl(node);
     if (requireImage && !imageUrl) continue;
+    const minPrice = node?.priceRangeV2?.minVariantPrice;
+    const priceAmount = minPrice?.amount != null ? Number(minPrice.amount) : null;
+    const currencyCode = minPrice?.currencyCode || null;
+    const stock = productHasAvailableVariant(node);
     list.push({
       handle: node.handle,
       title: node.title || node.handle,
       url: node.onlineStoreUrl || "",
       image_url: imageUrl,
+      product_type: node.productType || "",
+      tags: Array.isArray(node.tags) ? node.tags : [],
+      price_amount: Number.isFinite(priceAmount) ? priceAmount : null,
+      currency_code: currencyCode,
+      ...(stock !== undefined ? { in_stock: stock } : {}),
     });
   }
   return list;

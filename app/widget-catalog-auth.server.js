@@ -161,7 +161,20 @@ export function verifyCatalogSearchSignature(params) {
     return { ok: true, shopDomain, publicId };
   }
 
-  const canonical = [
+  const stylistTail = [
+    `country_code=${String(params.country_code || "")}`,
+    `occasion_ids=${String(params.occasion_ids || "")}`,
+    `gift_recipient=${String(params.gift_recipient || "")}`,
+    `store_audience=${String(params.store_audience || "")}`,
+    `effective_search_gender=${String(params.effective_search_gender || "")}`,
+    `exclude_handles=${String(params.exclude_handles || "")}`,
+    `sort_price_asc=${String(params.sort_price_asc || "0")}`,
+    `search_terms_boost=${String(params.search_terms_boost || "")}`,
+  ].join("|");
+
+  const stylistTailV2 = `${stylistTail}|price_band=${String(params.price_band || "")}|store_profile_source=${String(params.store_profile_source || "")}`;
+
+  const canonicalBase = [
     `collection_handles=${String(params.collection_handles || "")}`,
     `collection_type=${String(params.collection_type || "")}`,
     `exclude_handle=${String(params.exclude_handle || "")}`,
@@ -174,8 +187,16 @@ export function verifyCatalogSearchSignature(params) {
     `chart_gender_scope=${String(params.chart_gender_scope || "")}`,
   ].join("|");
 
-  const expected = hmacHex(secret, canonical);
-  if (!timingSafeEqual(expected, signature)) {
+  const canonicalStylist = `${canonicalBase}|${stylistTail}`;
+  const canonicalStylistV2 = `${canonicalBase}|${stylistTailV2}`;
+  const expectedBase = hmacHex(secret, canonicalBase);
+  const expectedStylist = hmacHex(secret, canonicalStylist);
+  const expectedStylistV2 = hmacHex(secret, canonicalStylistV2);
+  if (
+    !timingSafeEqual(expectedBase, signature) &&
+    !timingSafeEqual(expectedStylist, signature) &&
+    !timingSafeEqual(expectedStylistV2, signature)
+  ) {
     return { ok: false, reason: "bad_signature" };
   }
 

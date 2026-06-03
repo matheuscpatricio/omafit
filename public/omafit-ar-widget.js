@@ -598,7 +598,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-overlay-v173";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-monolithic-lens-shader-v174";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2369,49 +2369,98 @@ function omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName) {
 }
 
 /**
- * GLB monolítico (1 mesh): overlays translúcidos sobre as lentes — sem alterar geometria.
+ * Remove overlays v173 (discos mal posicionados).
+ * @param {import("three").Object3D} root
+ */
+function omafitRemoveMonolithicGlassesLensOverlays(root) {
+  if (!root?.traverse) return;
+  const toRemove = [];
+  root.traverse((o) => {
+    if (o?.name === "omafit_lens_overlay") toRemove.push(o);
+  });
+  for (const g of toRemove) {
+    try {
+      g.parent?.remove(g);
+      g.traverse((o) => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          if (o.material?.dispose) o.material.dispose();
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * GLB monolítico (1 mesh): translúcido na região das lentes via shader — sem placas extra.
  * @param {typeof import("three")} THREE
  * @param {import("three").Mesh} mesh
  * @param {string} lensType
- * @returns {number} número de discos de lente criados
+ * @returns {boolean}
  */
-function omafitEnsureMonolithicGlassesLensOverlay(THREE, mesh, lensType) {
-  if (!THREE || !mesh?.isMesh || !mesh.geometry) return 0;
-  if (mesh.getObjectByName?.("omafit_lens_overlay")) return 2;
+function omafitPatchMonolithicGlassesLensSurface(THREE, mesh, lensType) {
+  if (!THREE || !mesh?.isMesh || !mesh.geometry) return false;
   const lt = String(lensType || "clear_fake").trim().toLowerCase();
-  if (lt === "opaque" || lt === "none" || lt === "off") return 0;
+  if (lt === "opaque" || lt === "none" || lt === "off") return false;
+  omafitRemoveMonolithicGlassesLensOverlays(mesh);
   mesh.geometry.computeBoundingBox?.();
   const bb = mesh.geometry.boundingBox;
-  if (!bb) return 0;
+  if (!bb) return false;
   const sx = Math.max(1e-6, bb.max.x - bb.min.x);
   const sy = Math.max(1e-6, bb.max.y - bb.min.y);
   const sz = Math.max(1e-6, bb.max.z - bb.min.z);
   const cx = (bb.min.x + bb.max.x) * 0.5;
   const cy = bb.min.y + sy * 0.52;
   const halfIpd = sx * 0.21;
-  const lensW = sx * 0.34;
-  const lensH = sy * 0.62;
-  /** Canonical Omafit: frente das lentes ≈ −Z local. */
-  const zFront = bb.min.z + sz * 0.02;
-  const group = new THREE.Group();
-  group.name = "omafit_lens_overlay";
-  group.renderOrder = 10;
-  let n = 0;
-  for (const side of [-1, 1]) {
-    const mat = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
-    mat.userData = { ...(mat.userData || {}), omafitArLensMaterial: true, omafitArLensOverlay: true };
-    const disc = new THREE.Mesh(new THREE.PlaneGeometry(lensW, lensH), mat);
-    disc.name = side < 0 ? "omafit_lens_overlay_l" : "omafit_lens_overlay_r";
-    disc.position.set(cx + side * halfIpd, cy, zFront);
-    disc.rotation.y = Math.PI;
-    disc.renderOrder = 10;
-    disc.frustumCulled = false;
-    if (disc.material && "depthWrite" in disc.material) disc.material.depthWrite = false;
-    group.add(disc);
-    n += 1;
+  const lensRx = sx * 0.17;
+  const lensRy = sy * 0.31;
+  /** Canonical: frente ≈ −Z → z baixo. */
+  const zCut = bb.min.z + sz * 0.36;
+  const lensOpacity = lt === "tinted" ? 0.58 : lt === "mirror" ? 0.48 : 0.5;
+  const lensRgb = lt === "tinted" ? "vec3(0.22,0.24,0.27)" : "vec3(0.97,0.98,1.0)";
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  let patched = 0;
+  for (const mat of mats) {
+    if (!mat || typeof mat.onBeforeCompile !== "function") continue;
+    if (mat.onBeforeCompile?.name === "omafitMonolithicLensObc") {
+      patched += 1;
+      continue;
+    }
+    mat.userData = mat.userData || {};
+    mat.userData.omafitMonolithicLensPatched = true;
+    mat.transparent = true;
+    mat.needsUpdate = true;
+    const prevObc = mat.onBeforeCompile;
+    mat.onBeforeCompile = function omafitMonolithicLensObc(shader, renderer) {
+      if (typeof prevObc === "function") prevObc.call(this, shader, renderer);
+      if (shader.vertexShader.includes("vOmafitObjPos")) return;
+      shader.vertexShader = `varying vec3 vOmafitObjPos;\n${shader.vertexShader}`;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+vOmafitObjPos = vec3(position);`,
+      );
+      const inj = `
+float omafitLz=step(vOmafitObjPos.z,${zCut.toFixed(8)});
+float omafitDxL=abs(vOmafitObjPos.x-${(cx - halfIpd).toFixed(8)});
+float omafitDxR=abs(vOmafitObjPos.x-${(cx + halfIpd).toFixed(8)});
+float omafitDy=abs(vOmafitObjPos.y-${cy.toFixed(8)});
+float omafitMl=(1.0-smoothstep(${ (lensRx * 0.72).toFixed(8)},${lensRx.toFixed(8)},omafitDxL))*(1.0-smoothstep(${(lensRy * 0.72).toFixed(8)},${lensRy.toFixed(8)},omafitDy));
+float omafitMr=(1.0-smoothstep(${(lensRx * 0.72).toFixed(8)},${lensRx.toFixed(8)},omafitDxR))*(1.0-smoothstep(${(lensRy * 0.72).toFixed(8)},${lensRy.toFixed(8)},omafitDy));
+float omafitLensMask=clamp(omafitLz*max(omafitMl,omafitMr),0.0,1.0);
+diffuseColor.rgb=mix(diffuseColor.rgb,${lensRgb},omafitLensMask*0.78);
+diffuseColor.a=mix(diffuseColor.a,${lensOpacity.toFixed(4)},omafitLensMask);`;
+      shader.fragmentShader = `varying vec3 vOmafitObjPos;\n${shader.fragmentShader}`;
+      const needle = "#include <output_fragment>";
+      if (shader.fragmentShader.includes(needle) && !shader.fragmentShader.includes("omafitLensMask")) {
+        shader.fragmentShader = shader.fragmentShader.replace(needle, `${inj}\n${needle}`);
+      }
+    };
+    patched += 1;
   }
-  mesh.add(group);
-  return n;
+  return patched > 0;
 }
 
 /**
@@ -2645,29 +2694,27 @@ function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
     });
     return { lensMeshes: areaN };
   }
-  /** GLB monolítico (1 mesh): overlays translúcidos — sem cortar geometria. */
+  /** GLB monolítico (1 mesh): shader translúcido na superfície das lentes. */
   const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
   /** @type {import("three").Mesh[]} */
   const allMeshes = [];
   root.traverse((o) => {
-    if (o?.isMesh && o.name !== "omafit_lens_overlay_l" && o.name !== "omafit_lens_overlay_r") {
-      allMeshes.push(o);
-    }
+    if (o?.isMesh && !/omafit_lens_overlay/i.test(String(o.name || ""))) allMeshes.push(o);
   });
+  omafitRemoveMonolithicGlassesLensOverlays(root);
   if (
     allMeshes.length === 1 &&
     lensType !== "opaque" &&
     lensType !== "none" &&
     lensType !== "off"
   ) {
-    const overlayN = omafitEnsureMonolithicGlassesLensOverlay(THREE, allMeshes[0], lensType);
-    if (overlayN > 0) {
-      console.log("[omafit-ar] glasses monolithic lens overlay", {
+    if (omafitPatchMonolithicGlassesLensSurface(THREE, allMeshes[0], lensType)) {
+      console.log("[omafit-ar] glasses monolithic lens shader", {
         build: OMAFIT_AR_WIDGET_BUILD,
-        lensMeshes: overlayN,
+        lensMeshes: 1,
         lensType,
       });
-      return { lensMeshes: overlayN };
+      return { lensMeshes: 1 };
     }
   }
   return primary;
@@ -2984,6 +3031,7 @@ function upgradeFaceArEyewearRendering(THREE, root, envTexture, opts = {}) {
       const matName = String(m.name || "");
       const isLensMesh =
         m.userData?.omafitArLensMaterial ||
+        m.userData?.omafitMonolithicLensPatched ||
         omafitIsGlassesLensMeshMaterial(THREE, root, m, meshName, matName);
       if (isLensMesh) {
         return m;
@@ -5946,6 +5994,7 @@ diffuseColor.rgb*=mix(1.0,${1 - intensity},0.55*omafitCav+0.35*omafitTmp);`;
     for (const mat of mats) {
       if (!mat || mat.userData?.omafitCavityPatched) continue;
       if (mat.userData?.omafitArLensMaterial) continue;
+      if (mat.userData?.omafitMonolithicLensPatched) continue;
       if (omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, String(mat.name || ""))) continue;
       if (!("roughness" in mat) || typeof mat.onBeforeCompile !== "function") continue;
       mat.userData = mat.userData || {};
@@ -6076,6 +6125,7 @@ function omafitEnhanceFaceGlbPbrResponse(THREE, root) {
     for (const m of mats) {
       if (!m || m.userData?.omafitPbrRespTuned) continue;
       if (m.userData?.omafitArLensMaterial) continue;
+      if (m.userData?.omafitMonolithicLensPatched) continue;
       if (m.isMeshStandardMaterial !== true && m.isMeshPhysicalMaterial !== true) continue;
       m.userData = m.userData || {};
       m.userData.omafitPbrRespTuned = true;

@@ -435,10 +435,9 @@
       "translucent": "Translucent — light transparency (stable on mobile)",
       "transparent": "Transparent — realistic glass (recent phones)",
       "editLabel": "Change lens type",
-      "editHelp": "You can change this before publishing to the store. For queued jobs, the choice applies on the next run.",
+      "editHelp": "You can change this before publishing to the store.",
       "save": "Save lens type",
-      "saveError": "Could not save lens type",
-      "manifestHint": "The try-on manifest is updated; you do not need to regenerate the 3D model."
+      "saveError": "Could not save lens type"
     },
     "photoFront": "Front photo",
     "photoThreeQuarter": "Three-quarter (45°) photo",

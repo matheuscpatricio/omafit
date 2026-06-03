@@ -435,10 +435,9 @@
       "translucent": "Translúcido — leve transparência (estável no telemóvel)",
       "transparent": "Transparente — vidro realista (telemóveis recentes)",
       "editLabel": "Alterar tipo de lente",
-      "editHelp": "Pode mudar antes de disponibilizar na loja. Em pedidos em fila, a alteração vale no próximo processamento.",
+      "editHelp": "Pode mudar antes de disponibilizar na loja.",
       "save": "Guardar tipo de lente",
-      "saveError": "Não foi possível guardar o tipo de lente",
-      "manifestHint": "O manifest do provador é atualizado; não é preciso gerar o modelo outra vez."
+      "saveError": "Não foi possível guardar o tipo de lente"
     },
     "photoFront": "Foto frontal",
     "photoThreeQuarter": "Foto três-quartos (45°)",

@@ -20,7 +20,32 @@ function supabaseHeaders(extra = {}) {
 }
 
 function hasHeroAccess(plan) {
-  return GROWTH_PLUS_PLANS.has(String(plan || "").trim().toLowerCase());
+  return hasGrowthPlusPlan(plan);
+}
+
+const WIDGET_CONFIG_SELECT_VARIANTS = [
+  "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at",
+  "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,created_at,updated_at",
+  "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,created_at,updated_at",
+  "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at",
+  "id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at",
+];
+
+async function fetchLatestConfig(shopDomain) {
+  let lastError = "";
+  for (const select of WIDGET_CONFIG_SELECT_VARIANTS) {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${select}&order=updated_at.desc&limit=1`,
+      { headers: supabaseHeaders() },
+    );
+    if (res.ok) {
+      const rows = await res.json();
+      return Array.isArray(rows) && rows.length ? rows[0] : null;
+    }
+    lastError = (await res.text().catch(() => "")) || `widget_configurations read failed (${res.status})`;
+    if (res.status !== 400) break;
+  }
+  throw new Error(lastError || "widget_configurations read failed");
 }
 
 function normalizeLayout(value, heroAllowed) {
@@ -47,19 +72,6 @@ function normalizePayload(body, shopDomain, heroAllowed) {
     tryon_layout: normalizeLayout(body?.tryon_layout, heroAllowed),
     tryon_layout_background_image: bg || null,
   };
-}
-
-async function fetchLatestConfig(shopDomain, select) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${select}&order=updated_at.desc&limit=1`,
-    { headers: supabaseHeaders() },
-  );
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(body || `widget_configurations read failed (${res.status})`);
-  }
-  const rows = await res.json();
-  return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
 async function updateConfigByShopDomain(shopDomain, payload) {
@@ -102,24 +114,7 @@ export async function loader({ request }) {
       return Response.json({ error: "Supabase not configured" }, { status: 500 });
     }
 
-    const selectFields = [
-      "id",
-      "shop_domain",
-      "link_text",
-      "store_logo",
-      "primary_color",
-      "widget_enabled",
-      "excluded_collections",
-      "admin_locale",
-      "embed_position",
-      "cta_type",
-      "cta_button_border_radius",
-      "tryon_layout",
-      "tryon_layout_background_image",
-      "created_at",
-      "updated_at",
-    ];
-    const config = await fetchLatestConfig(session.shop, selectFields.join(","));
+    const config = await fetchLatestConfig(session.shop);
     if (config && config.tryon_layout === "hero" && !hasHeroAccess(billing.row?.plan)) {
       config.tryon_layout = "default";
     }

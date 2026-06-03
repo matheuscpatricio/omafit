@@ -113,18 +113,15 @@ export default function WidgetPage() {
   };
 
   useEffect(() => {
-    if (shopDomain) {
-      console.log('[Widget] Componente montado, shop_domain:', shopDomain);
-      loadConfig();
-      loadCollections();
-    }
-  }, [shopDomain]);
+    loadConfig();
+    loadCollections();
+  }, []);
 
   useEffect(() => {
-    if (!loading && !config.link_text) {
+    if (!loading && !configId && !config.link_text?.trim()) {
       setConfig((prev) => ({ ...prev, link_text: t("widget.defaultLinkText") }));
     }
-  }, [loading, config.link_text, t]);
+  }, [loading, configId, config.link_text, t]);
 
   const normalizeExcludedCollections = (value) => {
     if (Array.isArray(value)) {
@@ -154,57 +151,48 @@ export default function WidgetPage() {
   const loadConfig = async () => {
     try {
       setLoading(true);
-      // Tentar obter do window.ENV (exposto pelo loader) ou import.meta.env
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      if (!supabaseUrl || !supabaseKey) {
-        console.error('[Widget] Supabase não configurado.');
-        setError(t('widget.errorSupabase'));
-        setLoading(false);
-        return;
-      }
-
-      console.log('[Widget] Carregando configuração para shop_domain:', shopDomain);
+      setError(null);
 
       const response = await fetch('/api/widget-config', { credentials: 'include' });
-      if (response.ok) {
-        const json = await response.json().catch(() => ({}));
-        const loadedConfig = json?.config || null;
-        if (loadedConfig) {
-          setConfigId(loadedConfig.id);
-          setConfig({
-            link_text: loadedConfig.link_text || t('widget.defaultLinkText'),
-            store_logo: loadedConfig.store_logo || '',
-            primary_color: loadedConfig.primary_color || '#810707',
-            widget_enabled: loadedConfig.widget_enabled !== false,
-            excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections),
-            admin_locale: loadedConfig.admin_locale || locale || 'en',
-            embed_position:
-              loadedConfig.embed_position === 'above_buy_buttons'
-                ? 'above_buy_buttons'
-                : 'below_buy_buttons',
-            cta_type: loadedConfig.cta_type === 'button' ? 'button' : 'link',
-            tryon_layout:
-              loadedConfig.tryon_layout === 'hero' && hasHeroLayoutAccess
-                ? 'hero'
-                : loadedConfig.tryon_layout === 'sidebar' || loadedConfig.tryon_layout === 'default'
-                ? loadedConfig.tryon_layout
-                : 'default',
-            tryon_layout_background_image: loadedConfig.tryon_layout_background_image || '',
-            cta_button_border_radius: (() => {
-              const n = Number(loadedConfig.cta_button_border_radius);
-              if (!Number.isFinite(n)) return 40;
-              return Math.max(0, Math.min(40, Math.round(n)));
-            })(),
-          });
-        }
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(json?.error || response.statusText || t('widget.errorLoadConfig'));
+      }
+
+      const loadedConfig = json?.config || null;
+      if (loadedConfig) {
+        setConfigId(loadedConfig.id);
+        setConfig({
+          link_text: loadedConfig.link_text || t('widget.defaultLinkText'),
+          store_logo: loadedConfig.store_logo || '',
+          primary_color: loadedConfig.primary_color || '#810707',
+          widget_enabled: loadedConfig.widget_enabled !== false,
+          excluded_collections: normalizeExcludedCollections(loadedConfig.excluded_collections),
+          admin_locale: loadedConfig.admin_locale || locale || 'en',
+          embed_position:
+            loadedConfig.embed_position === 'above_buy_buttons'
+              ? 'above_buy_buttons'
+              : 'below_buy_buttons',
+          cta_type: loadedConfig.cta_type === 'button' ? 'button' : 'link',
+          tryon_layout:
+            loadedConfig.tryon_layout === 'hero' && hasHeroLayoutAccess
+              ? 'hero'
+              : loadedConfig.tryon_layout === 'sidebar' || loadedConfig.tryon_layout === 'default'
+              ? loadedConfig.tryon_layout
+              : 'default',
+          tryon_layout_background_image: loadedConfig.tryon_layout_background_image || '',
+          cta_button_border_radius: (() => {
+            const n = Number(loadedConfig.cta_button_border_radius);
+            if (!Number.isFinite(n)) return 40;
+            return Math.max(0, Math.min(40, Math.round(n)));
+          })(),
+        });
       } else {
-        const body = await response.text().catch(() => '');
-        console.warn('[Widget] loadConfig via API falhou:', response.status, body);
+        setConfigId(null);
       }
     } catch (err) {
       console.error('[Widget] Erro ao carregar configuração:', err);
+      setError(toFriendlyWidgetConfigError(err.message));
     } finally {
       setLoading(false);
     }

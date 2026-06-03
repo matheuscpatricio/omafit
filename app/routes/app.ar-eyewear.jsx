@@ -801,11 +801,6 @@ export default function ArEyewearPage() {
                               >
                                 {t("arEyewear.lensProfile.save")}
                               </Button>
-                              {a.status === "pending_review" && a.glb_draft_url ? (
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {t("arEyewear.lensProfile.manifestHint")}
-                                </Text>
-                              ) : null}
                             </InlineStack>
                           </BlockStack>
                         ) : null}

@@ -598,7 +598,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-monolithic-lens-shader-v174";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-overlay-front-v175";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2394,73 +2394,60 @@ function omafitRemoveMonolithicGlassesLensOverlays(root) {
 }
 
 /**
- * GLB monolítico (1 mesh): translúcido na região das lentes via shader — sem placas extra.
+ * GLB monolítico (1 mesh): discos translúcidos na frente das lentes (canonical −Z).
  * @param {typeof import("three")} THREE
  * @param {import("three").Mesh} mesh
  * @param {string} lensType
- * @returns {boolean}
+ * @returns {number}
  */
-function omafitPatchMonolithicGlassesLensSurface(THREE, mesh, lensType) {
-  if (!THREE || !mesh?.isMesh || !mesh.geometry) return false;
+function omafitEnsureMonolithicGlassesLensOverlay(THREE, mesh, lensType) {
+  if (!THREE || !mesh?.isMesh || !mesh.geometry) return 0;
   const lt = String(lensType || "clear_fake").trim().toLowerCase();
-  if (lt === "opaque" || lt === "none" || lt === "off") return false;
+  if (lt === "opaque" || lt === "none" || lt === "off") return 0;
   omafitRemoveMonolithicGlassesLensOverlays(mesh);
+  const frameMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const mat of frameMats) {
+    if (!mat) continue;
+    if (mat.userData?.omafitMonolithicLensPatched || mat.onBeforeCompile?.name === "omafitMonolithicLensObc") {
+      delete mat.userData.omafitMonolithicLensPatched;
+      mat.transparent = false;
+      mat.opacity = 1;
+      delete mat.onBeforeCompile;
+      mat.needsUpdate = true;
+    }
+  }
+  if (mesh.getObjectByName?.("omafit_lens_overlay")) return 2;
   mesh.geometry.computeBoundingBox?.();
   const bb = mesh.geometry.boundingBox;
-  if (!bb) return false;
+  if (!bb) return 0;
   const sx = Math.max(1e-6, bb.max.x - bb.min.x);
   const sy = Math.max(1e-6, bb.max.y - bb.min.y);
   const sz = Math.max(1e-6, bb.max.z - bb.min.z);
   const cx = (bb.min.x + bb.max.x) * 0.5;
   const cy = bb.min.y + sy * 0.52;
   const halfIpd = sx * 0.21;
-  const lensRx = sx * 0.17;
-  const lensRy = sy * 0.31;
-  /** Canonical: frente ≈ −Z → z baixo. */
-  const zCut = bb.min.z + sz * 0.36;
-  const lensOpacity = lt === "tinted" ? 0.58 : lt === "mirror" ? 0.48 : 0.5;
-  const lensRgb = lt === "tinted" ? "vec3(0.22,0.24,0.27)" : "vec3(0.97,0.98,1.0)";
-  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  let patched = 0;
-  for (const mat of mats) {
-    if (!mat || typeof mat.onBeforeCompile !== "function") continue;
-    if (mat.onBeforeCompile?.name === "omafitMonolithicLensObc") {
-      patched += 1;
-      continue;
-    }
-    mat.userData = mat.userData || {};
-    mat.userData.omafitMonolithicLensPatched = true;
-    mat.transparent = true;
-    mat.needsUpdate = true;
-    const prevObc = mat.onBeforeCompile;
-    mat.onBeforeCompile = function omafitMonolithicLensObc(shader, renderer) {
-      if (typeof prevObc === "function") prevObc.call(this, shader, renderer);
-      if (shader.vertexShader.includes("vOmafitObjPos")) return;
-      shader.vertexShader = `varying vec3 vOmafitObjPos;\n${shader.vertexShader}`;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
-vOmafitObjPos = vec3(position);`,
-      );
-      const inj = `
-float omafitLz=step(vOmafitObjPos.z,${zCut.toFixed(8)});
-float omafitDxL=abs(vOmafitObjPos.x-${(cx - halfIpd).toFixed(8)});
-float omafitDxR=abs(vOmafitObjPos.x-${(cx + halfIpd).toFixed(8)});
-float omafitDy=abs(vOmafitObjPos.y-${cy.toFixed(8)});
-float omafitMl=(1.0-smoothstep(${ (lensRx * 0.72).toFixed(8)},${lensRx.toFixed(8)},omafitDxL))*(1.0-smoothstep(${(lensRy * 0.72).toFixed(8)},${lensRy.toFixed(8)},omafitDy));
-float omafitMr=(1.0-smoothstep(${(lensRx * 0.72).toFixed(8)},${lensRx.toFixed(8)},omafitDxR))*(1.0-smoothstep(${(lensRy * 0.72).toFixed(8)},${lensRy.toFixed(8)},omafitDy));
-float omafitLensMask=clamp(omafitLz*max(omafitMl,omafitMr),0.0,1.0);
-diffuseColor.rgb=mix(diffuseColor.rgb,${lensRgb},omafitLensMask*0.78);
-diffuseColor.a=mix(diffuseColor.a,${lensOpacity.toFixed(4)},omafitLensMask);`;
-      shader.fragmentShader = `varying vec3 vOmafitObjPos;\n${shader.fragmentShader}`;
-      const needle = "#include <output_fragment>";
-      if (shader.fragmentShader.includes(needle) && !shader.fragmentShader.includes("omafitLensMask")) {
-        shader.fragmentShader = shader.fragmentShader.replace(needle, `${inj}\n${needle}`);
-      }
-    };
-    patched += 1;
+  const lensW = sx * 0.33;
+  const lensH = sy * 0.58;
+  /** Frente = −Z → posição ligeiramente mais negativa que bb.min.z. */
+  const zFront = bb.min.z - Math.max(sz * 0.012, 0.0004);
+  const group = new THREE.Group();
+  group.name = "omafit_lens_overlay";
+  group.renderOrder = 12;
+  let n = 0;
+  for (const side of [-1, 1]) {
+    const mat = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
+    mat.userData = { ...(mat.userData || {}), omafitArLensMaterial: true, omafitArLensOverlay: true };
+    const disc = new THREE.Mesh(new THREE.PlaneGeometry(lensW, lensH), mat);
+    disc.name = side < 0 ? "omafit_lens_overlay_l" : "omafit_lens_overlay_r";
+    disc.position.set(cx + side * halfIpd, cy, zFront);
+    disc.rotation.y = Math.PI;
+    disc.renderOrder = 12;
+    disc.frustumCulled = false;
+    group.add(disc);
+    n += 1;
   }
-  return patched > 0;
+  mesh.add(group);
+  return n;
 }
 
 /**
@@ -2694,27 +2681,27 @@ function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
     });
     return { lensMeshes: areaN };
   }
-  /** GLB monolítico (1 mesh): shader translúcido na superfície das lentes. */
+  /** GLB monolítico (1 mesh): overlays na frente das lentes (−Z). */
   const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
   /** @type {import("three").Mesh[]} */
   const allMeshes = [];
   root.traverse((o) => {
     if (o?.isMesh && !/omafit_lens_overlay/i.test(String(o.name || ""))) allMeshes.push(o);
   });
-  omafitRemoveMonolithicGlassesLensOverlays(root);
   if (
     allMeshes.length === 1 &&
     lensType !== "opaque" &&
     lensType !== "none" &&
     lensType !== "off"
   ) {
-    if (omafitPatchMonolithicGlassesLensSurface(THREE, allMeshes[0], lensType)) {
-      console.log("[omafit-ar] glasses monolithic lens shader", {
+    const overlayN = omafitEnsureMonolithicGlassesLensOverlay(THREE, allMeshes[0], lensType);
+    if (overlayN > 0) {
+      console.log("[omafit-ar] glasses monolithic lens overlay", {
         build: OMAFIT_AR_WIDGET_BUILD,
-        lensMeshes: 1,
+        lensMeshes: overlayN,
         lensType,
       });
-      return { lensMeshes: 1 };
+      return { lensMeshes: overlayN };
     }
   }
   return primary;

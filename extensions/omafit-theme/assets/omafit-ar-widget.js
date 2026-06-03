@@ -598,7 +598,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-overlay-front-v175";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-overlay-local-v177";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2394,14 +2394,15 @@ function omafitRemoveMonolithicGlassesLensOverlays(root) {
 }
 
 /**
- * GLB monolítico (1 mesh): discos translúcidos na frente das lentes (canonical −Z).
+ * GLB monolítico: discos translúcidos no espaço local do mesh (tamanho da geometria GLB).
  * @param {typeof import("three")} THREE
  * @param {import("three").Mesh} mesh
  * @param {string} lensType
+ * @param {import("three").Camera} camera
  * @returns {number}
  */
-function omafitEnsureMonolithicGlassesLensOverlay(THREE, mesh, lensType) {
-  if (!THREE || !mesh?.isMesh || !mesh.geometry) return 0;
+function omafitRefreshMonolithicGlassesLensOverlay(THREE, mesh, lensType, camera) {
+  if (!THREE || !mesh?.isMesh || !mesh.geometry || !camera) return 0;
   const lt = String(lensType || "clear_fake").trim().toLowerCase();
   if (lt === "opaque" || lt === "none" || lt === "off") return 0;
   omafitRemoveMonolithicGlassesLensOverlays(mesh);
@@ -2416,31 +2417,50 @@ function omafitEnsureMonolithicGlassesLensOverlay(THREE, mesh, lensType) {
       mat.needsUpdate = true;
     }
   }
-  if (mesh.getObjectByName?.("omafit_lens_overlay")) return 2;
   mesh.geometry.computeBoundingBox?.();
-  const bb = mesh.geometry.boundingBox;
-  if (!bb) return 0;
-  const sx = Math.max(1e-6, bb.max.x - bb.min.x);
-  const sy = Math.max(1e-6, bb.max.y - bb.min.y);
-  const sz = Math.max(1e-6, bb.max.z - bb.min.z);
-  const cx = (bb.min.x + bb.max.x) * 0.5;
-  const cy = bb.min.y + sy * 0.52;
-  const halfIpd = sx * 0.21;
-  const lensW = sx * 0.33;
-  const lensH = sy * 0.58;
-  /** Frente = −Z → posição ligeiramente mais negativa que bb.min.z. */
-  const zFront = bb.min.z - Math.max(sz * 0.012, 0.0004);
+  const lbb = mesh.geometry.boundingBox;
+  if (!lbb || lbb.isEmpty()) return 0;
+  const sx = Math.max(1e-6, lbb.max.x - lbb.min.x);
+  const sy = Math.max(1e-6, lbb.max.y - lbb.min.y);
+  const sz = Math.max(1e-6, lbb.max.z - lbb.min.z);
+  const cx = (lbb.min.x + lbb.max.x) * 0.5;
+  const cy = lbb.min.y + sy * 0.52;
+  const halfIpd = sx * 0.2;
+  const lensW = sx * 0.26;
+  const lensH = sy * 0.5;
+  /** Canonical Blender/Rodin: −Z = frente (paridade preview admin). */
+  const nudge = Math.max(sz * 0.006, 0.00012);
+  const zFront = lbb.min.z - nudge;
+  const camPos = new THREE.Vector3();
+  camera.getWorldPosition(camPos);
   const group = new THREE.Group();
   group.name = "omafit_lens_overlay";
   group.renderOrder = 12;
+  const lookScratch = new THREE.Object3D();
+  const meshWorldQ = new THREE.Quaternion();
+  const invMeshWorldQ = new THREE.Quaternion();
+  const worldPos = new THREE.Vector3();
   let n = 0;
   for (const side of [-1, 1]) {
+    const localPos = new THREE.Vector3(cx + side * halfIpd, cy, zFront);
+    worldPos.copy(localPos);
+    mesh.localToWorld(worldPos);
     const mat = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
+    mat.side = THREE.DoubleSide;
+    mat.depthWrite = false;
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -2;
+    mat.polygonOffsetUnits = -2;
     mat.userData = { ...(mat.userData || {}), omafitArLensMaterial: true, omafitArLensOverlay: true };
     const disc = new THREE.Mesh(new THREE.PlaneGeometry(lensW, lensH), mat);
     disc.name = side < 0 ? "omafit_lens_overlay_l" : "omafit_lens_overlay_r";
-    disc.position.set(cx + side * halfIpd, cy, zFront);
-    disc.rotation.y = Math.PI;
+    disc.position.copy(localPos);
+    lookScratch.position.copy(worldPos);
+    lookScratch.lookAt(camPos);
+    mesh.updateMatrixWorld(true);
+    mesh.getWorldQuaternion(meshWorldQ);
+    invMeshWorldQ.copy(meshWorldQ).invert();
+    disc.quaternion.copy(invMeshWorldQ.multiply(lookScratch.quaternion));
     disc.renderOrder = 12;
     disc.frustumCulled = false;
     group.add(disc);
@@ -2448,6 +2468,47 @@ function omafitEnsureMonolithicGlassesLensOverlay(THREE, mesh, lensType) {
   }
   mesh.add(group);
   return n;
+}
+
+/**
+ * Uma vez por sessão: overlay monolítico só após escala de calibração (evita placas gigantes).
+ * @param {typeof import("three")} THREE
+ * @param {{ st?: object, camera?: import("three").Camera, glassesRoot?: import("three").Object3D, lensType?: string }} opts
+ */
+function omafitTryCommitMonolithicLensOverlay(THREE, opts = {}) {
+  const st = opts.st;
+  const camera = opts.camera;
+  const glassesRoot = opts.glassesRoot;
+  const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
+  if (!st || st.monolithicLensOverlayDone || !THREE || !camera || !glassesRoot) return 0;
+  if (!Number.isFinite(st.glassesLastMeshScale) || st.glassesLastMeshScale <= 0) return 0;
+  if (lensType === "opaque" || lensType === "none" || lensType === "off") return 0;
+  let monoMesh = null;
+  let monoCount = 0;
+  glassesRoot.traverse((o) => {
+    if (!o?.isMesh || /omafit_lens_overlay/i.test(String(o.name || ""))) return;
+    monoCount += 1;
+    monoMesh = o;
+  });
+  if (monoCount !== 1 || !monoMesh) return 0;
+  glassesRoot.updateMatrixWorld(true);
+  const overlayN = omafitRefreshMonolithicGlassesLensOverlay(THREE, monoMesh, lensType, camera);
+  if (overlayN > 0) {
+    st.monolithicLensOverlayDone = true;
+    console.log("[omafit-ar] glasses monolithic lens overlay (post-scale)", {
+      build: OMAFIT_AR_WIDGET_BUILD,
+      lensMeshes: overlayN,
+      lensType,
+      meshScale: st.glassesLastMeshScale,
+      cameraAligned: true,
+    });
+  }
+  return overlayN;
+}
+
+/** @deprecated use omafitRefreshMonolithicGlassesLensOverlay após bind + câmara */
+function omafitEnsureMonolithicGlassesLensOverlay(THREE, mesh, lensType, camera) {
+  return omafitRefreshMonolithicGlassesLensOverlay(THREE, mesh, lensType, camera);
 }
 
 /**
@@ -2681,27 +2742,43 @@ function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
     });
     return { lensMeshes: areaN };
   }
-  /** GLB monolítico (1 mesh): overlays na frente das lentes (−Z). */
+  /** GLB monolítico: overlays só com câmara + escala já aplicada (ver `omafitTryCommitMonolithicLensOverlay`). */
   const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
-  /** @type {import("three").Mesh[]} */
-  const allMeshes = [];
-  root.traverse((o) => {
-    if (o?.isMesh && !/omafit_lens_overlay/i.test(String(o.name || ""))) allMeshes.push(o);
-  });
+  const camera = opts.camera || null;
+  const overlayState = opts.monolithicLensOverlayState || null;
   if (
-    allMeshes.length === 1 &&
-    lensType !== "opaque" &&
-    lensType !== "none" &&
-    lensType !== "off"
+    camera &&
+    overlayState &&
+    Number.isFinite(overlayState.glassesLastMeshScale) &&
+    overlayState.glassesLastMeshScale > 0 &&
+    !overlayState.monolithicLensOverlayDone
   ) {
-    const overlayN = omafitEnsureMonolithicGlassesLensOverlay(THREE, allMeshes[0], lensType);
-    if (overlayN > 0) {
-      console.log("[omafit-ar] glasses monolithic lens overlay", {
-        build: OMAFIT_AR_WIDGET_BUILD,
-        lensMeshes: overlayN,
+    /** @type {import("three").Mesh[]} */
+    const allMeshes = [];
+    root.traverse((o) => {
+      if (o?.isMesh && !/omafit_lens_overlay/i.test(String(o.name || ""))) allMeshes.push(o);
+    });
+    if (
+      allMeshes.length === 1 &&
+      lensType !== "opaque" &&
+      lensType !== "none" &&
+      lensType !== "off"
+    ) {
+      const overlayN = omafitRefreshMonolithicGlassesLensOverlay(
+        THREE,
+        allMeshes[0],
         lensType,
-      });
-      return { lensMeshes: overlayN };
+        camera,
+      );
+      if (overlayN > 0) {
+        console.log("[omafit-ar] glasses monolithic lens overlay", {
+          build: OMAFIT_AR_WIDGET_BUILD,
+          lensMeshes: overlayN,
+          lensType,
+          cameraAligned: true,
+        });
+        return { lensMeshes: overlayN };
+      }
     }
   }
   return primary;
@@ -12909,6 +12986,7 @@ async function runArSession({
       projectionSyncLogged: false,
       positionLogged: false,
       glassesCalibRuntimeLogged: false,
+      monolithicLensOverlayDone: false,
       glassesNdcScreenLock,
       glassesNdcBlendFromMp,
       glassesLensDistortK,
@@ -13460,6 +13538,7 @@ async function runArSession({
             st.faceProjectionOpts.principalShiftNdcLp.y *= 0.88;
           }
           st.smoothInitialized = false;
+          st.monolithicLensOverlayDone = false;
           st.lmSmoother?.reset();
           st.smoothedCheekW = null;
           st.smoothedFaceScale = null;
@@ -13935,6 +14014,18 @@ async function runArSession({
                     st.glassesLastMeshScale = displayScale;
                     if (st.glassesModelWrap) st.glassesModelWrap.scale.set(1, 1, 1);
                     glasses.scale.set(displayScale, displayScale, displayScale);
+                    try {
+                      omafitTryCommitMonolithicLensOverlay(THREE, {
+                        st,
+                        camera: mindarThree?.camera,
+                        glassesRoot: st.microUxGlassesRoot || glasses,
+                        lensType:
+                          glassesRenderFlags.lensType ||
+                          cfgAttr("arGlassesLensType", "clear_fake"),
+                      });
+                    } catch {
+                      /* ignore */
+                    }
                     if (st.calibRotGroup) {
                       applyGlassesMerchantCalibRotation(
                         THREE,
@@ -14646,6 +14737,8 @@ async function runArSession({
               physicalLenses: glassesPhysicalLenses,
               stripTransmission: glassesRenderFlags.stripTransmission !== false,
               envTexture: pmremRT.texture,
+              camera: mindarThree.camera,
+              monolithicLensOverlayState: faceArEnhancementState,
             });
           } catch {
             /* ignore */
@@ -14663,6 +14756,8 @@ async function runArSession({
               physicalLenses: glassesPhysicalLenses,
               stripTransmission: glassesRenderFlags.stripTransmission !== false,
               envTexture: pmremRT.texture,
+              camera: mindarThree.camera,
+              monolithicLensOverlayState: faceArEnhancementState,
             });
           } catch {
             /* ignore */

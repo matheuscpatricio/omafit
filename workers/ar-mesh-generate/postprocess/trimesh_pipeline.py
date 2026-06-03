@@ -406,8 +406,8 @@ def _scale_scene_to_width_x(scene, target_width_m: float) -> None:
 
 def _split_monolithic_glasses_lens(scene) -> bool:
     """
-    GLB Rodin monolítico (1 mesh): separa a shell frontal (−Z) como `lens_glass`.
-    Sem isto o runtime não consegue aplicar translúcido/transmissão só nas lentes.
+    GLB Rodin monolítico (1 mesh): separa a shell frontal (−Z) como `omafit_lens` / `lens_glass`.
+    Sem isto o runtime não consegue aplicar translúcido só nas lentes (contorno real da malha).
     Desligar: AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS=0
     """
     if str(os.environ.get("AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS", "1")).strip() in (
@@ -423,35 +423,72 @@ def _split_monolithic_glasses_lens(scene) -> bool:
     if len(meshes) != 1:
         return False
     orig_name, geom = meshes[0]
-    if len(geom.faces) < 32:
+    face_n = len(geom.faces)
+    if face_n < 24:
         return False
     try:
-        z = np.asarray(geom.triangles_center[:, 2], dtype=float)
+        centers = np.asarray(geom.triangles_center, dtype=float)
+        normals = np.asarray(geom.face_normals, dtype=float)
     except Exception:
         return False
+    z = centers[:, 2]
     z_min = float(z.min())
     z_max = float(z.max())
     depth = z_max - z_min
     if depth <= 1e-8:
         return False
-    frac_raw = os.environ.get("AR_POSTPROCESS_LENS_FRONT_FRAC", "0.28")
+    nz = normals[:, 2]
+    min_each = max(8, int(face_n * 0.015))
+
+    def _try_split(frac: float, use_normals: bool):
+        frac = max(0.1, min(0.52, float(frac)))
+        thresh = z_min + depth * frac
+        front_mask = z <= thresh
+        if use_normals:
+            front_mask = front_mask & (nz < 0.2)
+        front_idx = np.where(front_mask)[0]
+        back_idx = np.where(~front_mask)[0]
+        if len(front_idx) < min_each or len(back_idx) < min_each:
+            return None
+        try:
+            lens_geom = geom.submesh([front_idx], append=True)
+            frame_geom = geom.submesh([back_idx], append=True)
+        except Exception:
+            return None
+        if lens_geom is None or frame_geom is None:
+            return None
+        if len(lens_geom.faces) < min_each or len(frame_geom.faces) < min_each:
+            return None
+        return lens_geom, frame_geom
+
+    frac_default = 0.28
     try:
-        frac = float(frac_raw)
+        frac_default = float(os.environ.get("AR_POSTPROCESS_LENS_FRONT_FRAC", "0.28"))
     except (TypeError, ValueError):
-        frac = 0.28
-    frac = max(0.08, min(0.45, frac))
-    thresh = z_min + depth * frac
-    front_idx = np.where(z <= thresh)[0]
-    back_idx = np.where(z > thresh)[0]
-    if len(front_idx) < 12 or len(back_idx) < 12:
+        pass
+    candidates = [frac_default, 0.22, 0.32, 0.38, 0.45]
+    seen = set()
+    fracs = []
+    for f in candidates:
+        k = round(float(f), 4)
+        if k not in seen:
+            seen.add(k)
+            fracs.append(k)
+
+    split_pair = None
+    for frac in fracs:
+        split_pair = _try_split(frac, use_normals=True)
+        if split_pair is not None:
+            break
+    if split_pair is None:
+        for frac in fracs:
+            split_pair = _try_split(frac, use_normals=False)
+            if split_pair is not None:
+                break
+    if split_pair is None:
         return False
-    try:
-        lens_geom = geom.submesh([front_idx], append=True)
-        frame_geom = geom.submesh([back_idx], append=True)
-    except Exception:
-        return False
-    if lens_geom is None or frame_geom is None:
-        return False
+
+    lens_geom, frame_geom = split_pair
     del scene.geometry[orig_name]
     scene.geometry["omafit_frame"] = frame_geom
     scene.geometry["omafit_lens"] = lens_geom
@@ -579,21 +616,27 @@ def process_glasses_canonical(inp: Path, out: Path, params: dict | None = None) 
         pass
     _scale_scene_to_width_x(scene, target_w)
     _rename_materials_for_glasses(scene)
-    _assert_lens_glass_present(scene)
+    _assert_lens_glass_present(scene, lens_type)
     apply_lens_type_materials(scene, lens_type)
     scene.export(str(out))
 
 
-def _assert_lens_glass_present(scene) -> None:
+def _assert_lens_glass_present(scene, lens_type: str = "clear_fake") -> None:
     """Certify ingest: malha de lente identificável para o runtime AR."""
     import trimesh
 
+    lt = str(lens_type or "clear_fake").strip().lower()
     mesh_count = sum(
         1 for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)
     )
-    if mesh_count < 2:
-        # GLB monolítico (Rodin): runtime usa materialProfile lite/clear_fake.
+    if lt in ("opaque", "none", "off"):
         return
+    if mesh_count < 2:
+        raise ValueError(
+            "ingest_qa: split monolítico falhou (meshes=1) — "
+            "perfil translúcido/transparente exige omafit_lens + material lens_glass; "
+            "verifique AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS e canonical −Z"
+        )
 
     for geom in scene.geometry.values():
         if not isinstance(geom, trimesh.Trimesh):

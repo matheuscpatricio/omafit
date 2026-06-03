@@ -1,4 +1,5 @@
 /* Identidade Omafit (landing omafit-widget) — escopo admin Shopify */
+@import url('https://fonts.cdnfonts.com/css/jhc-rasbora');
 @import url('https://fonts.googleapis.com/css2?family=Gloock&display=swap');
 
 :root {
@@ -62,22 +63,6 @@
   gap: 1rem 1.25rem;
 }
 
-.omafit-brand-banner__icon {
-  flex-shrink: 0;
-  display: block;
-  border-radius: 8px;
-}
-
-.omafit-brand-banner--compact .omafit-brand-banner__icon {
-  width: 36px;
-  height: 36px;
-}
-
-.omafit-brand-banner--hero .omafit-brand-banner__icon {
-  width: 48px;
-  height: 48px;
-}
-
 .omafit-brand-banner__text {
   flex: 1;
   min-width: 0;
@@ -85,19 +70,17 @@
 
 .omafit-brand-banner__wordmark {
   display: block;
-  font-size: 1.35rem;
+  font-family: 'JHC Rasbora', Georgia, serif;
+  font-size: 1.375rem;
   font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
+  font-style: normal;
+  letter-spacing: -0.02em;
+  line-height: 1;
   color: var(--oma-cream);
 }
 
 .omafit-brand-banner--hero .omafit-brand-banner__wordmark {
   font-size: 1.65rem;
-}
-
-.omafit-brand-banner__wordmark-accent {
-  color: var(--oma-accent);
 }
 
 .omafit-brand-banner__tagline {

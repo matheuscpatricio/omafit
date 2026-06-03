@@ -14,17 +14,9 @@ export function OmafitBrandBanner({ variant = 'compact' }) {
       aria-label="Omafit"
     >
       <div className="omafit-brand-banner__inner">
-        <img
-          className="omafit-brand-banner__icon"
-          src="/omafit-brand-icon.svg"
-          alt=""
-          width={isHero ? 48 : 36}
-          height={isHero ? 48 : 36}
-          decoding="async"
-        />
         <div className="omafit-brand-banner__text">
           <span className="omafit-brand-banner__wordmark" aria-hidden="true">
-            Oma<span className="omafit-brand-banner__wordmark-accent">fit</span>
+            Omafit
           </span>
           <p className="omafit-brand-banner__tagline">{t('brand.tagline')}</p>
           {isHero ? (

@@ -455,6 +455,7 @@
     "product": "Produto",
     "openDraft": "Ver pré-visualização do modelo",
     "publish": "Disponibilizar na loja online",
+    "republish": "Republicar na loja online",
     "reject": "Rejeitar",
     "requeue": "Reenfileirar",
     "errorProductId": "Informe o ID do produto.",

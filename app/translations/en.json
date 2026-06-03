@@ -455,6 +455,7 @@
     "product": "Product",
     "openDraft": "Preview the virtual model",
     "publish": "Publish to online store",
+    "republish": "Republish to online store",
     "reject": "Reject",
     "requeue": "Re-queue",
     "errorProductId": "Enter the product ID.",

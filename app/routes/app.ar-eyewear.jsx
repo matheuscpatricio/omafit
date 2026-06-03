@@ -810,13 +810,16 @@ export default function ArEyewearPage() {
                           </BlockStack>
                         ) : null}
                         <InlineStack gap="200" wrap>
-                          {a.status === "pending_review" && (
+                          {(a.status === "pending_review" ||
+                            (a.status === "rejected" && a.glb_draft_url)) && (
                             <Button
                               variant="primary"
                               loading={actionId === `${a.id}-publish`}
                               onClick={() => doAction(a.id, "publish")}
                             >
-                              {t("arEyewear.publish")}
+                              {a.status === "rejected"
+                                ? t("arEyewear.republish")
+                                : t("arEyewear.publish")}
                             </Button>
                           )}
                           {a.status === "pending_review" && (

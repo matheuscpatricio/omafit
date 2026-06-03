@@ -99,9 +99,17 @@ export async function action({ request, params }) {
     }
 
     if (intent === "publish") {
-      if (row.status !== "pending_review") {
+      const canPublish =
+        row.status === "pending_review" ||
+        (row.status === "rejected" && String(row.glb_draft_url || "").trim());
+      if (!canPublish) {
         return Response.json(
-          { error: "Only pending_review assets can be published" },
+          {
+            error:
+              row.status === "rejected"
+                ? "Rejected assets need a draft model (glb_draft_url) to republish"
+                : "Only pending_review assets can be published",
+          },
           { status: 400 },
         );
       }
@@ -146,6 +154,7 @@ export async function action({ request, params }) {
       const updated = await patchAsset(id, {
         status: "published",
         glb_published_url: draftUrl,
+        error_message: null,
       });
       return Response.json({
         asset: updated,

@@ -152,7 +152,8 @@ export default function ArEyewearPage() {
   const appBackHref = `/app${appSearch ? `?${appSearch}` : ""}`;
 
   const [assetsLoading, setAssetsLoading] = useState(true);
-  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsCatalogReady, setProductsCatalogReady] = useState(false);
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState([]);
   const [products, setProducts] = useState([]);
@@ -199,7 +200,9 @@ export default function ArEyewearPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
       setProducts(data.products || []);
+      setProductsCatalogReady(true);
     } catch (e) {
+      setProductsCatalogReady(false);
       setError((prev) => prev || e.message || t("arEyewear.errorLoadProducts"));
       setProducts([]);
     } finally {
@@ -214,9 +217,9 @@ export default function ArEyewearPage() {
   }, [loadAssets]);
 
   useEffect(() => {
-    if (!productSearchQuery || products.length > 0 || productsLoading) return;
+    if (!productSearchQuery || productsCatalogReady || productsLoading) return;
     loadProducts();
-  }, [productSearchQuery, products.length, productsLoading, loadProducts]);
+  }, [productSearchQuery, productsCatalogReady, productsLoading, loadProducts]);
 
   const filteredProducts = useMemo(() => {
     const q = productSearchQuery.toLowerCase();
@@ -672,6 +675,7 @@ export default function ArEyewearPage() {
                 <Button
                   onClick={() => {
                     loadAssets();
+                    setProductsCatalogReady(false);
                     loadProducts();
                   }}
                   disabled={assetsLoading}

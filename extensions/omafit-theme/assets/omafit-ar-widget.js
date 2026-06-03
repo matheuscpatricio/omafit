@@ -2737,6 +2737,7 @@ function omafitPrepareGlassesFrameMaterialsForAr(THREE, root) {
       if (!mat) continue;
       const matName = String(mat.name || "");
       if (omafitIsGlassesLensMaterial(meshName, matName) || mat.userData?.omafitArLensMaterial) continue;
+      if (mat.userData?.omafitMonolithicLensPatched) continue;
       if (mat.isMeshStandardMaterial !== true && mat.isMeshPhysicalMaterial !== true) {
         continue;
       }

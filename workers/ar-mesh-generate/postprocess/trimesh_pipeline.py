@@ -492,8 +492,12 @@ def _split_monolithic_glasses_lens(scene) -> bool:
         thresh = z_min + depth * frac
         front_mask = z <= thresh
         if use_normals:
-            front_mask = front_mask & (nz < -0.12)
-            if len(np.where(front_mask)[0]) < min_each:
+            for nz_cut in (-0.12, 0.2):
+                trial = front_mask & (nz < nz_cut)
+                if len(np.where(trial)[0]) >= min_each:
+                    front_mask = trial
+                    break
+            else:
                 alt_mask = (z >= z_max - depth * frac) & (nz > 0.12)
                 if len(np.where(alt_mask)[0]) >= min_each:
                     front_mask = alt_mask

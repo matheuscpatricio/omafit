@@ -61,7 +61,11 @@ def main() -> None:
 
     from trimesh_pipeline import run_recipe as trimesh_run
 
-    trimesh_run(recipe, inp, out, params)
+    try:
+        trimesh_run(recipe, inp, out, params)
+    except Exception as e:
+        print(f"[run_recipe] trimesh erro ({recipe}): {e}", file=sys.stderr)
+        raise SystemExit(1) from e
     print(f"[run_recipe] trimesh {recipe} OK")
 
 

@@ -307,7 +307,9 @@ export async function invokeArEyewearRodinPipeline(assetId, shopDomain) {
   const blenderCfg = preset.blender || {};
   const recipeParams = blenderCfg.params || {};
   let lensProfileManifest = glassesLensProfileManifestMaterial(row.lens_profile);
-  if (!lensProfileManifest) {
+  if (lensProfileManifest?.lensType) {
+    recipeParams.lens_type = lensProfileManifest.lensType;
+  } else if (!lensProfileManifest) {
     const lensType = String(recipeParams.lens_type || "").trim();
     if (lensType) {
       lensProfileManifest = {

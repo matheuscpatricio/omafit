@@ -1015,7 +1015,9 @@ def process_job(row: dict):
     from presets import lens_profile_manifest_material
 
     lens_profile_manifest = lens_profile_manifest_material(row.get("lens_profile"))
-    if not lens_profile_manifest:
+    if lens_profile_manifest and lens_profile_manifest.get("lensType"):
+        recipe_params["lens_type"] = str(lens_profile_manifest["lensType"])
+    elif not lens_profile_manifest:
         lens_type = str(recipe_params.get("lens_type") or "").strip()
         if lens_type:
             render_mode = "pmrem" if lens_type == "clear_physical" else "lite"

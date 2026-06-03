@@ -177,7 +177,7 @@ export async function action({ request }) {
       collection_type: safeCollection,
     });
 
-    const candidates = scoredTop.length ? scoredTop : filtered.slice(0, 3);
+    const candidates = scoredTop.length ? scoredTop : filtered.slice(0, 15);
 
     const payload = {
       candidates,

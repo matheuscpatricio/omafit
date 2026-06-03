@@ -1,6 +1,9 @@
 /**
- * Score determinístico de look (consultor sénior v1).
+ * Anota candidatos com pistas de combinação (consultor).
+ * A escolha final e o ranking ficam com o GPT — não reordenamos nem cortamos a 3 aqui.
  */
+
+const STYLIST_CANDIDATE_CAP = 15;
 
 const DRESS_CODE_BOOST = {
   festive: /\b(festa|natal|ano\s+novo|brilho|lurex|sequin|party|holiday)\b/i,
@@ -102,10 +105,8 @@ export function scoreCandidatesForOutfit(candidates, params = {}) {
     return { c: { ...c, score_reason_tags: reasons }, score, idx };
   });
 
-  scored.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return a.idx - b.idx;
-  });
-
-  return scored.map((x) => x.c).slice(0, 3);
+  return scored
+    .sort((a, b) => a.idx - b.idx)
+    .map((x) => x.c)
+    .slice(0, STYLIST_CANDIDATE_CAP);
 }

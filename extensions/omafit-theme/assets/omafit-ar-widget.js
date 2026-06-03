@@ -598,7 +598,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-overlay-local-v177";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-overlay-lite-v178";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2394,6 +2394,17 @@ function omafitRemoveMonolithicGlassesLensOverlays(root) {
 }
 
 /**
+ * Overlays monolíticos só para perfil lojista "translúcido" (manifest: clear_fake / tinted / mirror).
+ * "Opaco" → opaque; "Transparente premium" → clear_physical (mesh split / PMREM, sem placas).
+ * @param {string} lensType
+ * @returns {boolean}
+ */
+function omafitMonolithicLensOverlayEligible(lensType) {
+  const lt = String(lensType || "").trim().toLowerCase();
+  return lt === "clear_fake" || lt === "tinted" || lt === "mirror";
+}
+
+/**
  * GLB monolítico: discos translúcidos no espaço local do mesh (tamanho da geometria GLB).
  * @param {typeof import("three")} THREE
  * @param {import("three").Mesh} mesh
@@ -2404,7 +2415,7 @@ function omafitRemoveMonolithicGlassesLensOverlays(root) {
 function omafitRefreshMonolithicGlassesLensOverlay(THREE, mesh, lensType, camera) {
   if (!THREE || !mesh?.isMesh || !mesh.geometry || !camera) return 0;
   const lt = String(lensType || "clear_fake").trim().toLowerCase();
-  if (lt === "opaque" || lt === "none" || lt === "off") return 0;
+  if (!omafitMonolithicLensOverlayEligible(lt)) return 0;
   omafitRemoveMonolithicGlassesLensOverlays(mesh);
   const frameMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   for (const mat of frameMats) {
@@ -2446,8 +2457,11 @@ function omafitRefreshMonolithicGlassesLensOverlay(THREE, mesh, lensType, camera
     worldPos.copy(localPos);
     mesh.localToWorld(worldPos);
     const mat = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
-    mat.side = THREE.DoubleSide;
+    mat.side = THREE.FrontSide;
+    mat.transparent = true;
+    mat.toneMapped = false;
     mat.depthWrite = false;
+    mat.depthTest = true;
     mat.polygonOffset = true;
     mat.polygonOffsetFactor = -2;
     mat.polygonOffsetUnits = -2;
@@ -2482,7 +2496,7 @@ function omafitTryCommitMonolithicLensOverlay(THREE, opts = {}) {
   const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
   if (!st || st.monolithicLensOverlayDone || !THREE || !camera || !glassesRoot) return 0;
   if (!Number.isFinite(st.glassesLastMeshScale) || st.glassesLastMeshScale <= 0) return 0;
-  if (lensType === "opaque" || lensType === "none" || lensType === "off") return 0;
+  if (!omafitMonolithicLensOverlayEligible(lensType)) return 0;
   let monoMesh = null;
   let monoCount = 0;
   glassesRoot.traverse((o) => {
@@ -2604,43 +2618,32 @@ function omafitApplyGlassesLensAppearanceFallback(THREE, root, opts = {}) {
  */
 function omafitCreateGlassesLiteLensMaterial(THREE, lensType) {
   const lt = String(lensType || "clear_fake").trim().toLowerCase();
-  if (lt === "tinted") {
-    return new THREE.MeshStandardMaterial({
-      color: new THREE.Color(0.22, 0.23, 0.26),
-      transparent: true,
-      opacity: 0.58,
-      metalness: 0,
-      roughness: 0.14,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      depthTest: true,
-      toneMapped: true,
-    });
-  }
-  if (lt === "mirror") {
-    return new THREE.MeshStandardMaterial({
-      color: new THREE.Color(0.78, 0.8, 0.84),
-      transparent: true,
-      opacity: 0.5,
-      metalness: 0.55,
-      roughness: 0.18,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      depthTest: true,
-      toneMapped: true,
-    });
-  }
-  /** AR webcam: Basic ignora luzes/exposure — evita lente “preta” com PBR ou map escuro do Rodin. */
-  const isMobile =
-    typeof navigator !== "undefined" &&
-    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-  return new THREE.MeshBasicMaterial({
-    color: new THREE.Color(0.98, 0.99, 1.0),
-    transparent: true,
-    opacity: isMobile ? 0.52 : 0.44,
+  /** AR webcam: Basic ignora luzes/exposure — paridade `omafit-glasses-lens-appearance.js`. */
+  const base = {
     side: THREE.DoubleSide,
     depthWrite: false,
     depthTest: true,
+    transparent: true,
+    toneMapped: false,
+  };
+  if (lt === "tinted") {
+    return new THREE.MeshBasicMaterial({
+      ...base,
+      color: new THREE.Color(0.22, 0.24, 0.28),
+      opacity: 0.58,
+    });
+  }
+  if (lt === "mirror") {
+    return new THREE.MeshBasicMaterial({
+      ...base,
+      color: new THREE.Color(0.78, 0.8, 0.84),
+      opacity: 0.48,
+    });
+  }
+  return new THREE.MeshBasicMaterial({
+    ...base,
+    color: new THREE.Color(0.96, 0.97, 0.99),
+    opacity: 0.42,
   });
 }
 
@@ -2751,7 +2754,8 @@ function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
     overlayState &&
     Number.isFinite(overlayState.glassesLastMeshScale) &&
     overlayState.glassesLastMeshScale > 0 &&
-    !overlayState.monolithicLensOverlayDone
+    !overlayState.monolithicLensOverlayDone &&
+    omafitMonolithicLensOverlayEligible(lensType)
   ) {
     /** @type {import("three").Mesh[]} */
     const allMeshes = [];
@@ -2760,9 +2764,7 @@ function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
     });
     if (
       allMeshes.length === 1 &&
-      lensType !== "opaque" &&
-      lensType !== "none" &&
-      lensType !== "off"
+      omafitMonolithicLensOverlayEligible(lensType)
     ) {
       const overlayN = omafitRefreshMonolithicGlassesLensOverlay(
         THREE,

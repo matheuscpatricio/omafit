@@ -2312,7 +2312,9 @@ function omafitEnsureGlassesMeshesRenderable(THREE, root) {
     for (const mat of mats) {
       if (!mat) continue;
       const matName = String(mat.name || "");
-      const isLens = omafitIsGlassesLensMaterial(meshName, matName);
+      const isLens =
+        mat.userData?.omafitArLensMaterial ||
+        omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName);
       if ("visible" in mat) mat.visible = true;
       if ("opacity" in mat) {
         const o = Number(mat.opacity);
@@ -2345,36 +2347,111 @@ function omafitEnsureGlassesMeshesRenderable(THREE, root) {
  * @param {string} matName
  * @returns {boolean}
  */
-function omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName, opts = {}) {
+function omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName) {
+  if (mat?.userData?.omafitArLensMaterial) return true;
   if (omafitIsGlassesLensMaterial(meshName, matName)) return true;
   const mn = String(meshName || "").toLowerCase();
-  const matn = String(matName || "").toLowerCase();
-  if (/\b(omafit_lens|rim_front|shield|visor|mica)\b/i.test(mn)) return true;
+  const matN = String(matName || "").toLowerCase();
+  if (/\b(glass|vidro|cristal|mica|shield|visor)\b/i.test(mn) && !/\b(frame|temple|haste)\b/i.test(mn)) {
+    return true;
+  }
+  if (mat && Number(mat.transmission) > 0.02) return true;
   if (
     mat &&
     mat.transparent === true &&
     Number(mat.opacity) > 0.04 &&
-    Number(mat.opacity) < 0.72 &&
-    !/\b(frame_metal|temple|haste|metal)\b/i.test(matn)
+    Number(mat.opacity) < 0.92 &&
+    !/\b(frame_metal|frame_|temple|haste|metal|bridge|bezel|rim)\b/i.test(matN)
   ) {
     return true;
   }
-  if (opts.fallbackDiscover) {
-    if (/\b(glass|vidro|cristal|crystal)\b/i.test(matn) && !/\b(frame_metal|temple)\b/i.test(matn)) {
-      return true;
-    }
-    if (mat && "transmission" in mat && Number(mat.transmission) > 0.05) return true;
-    if (
-      mat &&
-      mat.transparent === true &&
-      Number(mat.opacity) > 0.08 &&
-      Number(mat.opacity) < 0.92 &&
-      !/\b(frame_metal|temple|haste|metal|bridge|bezel)\b/i.test(matn)
-    ) {
-      return true;
-    }
-  }
   return false;
+}
+
+/**
+ * GLB monolítico / nomes Rodin atípicos: menor mesh ≈ lentes (paridade worker trimesh).
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {import("three").Mesh[]}
+ */
+function omafitGuessGlassesLensMeshesByArea(THREE, root) {
+  if (!THREE || !root?.traverse) return [];
+  /** @type {{ mesh: import("three").Mesh, area: number }[]} */
+  const scored = [];
+  root.traverse((obj) => {
+    if (!obj?.isMesh || !obj.geometry) return;
+    const meshName = String(obj.name || "");
+    const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+    const matName = String(mat?.name || "");
+    if (omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName)) return;
+    if (/\b(temple|haste|shaft|stem|earpiece|bra[cç]o)\b/i.test(meshName)) return;
+    if (/\b(temple|haste|metal)\b/i.test(matName) && !/\blens\b/i.test(matName)) return;
+    try {
+      obj.geometry.computeBoundingBox?.();
+      const bb = obj.geometry.boundingBox;
+      if (!bb) return;
+      const sx = Math.max(0, bb.max.x - bb.min.x);
+      const sy = Math.max(0, bb.max.y - bb.min.y);
+      const sz = Math.max(0, bb.max.z - bb.min.z);
+      const area = sx * sy + sy * sz + sx * sz;
+      if (area > 1e-12) scored.push({ mesh: obj, area });
+    } catch {
+      /* ignore */
+    }
+  });
+  if (scored.length < 2) return [];
+  scored.sort((a, b) => a.area - b.area);
+  const smallest = scored[0];
+  const largest = scored[scored.length - 1];
+  if (smallest.area > largest.area * 0.58) return [];
+  return [smallest.mesh];
+}
+
+/**
+ * GLB monolítico ou nomes Rodin genéricos: força material lite nas malhas mais prováveis.
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {{ lensType?: string }} opts
+ * @returns {number}
+ */
+function omafitApplyGlassesLensAppearanceFallback(THREE, root, opts = {}) {
+  if (!THREE || !root?.traverse) return 0;
+  const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
+  if (lensType === "opaque" || lensType === "none" || lensType === "off") return 0;
+  const candidates = [];
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const meshName = String(obj.name || "").toLowerCase();
+    if (/\b(temple|haste|shaft|stem|earpiece|varilla)\b/i.test(meshName)) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const m of mats) {
+      if (!m || m.userData?.omafitArLensMaterial) continue;
+      const matName = String(m.name || "").toLowerCase();
+      if (/\b(frame_metal|temple|haste|metal)\b/i.test(matName)) continue;
+      let score = 0;
+      if (/\b(lens|lentes|glass|vidro|cristal|mica)\b/i.test(meshName)) score += 4;
+      if (/\b(lens|glass|vidro|cristal)\b/i.test(matName)) score += 4;
+      if (m.transparent && Number(m.opacity) > 0.04 && Number(m.opacity) < 0.92) score += 3;
+      if (Number(m.transmission) > 0.02) score += 3;
+      if (score >= 3) candidates.push({ obj, mat: m, score });
+    }
+  });
+  candidates.sort((a, b) => b.score - a.score);
+  let n = 0;
+  for (const { obj, mat } of candidates.slice(0, 4)) {
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    const next = mats.map((m) => {
+      if (m !== mat) return m;
+      n += 1;
+      const out = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
+      out.userData = { ...(out.userData || {}), omafitArLensMaterial: true, omafitArLensFallback: true };
+      out.needsUpdate = true;
+      return out;
+    });
+    obj.material = Array.isArray(obj.material) ? next : next[0];
+    obj.renderOrder = Math.max(Number(obj.renderOrder) || 0, 8);
+  }
+  return n;
 }
 
 /**
@@ -2382,37 +2459,42 @@ function omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName, op
  * @param {typeof import("three")} THREE
  * @param {string} lensType
  */
-/**
- * Lentes lite sobre vídeo: MeshBasicMaterial (sem luz/IBL) — paridade visual do preview
- * admin em fundo claro; evita lentes pretas com MeshStandard + feed escuro.
- */
 function omafitCreateGlassesLiteLensMaterial(THREE, lensType) {
   const lt = String(lensType || "clear_fake").trim().toLowerCase();
-  const base = {
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    depthTest: true,
-    transparent: true,
-    toneMapped: false,
-  };
   if (lt === "tinted") {
-    return new THREE.MeshBasicMaterial({
-      ...base,
-      color: new THREE.Color(0.22, 0.24, 0.28),
+    return new THREE.MeshStandardMaterial({
+      color: new THREE.Color(0.22, 0.23, 0.26),
+      transparent: true,
       opacity: 0.58,
+      metalness: 0,
+      roughness: 0.14,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: true,
     });
   }
   if (lt === "mirror") {
-    return new THREE.MeshBasicMaterial({
-      ...base,
+    return new THREE.MeshStandardMaterial({
       color: new THREE.Color(0.78, 0.8, 0.84),
-      opacity: 0.48,
+      transparent: true,
+      opacity: 0.5,
+      metalness: 0.55,
+      roughness: 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: true,
     });
   }
+  /** AR webcam: Basic ignora luzes/exposure — evita lente “preta” com PBR ou map escuro do Rodin. */
   return new THREE.MeshBasicMaterial({
-    ...base,
-    color: new THREE.Color(0.96, 0.97, 0.99),
-    opacity: 0.42,
+    color: new THREE.Color(0.98, 0.99, 1.0),
+    transparent: true,
+    opacity: 0.44,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    depthTest: true,
   });
 }
 
@@ -2430,69 +2512,91 @@ function omafitApplyGlassesLensAppearance(THREE, root, opts = {}) {
   if (lensType === "opaque" || lensType === "none" || lensType === "off") {
     return { lensMeshes: 0 };
   }
-  const usePhysical =
-    lensType === "clear_physical" &&
-    opts.physicalLenses === true &&
-    opts.stripTransmission === false;
+  /** Face AR + webcam: transmissão física lê o vídeo escuro como preto — sempre lite aqui. */
+  const usePhysical = false;
   const envTexture = opts.envTexture || null;
   let lensMeshes = 0;
-  const applyPass = (discoverOpts) => {
-    root.traverse((obj) => {
-      if (!obj.isMesh || !obj.material) return;
-      const meshName = String(obj.name || "");
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      const next = mats.map((m) => {
-        if (!m || m.userData?.omafitArLensMaterial) return m;
-        const matName = String(m.name || "");
-        if (!omafitIsGlassesLensMeshMaterial(THREE, root, m, meshName, matName, discoverOpts)) {
-          return m;
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const meshName = String(obj.name || "");
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    const next = mats.map((m) => {
+      if (!m) return m;
+      const matName = String(m.name || "");
+      if (!omafitIsGlassesLensMeshMaterial(THREE, root, m, meshName, matName)) return m;
+      lensMeshes += 1;
+      if (usePhysical) {
+        const pm = new THREE.MeshPhysicalMaterial({
+          color: new THREE.Color(0.98, 0.99, 1.0),
+          transmission: lensType === "tinted" ? 0.42 : 0.82,
+          thickness: lensType === "tinted" ? 0.15 : 0.28,
+          ior: 1.48,
+          roughness: 0.02,
+          metalness: 0,
+          transparent: true,
+          opacity: 1,
+          side: THREE.DoubleSide,
+          envMap: envTexture || null,
+          envMapIntensity: envTexture ? 0.45 : 0,
+          toneMapped: true,
+          depthWrite: false,
+          depthTest: true,
+        });
+        if ("attenuationColor" in pm) {
+          pm.attenuationColor = new THREE.Color(0.99, 0.99, 1.0);
+          pm.attenuationDistance = 3.5;
         }
-        lensMeshes += 1;
-        if (usePhysical) {
-          const pm = new THREE.MeshPhysicalMaterial({
-            color: new THREE.Color(0.98, 0.99, 1.0),
-            transmission: lensType === "tinted" ? 0.42 : 0.82,
-            thickness: lensType === "tinted" ? 0.15 : 0.28,
-            ior: 1.48,
-            roughness: 0.02,
-            metalness: 0,
-            transparent: true,
-            opacity: 1,
-            side: THREE.DoubleSide,
-            envMap: envTexture || null,
-            envMapIntensity: envTexture ? 0.45 : 0,
-            toneMapped: true,
-            depthWrite: false,
-            depthTest: true,
-          });
-          if ("attenuationColor" in pm) {
-            pm.attenuationColor = new THREE.Color(0.99, 0.99, 1.0);
-            pm.attenuationDistance = 3.5;
-          }
-          pm.userData = { ...(pm.userData || {}), omafitArLensMaterial: true };
-          pm.needsUpdate = true;
-          return pm;
-        }
-        const out = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
-        out.userData = { ...(out.userData || {}), omafitArLensMaterial: true };
-        /** Não reutilizar map/albedo do Rodin — texturas escuras deixavam as lentes pretas. */
-        out.needsUpdate = true;
-        return out;
-      });
-      obj.material = Array.isArray(obj.material) ? next : next[0];
-      if (discoverOpts?.fallbackDiscover) {
-        const n = String(obj.name || "").toLowerCase();
-        if (/\b(lens|lentes|omafit_lens|glass|visor|shield)\b/i.test(n)) {
-          obj.renderOrder = Math.max(obj.renderOrder || 0, 4);
-        }
+        pm.userData = { ...(pm.userData || {}), omafitArLensMaterial: true };
+        pm.needsUpdate = true;
+        return pm;
       }
+      const out = omafitCreateGlassesLiteLensMaterial(THREE, lensType);
+      out.userData = { ...(out.userData || {}), omafitArLensMaterial: true };
+      out.needsUpdate = true;
+      obj.renderOrder = Math.max(Number(obj.renderOrder) || 0, 8);
+      return out;
     });
-  };
-  applyPass({});
-  if (lensMeshes === 0 && (lensType === "clear_fake" || lensType === "tinted" || lensType === "mirror")) {
-    applyPass({ fallbackDiscover: true });
-  }
+    obj.material = Array.isArray(obj.material) ? next : next[0];
+  });
   return { lensMeshes };
+}
+
+/** @param {typeof import("three")} THREE @param {import("three").Object3D} root @param {object} opts @returns {{ lensMeshes: number }} */
+function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
+  const primary = omafitApplyGlassesLensAppearance(THREE, root, opts);
+  if (primary.lensMeshes > 0) return primary;
+  const fb = omafitApplyGlassesLensAppearanceFallback(THREE, root, opts);
+  if (fb > 0) {
+    console.warn("[omafit-ar] glasses lens fallback heurístico", {
+      build: OMAFIT_AR_WIDGET_BUILD,
+      lensMeshes: fb,
+    });
+    return { lensMeshes: fb };
+  }
+  /** GLB monolítico: menor malha por área AABB (paridade worker trimesh). */
+  const areaGuess = omafitGuessGlassesLensMeshesByArea(THREE, root);
+  let areaN = 0;
+  for (const mesh of areaGuess) {
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const next = mats.map((m) => {
+      if (!m || m.userData?.omafitArLensMaterial) return m;
+      areaN += 1;
+      const out = omafitCreateGlassesLiteLensMaterial(THREE, opts.lensType || "clear_fake");
+      out.userData = { ...(out.userData || {}), omafitArLensMaterial: true, omafitArLensAreaGuess: true };
+      out.needsUpdate = true;
+      return out;
+    });
+    mesh.material = Array.isArray(mesh.material) ? next : next[0];
+    mesh.renderOrder = Math.max(Number(mesh.renderOrder) || 0, 8);
+  }
+  if (areaN > 0) {
+    console.warn("[omafit-ar] glasses lens fallback área AABB", {
+      build: OMAFIT_AR_WIDGET_BUILD,
+      lensMeshes: areaN,
+    });
+    return { lensMeshes: areaN };
+  }
+  return primary;
 }
 
 /**
@@ -2511,7 +2615,7 @@ function omafitPrepareGlassesFrameMaterialsForAr(THREE, root) {
     for (const mat of mats) {
       if (!mat) continue;
       const matName = String(mat.name || "");
-      if (omafitIsGlassesLensMaterial(meshName, matName)) continue;
+      if (omafitIsGlassesLensMaterial(meshName, matName) || mat.userData?.omafitArLensMaterial) continue;
       if (mat.isMeshStandardMaterial !== true && mat.isMeshPhysicalMaterial !== true) {
         continue;
       }
@@ -2797,7 +2901,6 @@ function upgradeHandArGlassMaterials(THREE, root) {
  */
 function upgradeFaceArEyewearRendering(THREE, root, envTexture, opts = {}) {
   if (!root || typeof root.traverse !== "function" || !envTexture) return;
-  const physicalLenses = opts.physicalLenses === true;
   root.traverse((obj) => {
     if (!obj.isMesh || !obj.material) return;
     const meshName = String(obj.name || "");
@@ -2807,43 +2910,7 @@ function upgradeFaceArEyewearRendering(THREE, root, envTexture, opts = {}) {
       const matName = String(m.name || "");
       const isLensMesh =
         m.userData?.omafitArLensMaterial ||
-        omafitIsGlassesLensMaterial(meshName, matName) ||
-        (m.transparent === true &&
-          Number(m.opacity) > 0.04 &&
-          Number(m.opacity) < 0.72 &&
-          !/\b(frame_metal|temple|haste|metal)\b/i.test(matName));
-      const isLens =
-        physicalLenses && isLensMesh;
-      if (isLens) {
-        const pm = new THREE.MeshPhysicalMaterial({
-          color: new THREE.Color(0.98, 0.99, 1.0),
-          transmission: 0.88,
-          thickness: 0.35,
-          ior: 1.5,
-          roughness: 0.03,
-          metalness: 0,
-          transparent: true,
-          opacity: 1,
-          side: m.side != null ? m.side : THREE.DoubleSide,
-          envMap: envTexture,
-          envMapIntensity: 0.65,
-          specularIntensity: 0.35,
-          attenuationDistance: 2.5,
-          clearcoat: 0.04,
-          clearcoatRoughness: 0.06,
-        });
-        if ("attenuationColor" in pm) {
-          pm.attenuationColor = new THREE.Color(0.98, 0.99, 1.0);
-        }
-        if ("reflectivity" in pm) pm.reflectivity = 0.35;
-        if (m.map) pm.map = m.map;
-        if (m.normalMap) pm.normalMap = m.normalMap;
-        if (m.alphaMap) pm.alphaMap = m.alphaMap;
-        if (m.roughnessMap) pm.roughnessMap = m.roughnessMap;
-        pm.toneMapped = true;
-        pm.needsUpdate = true;
-        return pm;
-      }
+        omafitIsGlassesLensMeshMaterial(THREE, root, m, meshName, matName);
       if (isLensMesh) {
         return m;
       }
@@ -5126,9 +5193,15 @@ function omafitApplyGlassesMeshDepthPriorities(THREE, root) {
     if (!child.isMesh) return;
     const n = String(child.name || "").toLowerCase();
     const isTempleSide = templeRe.test(n) && !protectRe.test(n);
-    const isLens = /\b(lens|lentes|mica|shield|visor)\b/i.test(n);
-    child.renderOrder = isLens ? 4 : isTempleSide ? 1 : 2;
     const mats = Array.isArray(child.material) ? child.material : [child.material];
+    const isLens =
+      /\b(lens|lentes|mica|shield|visor|omafit_lens)\b/i.test(n) ||
+      mats.some(
+        (mat) =>
+          mat?.userData?.omafitArLensMaterial ||
+          omafitIsGlassesLensMeshMaterial(THREE, root, mat, child.name, String(mat?.name || "")),
+      );
+    child.renderOrder = isLens ? 8 : isTempleSide ? 1 : 2;
     for (const mat of mats) {
       if (!mat || typeof mat !== "object") continue;
       mat.depthTest = true;
@@ -5581,12 +5654,12 @@ function omafitOneEuroFilterQuaternion(THREE, qRaw, tSec, state, minCutoff, beta
   return state.qPrev;
 }
 
-/** Decal radial + planos suaves sob ponte / têmporas (sem EffectComposer). */
+/** Sombra suave só nas têmporas — sem plano na ponte (multiply escurecia lentes). */
 function omafitCreateGlassesContactShadowRig(THREE, glassesAnatomy) {
   if (!THREE || !glassesAnatomy) return null;
   const g = new THREE.Group();
   g.name = "omafit-ar-glasses-contact-ao-rig";
-  g.renderOrder = -2;
+  g.renderOrder = -3;
   const cvs =
     typeof document !== "undefined" ? document.createElement("canvas") : null;
   let tex = null;
@@ -5596,8 +5669,8 @@ function omafitCreateGlassesContactShadowRig(THREE, glassesAnatomy) {
     const ctx = cvs.getContext("2d");
     if (ctx) {
       const grd = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
-      grd.addColorStop(0, "rgba(28,26,32,0.16)");
-      grd.addColorStop(0.45, "rgba(28,26,32,0.06)");
+      grd.addColorStop(0, "rgba(28,26,32,0.12)");
+      grd.addColorStop(0.45, "rgba(28,26,32,0.04)");
       grd.addColorStop(1, "rgba(28,26,32,0)");
       ctx.fillStyle = grd;
       ctx.fillRect(0, 0, 64, 64);
@@ -5608,7 +5681,7 @@ function omafitCreateGlassesContactShadowRig(THREE, glassesAnatomy) {
   const sharedMat = new THREE.MeshBasicMaterial({
     map: tex,
     transparent: true,
-    opacity: 1,
+    opacity: 0.72,
     depthWrite: false,
     depthTest: true,
     blending: THREE.MultiplyBlending,
@@ -5616,19 +5689,15 @@ function omafitCreateGlassesContactShadowRig(THREE, glassesAnatomy) {
     polygonOffsetFactor: 2,
     polygonOffsetUnits: 2,
   });
-  /** Frente das lentes canonical Omafit ≈ −Z local; sombra assenta na face (+Z). */
-  const bridge = new THREE.Mesh(new THREE.PlaneGeometry(0.072, 0.036), sharedMat);
-  bridge.rotation.x = -Math.PI / 2;
-  bridge.position.set(0, -0.012, 0.014);
   const tL = new THREE.Mesh(new THREE.PlaneGeometry(0.034, 0.092), sharedMat);
   tL.rotation.y = Math.PI * 0.22;
   tL.rotation.x = -Math.PI / 2;
-  tL.position.set(-0.086, -0.006, 0.01);
+  tL.position.set(-0.086, -0.006, 0.008);
   const tR = new THREE.Mesh(new THREE.PlaneGeometry(0.034, 0.092), sharedMat);
   tR.rotation.y = -Math.PI * 0.22;
   tR.rotation.x = -Math.PI / 2;
-  tR.position.set(0.086, -0.006, 0.01);
-  g.add(bridge, tL, tR);
+  tR.position.set(0.086, -0.006, 0.008);
+  g.add(tL, tR);
   g.userData.omafitContactShadowMat = sharedMat;
   glassesAnatomy.add(g);
   return g;
@@ -5802,7 +5871,8 @@ diffuseColor.rgb*=mix(1.0,${1 - intensity},0.55*omafitCav+0.35*omafitTmp);`;
     const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
     for (const mat of mats) {
       if (!mat || mat.userData?.omafitCavityPatched) continue;
-      if (omafitIsGlassesLensMaterial(meshName, mat.name)) continue;
+      if (mat.userData?.omafitArLensMaterial) continue;
+      if (omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, String(mat.name || ""))) continue;
       if (!("roughness" in mat) || typeof mat.onBeforeCompile !== "function") continue;
       mat.userData = mat.userData || {};
       mat.userData.omafitCavityPatched = true;
@@ -5905,19 +5975,15 @@ function omafitStepFaceAdaptiveLighting(THREE, al, mindarHost, renderer) {
     al.key.color.lerp(al._keyTint, k * 0.55);
   }
   if (renderer && typeof renderer.toneMappingExposure === "number") {
-    if (al.accessoryGlasses && al.liteLensExposureLock) {
-      renderer.toneMappingExposure = 1.12;
-    } else {
-      const expT = al.accessoryGlasses
-        ? THREE.MathUtils.lerp(1.04, 1.14, y)
-        : THREE.MathUtils.lerp(0.86, 1.24, y);
-      renderer.toneMappingExposure += (expT - renderer.toneMappingExposure) * (k * 0.38);
-    }
+    const expT = al.accessoryGlasses
+      ? THREE.MathUtils.lerp(1.08, 1.18, y)
+      : THREE.MathUtils.lerp(0.86, 1.24, y);
+    renderer.toneMappingExposure += (expT - renderer.toneMappingExposure) * (k * 0.38);
   }
   const cm = al.contactRig?.userData?.omafitContactShadowMat;
   if (cm && typeof cm.opacity === "number") {
     const opT = al.accessoryGlasses
-      ? THREE.MathUtils.lerp(0.08, 0.16, y)
+      ? THREE.MathUtils.lerp(0.02, 0.06, y)
       : THREE.MathUtils.lerp(0.3, 0.6, y);
     cm.opacity += (opT - cm.opacity) * k;
   }
@@ -10959,7 +11025,7 @@ async function runArSession({
           mat.polygonOffsetFactor = accessoryType === "necklace" ? -4 : -2;
           mat.polygonOffsetUnits = accessoryType === "necklace" ? -4 : -2;
         }
-        if (accessoryType !== "necklace" && accessoryType !== "glasses" && !isGlassesFrameMesh) {
+        if (accessoryType !== "necklace" && !isGlassesFrameMesh && !isLensMesh) {
           mat.toneMapped = false;
         }
         mat.needsUpdate = true;
@@ -10973,31 +11039,16 @@ async function runArSession({
             "clear_fake",
         ).trim() || "clear_fake";
       try {
-        const lensAppear = omafitApplyGlassesLensAppearance(THREE, glasses, {
+        const lensAppear = omafitApplyGlassesLensAppearanceWithFallback(THREE, glasses, {
           lensType: resolvedLensType,
           physicalLenses: glassesPhysicalLenses,
           stripTransmission: glassesRenderFlags.stripTransmission !== false,
         });
         if (lensAppear.lensMeshes > 0) {
-          let lensMatKind = "unknown";
-          glasses.traverse((o) => {
-            if (!o.isMesh || lensMatKind !== "unknown") return;
-            const m = Array.isArray(o.material) ? o.material[0] : o.material;
-            if (m?.userData?.omafitArLensMaterial) {
-              lensMatKind = m.isMeshBasicMaterial
-                ? "MeshBasicMaterial"
-                : m.isMeshPhysicalMaterial
-                  ? "MeshPhysicalMaterial"
-                  : m.isMeshStandardMaterial
-                    ? "MeshStandardMaterial"
-                    : m.type || "other";
-            }
-          });
           console.log("[omafit-ar] glasses lens appearance", {
             build: OMAFIT_AR_WIDGET_BUILD,
             lensType: resolvedLensType,
             lensMeshes: lensAppear.lensMeshes,
-            lensMatKind,
             physicalLenses: glassesPhysicalLenses,
             stripTransmission: glassesRenderFlags.stripTransmission !== false,
           });
@@ -11064,7 +11115,7 @@ async function runArSession({
               cfgAttr("arGlassesLensType", "clear_fake") ||
               "clear_fake",
           ).trim() || "clear_fake";
-        omafitApplyGlassesLensAppearance(THREE, glasses, {
+        omafitApplyGlassesLensAppearanceWithFallback(THREE, glasses, {
           lensType: resolvedLensType,
           physicalLenses: glassesPhysicalLenses,
           stripTransmission: glassesRenderFlags.stripTransmission !== false,
@@ -11088,7 +11139,7 @@ async function runArSession({
               cfgAttr("arGlassesLensType", "clear_fake") ||
               "clear_fake",
           ).trim() || "clear_fake";
-        omafitApplyGlassesLensAppearance(THREE, glasses, {
+        omafitApplyGlassesLensAppearanceWithFallback(THREE, glasses, {
           lensType: resolvedLensType,
           physicalLenses: glassesPhysicalLenses,
           stripTransmission: glassesRenderFlags.stripTransmission !== false,
@@ -12523,19 +12574,10 @@ async function runArSession({
 
     /** Sombras de contacto suaves (ponte / têmporas) — sem composer WebGL. */
     let glassesContactRig = null;
-    const glassesContactRigDefault =
-      glassesRenderFlags.lensType === "clear_fake" ||
-      String(glassesRenderFlags.lensType || cfgAttr("arGlassesLensType", "clear_fake"))
-        .trim()
-        .toLowerCase() === "clear_fake"
-        ? "0"
-        : "1";
     if (
       accessoryType === "glasses" &&
       glassesPivot &&
-      !/^(0|false|off|no)$/i.test(
-        String(cfgAttr("arGlassesContactShadowRig", glassesContactRigDefault)).trim(),
-      )
+      !/^(0|false|off|no)$/i.test(String(cfgAttr("arGlassesContactShadowRig", "0")).trim())
     ) {
       try {
         glassesContactRig = omafitCreateGlassesContactShadowRig(THREE, glassesPivot);
@@ -13223,8 +13265,6 @@ async function runArSession({
           ),
           accessoryNecklace: accessoryType === "necklace",
           accessoryGlasses: accessoryType === "glasses",
-          liteLensExposureLock:
-            accessoryType === "glasses" && !glassesPhysicalLenses,
           contactRig: glassesContactRig,
         };
       })(),
@@ -14482,12 +14522,12 @@ async function runArSession({
         } catch {
           /* ignore */
         }
-        if (accessoryType === "glasses" && glassesPhysicalLenses) {
+        if (accessoryType === "glasses") {
           upgradeFaceArEyewearRendering(THREE, glasses, pmremRT.texture, {
-            physicalLenses: true,
+            physicalLenses: glassesPhysicalLenses,
           });
           try {
-            omafitApplyGlassesLensAppearance(THREE, glasses, {
+            omafitApplyGlassesLensAppearanceWithFallback(THREE, glasses, {
               lensType:
                 glassesRenderFlags.lensType ||
                 cfgAttr("arGlassesLensType", "clear_fake"),
@@ -14504,7 +14544,7 @@ async function runArSession({
             /* ignore */
           }
           try {
-            omafitApplyGlassesLensAppearance(THREE, glasses, {
+            omafitApplyGlassesLensAppearanceWithFallback(THREE, glasses, {
               lensType:
                 glassesRenderFlags.lensType ||
                 cfgAttr("arGlassesLensType", "clear_fake"),

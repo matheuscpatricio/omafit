@@ -274,10 +274,13 @@ def _remap_glasses_worker_frame_to_widget(scene):
 
 def _fix_sign_conventions(scene):
     """
-    After extent-based rotation (X widest, Y thinnest, Z middle), resolve the
-    sign ambiguity of Y and Z axes using vertex distribution heuristics:
-      (a) bridge at +Y ⇒ bottom-center has more Z-spread (nose pads) than top-center
-      (b) temple tips at outer |X| extend toward +Z (behind face)
+    Resolve sinais de topo/baixo e frente/trás após canonical + remap widget.
+
+    Pós `_remap_glasses_worker_frame_to_widget`: +X largura, +Y topo, −Z frente.
+    Se remap não correu, infere eixos pelos extents (paridade commit 5108c1d).
+
+    Regressão 03ac9c6: `flip_y` sozinho usava Rz(180) e deixava o óculos de cabeça
+    para baixo — corrigido para Rx(180) como no sign-fix original.
     Disable: AR_POSTPROCESS_SIGN_FIX=0
     """
     if str(os.environ.get("AR_POSTPROCESS_SIGN_FIX", "1")).strip() in ("0", "false", "no"):
@@ -298,53 +301,77 @@ def _fix_sign_conventions(scene):
     if np.any(half_ext < 1e-9):
         return
 
-    hw, hh, hd = float(half_ext[0]), float(half_ext[1]), float(half_ext[2])
-    cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
+    ext = np.asarray(half_ext, dtype=float) * 2.0
+    order = np.argsort(ext)
+    # Pós-remap widget: Z fino (espessura), Y altura, X largura
+    post_remap_widget = int(order[0]) == 2 and int(order[2]) == 0
+    if post_remap_widget:
+        i_wide, i_vert, i_depth = 0, 1, 2
+        i_thin = 2
+    else:
+        i_thin = int(order[0])
+        i_vert = int(order[1])
+        i_wide = int(order[2])
+        i_depth = i_vert
+        if i_thin == 1 and i_wide == 0:
+            i_vert = 2
+            i_depth = 2
 
-    flip_y = False
-    flip_z = False
+    wide_half = float(half_ext[i_wide])
+    depth_half = float(half_ext[i_depth])
 
-    # Y-sign signal 1: Z-spread at center band (nose pads protrude more in Z than bridge)
-    center_mask = np.abs(verts[:, 0] - cx) < hw * 0.35
+    flip_vert = False
+    flip_forward = False
+
+    center_mask = np.abs(verts[:, i_wide] - center[i_wide]) < wide_half * 0.35
     cb = verts[center_mask]
     if len(cb) > 8:
-        top_c = cb[cb[:, 1] > cy]
-        bot_c = cb[cb[:, 1] < cy]
+        top_c = cb[cb[:, i_vert] > center[i_vert]]
+        bot_c = cb[cb[:, i_vert] <= center[i_vert]]
         if len(top_c) > 2 and len(bot_c) > 2:
-            top_zs = float(top_c[:, 2].max() - top_c[:, 2].min())
-            bot_zs = float(bot_c[:, 2].max() - bot_c[:, 2].min())
-            if top_zs > bot_zs * 1.08:
-                flip_y = True
+            if post_remap_widget:
+                top_sp = float(top_c[:, i_depth].max() - top_c[:, i_depth].min())
+                bot_sp = float(bot_c[:, i_depth].max() - bot_c[:, i_depth].min())
+            else:
+                top_sp = float(top_c[:, i_thin].max() - top_c[:, i_thin].min())
+                bot_sp = float(bot_c[:, i_thin].max() - bot_c[:, i_thin].min())
+            if top_sp > bot_sp * 1.08:
+                flip_vert = True
 
-    # Y-sign signal 2: X-spread at Y extremes — bridge (top) is narrower
-    # in X than bottom rim; if the top 8% of vertices by Y is wider → upside down
-    if not flip_y and len(verts) > 20:
-        sorted_y = verts[verts[:, 1].argsort()]
-        sn = max(8, int(len(sorted_y) * 0.08))
-        b_slice = sorted_y[:sn]
-        t_slice = sorted_y[-sn:]
-        t_x_sp = float(t_slice[:, 0].max() - t_slice[:, 0].min())
-        b_x_sp = float(b_slice[:, 0].max() - b_slice[:, 0].min())
+    if not flip_vert and len(verts) > 20:
+        sorted_v = verts[verts[:, i_vert].argsort()]
+        sn = max(8, int(len(sorted_v) * 0.08))
+        b_slice = sorted_v[:sn]
+        t_slice = sorted_v[-sn:]
+        t_x_sp = float(t_slice[:, i_wide].max() - t_slice[:, i_wide].min())
+        b_x_sp = float(b_slice[:, i_wide].max() - b_slice[:, i_wide].min())
         if t_x_sp > b_x_sp * 1.08:
-            flip_y = True
+            flip_vert = True
 
-    outer_mask = np.abs(verts[:, 0] - cx) > hw * 0.6
+    outer_mask = np.abs(verts[:, i_wide] - center[i_wide]) > wide_half * 0.6
     outer = verts[outer_mask]
     if len(outer) > 4:
-        z_vals = outer[:, 2] - cz
-        abs_z = np.abs(z_vals)
-        top_n = max(4, int(len(z_vals) * 0.15))
-        idx = np.argpartition(abs_z, -top_n)[-top_n:]
-        mez = float(z_vals[idx].mean())
-        if mez < -hd * 0.12:
-            flip_z = True
+        if post_remap_widget:
+            fwd_vals = outer[:, i_depth] - center[i_depth]
+        else:
+            fwd_vals = outer[:, i_thin] - center[i_thin]
+        abs_fwd = np.abs(fwd_vals)
+        top_n = max(4, int(len(fwd_vals) * 0.15))
+        idx = np.argpartition(abs_fwd, -top_n)[-top_n:]
+        mef = float(fwd_vals[idx].mean())
+        thin_half = float(half_ext[i_thin if not post_remap_widget else i_depth])
+        if mef < -thin_half * 0.12:
+            flip_forward = True
 
-    if flip_y and flip_z:
+    if flip_vert and flip_forward:
         scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
-    elif flip_y:
-        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 0.0, 1.0]))
-    elif flip_z:
-        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0]))
+    elif flip_vert:
+        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
+    elif flip_forward:
+        if post_remap_widget:
+            scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0]))
+        else:
+            scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 0.0, 1.0]))
 
 
 def _lay_down_tallest_extent(scene):
@@ -388,6 +415,26 @@ def _lay_down_tallest_extent(scene):
         scene.apply_transform(
             trimesh.transformations.rotation_matrix(-math.pi / 2.0, [0.0, 1.0, 0.0])
         )
+
+
+def _set_glasses_visual_material_name(geom, mat_name: str) -> None:
+    """Paridade GLB export: `visual.name` + `material.name` para o runtime AR."""
+    import trimesh
+
+    if getattr(geom, "visual", None) is None:
+        geom.visual = trimesh.visual.ColorVisuals(mesh=geom)
+    geom.visual.name = mat_name
+    mat = getattr(geom.visual, "material", None)
+    if mat is None:
+        try:
+            from trimesh.visual.material import PBRMaterial
+
+            mat = PBRMaterial(name=mat_name)
+            geom.visual.material = mat
+        except Exception:
+            return
+    if hasattr(mat, "name"):
+        mat.name = mat_name
 
 
 def _scale_scene_to_width_x(scene, target_width_m: float) -> None:
@@ -445,7 +492,11 @@ def _split_monolithic_glasses_lens(scene) -> bool:
         thresh = z_min + depth * frac
         front_mask = z <= thresh
         if use_normals:
-            front_mask = front_mask & (nz < 0.2)
+            front_mask = front_mask & (nz < -0.12)
+            if len(np.where(front_mask)[0]) < min_each:
+                alt_mask = (z >= z_max - depth * frac) & (nz > 0.12)
+                if len(np.where(alt_mask)[0]) >= min_each:
+                    front_mask = alt_mask
         front_idx = np.where(front_mask)[0]
         back_idx = np.where(~front_mask)[0]
         if len(front_idx) < min_each or len(back_idx) < min_each:
@@ -493,9 +544,7 @@ def _split_monolithic_glasses_lens(scene) -> bool:
     scene.geometry["omafit_frame"] = frame_geom
     scene.geometry["omafit_lens"] = lens_geom
     for g, mat_name in ((frame_geom, "frame_metal"), (lens_geom, "lens_glass")):
-        if getattr(g, "visual", None) is None:
-            g.visual = trimesh.visual.ColorVisuals(mesh=g)
-        g.visual.name = mat_name
+        _set_glasses_visual_material_name(g, mat_name)
     return True
 
 
@@ -510,7 +559,11 @@ def _rename_materials_for_glasses(scene) -> None:
         if _split_monolithic_glasses_lens(scene):
             return
         name, geom = geoms[0]
-        scene.geometry[name].visual.name = "frame_metal"
+        _set_glasses_visual_material_name(scene.geometry[name], "frame_metal")
+        return
+    if "omafit_lens" in scene.geometry and "omafit_frame" in scene.geometry:
+        _set_glasses_visual_material_name(scene.geometry["omafit_lens"], "lens_glass")
+        _set_glasses_visual_material_name(scene.geometry["omafit_frame"], "frame_metal")
         return
     # Heurística: maior área de superfície = armação; menor = lentes
     scored = []
@@ -528,11 +581,11 @@ def _rename_materials_for_glasses(scene) -> None:
         if not hasattr(g, "visual") or g.visual is None:
             continue
         if n == lens_name:
-            g.visual.name = "lens_glass"
+            _set_glasses_visual_material_name(g, "lens_glass")
         elif n == frame_name:
-            g.visual.name = "frame_metal"
+            _set_glasses_visual_material_name(g, "frame_metal")
         else:
-            g.visual.name = f"frame_{n}"
+            _set_glasses_visual_material_name(g, f"frame_{n}")
 
 
 def apply_lens_type_materials(scene, lens_type: str) -> None:

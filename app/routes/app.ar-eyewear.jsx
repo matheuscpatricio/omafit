@@ -207,14 +207,20 @@ export default function ArEyewearPage() {
     }
   }, [t]);
 
+  const productSearchQuery = productFilter.trim();
+
   useEffect(() => {
     loadAssets();
+  }, [loadAssets]);
+
+  useEffect(() => {
+    if (!productSearchQuery || products.length > 0 || productsLoading) return;
     loadProducts();
-  }, [loadAssets, loadProducts]);
+  }, [productSearchQuery, products.length, productsLoading, loadProducts]);
 
   const filteredProducts = useMemo(() => {
-    const q = productFilter.trim().toLowerCase();
-    if (!q) return products;
+    const q = productSearchQuery.toLowerCase();
+    if (!q) return [];
     return products.filter(
       (p) =>
         (p.title || "").toLowerCase().includes(q) ||
@@ -222,7 +228,7 @@ export default function ArEyewearPage() {
         (p.productType || "").toLowerCase().includes(q) ||
         (p.categoryFullName || "").toLowerCase().includes(q),
     );
-  }, [products, productFilter]);
+  }, [products, productSearchQuery]);
 
   const detectedAccessoryType = useMemo(() => {
     if (!selectedProduct) return "glasses";
@@ -369,13 +375,6 @@ export default function ArEyewearPage() {
     [assets],
   );
 
-  useEffect(() => {
-    if (!hasQueuedJobs) return undefined;
-    const timer = setInterval(() => {
-      loadAssets();
-    }, 12000);
-    return () => clearInterval(timer);
-  }, [hasQueuedJobs, loadAssets]);
   const productNameById = useMemo(() => {
     const map = new Map();
     for (const p of products || []) map.set(String(p.id || ""), p.title || "");
@@ -461,8 +460,16 @@ export default function ArEyewearPage() {
                 value={productFilter}
                 onChange={setProductFilter}
                 autoComplete="off"
+                placeholder={t("arEyewear.shopProductsSearchPlaceholder")}
+                prefix={<Icon source={SearchIcon} />}
+                clearButton
+                onClearButtonClick={() => setProductFilter("")}
               />
-              {productsLoading ? (
+              {!productSearchQuery ? (
+                <Text as="p" tone="subdued">
+                  {t("arEyewear.shopProductsSearchPrompt")}
+                </Text>
+              ) : productsLoading ? (
                 <InlineStack gap="200" blockAlign="center">
                   <Spinner size="small" />
                   <Text as="span">{t("arEyewear.shopProductsLoading")}</Text>
@@ -533,25 +540,6 @@ export default function ArEyewearPage() {
                     {t("arEyewear.shopImagesHelp")}
                   </Text>
                   <Banner tone="info">{t("arEyewear.whiteBackgroundHint")}</Banner>
-                  {selectedProduct.categoryFullName ? (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t("arEyewear.categoryLabel")}: {selectedProduct.categoryFullName}
-                    </Text>
-                  ) : null}
-                  <Banner tone="info">
-                    <InlineStack gap="200" wrap>
-                      <Text as="span" variant="bodySm">
-                        {t("arEyewear.detection.detectedLabel")}:
-                      </Text>
-                      <Badge tone="attention">
-                        {t(`arEyewear.accessoryType.${detectedAccessoryType}`) ||
-                          detectedAccessoryType}
-                      </Badge>
-                    </InlineStack>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t("arEyewear.detection.hint")}
-                    </Text>
-                  </Banner>
                   {(selectedProduct.variants || []).length > 1 ? (
                     <Select
                       label={t("arEyewear.variantSelect")}
@@ -782,20 +770,6 @@ export default function ArEyewearPage() {
                             </a>
                           </Text>
                         )}
-                        {a.ar_manifest_draft_url ? (
-                          <Text as="p" tone="subdued" variant="bodySm">
-                            <a href={a.ar_manifest_draft_url} target="_blank" rel="noreferrer">
-                              Manifest AR
-                            </a>
-                            {a.wearable_class ? ` · ${a.wearable_class}` : ""}
-                            {a.generation_stage ? ` · ${a.generation_stage}` : ""}
-                          </Text>
-                        ) : a.wearable_class ? (
-                          <Text as="p" tone="subdued" variant="bodySm">
-                            {a.wearable_class}
-                            {a.generation_stage ? ` · ${a.generation_stage}` : ""}
-                          </Text>
-                        ) : null}
                         {displayAccessoryType === "glasses" &&
                         canEditGlassesLensProfile(a.status) ? (
                           <BlockStack gap="200">

@@ -1,4 +1,11 @@
 {
+  "brand": {
+    "tagline": "Menos devoluções. Mais conversão.",
+    "subtitle": "Provador virtual, AR e tabelas de medidas para a sua loja Shopify.",
+    "pillTryOn": "Try-on IA",
+    "pillReturns": "Menos devoluções",
+    "pillConversion": "Mais conversão"
+  },
   "nav": {
     "home": "Início",
     "billing": "Plano",

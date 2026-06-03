@@ -17,6 +17,8 @@ import esTranslations from "@shopify/polaris/locales/es.json";
 import { authenticate, registerWebhooks } from "../shopify.server";
 import { syncBillingFromShopify } from "../billing-sync.server";
 import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
+import { OmafitBrandBanner } from "../components/OmafitBrandBanner";
+import "../styles/omafit-brand.css";
 
 const SHOP_LOCALE_QUERY = `#graphql
   query ShopPrimaryLocale {
@@ -205,6 +207,21 @@ function AppNav() {
   );
 }
 
+function AppBrandShell() {
+  const location = useLocation();
+  const pathname = (location.pathname || "").replace(/\/$/, "") || "/app";
+  const isDashboard = pathname === "/app";
+
+  return (
+    <div className="omafit-brand-shell">
+      <div className="omafit-brand-shell__content">
+        <OmafitBrandBanner variant={isDashboard ? "hero" : "compact"} />
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { apiKey, supabaseUrl, supabaseKey, appUrl, locale } = useLoaderData();
   const location = useLocation();
@@ -256,7 +273,7 @@ export default function App() {
       <PolarisAppProvider i18n={polarisLocale}>
         <AppI18nProvider locale={effectiveLocale}>
           <AppNav />
-          <Outlet />
+          <AppBrandShell />
         </AppI18nProvider>
       </PolarisAppProvider>
     </AppProvider>

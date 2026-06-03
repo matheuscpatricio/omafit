@@ -1,4 +1,11 @@
 {
+  "brand": {
+    "tagline": "Fewer returns. More conversion.",
+    "subtitle": "Virtual try-on, AR, and size charts for your Shopify store.",
+    "pillTryOn": "AI try-on",
+    "pillReturns": "Fewer returns",
+    "pillConversion": "More conversion"
+  },
   "nav": {
     "home": "Home",
     "billing": "Billing",

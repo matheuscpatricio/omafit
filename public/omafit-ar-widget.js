@@ -598,7 +598,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-02-ar-glasses-lens-bright-v171";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-monolithic-lens-split-v172";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2369,6 +2369,161 @@ function omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, matName) {
 }
 
 /**
+ * Extrai subconjunto de triângulos para nova BufferGeometry (preserva atributos).
+ * @param {typeof import("three")} THREE
+ * @param {import("three").BufferGeometry} sourceGeom
+ * @param {number[]} triangleIndices índices de triângulo (0-based)
+ */
+function omafitBuildGeometryFromTriangles(THREE, sourceGeom, triangleIndices) {
+  if (!sourceGeom?.attributes?.position || !triangleIndices.length) return null;
+  const attrs = sourceGeom.attributes;
+  const attrNames = Object.keys(attrs);
+  /** @type {Record<string, number[]>} */
+  const buckets = {};
+  for (const k of attrNames) buckets[k] = [];
+  const outIndex = [];
+  const vtxMap = new Map();
+  let nextIdx = 0;
+  const getTriVerts = (t) => {
+    if (sourceGeom.index) {
+      return [
+        sourceGeom.index.getX(t * 3),
+        sourceGeom.index.getX(t * 3 + 1),
+        sourceGeom.index.getX(t * 3 + 2),
+      ];
+    }
+    return [t * 3, t * 3 + 1, t * 3 + 2];
+  };
+  for (const t of triangleIndices) {
+    const [i0, i1, i2] = getTriVerts(t);
+    for (const oldIdx of [i0, i1, i2]) {
+      let newIdx = vtxMap.get(oldIdx);
+      if (newIdx === undefined) {
+        newIdx = nextIdx++;
+        vtxMap.set(oldIdx, newIdx);
+        for (const k of attrNames) {
+          const attr = attrs[k];
+          const itemSize = attr.itemSize;
+          for (let j = 0; j < itemSize; j++) {
+            buckets[k].push(attr.array[oldIdx * itemSize + j]);
+          }
+        }
+      }
+      outIndex.push(newIdx);
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  for (const k of attrNames) {
+    const itemSize = attrs[k].itemSize;
+    const arr = attrs[k].array;
+    const Typed = arr?.constructor || Float32Array;
+    geom.setAttribute(k, new THREE.BufferAttribute(new Typed(buckets[k]), itemSize));
+  }
+  geom.setIndex(outIndex);
+  if (sourceGeom.groups?.length) geom.groups = sourceGeom.groups.map((g) => ({ ...g }));
+  geom.computeBoundingBox();
+  geom.computeBoundingSphere();
+  return geom;
+}
+
+/**
+ * GLB monolítico (1 mesh): separa shell frontal (−Z) como `omafit_lens` (paridade worker trimesh).
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {{ frontFrac?: number }} [opts]
+ * @returns {{ split: boolean, lensMesh?: import("three").Mesh, frameMesh?: import("three").Mesh, reason?: string }}
+ */
+function omafitSplitMonolithicGlassesLensAtRuntime(THREE, root, opts = {}) {
+  if (!THREE || !root?.traverse) return { split: false, reason: "no-root" };
+  /** @type {import("three").Mesh[]} */
+  const meshes = [];
+  root.traverse((o) => {
+    if (o?.isMesh) meshes.push(o);
+  });
+  if (meshes.length !== 1) return { split: false, reason: `meshes=${meshes.length}` };
+  const mesh = meshes[0];
+  if (mesh.userData?.omafitMonolithicSplitDone) return { split: false, reason: "already-split" };
+  const geometry = mesh.geometry;
+  if (!geometry?.attributes?.position) return { split: false, reason: "no-geometry" };
+  const triCount = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
+  if (triCount < 32) return { split: false, reason: "too-few-tris" };
+  const pos = geometry.attributes.position;
+  const _a = new THREE.Vector3();
+  const _b = new THREE.Vector3();
+  const _c = new THREE.Vector3();
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  const triCentersZ = new Float32Array(triCount);
+  for (let t = 0; t < triCount; t++) {
+    let i0;
+    let i1;
+    let i2;
+    if (geometry.index) {
+      i0 = geometry.index.getX(t * 3);
+      i1 = geometry.index.getX(t * 3 + 1);
+      i2 = geometry.index.getX(t * 3 + 2);
+    } else {
+      i0 = t * 3;
+      i1 = t * 3 + 1;
+      i2 = t * 3 + 2;
+    }
+    _a.fromBufferAttribute(pos, i0);
+    _b.fromBufferAttribute(pos, i1);
+    _c.fromBufferAttribute(pos, i2);
+    const cz = (_a.z + _b.z + _c.z) / 3;
+    triCentersZ[t] = cz;
+    if (cz < zMin) zMin = cz;
+    if (cz > zMax) zMax = cz;
+  }
+  const depth = zMax - zMin;
+  if (!(depth > 1e-8)) return { split: false, reason: "zero-depth" };
+  let frac = Number(opts.frontFrac);
+  if (!Number.isFinite(frac)) frac = 0.28;
+  frac = THREE.MathUtils.clamp(frac, 0.08, 0.45);
+  const thresh = zMin + depth * frac;
+  /** @type {number[]} */
+  const lensTris = [];
+  /** @type {number[]} */
+  const frameTris = [];
+  for (let t = 0; t < triCount; t++) {
+    if (triCentersZ[t] <= thresh) lensTris.push(t);
+    else frameTris.push(t);
+  }
+  if (lensTris.length < 12 || frameTris.length < 12) {
+    return { split: false, reason: `partition lens=${lensTris.length} frame=${frameTris.length}` };
+  }
+  const lensGeom = omafitBuildGeometryFromTriangles(THREE, geometry, lensTris);
+  const frameGeom = omafitBuildGeometryFromTriangles(THREE, geometry, frameTris);
+  if (!lensGeom || !frameGeom) return { split: false, reason: "geom-build-failed" };
+  const parent = mesh.parent || root;
+  const frameMat = Array.isArray(mesh.material) ? mesh.material[0]?.clone?.() || mesh.material[0] : mesh.material?.clone?.() || mesh.material;
+  if (frameMat && typeof frameMat === "object") {
+    frameMat.name = frameMat.name || "frame_metal";
+  }
+  const frameMesh = new THREE.Mesh(frameGeom, frameMat);
+  frameMesh.name = "omafit_frame";
+  frameMesh.renderOrder = mesh.renderOrder;
+  frameMesh.frustumCulled = false;
+  frameMesh.userData = { ...(mesh.userData || {}), omafitMonolithicSplitFrame: true };
+  const lensMesh = new THREE.Mesh(lensGeom, frameMat?.clone?.() || frameMat);
+  lensMesh.name = "omafit_lens";
+  lensMesh.renderOrder = Math.max(Number(mesh.renderOrder) || 0, 8);
+  lensMesh.frustumCulled = false;
+  lensMesh.userData = { omafitMonolithicSplitLens: true, omafitMonolithicSplitDone: true };
+  frameMesh.userData.omafitMonolithicSplitDone = true;
+  parent.add(frameMesh);
+  parent.add(lensMesh);
+  parent.remove(mesh);
+  try {
+    if (mesh.geometry && mesh.geometry !== geometry) mesh.geometry.dispose?.();
+    geometry.dispose?.();
+  } catch {
+    /* ignore */
+  }
+  return { split: true, lensMesh, frameMesh };
+}
+
+/**
  * GLB monolítico / nomes Rodin atípicos: menor mesh ≈ lentes (paridade worker trimesh).
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
@@ -2488,10 +2643,13 @@ function omafitCreateGlassesLiteLensMaterial(THREE, lensType) {
     });
   }
   /** AR webcam: Basic ignora luzes/exposure — evita lente “preta” com PBR ou map escuro do Rodin. */
+  const isMobile =
+    typeof navigator !== "undefined" &&
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
   return new THREE.MeshBasicMaterial({
     color: new THREE.Color(0.98, 0.99, 1.0),
     transparent: true,
-    opacity: 0.44,
+    opacity: isMobile ? 0.52 : 0.44,
     side: THREE.DoubleSide,
     depthWrite: false,
     depthTest: true,
@@ -2563,6 +2721,23 @@ function omafitApplyGlassesLensAppearance(THREE, root, opts = {}) {
 
 /** @param {typeof import("three")} THREE @param {import("three").Object3D} root @param {object} opts @returns {{ lensMeshes: number }} */
 function omafitApplyGlassesLensAppearanceWithFallback(THREE, root, opts = {}) {
+  const lensType = String(opts.lensType || "clear_fake").trim().toLowerCase();
+  if (lensType !== "opaque" && lensType !== "none" && lensType !== "off") {
+    try {
+      const split = omafitSplitMonolithicGlassesLensAtRuntime(THREE, root, {
+        frontFrac: opts.lensSplitFrontFrac,
+      });
+      if (split.split) {
+        console.log("[omafit-ar] glasses monolithic split runtime", {
+          build: OMAFIT_AR_WIDGET_BUILD,
+          lensMesh: split.lensMesh?.name,
+          frameMesh: split.frameMesh?.name,
+        });
+      }
+    } catch (splitErr) {
+      console.warn("[omafit-ar] glasses monolithic split:", splitErr?.message || splitErr);
+    }
+  }
   const primary = omafitApplyGlassesLensAppearance(THREE, root, opts);
   if (primary.lensMeshes > 0) return primary;
   const fb = omafitApplyGlassesLensAppearanceFallback(THREE, root, opts);
@@ -10962,6 +11137,34 @@ async function runArSession({
       );
     }
     glasses.frustumCulled = false;
+    if (accessoryType === "glasses") {
+      const resolvedLensTypeEarly =
+        String(
+          glassesRenderFlags.lensType ||
+            cfgAttr("arGlassesLensType", "clear_fake") ||
+            "clear_fake",
+        ).trim() || "clear_fake";
+      if (
+        resolvedLensTypeEarly !== "opaque" &&
+        resolvedLensTypeEarly !== "none" &&
+        resolvedLensTypeEarly !== "off"
+      ) {
+        try {
+          const splitEarly = omafitSplitMonolithicGlassesLensAtRuntime(THREE, glasses, {
+            frontFrac: Number(String(cfgAttr("arGlassesLensSplitFrontFrac", "0.28")).trim()) || 0.28,
+          });
+          if (splitEarly.split) {
+            console.log("[omafit-ar] glasses monolithic split (pre-PBR)", {
+              build: OMAFIT_AR_WIDGET_BUILD,
+              lensMesh: splitEarly.lensMesh?.name,
+              frameMesh: splitEarly.frameMesh?.name,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     glasses.traverse((child) => {
       if (!child.isMesh) return;
       child.frustumCulled = false;

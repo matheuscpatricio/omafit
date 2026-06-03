@@ -34,7 +34,9 @@ export function filterCandidatesByStylistParams(candidates, params = {}) {
     list = list.filter((c) => !MALE_ONLY.test(String(c.title || "")));
   }
 
-  list = list.filter((c) => c.in_stock !== false);
+  const beforeStock = list.length;
+  const inStockOnly = list.filter((c) => c.in_stock !== false);
+  list = inStockOnly.length > 0 ? inStockOnly : list;
 
   if (String(params.sort_price_asc || "") === "1") {
     list.sort((a, b) => {

@@ -601,6 +601,29 @@ export async function runCatalogSearches(
     }
   }
 
+  if (byHandle.size === 0 && resolvedCollectionHandles.length) {
+    const relaxedOpts = {
+      applyGenderFilter: false,
+      excludeFootwearAndAccessories: false,
+      requireImage: false,
+    };
+    for (const collectionHandle of resolvedCollectionHandles) {
+      try {
+        const response = await admin.graphql(COLLECTION_PRODUCTS, {
+          variables: { handle: collectionHandle, first: Math.min(50, fetchFirst) },
+        });
+        const json = await response.json();
+        const edges = json?.data?.collectionByHandle?.products?.edges ?? [];
+        for (const c of mapEdgesToCandidates(edges, excludeHandle, gender, relaxedOpts)) {
+          if (!byHandle.has(c.handle)) byHandle.set(c.handle, c);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (byHandle.size >= limit) break;
+    }
+  }
+
   return Array.from(byHandle.values()).slice(0, limit);
 }
 

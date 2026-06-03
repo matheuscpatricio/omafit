@@ -186,6 +186,7 @@ export async function action({ request }) {
       store_profile: storeProfile,
     };
     if (candidates.length === 0) {
+      const inStockRaw = candidatesRaw.filter((c) => c.in_stock !== false).length;
       payload.debug = {
         exclude_handle: excludeHandle,
         collection_handles_param: collectionHandles,
@@ -195,12 +196,25 @@ export async function action({ request }) {
         search_queries_count: queries.length,
         search_queries_sample: queries.slice(0, 5),
         target_gender: targetGender,
+        effective_search_gender: effectiveSearchGender,
+        chart_gender_scope: chartGenderScope,
+        shopper_gender: shopperGender,
+        collection_type: safeCollection,
+        counts: {
+          raw_from_search: candidatesRaw.length,
+          raw_in_stock: inStockRaw,
+          after_stylist_filter: filtered.length,
+        },
         hint:
           resolvedCollectionHandles.length === 0
             ? "Nenhuma coleção Shopify ligada ao produto âncora (ou sessão sem acesso). Confira se o produto está em coleções na loja."
-            : collectionHandles.length === 0
-              ? "Sem collection_handles no pedido; o servidor inferiu coleções do produto âncora."
-              : "Verifique imagem destacada dos produtos e filtro de género.",
+            : candidatesRaw.length === 0
+              ? "Coleção/loja não devolveu outros produtos além do âncora (ou todos foram filtrados na busca). Coloque o produto numa coleção manual com mais peças."
+              : inStockRaw === 0 && candidatesRaw.length > 0
+                ? "Há produtos na busca mas nenhum com stock (availableForSale). O consultor passa a aceitar sem stock quando não há alternativa — faça redeploy da app Omafit."
+                : collectionHandles.length === 0
+                  ? "Sem collection_handles no pedido; o servidor inferiu coleções do produto âncora."
+                  : "Verifique imagem destacada, género (tabela/calculadora) e se a coleção tem mais produtos além do âncora.",
       };
     }
 

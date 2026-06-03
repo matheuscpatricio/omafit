@@ -12,7 +12,7 @@
     "widget": "Widget",
     "sizeChart": "Guías de tallas",
     "analytics": "Analíticas",
-    "arEyewear": "Accesorios AR"
+    "arEyewear": "Accesorios"
   },
   "common": {
     "dashboard": "Panel",
@@ -411,7 +411,7 @@
     "errorLoadDataWithStatus": "Error al cargar datos: {status}"
   },
   "arEyewear": {
-    "title": "Accesorios AR",
+    "title": "Accesorios",
     "subtitle": "Crea y publica modelos 3D de tus accesorios (p. ej., gafas) para una prueba virtual más realista.",
     "uploadTitle": "Nuevo envío",
     "uploadHelp": "Una foto clara del producto (un fondo claro suele funcionar mejor). Fotos extra opcionales en la subida manual avanzada.",
@@ -465,7 +465,7 @@
     "errorSubmit": "Error al enviar a procesamiento.",
     "errorAction": "Error al ejecutar la acción.",
     "warnShop": "Abre desde el admin incrustado de Shopify.",
-    "shopProductsTitle": "Productos de la tienda (gafas)",
+    "shopProductsTitle": "Accesorios de la tienda",
     "shopProductsHelp": "Elija el producto, la variante y hasta 5 fotos del catálogo — más ángulos nítidos mejoran el modelo 3D de la prueba virtual.",
     "shopProductsSearch": "Filtrar por nombre",
     "shopProductsEmpty": "Ningún producto coincidió. Revisa el tipo, la categoría de producto Shopify o etiquetas (ej. gafas, sunglasses).",
@@ -515,7 +515,7 @@
       "openButton": "Afinar la prueba virtual",
       "title": "Perfecciona cómo se ve la prueba en tu tienda",
       "subtitle": "Mostramos el accesorio sobre una silueta de referencia. Solo puedes ajustar la rotación (tres controles), igual que en la prueba virtual de la tienda. Posición y tamaño usan valores automáticos según el tipo de accesorio.",
-      "back": "Volver a Accesorios AR",
+      "back": "Volver a Accesorios",
       "howToTitle": "Cómo funciona",
       "howToIntro": "Solo la rotación es configurable aquí. Cada control se ajusta a −90°, 0° o 90°. La vista previa usa el mismo orden de ejes de mundo (Y, luego X, luego Z) que el widget en la tienda.",
       "howToStep1": "Usa \"Girar arriba/abajo\" (rx) cuando la pieza parezca inclinada hacia delante o hacia atrás.",
@@ -541,7 +541,7 @@
       "tip1": "Si la pieza se ve de perfil, usa \"Girar izquierda/derecha\" hasta colocarla de frente.",
       "tip2": "Si parece invertida, corrígela con \"Girar arriba/abajo\" o \"Inclinar lateralmente\".",
       "tip3": "¿Necesitas otro tamaño o posición en la muñeca o el rostro? Regenera o sustituye el modelo 3D: esta pantalla solo ajusta la rotación.",
-      "previewErrorNoScene": "No pudimos mostrar este modelo en la vista previa: el archivo podría estar incompleto. Vuelve a publicarlo desde Accesorios AR.",
+      "previewErrorNoScene": "No pudimos mostrar este modelo en la vista previa: el archivo podría estar incompleto. Vuelve a publicarlo desde Accesorios.",
       "previewErrorNoGeometry": "No encontramos formas visibles en este archivo para la vista previa. Comprueba el archivo o vuelve a generar el modelo.",
       "previewErrorProcess": "No pudimos preparar la vista previa. Más información: {detail}",
       "previewErrorLoadModel": "No pudimos cargar el modelo para previsualizarlo. Detalle: {detail}",

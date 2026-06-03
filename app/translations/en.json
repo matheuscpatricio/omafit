@@ -12,7 +12,7 @@
     "widget": "Widget",
     "sizeChart": "Size Charts",
     "analytics": "Analytics",
-    "arEyewear": "AR Accessories"
+    "arEyewear": "Accessories"
   },
   "common": {
     "dashboard": "Dashboard",
@@ -411,7 +411,7 @@
     "errorLoadDataWithStatus": "Error loading data: {status}"
   },
   "arEyewear": {
-    "title": "AR Accessories",
+    "title": "Accessories",
     "subtitle": "Create and publish 3D models of your accessories (e.g. eyewear) for a more realistic virtual try-on.",
     "uploadTitle": "New submission",
     "uploadHelp": "One clear product photo (a light background usually works best). Optional extra photos on advanced manual upload.",
@@ -465,7 +465,7 @@
     "errorSubmit": "Failed to submit for processing.",
     "errorAction": "Failed to run action.",
     "warnShop": "Open from the embedded Shopify admin for shop context.",
-    "shopProductsTitle": "Store products (eyewear)",
+    "shopProductsTitle": "Store accessories",
     "shopProductsHelp": "Pick the product, variant, and up to 5 catalog photos — more clear angles mean a better 3D try-on model.",
     "shopProductsSearch": "Filter by name",
     "shopProductsEmpty": "No products matched eyewear heuristics. Check product type, Shopify product category, or tags (e.g. glasses, sunglasses).",
@@ -515,7 +515,7 @@
       "openButton": "Fine-tune try-on placement",
       "title": "Polish how your try-on looks to shoppers",
       "subtitle": "We show the accessory on a simple silhouette. Use the three rotation controls only — they match the try-on widget. Position and size use automatic defaults for your accessory type.",
-      "back": "Back to AR Accessories",
+      "back": "Back to Accessories",
       "howToTitle": "How it works",
       "howToIntro": "Only rotation is adjustable here. Each control snaps to −90°, 0°, or 90°. The preview uses the same world-axis order (Y, then X, then Z) as the storefront try-on.",
       "howToStep1": "Use \"Tilt up/down\" (rx) when the piece looks tipped toward or away from the viewer.",
@@ -543,7 +543,7 @@
       "tip1": "If the piece looks sideways, use \"Turn left/right\" until it faces the shopper.",
       "tip2": "If it looks upside down, correct it with \"Tilt up/down\" or \"Roll sideways\".",
       "tip3": "Need a different size or position on the wrist or face? Regenerate or replace the 3D model — this screen only adjusts rotation.",
-      "previewErrorNoScene": "We could not show this model in the preview — the file may be incomplete. Try publishing the model again from AR Accessories.",
+      "previewErrorNoScene": "We could not show this model in the preview — the file may be incomplete. Try publishing the model again from Accessories.",
       "previewErrorNoGeometry": "We could not find visible shapes in this file for the preview. Check the file or regenerate the model.",
       "previewErrorProcess": "We could not prepare the preview. More information: {detail}",
       "previewErrorLoadModel": "We could not load the model for preview. Detail: {detail}",

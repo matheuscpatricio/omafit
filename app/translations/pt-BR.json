@@ -12,7 +12,7 @@
     "widget": "Widget",
     "sizeChart": "Tabelas de Medidas",
     "analytics": "Dados",
-    "arEyewear": "Acessórios AR"
+    "arEyewear": "Acessórios"
   },
   "common": {
     "dashboard": "Dashboard",
@@ -411,7 +411,7 @@
     "errorLoadDataWithStatus": "Erro ao carregar dados: {status}"
   },
   "arEyewear": {
-    "title": "Acessórios AR",
+    "title": "Acessórios",
     "subtitle": "Transforme os seus acessórios em uma experiência de compra mais envolvente: apresente seus produtos com visual mais real, aumente a confiança do cliente antes da compra e destaque a sua marca com uma prova virtual que ajuda a vender mais.",
     "uploadTitle": "Novo envio",
     "uploadHelp": "Uma foto nítida do produto (fundo claro costuma dar melhor resultado). No upload manual, fotos extra são opcionais.",
@@ -465,7 +465,7 @@
     "errorSubmit": "Erro ao enviar para processamento.",
     "errorAction": "Erro ao executar a ação.",
     "warnShop": "Abra pelo admin embutido da Shopify para contexto da loja.",
-    "shopProductsTitle": "Produtos da loja (óculos)",
+    "shopProductsTitle": "Acessórios da loja",
     "shopProductsHelp": "Escolha o produto, a variante e até 5 fotos do catálogo — quanto mais ângulos nítidos, melhor o modelo 3D no provador virtual.",
     "shopProductsSearch": "Filtrar por nome",
     "shopProductsEmpty": "Nenhum produto correspondeu aos critérios de óculos. Verifique o tipo de produto, a categoria padrão da Shopify ou as tags (ex.: óculos, sunglasses).",
@@ -515,7 +515,7 @@
       "openButton": "Ajustar posição no provador",
       "title": "Deixe o provador virtual com o aspeto certo",
       "subtitle": "Mostramos o acessório sobre uma silhueta de referência. Só pode ajustar a rotação (três controlos) — igual ao provador na loja. Posição e escala usam os valores automáticos do tipo de produto.",
-      "back": "Voltar aos Acessórios AR",
+      "back": "Voltar aos Acessórios",
       "howToTitle": "Como funciona",
       "howToIntro": "Apenas a rotação é configurável aqui. Cada controlo fixa em −90°, 0° ou 90°. A pré-visualização usa a mesma ordem de eixos de mundo (Y, depois X, depois Z) que o widget na loja.",
       "howToStep1": "Use \"Girar para cima/baixo\" (rx) quando a peça parecer inclinada para a frente ou para trás.",
@@ -543,7 +543,7 @@
       "tip1": "Se a peça aparecer de perfil, use \"Girar para esquerda/direita\" até ficar de frente.",
       "tip2": "Se parecer invertida, corrija com \"Girar para cima/baixo\" ou \"Inclinar lateralmente\".",
       "tip3": "Precisa de outro tamanho ou posição no pulso ou rosto? Gere ou substitua o modelo 3D — este ecrã só ajusta rotação.",
-      "previewErrorNoScene": "Não conseguimos mostrar este modelo na pré-visualização — o ficheiro parece incompleto. Tente voltar a disponibilizar o modelo a partir de Acessórios AR.",
+      "previewErrorNoScene": "Não conseguimos mostrar este modelo na pré-visualização — o ficheiro parece incompleto. Tente voltar a disponibilizar o modelo a partir de Acessórios.",
       "previewErrorNoGeometry": "Não encontrámos formas visíveis neste modelo para mostrar na pré-visualização. Verifique se o ficheiro está correto ou volte a gerar o modelo.",
       "previewErrorProcess": "Não foi possível preparar a pré-visualização. Mais informação: {detail}",
       "previewErrorLoadModel": "Não foi possível carregar o modelo para pré-visualizar. Detalhe: {detail}",

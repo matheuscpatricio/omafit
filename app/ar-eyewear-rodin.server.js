@@ -262,6 +262,13 @@ export async function generateGlbDraftViaRodinFal({
       glbBuf = Buffer.from(await canonicalizeArEyewearGlbBuffer(glbBuf));
     }
   } catch (e) {
+    const recipe = String(glbPostprocess?.recipe || "").trim();
+    const allowIgnore = /^(1|true|yes|on)$/i.test(
+      String(process.env.AR_MESH_RUN_RECIPE_FALLBACK || "").trim(),
+    );
+    if (recipe && !allowIgnore) {
+      throw e;
+    }
     console.warn("[ar-eyewear] Rodin GLB pós-processo ignorado:", e?.message || e);
   }
   const storagePath = `${String(shopDomain || "").replace(/[^\w.-]+/g, "_")}/${assetId}/model.glb`;

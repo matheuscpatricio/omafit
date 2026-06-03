@@ -387,6 +387,17 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
   return false;
 }
 
+/** @see extensions/omafit-theme/assets/omafit-glasses-orient.js */
+export function omafitEnsureGlassesBridgePointsUp(THREE, glasses) {
+  if (!THREE || !glasses) return false;
+  const hSign = detectGlassesRimHeuristic(THREE, glasses, 0, 1);
+  if (hSign >= 0) return false;
+  const ax = new THREE.Vector3(1, 0, 0);
+  glasses.rotateOnWorldAxis(ax, Math.PI);
+  glasses.updateMatrixWorld(true);
+  return true;
+}
+
 /**
  * Paridade preview admin ↔ widget: detecta frame worker ou aplica remap Rodin.
  *

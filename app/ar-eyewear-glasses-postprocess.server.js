@@ -109,6 +109,15 @@ export async function postprocessRodinGlassesGlbBuffer(glbBuf, opts = {}) {
       });
       return Buffer.from(outBuf);
     } catch (e) {
+      const allowFallback = /^(1|true|yes|on)$/i.test(
+        String(process.env.AR_MESH_RUN_RECIPE_FALLBACK || "").trim(),
+      );
+      if (!allowFallback) {
+        throw new Error(
+          `run_recipe falhou (${recipe}): ${e?.message || e}. ` +
+            "Defina AR_MESH_RUN_RECIPE_FALLBACK=1 para canonicalize legado (sem split lens_glass).",
+        );
+      }
       console.warn(
         "[ar-eyewear] run_recipe falhou — fallback canonicalizeArEyewearGlbBuffer:",
         e?.message || e,

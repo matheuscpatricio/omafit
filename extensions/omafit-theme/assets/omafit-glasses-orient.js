@@ -388,6 +388,24 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
 }
 
 /**
+ * Correcção determinística pós-worker: ponte estreita em +Y.
+ * Se o topo for mais largo que a base → Rx(180°).
+ *
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {boolean}
+ */
+export function omafitEnsureGlassesBridgePointsUp(THREE, glasses) {
+  if (!THREE || !glasses) return false;
+  const hSign = detectGlassesRimHeuristic(THREE, glasses, 0, 1);
+  if (hSign >= 0) return false;
+  const ax = new THREE.Vector3(1, 0, 0);
+  glasses.rotateOnWorldAxis(ax, Math.PI);
+  glasses.updateMatrixWorld(true);
+  return true;
+}
+
+/**
  * Paridade preview admin ↔ widget: detecta frame worker ou aplica remap Rodin.
  *
  * @param {any} THREE

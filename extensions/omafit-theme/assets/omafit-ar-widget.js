@@ -3,6 +3,7 @@ import {
   computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
+  omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
 import {
@@ -598,7 +599,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-mesh-v180";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-deterministic-v181";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11347,6 +11348,17 @@ async function runArSession({
             "[omafit-ar] glasses worker/Rodin frame remap Rx(-90°) → +Y topo, −Z frente",
             { build: OMAFIT_AR_WIDGET_BUILD },
           );
+        }
+        if (
+          glassesWorkerFrameRemapped ||
+          hasOmafitCanonicalNode ||
+          omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)
+        ) {
+          if (omafitEnsureGlassesBridgePointsUp(THREE, glasses)) {
+            console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
+              build: OMAFIT_AR_WIDGET_BUILD,
+            });
+          }
         }
       } catch (remapErr) {
         console.warn(

@@ -264,7 +264,12 @@ def _remap_glasses_worker_frame_to_widget(scene):
     if ext.shape != (3,) or np.any(ext <= 1e-9):
         return False
     order = np.argsort(ext)
-    if int(order[0]) != 1 or int(order[1]) != 2 or int(order[2]) != 0:
+    i_small, i_mid, i_large = int(order[0]), int(order[1]), int(order[2])
+    # Já no frame widget: Z fino, Y altura, X largura
+    if i_small == 2 and i_large == 0:
+        return True
+    # Pré-remap hard-canonical: Y fino, Z médio, X largo
+    if i_small != 1 or i_mid != 2 or i_large != 0:
         return False
     scene.apply_transform(
         trimesh.transformations.rotation_matrix(-math.pi / 2.0, [1.0, 0.0, 0.0])
@@ -272,106 +277,51 @@ def _remap_glasses_worker_frame_to_widget(scene):
     return True
 
 
-def _fix_sign_conventions(scene):
+def _ensure_bridge_at_plus_y(scene) -> bool:
     """
-    Resolve sinais de topo/baixo e frente/trás após canonical + remap widget.
-
-    Pós `_remap_glasses_worker_frame_to_widget`: +X largura, +Y topo, −Z frente.
-    Se remap não correu, infere eixos pelos extents (paridade commit 5108c1d).
-
-    Regressão 03ac9c6: `flip_y` sozinho usava Rz(180) e deixava o óculos de cabeça
-    para baixo — corrigido para Rx(180) como no sign-fix original.
-    Disable: AR_POSTPROCESS_SIGN_FIX=0
+    Regra única e previsível: ponte (estreita) em +Y.
+    Se o topo do aro for mais largo em X que a base → Rx(180°).
+    Desligar: AR_POSTPROCESS_BRIDGE_UP=0 (legado: AR_POSTPROCESS_SIGN_FIX=0)
     """
-    if str(os.environ.get("AR_POSTPROCESS_SIGN_FIX", "1")).strip() in ("0", "false", "no"):
-        return
+    sign_off = str(os.environ.get("AR_POSTPROCESS_SIGN_FIX", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    )
+    bridge_off = str(os.environ.get("AR_POSTPROCESS_BRIDGE_UP", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    )
+    if sign_off or bridge_off:
+        return False
 
     import trimesh
 
     combined = _scene_concat_meshes(scene)
-    if combined is None or len(combined.vertices) < 16:
-        return
+    if combined is None or len(combined.vertices) < 20:
+        return False
 
     verts = np.asarray(combined.vertices, dtype=float)
-    bb_min = verts.min(axis=0)
-    bb_max = verts.max(axis=0)
-    center = (bb_min + bb_max) * 0.5
-    half_ext = (bb_max - bb_min) * 0.5
+    y = verts[:, 1]
+    x = verts[:, 0]
+    y_hi = float(np.quantile(y, 0.92))
+    y_lo = float(np.quantile(y, 0.08))
+    top = verts[y >= y_hi]
+    bot = verts[y <= y_lo]
+    if len(top) < 8 or len(bot) < 8:
+        return False
+    top_x = float(top[:, 0].max() - top[:, 0].min())
+    bot_x = float(bot[:, 0].max() - bot[:, 0].min())
+    if bot_x <= 1e-9 or top_x <= bot_x * 1.04:
+        return False
+    scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
+    return True
 
-    if np.any(half_ext < 1e-9):
-        return
 
-    ext = np.asarray(half_ext, dtype=float) * 2.0
-    order = np.argsort(ext)
-    # Pós-remap widget: Z fino (espessura), Y altura, X largura
-    post_remap_widget = int(order[0]) == 2 and int(order[2]) == 0
-    if post_remap_widget:
-        i_wide, i_vert, i_depth = 0, 1, 2
-        i_thin = 2
-    else:
-        i_thin = int(order[0])
-        i_vert = int(order[1])
-        i_wide = int(order[2])
-        i_depth = i_vert
-        if i_thin == 1 and i_wide == 0:
-            i_vert = 2
-            i_depth = 2
-
-    wide_half = float(half_ext[i_wide])
-    depth_half = float(half_ext[i_depth])
-
-    flip_vert = False
-    flip_forward = False
-
-    center_mask = np.abs(verts[:, i_wide] - center[i_wide]) < wide_half * 0.35
-    cb = verts[center_mask]
-    if len(cb) > 8:
-        top_c = cb[cb[:, i_vert] > center[i_vert]]
-        bot_c = cb[cb[:, i_vert] <= center[i_vert]]
-        if len(top_c) > 2 and len(bot_c) > 2:
-            if post_remap_widget:
-                top_sp = float(top_c[:, i_depth].max() - top_c[:, i_depth].min())
-                bot_sp = float(bot_c[:, i_depth].max() - bot_c[:, i_depth].min())
-            else:
-                top_sp = float(top_c[:, i_thin].max() - top_c[:, i_thin].min())
-                bot_sp = float(bot_c[:, i_thin].max() - bot_c[:, i_thin].min())
-            if top_sp > bot_sp * 1.08:
-                flip_vert = True
-
-    if not flip_vert and len(verts) > 20:
-        sorted_v = verts[verts[:, i_vert].argsort()]
-        sn = max(8, int(len(sorted_v) * 0.08))
-        b_slice = sorted_v[:sn]
-        t_slice = sorted_v[-sn:]
-        t_x_sp = float(t_slice[:, i_wide].max() - t_slice[:, i_wide].min())
-        b_x_sp = float(b_slice[:, i_wide].max() - b_slice[:, i_wide].min())
-        if t_x_sp > b_x_sp * 1.08:
-            flip_vert = True
-
-    outer_mask = np.abs(verts[:, i_wide] - center[i_wide]) > wide_half * 0.6
-    outer = verts[outer_mask]
-    if len(outer) > 4:
-        if post_remap_widget:
-            fwd_vals = outer[:, i_depth] - center[i_depth]
-        else:
-            fwd_vals = outer[:, i_thin] - center[i_thin]
-        abs_fwd = np.abs(fwd_vals)
-        top_n = max(4, int(len(fwd_vals) * 0.15))
-        idx = np.argpartition(abs_fwd, -top_n)[-top_n:]
-        mef = float(fwd_vals[idx].mean())
-        thin_half = float(half_ext[i_thin if not post_remap_widget else i_depth])
-        if mef < -thin_half * 0.12:
-            flip_forward = True
-
-    if flip_vert and flip_forward:
-        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
-    elif flip_vert:
-        scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
-    elif flip_forward:
-        if post_remap_widget:
-            scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0]))
-        else:
-            scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 0.0, 1.0]))
+def _fix_sign_conventions(scene):
+    """Compat: delega à regra determinística de ponte em +Y."""
+    _ensure_bridge_at_plus_y(scene)
 
 
 def _lay_down_tallest_extent(scene):
@@ -475,7 +425,6 @@ def _split_monolithic_glasses_lens(scene) -> bool:
         return False
     try:
         centers = np.asarray(geom.triangles_center, dtype=float)
-        normals = np.asarray(geom.face_normals, dtype=float)
     except Exception:
         return False
     z = centers[:, 2]
@@ -484,23 +433,12 @@ def _split_monolithic_glasses_lens(scene) -> bool:
     depth = z_max - z_min
     if depth <= 1e-8:
         return False
-    nz = normals[:, 2]
     min_each = max(8, int(face_n * 0.015))
 
-    def _try_split(frac: float, use_normals: bool):
+    def _try_split(frac: float):
         frac = max(0.1, min(0.52, float(frac)))
         thresh = z_min + depth * frac
         front_mask = z <= thresh
-        if use_normals:
-            for nz_cut in (-0.12, 0.2):
-                trial = front_mask & (nz < nz_cut)
-                if len(np.where(trial)[0]) >= min_each:
-                    front_mask = trial
-                    break
-            else:
-                alt_mask = (z >= z_max - depth * frac) & (nz > 0.12)
-                if len(np.where(alt_mask)[0]) >= min_each:
-                    front_mask = alt_mask
         front_idx = np.where(front_mask)[0]
         back_idx = np.where(~front_mask)[0]
         if len(front_idx) < min_each or len(back_idx) < min_each:
@@ -532,14 +470,9 @@ def _split_monolithic_glasses_lens(scene) -> bool:
 
     split_pair = None
     for frac in fracs:
-        split_pair = _try_split(frac, use_normals=True)
+        split_pair = _try_split(frac)
         if split_pair is not None:
             break
-    if split_pair is None:
-        for frac in fracs:
-            split_pair = _try_split(frac, use_normals=False)
-            if split_pair is not None:
-                break
     if split_pair is None:
         return False
 
@@ -590,6 +523,36 @@ def _rename_materials_for_glasses(scene) -> None:
             _set_glasses_visual_material_name(g, "frame_metal")
         else:
             _set_glasses_visual_material_name(g, f"frame_{n}")
+
+
+def _finalize_glasses_glb_nodes(scene) -> None:
+    """
+    Garante nós GLB estáveis `omafit_frame` + `omafit_lens` (contrato runtime AR).
+    """
+    import trimesh
+
+    meshes = [(n, g) for n, g in scene.geometry.items() if isinstance(g, trimesh.Trimesh)]
+    if len(meshes) < 2:
+        return
+    by_name = {n: g for n, g in meshes}
+    if "omafit_lens" in by_name and "omafit_frame" in by_name:
+        frame_geom, lens_geom = by_name["omafit_frame"], by_name["omafit_lens"]
+    else:
+        scored = []
+        for name, geom in meshes:
+            area = float(getattr(geom, "area", 0) or 0)
+            scored.append((area, name, geom))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        frame_geom = scored[0][2]
+        lens_geom = scored[-1][2]
+    _set_glasses_visual_material_name(frame_geom, "frame_metal")
+    _set_glasses_visual_material_name(lens_geom, "lens_glass")
+    rebuilt = trimesh.Scene()
+    rebuilt.add_geometry(frame_geom, node_name="omafit_frame", geom_name="omafit_frame")
+    rebuilt.add_geometry(lens_geom, node_name="omafit_lens", geom_name="omafit_lens")
+    scene.geometry.clear()
+    for key, geom in rebuilt.geometry.items():
+        scene.geometry[key] = geom
 
 
 def apply_lens_type_materials(scene, lens_type: str) -> None:
@@ -673,6 +636,7 @@ def process_glasses_canonical(inp: Path, out: Path, params: dict | None = None) 
         pass
     _scale_scene_to_width_x(scene, target_w)
     _rename_materials_for_glasses(scene)
+    _finalize_glasses_glb_nodes(scene)
     _assert_lens_glass_present(scene, lens_type)
     apply_lens_type_materials(scene, lens_type)
     scene.export(str(out))

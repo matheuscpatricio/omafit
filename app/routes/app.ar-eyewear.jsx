@@ -153,7 +153,6 @@ export default function ArEyewearPage() {
 
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [productsLoading, setProductsLoading] = useState(false);
-  const [productsCatalogReady, setProductsCatalogReady] = useState(false);
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState([]);
   const [products, setProducts] = useState([]);
@@ -200,9 +199,7 @@ export default function ArEyewearPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
       setProducts(data.products || []);
-      setProductsCatalogReady(true);
     } catch (e) {
-      setProductsCatalogReady(false);
       setError((prev) => prev || e.message || t("arEyewear.errorLoadProducts"));
       setProducts([]);
     } finally {
@@ -214,12 +211,8 @@ export default function ArEyewearPage() {
 
   useEffect(() => {
     loadAssets();
-  }, [loadAssets]);
-
-  useEffect(() => {
-    if (!productSearchQuery || productsCatalogReady || productsLoading) return;
     loadProducts();
-  }, [productSearchQuery, productsCatalogReady, productsLoading, loadProducts]);
+  }, [loadAssets, loadProducts]);
 
   const filteredProducts = useMemo(() => {
     const q = productSearchQuery.toLowerCase();
@@ -675,7 +668,6 @@ export default function ArEyewearPage() {
                 <Button
                   onClick={() => {
                     loadAssets();
-                    setProductsCatalogReady(false);
                     loadProducts();
                   }}
                   disabled={assetsLoading}

@@ -56,11 +56,19 @@ export function scoreCandidatesForOutfit(candidates, params = {}) {
   const anchorDark = /\b(preto|preta|black|navy)\b/i.test(
     String(params.anchor_color_hint || params.product_name || ""),
   );
-  const occasionCodes = dressCodesForOccasions(parseOccasionIds(params.occasion_ids));
+  const occasionCodes = new Set(dressCodesForOccasions(parseOccasionIds(params.occasion_ids)));
   const boostTerms = String(params.search_terms_boost || "")
     .split(/[,;|]/)
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
+  for (const term of boostTerms) {
+    if (term === "formal" || /\b(alfaiat|blazer|social|terno|smoking)\b/.test(term)) {
+      occasionCodes.add("formal");
+    }
+    if (term === "casual" || /\b(jeans|moletom|basico|básico|dia a dia)\b/.test(term)) {
+      occasionCodes.add("relaxed");
+    }
+  }
   const sortPrice = String(params.sort_price_asc || "") === "1";
   const priceBand = String(params.price_band || "").toLowerCase();
 

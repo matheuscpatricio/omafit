@@ -541,8 +541,12 @@ function materialForSplitPart(doc, srcMat, matName) {
  * @param {number[]} worldMatrix
  * @param {number} frac
  * @param {"minZ" | "maxZ"} lensSide
+ * @param {{ useYBand?: boolean, minLensRatio?: number, maxLensRatio?: number }} [opts]
  */
-function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
+function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) {
+  const useYBand = opts.useYBand !== false;
+  const minLensRatio = opts.minLensRatio ?? 0.02;
+  const maxLensRatio = opts.maxLensRatio ?? 0.2;
   const posAttr = prim.getAttribute("POSITION");
   if (!posAttr) return null;
   const pos = posAttr.getArray();
@@ -597,7 +601,7 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
   const yLo = yMin + spanY * 0.12;
   const yHi = yMax - spanY * 0.12;
   const minEach = Math.max(8, Math.floor(triN * 0.015));
-  const f = Math.max(0.06, Math.min(0.22, frac));
+  const f = Math.max(0.1, Math.min(0.52, frac));
 
   /** @type {number[]} */
   const lensTris = [];
@@ -609,51 +613,64 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
       lensSide === "minZ"
         ? z <= zMin + depth * f
         : z >= zMax - depth * f;
-    const inLensBand = y >= yLo && y <= yHi;
+    const inLensBand = !useYBand || (y >= yLo && y <= yHi);
     if (inFrontShell && inLensBand) lensTris.push(t);
     else frameTris.push(t);
   }
   if (lensTris.length < minEach || frameTris.length < minEach) return null;
 
   const lensRatio = lensTris.length / triN;
-  if (lensRatio > 0.2 || lensRatio < 0.02) return null;
+  if (lensRatio > maxLensRatio || lensRatio < minLensRatio) return null;
 
   return { lensTris, frameTris, indices, pos, el, prim, lensSide, lensRatio, frac: f };
 }
 
 /**
- * Escolhe o split onde a malha de lente é fina (≈ shell frontal), testando −Z e +Z.
+ * Escolhe o split onde a malha de lente é fina (≈ shell frontal em −Z).
+ * 1ª passagem: faixa Y central (evita aro inferior no lens_glass).
+ * 2ª passagem: paridade Python (sem faixa Y, fracs 0.22–0.45).
  * @param {import('@gltf-transform/core').Primitive} prim
  * @param {number[]} worldMatrix
  */
 function pickBestLensSplit(prim, worldMatrix) {
-  let fracDefault = 0.1;
+  let fracDefault = 0.28;
   try {
-    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.1");
+    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.28");
   } catch {
     /* ignore */
   }
   const fracs = [
     ...new Set(
-      [fracDefault, 0.06, 0.08, 0.1, 0.12, 0.14].map(
-        (f) => Math.round(f * 1000) / 1000,
-      ),
+      [fracDefault, 0.22, 0.32, 0.38, 0.45].map((f) => Math.round(f * 1000) / 1000),
     ),
   ];
-  /** @type {ReturnType<typeof trySplitPrimitiveByZSide> | null} */
-  let best = null;
+  const targetRatio = 0.12;
+  /** @type {{ pass: typeof passes[number], cand: NonNullable<ReturnType<typeof trySplitPrimitiveByZSide>> } | null} */
+  let bestEntry = null;
   let bestScore = -Infinity;
-  // Paridade Python/trimesh: frente das lentes em −Z após remap widget.
-  for (const frac of fracs) {
-    const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ");
-    if (!cand) continue;
-      const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.1) * 0.45;
-    if (score > bestScore) {
-      bestScore = score;
-      best = cand;
+
+  const passes = [
+    { useYBand: true, minLensRatio: 0.02, maxLensRatio: 0.2 },
+    { useYBand: false, minLensRatio: 0.015, maxLensRatio: 0.52 },
+  ];
+
+  for (const pass of passes) {
+    for (const frac of fracs) {
+      const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ", pass);
+      if (!cand) continue;
+      const score =
+        1 -
+        cand.lensRatio -
+        Math.abs(cand.lensRatio - targetRatio) * 0.45 -
+        (pass.useYBand ? 0 : 0.02);
+      if (score > bestScore) {
+        bestScore = score;
+        bestEntry = { pass, cand };
+      }
     }
+    if (bestEntry) return bestEntry.cand;
   }
-  return best;
+  return null;
 }
 
 /**

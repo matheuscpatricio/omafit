@@ -12,5 +12,6 @@
 
 - **Causa:** `mat4RotateXNeg90` em `shared/ar-eyewear-glasses-canonical.mjs` aplicava **+90°** em X (sinal errado na matriz column-major).
 - **Fix:** matriz alinhada a `trimesh_pipeline._remap_glasses_worker_frame_to_widget` e `omafit-glasses-orient.js` (`rotateOnWorldAxis(ax, -π/2)`).
+- **Split lente:** fracs alinhados ao Python (default `0.28`); fallback sem faixa Y se `ingest_qa: split monolítico falhou`.
 - **Obrigatório:** regenerar GLB após deploy do ingest Node; cache-bust `2026-06-03-ar-glasses-snap-v186` / `oma_ar_asset=20260603arGlassesSnapV186`.
 - **Teste:** `node scripts/test-glasses-canonical-extents.mjs`

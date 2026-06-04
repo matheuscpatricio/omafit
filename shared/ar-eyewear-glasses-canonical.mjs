@@ -206,11 +206,51 @@ function snapToBestRightAngleDoc(doc) {
   wrap.setMatrix(multiplyMat4(eulerMat, wrap.getMatrix()));
 }
 
-/** Rotação −90° em X (paridade `_remap_glasses_worker_frame_to_widget`). */
+/** Rotação −90° em X (paridade `_remap_glasses_worker_frame_to_widget` + Three.js `rotateOnWorldAxis(ax, -π/2)`). */
 function mat4RotateXNeg90() {
-  const c = 0;
-  const s = -1;
-  return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
+  // Column-major Rx(-90°): e_z→+Y, e_y→−Z
+  return [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
+}
+
+/** @param {number[]} m column-major 4×4 @param {number} x @param {number} y @param {number} z */
+function mulMat4Vec3Pure(m, x, y, z) {
+  return [
+    m[0] * x + m[4] * y + m[8] * z,
+    m[1] * x + m[5] * y + m[9] * z,
+    m[2] * x + m[6] * y + m[10] * z,
+  ];
+}
+
+/**
+ * Contrato widget pós-remap: +X largura, +Y topo, Z fino (profundidade).
+ * Não confundir com Rodin pré-remap (Y fino, Z médio, X largo).
+ *
+ * @param {number} sx @param {number} sy @param {number} sz
+ */
+export function glassesExtentsMatchWidgetFrame(sx, sy, sz) {
+  const dims = [
+    { v: sx, i: 0 },
+    { v: sy, i: 1 },
+    { v: sz, i: 2 },
+  ].sort((a, b) => a.v - b.v);
+  if (dims[2].i !== 0) return false;
+  if (dims[0].i !== 2 || dims[1].i !== 1) return false;
+  return dims[1].v > dims[0].v * 1.05;
+}
+
+/** Rodin pós-snap: Y fino, Z médio, X largo. */
+function glassesExtentsMatchRodinPreRemap(sx, sy, sz) {
+  const dims = [
+    { v: sx, i: 0 },
+    { v: sy, i: 1 },
+    { v: sz, i: 2 },
+  ].sort((a, b) => a.v - b.v);
+  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
+  return dims[1].v > dims[0].v * 1.05;
+}
+
+export function applyMat4RotateXNeg90ToVec3(x, y, z) {
+  return mulMat4Vec3Pure(mat4RotateXNeg90(), x, y, z);
 }
 
 /** Rotação 180° em X (paridade `_ensure_bridge_at_plus_y`). */
@@ -284,18 +324,8 @@ function applyWidgetFrameRemap(doc) {
   const scene = doc.getRoot().listScenes()[0];
   if (!scene) return false;
   const { sx, sy, sz } = bboxSizeFromScene(scene);
-  const dims = [
-    { v: sx, i: 0 },
-    { v: sy, i: 1 },
-    { v: sz, i: 2 },
-  ].sort((a, b) => a.v - b.v);
-  // Já no frame widget: Z fino, Y altura, X largura
-  if (dims[0].i === 2 && dims[1].i === 1 && dims[2].i === 0) {
-    return dims[1].v > dims[0].v * 1.05;
-  }
-  // Pré-remap Rodin: Y fino, Z médio, X largo
-  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
-  if (dims[1].v <= dims[0].v * 1.05) return false;
+  if (glassesExtentsMatchWidgetFrame(sx, sy, sz)) return true;
+  if (!glassesExtentsMatchRodinPreRemap(sx, sy, sz)) return false;
   applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
   return true;
 }

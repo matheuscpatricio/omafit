@@ -7,3 +7,10 @@
 5. `npm run ar:qa-matrix` em **omafit-widget**.
 6. Deploy Netlify → `shopify app deploy`.
 7. QA: `docs/ar-qa-occlusion-lenses.md`.
+
+## v186 (2026-06-04) — ingest `Rx(-90°)` remap
+
+- **Causa:** `mat4RotateXNeg90` em `shared/ar-eyewear-glasses-canonical.mjs` aplicava **+90°** em X (sinal errado na matriz column-major).
+- **Fix:** matriz alinhada a `trimesh_pipeline._remap_glasses_worker_frame_to_widget` e `omafit-glasses-orient.js` (`rotateOnWorldAxis(ax, -π/2)`).
+- **Obrigatório:** regenerar GLB após deploy do ingest Node; cache-bust `2026-06-03-ar-glasses-snap-v186` / `oma_ar_asset=20260603arGlassesSnapV186`.
+- **Teste:** `node scripts/test-glasses-canonical-extents.mjs`

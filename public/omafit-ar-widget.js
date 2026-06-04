@@ -600,7 +600,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-snap-v185";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-widget-frame-v187";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11914,27 +11914,43 @@ async function runArSession({
       new THREE.Box3().setFromObject(glasses).getSize(szC);
       glassesFaceWideAxisX = szC.x >= szC.z;
       if (tripOffUseAuto && !omafitArSkipTripCanonicalQuatDebug) {
-        try {
-          const canon = computeGlassesCanonicalOffsetQuat(THREE, glasses);
-          if (canon && canon.quat) {
-            tripCanonicalQuat = canon.quat;
-            tripCanonicalDetected = canon.detected;
-            console.log("[omafit-ar] glasses canonical offset quat (auto, determinístico)", {
-              widthAxis: canon.detected?.widthAxisIdx,
-              heightAxis: canon.detected?.heightAxisIdx,
-              depthAxis: canon.detected?.depthAxisIdx,
-              depthFrontSign: canon.detected?.depthFrontSign,
-              rimHeightSign: canon.rimHeightSign,
-              widthSign: canon.signs?.widthSign,
-              flippedWidthForRotation: canon.signs?.flippedWidthForRotation,
-              confidence: canon.detected?.confidence,
+        const trustIngestWidgetFrame =
+          omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) &&
+          (glassesWorkerFrameRemapped || hasOmafitCanonicalNode);
+        if (trustIngestWidgetFrame) {
+          tripCanonicalQuat = new THREE.Quaternion();
+          console.log(
+            "[omafit-ar] glasses canonical offset omitido (GLB já em frame widget / ingest)",
+            {
+              build: OMAFIT_AR_WIDGET_BUILD,
+              hasOmafitCanonicalNode,
+              glassesWorkerFrameRemapped,
               sizeBbox: { x: szC.x, y: szC.y, z: szC.z },
-            });
-          } else {
-            console.warn("[omafit-ar] canonical quat: confiança baixa — fallback Y-90 X180");
+            },
+          );
+        } else {
+          try {
+            const canon = computeGlassesCanonicalOffsetQuat(THREE, glasses);
+            if (canon && canon.quat) {
+              tripCanonicalQuat = canon.quat;
+              tripCanonicalDetected = canon.detected;
+              console.log("[omafit-ar] glasses canonical offset quat (auto, determinístico)", {
+                widthAxis: canon.detected?.widthAxisIdx,
+                heightAxis: canon.detected?.heightAxisIdx,
+                depthAxis: canon.detected?.depthAxisIdx,
+                depthFrontSign: canon.detected?.depthFrontSign,
+                rimHeightSign: canon.rimHeightSign,
+                widthSign: canon.signs?.widthSign,
+                flippedWidthForRotation: canon.signs?.flippedWidthForRotation,
+                confidence: canon.detected?.confidence,
+                sizeBbox: { x: szC.x, y: szC.y, z: szC.z },
+              });
+            } else {
+              console.warn("[omafit-ar] canonical quat: confiança baixa — fallback Y-90 X180");
+            }
+          } catch (e) {
+            console.warn("[omafit-ar] canonical quat falhou:", e?.message || e);
           }
-        } catch (e) {
-          console.warn("[omafit-ar] canonical quat falhou:", e?.message || e);
         }
       } else if (tripOffUseAuto && omafitArSkipTripCanonicalQuatDebug) {
         try {

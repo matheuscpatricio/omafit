@@ -3,6 +3,7 @@ import {
   computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
+  omafitGlassesGlbHasIngestWidgetFrameTag,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
@@ -600,7 +601,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-snap-v186";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-orient-v187";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11398,7 +11399,13 @@ async function runArSession({
       !glassesManualMindarRig
     ) {
       try {
-        if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
+        if (omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) {
+          glassesWorkerFrameRemapped = true;
+          console.log(
+            "[omafit-ar] glasses GLB ingest tag (frame widget, sem remap runtime)",
+            { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
+          );
+        } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
             "[omafit-ar] glasses GLB já em frame widget (+Y topo, −Z frente)",
@@ -11417,6 +11424,7 @@ async function runArSession({
         ) {
           if (
             !hasOmafitCanonicalNode &&
+            !omafitGlassesGlbHasIngestWidgetFrameTag(glasses) &&
             omafitEnsureGlassesBridgePointsUp(THREE, glasses)
           ) {
             console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {

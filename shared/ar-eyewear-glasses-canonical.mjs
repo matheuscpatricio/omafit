@@ -317,6 +317,19 @@ function applyWorldRotationToCanonicalRoot(doc, rotMat16) {
  * @param {import('@gltf-transform/core').Document} doc
  * @returns {boolean}
  */
+/**
+ * Marca GLB pós-ingest para o runtime não reaplicar remap/bridge por heurística de bbox.
+ * @param {import('@gltf-transform/core').Document} doc
+ */
+function markIngestWidgetFrameTag(doc) {
+  const wrap = doc.getRoot().listScenes()[0]?.listChildren().find(
+    (n) => n.getName() === "omafit_ar_canonical",
+  );
+  if (!wrap) return;
+  const prev = wrap.getExtras() || {};
+  wrap.setExtras({ ...prev, omafit_ar_canonical: 1, omafit_widget_frame: 1 });
+}
+
 function applyWidgetFrameRemap(doc) {
   if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_REMAP_WIDGET_FRAME || "1"))) {
     return false;
@@ -324,9 +337,16 @@ function applyWidgetFrameRemap(doc) {
   const scene = doc.getRoot().listScenes()[0];
   if (!scene) return false;
   const { sx, sy, sz } = bboxSizeFromScene(scene);
-  if (glassesExtentsMatchWidgetFrame(sx, sy, sz)) return true;
-  if (!glassesExtentsMatchRodinPreRemap(sx, sy, sz)) return false;
+  const isWidget = glassesExtentsMatchWidgetFrame(sx, sy, sz);
+  const isRodin = glassesExtentsMatchRodinPreRemap(sx, sy, sz);
+  // Só confiar em bbox widget se NÃO for ainda Rodin pós-snap (evita “virado pra cima” sem Rx(-90°)).
+  if (isWidget && !isRodin) {
+    markIngestWidgetFrameTag(doc);
+    return true;
+  }
+  if (!isRodin) return false;
   applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
+  markIngestWidgetFrameTag(doc);
   return true;
 }
 
@@ -358,6 +378,7 @@ function detectRimHeightSign(scene) {
   if (vertCount < 20) return 1;
   const spanY = maxY - minY;
   if (spanY <= 1e-9) return 1;
+  // Paridade Python `_ensure_bridge_at_plus_y` (quantis 92% / 8%).
   const yHi = maxY - spanY * 0.08;
   const yLo = minY + spanY * 0.08;
   let topMinX = Infinity;
@@ -393,8 +414,8 @@ function detectRimHeightSign(scene) {
   if (topCount < 8 || botCount < 8) return 1;
   const topSpread = topMaxX - topMinX;
   const botSpread = botMaxX - botMinX;
-  if (topSpread > botSpread * 1.08) return -1;
-  return 1;
+  if (botSpread <= 1e-9 || topSpread <= botSpread * 1.04) return 1;
+  return -1;
 }
 
 /** @param {import('@gltf-transform/core').Document} doc */
@@ -598,8 +619,12 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
   const depth = zMax - zMin;
   const spanY = yMax - yMin;
   if (depth <= 1e-8 || spanY <= 1e-8) return null;
-  const yLo = yMin + spanY * 0.12;
-  const yHi = yMax - spanY * 0.12;
+  const yTrim = Math.max(
+    0.06,
+    Math.min(0.14, Number(process.env.AR_POSTPROCESS_LENS_Y_TRIM_FRAC || "0.1")),
+  );
+  const yLo = yMin + spanY * yTrim;
+  const yHi = yMax - spanY * yTrim;
   const minEach = Math.max(8, Math.floor(triN * 0.015));
   const f = Math.max(0.1, Math.min(0.52, frac));
 
@@ -626,9 +651,7 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
 }
 
 /**
- * Escolhe o split onde a malha de lente é fina (≈ shell frontal em −Z).
- * 1ª passagem: faixa Y central (evita aro inferior no lens_glass).
- * 2ª passagem: paridade Python (sem faixa Y, fracs 0.22–0.45).
+ * Escolhe o split onde a malha de lente é fina (≈ shell frontal em −Z, faixa Y central).
  * @param {import('@gltf-transform/core').Primitive} prim
  * @param {number[]} worldMatrix
  */
@@ -645,32 +668,22 @@ function pickBestLensSplit(prim, worldMatrix) {
     ),
   ];
   const targetRatio = 0.12;
-  /** @type {{ pass: typeof passes[number], cand: NonNullable<ReturnType<typeof trySplitPrimitiveByZSide>> } | null} */
+  /** @type {ReturnType<typeof trySplitPrimitiveByZSide>} */
   let bestEntry = null;
   let bestScore = -Infinity;
 
-  const passes = [
-    { useYBand: true, minLensRatio: 0.02, maxLensRatio: 0.2 },
-    { useYBand: false, minLensRatio: 0.015, maxLensRatio: 0.52 },
-  ];
-
-  for (const pass of passes) {
-    for (const frac of fracs) {
-      const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ", pass);
-      if (!cand) continue;
-      const score =
-        1 -
-        cand.lensRatio -
-        Math.abs(cand.lensRatio - targetRatio) * 0.45 -
-        (pass.useYBand ? 0 : 0.02);
-      if (score > bestScore) {
-        bestScore = score;
-        bestEntry = { pass, cand };
-      }
+  // Só split com faixa Y (evita hastes/aro inferior classificados como lens_glass).
+  const pass = { useYBand: true, minLensRatio: 0.02, maxLensRatio: 0.22 };
+  for (const frac of fracs) {
+    const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ", pass);
+    if (!cand) continue;
+    const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - targetRatio) * 0.45;
+    if (score > bestScore) {
+      bestScore = score;
+      bestEntry = cand;
     }
-    if (bestEntry) return bestEntry.cand;
   }
-  return null;
+  return bestEntry;
 }
 
 /**

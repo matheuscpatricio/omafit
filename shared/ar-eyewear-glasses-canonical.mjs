@@ -56,22 +56,35 @@ function mat4RotateX180() {
  * @returns {{ sx: number, sy: number, sz: number }}
  */
 function bboxSizeFromScene(scene) {
-  const pts = collectWorldPositions(scene);
-  if (!pts.length) return { sx: 0, sy: 0, sz: 0 };
   let minX = Infinity;
   let minY = Infinity;
   let minZ = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
   let maxZ = -Infinity;
-  for (const p of pts) {
-    minX = Math.min(minX, p[0]);
-    minY = Math.min(minY, p[1]);
-    minZ = Math.min(minZ, p[2]);
-    maxX = Math.max(maxX, p[0]);
-    maxY = Math.max(maxY, p[1]);
-    maxZ = Math.max(maxZ, p[2]);
-  }
+  let has = false;
+  scene.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const wm = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute("POSITION");
+      if (!pos) continue;
+      const arr = pos.getArray();
+      const el = Math.max(3, pos.getElementSize() || 3);
+      for (let i = 0; i < arr.length; i += el) {
+        const wp = mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2]);
+        has = true;
+        minX = Math.min(minX, wp[0]);
+        minY = Math.min(minY, wp[1]);
+        minZ = Math.min(minZ, wp[2]);
+        maxX = Math.max(maxX, wp[0]);
+        maxY = Math.max(maxY, wp[1]);
+        maxZ = Math.max(maxZ, wp[2]);
+      }
+    }
+  });
+  if (!has) return { sx: 0, sy: 0, sz: 0 };
   return { sx: maxX - minX, sy: maxY - minY, sz: maxZ - minZ };
 }
 
@@ -120,29 +133,64 @@ function applyWidgetFrameRemap(doc) {
  * @returns {1|-1}
  */
 function detectRimHeightSign(scene) {
-  const pts = collectWorldPositions(scene);
-  if (pts.length < 20) return 1;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const p of pts) {
-    minY = Math.min(minY, p[1]);
-    maxY = Math.max(maxY, p[1]);
-  }
+  let vertCount = 0;
+  scene.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const wm = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute("POSITION");
+      if (!pos) continue;
+      const arr = pos.getArray();
+      const el = Math.max(3, pos.getElementSize() || 3);
+      vertCount += Math.floor(arr.length / el);
+      for (let i = 0; i < arr.length; i += el) {
+        const y = mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2])[1];
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  });
+  if (vertCount < 20) return 1;
   const spanY = maxY - minY;
   if (spanY <= 1e-9) return 1;
   const yHi = maxY - spanY * 0.08;
   const yLo = minY + spanY * 0.08;
-  /** @type {number[]} */
-  const topX = [];
-  /** @type {number[]} */
-  const botX = [];
-  for (const p of pts) {
-    if (p[1] >= yHi) topX.push(p[0]);
-    if (p[1] <= yLo) botX.push(p[0]);
-  }
-  if (topX.length < 8 || botX.length < 8) return 1;
-  const topSpread = Math.max(...topX) - Math.min(...topX);
-  const botSpread = Math.max(...botX) - Math.min(...botX);
+  let topMinX = Infinity;
+  let topMaxX = -Infinity;
+  let botMinX = Infinity;
+  let botMaxX = -Infinity;
+  let topCount = 0;
+  let botCount = 0;
+  scene.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const wm = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute("POSITION");
+      if (!pos) continue;
+      const arr = pos.getArray();
+      const el = Math.max(3, pos.getElementSize() || 3);
+      for (let i = 0; i < arr.length; i += el) {
+        const wp = mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2]);
+        if (wp[1] >= yHi) {
+          topCount++;
+          topMinX = Math.min(topMinX, wp[0]);
+          topMaxX = Math.max(topMaxX, wp[0]);
+        }
+        if (wp[1] <= yLo) {
+          botCount++;
+          botMinX = Math.min(botMinX, wp[0]);
+          botMaxX = Math.max(botMaxX, wp[0]);
+        }
+      }
+    }
+  });
+  if (topCount < 8 || botCount < 8) return 1;
+  const topSpread = topMaxX - topMinX;
+  const botSpread = botMaxX - botMinX;
   if (topSpread > botSpread * 1.08) return -1;
   return 1;
 }
@@ -177,10 +225,18 @@ function ensureCanonicalWrapNode(doc) {
   return wrap;
 }
 
-/** @param {import('@gltf-transform/core').Scene} scene */
-function collectWorldPositions(scene) {
-  /** @type {number[][]} */
-  const out = [];
+/**
+ * @param {import('@gltf-transform/core').Document} doc
+ * @param {number} targetWidthM
+ */
+function scaleDocToWidthX(doc, targetWidthM) {
+  const w = Number(targetWidthM);
+  if (!(w > 1e-6)) return;
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let has = false;
   scene.traverse((node) => {
     const mesh = node.getMesh();
     if (!mesh) return;
@@ -191,30 +247,14 @@ function collectWorldPositions(scene) {
       const arr = pos.getArray();
       const el = Math.max(3, pos.getElementSize() || 3);
       for (let i = 0; i < arr.length; i += el) {
-        out.push(mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2]));
+        const x = mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2])[0];
+        has = true;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
       }
     }
   });
-  return out;
-}
-
-/**
- * @param {import('@gltf-transform/core').Document} doc
- * @param {number} targetWidthM
- */
-function scaleDocToWidthX(doc, targetWidthM) {
-  const w = Number(targetWidthM);
-  if (!(w > 1e-6)) return;
-  const scene = doc.getRoot().listScenes()[0];
-  if (!scene) return;
-  const pts = collectWorldPositions(scene);
-  if (!pts.length) return;
-  let minX = Infinity;
-  let maxX = -Infinity;
-  for (const p of pts) {
-    minX = Math.min(minX, p[0]);
-    maxX = Math.max(maxX, p[0]);
-  }
+  if (!has) return;
   const span = maxX - minX;
   if (span <= 1e-9) return;
   const s = w / span;

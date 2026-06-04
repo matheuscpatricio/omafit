@@ -288,6 +288,39 @@ function ensureMaterialName(mat, name, opts = {}) {
 }
 
 /**
+ * Copia PBR sem Material.clone() — evita recursão profunda em extensões GLB Rodin.
+ * @param {import('@gltf-transform/core').Document} doc
+ * @param {import('@gltf-transform/core').Material | null} srcMat
+ * @param {string} name
+ */
+function copyPbrMaterialShallow(doc, srcMat, name) {
+  const mat = doc.createMaterial(name);
+  mat.setName(name);
+  if (!srcMat) return mat;
+  try {
+    mat.setBaseColorFactor([...srcMat.getBaseColorFactor()]);
+    mat.setMetallicFactor(srcMat.getMetallicFactor());
+    mat.setRoughnessFactor(srcMat.getRoughnessFactor());
+    mat.setDoubleSided(srcMat.getDoubleSided());
+    mat.setAlphaMode(srcMat.getAlphaMode());
+    const bcTex = srcMat.getBaseColorTexture();
+    if (bcTex) mat.setBaseColorTexture(bcTex);
+    const mrTex = srcMat.getMetallicRoughnessTexture();
+    if (mrTex) mat.setMetallicRoughnessTexture(mrTex);
+    const nTex = srcMat.getNormalTexture();
+    if (nTex) mat.setNormalTexture(nTex);
+    const oTex = srcMat.getOcclusionTexture();
+    if (oTex) mat.setOcclusionTexture(oTex);
+    const eTex = srcMat.getEmissiveTexture();
+    if (eTex) mat.setEmissiveTexture(eTex);
+    mat.setEmissiveFactor([...srcMat.getEmissiveFactor()]);
+  } catch {
+    /* defaults */
+  }
+  return mat;
+}
+
+/**
  * @param {import('@gltf-transform/core').Document} doc
  * @param {import('@gltf-transform/core').Material | null} srcMat
  * @param {string} matName
@@ -298,14 +331,7 @@ function materialForSplitPart(doc, srcMat, matName) {
     ensureMaterialName(mat, "lens_glass", { lensExport: true });
     return mat;
   }
-  if (srcMat) {
-    const mat = srcMat.clone();
-    mat.setName("frame_metal");
-    return mat;
-  }
-  const mat = doc.createMaterial("frame_metal");
-  mat.setName("frame_metal");
-  return mat;
+  return copyPbrMaterialShallow(doc, srcMat, "frame_metal");
 }
 
 /**

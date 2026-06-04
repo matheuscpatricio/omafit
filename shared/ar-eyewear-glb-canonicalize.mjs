@@ -126,6 +126,19 @@ function estimateNasalBridgePivotInRotSpace(rot) {
   return [(cL[0] + cR[0]) * 0.5, (cL[1] + cR[1]) * 0.5, (cL[2] + cR[2]) * 0.5];
 }
 
+/** Min/max numérico de um eixo em pontos [x,y,z] sem spread (malhas densas). */
+function axisSpread(points, axisIdx) {
+  if (!points.length) return 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < points.length; i++) {
+    const v = points[i][axisIdx];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return max - min;
+}
+
 function collectWorldPositions(scene) {
   const out = [];
   scene.traverse((node) => {
@@ -260,8 +273,8 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
         const tC = cb.filter((p) => p[1] > 0);
         const bC = cb.filter((p) => p[1] < 0);
         if (tC.length > 2 && bC.length > 2) {
-          const tZS = Math.max(...tC.map((p) => p[2])) - Math.min(...tC.map((p) => p[2]));
-          const bZS = Math.max(...bC.map((p) => p[2])) - Math.min(...bC.map((p) => p[2]));
+          const tZS = axisSpread(tC, 2);
+          const bZS = axisSpread(bC, 2);
           if (tZS > bZS * 1.08) signFlipY = true;
         }
       }
@@ -272,8 +285,8 @@ export async function canonicalizeArEyewearGlbBuffer(buf) {
         const sn = Math.max(8, Math.floor(sortedY.length * 0.08));
         const bSlice = sortedY.slice(0, sn);
         const tSlice = sortedY.slice(sortedY.length - sn);
-        const tXSp = Math.max(...tSlice.map((p) => p[0])) - Math.min(...tSlice.map((p) => p[0]));
-        const bXSp = Math.max(...bSlice.map((p) => p[0])) - Math.min(...bSlice.map((p) => p[0]));
+        const tXSp = axisSpread(tSlice, 0);
+        const bXSp = axisSpread(bSlice, 0);
         if (tXSp > bXSp * 1.08) signFlipY = true;
       }
       const outer = rot.filter((p) => Math.abs(p[0]) > sHW * 0.6);

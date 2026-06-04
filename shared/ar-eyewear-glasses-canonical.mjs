@@ -80,23 +80,46 @@ function scaleDocToWidthX(doc, targetWidthM) {
 /**
  * @param {import('@gltf-transform/core').Material} mat
  * @param {string} name
+ * @param {{ lensExport?: boolean }} [opts]
  */
-function ensureMaterialName(mat, name) {
+function ensureMaterialName(mat, name, opts = {}) {
   if (!mat) return;
   mat.setName(name);
-  if (mat.getBaseColorFactor()[3] < 0.99 && /lens_glass/i.test(name)) {
-    /* mantém alpha do export */
-  } else if (/lens_glass/i.test(name)) {
-    mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.52]);
+  if (!/lens_glass/i.test(name)) return;
+  if (!opts.lensExport) return;
+  const bc = mat.getBaseColorFactor();
+  if (bc[3] < 0.99) return;
+  mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.52]);
+}
+
+/**
+ * @param {import('@gltf-transform/core').Document} doc
+ * @param {import('@gltf-transform/core').Material | null} srcMat
+ * @param {string} matName
+ */
+function materialForSplitPart(doc, srcMat, matName) {
+  if (/lens_glass/i.test(matName)) {
+    const mat = doc.createMaterial("lens_glass");
+    ensureMaterialName(mat, "lens_glass", { lensExport: true });
+    return mat;
   }
+  if (srcMat) {
+    const mat = srcMat.clone();
+    mat.setName("frame_metal");
+    return mat;
+  }
+  const mat = doc.createMaterial("frame_metal");
+  mat.setName("frame_metal");
+  return mat;
 }
 
 /**
  * @param {import('@gltf-transform/core').Primitive} prim
  * @param {number[]} worldMatrix
  * @param {number} frac
+ * @param {"minZ" | "maxZ"} lensSide
  */
-function trySplitPrimitiveByFrontZ(prim, worldMatrix, frac) {
+function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
   const posAttr = prim.getAttribute("POSITION");
   if (!posAttr) return null;
   const pos = posAttr.getArray();
@@ -138,31 +161,74 @@ function trySplitPrimitiveByFrontZ(prim, worldMatrix, frac) {
   const depth = zMax - zMin;
   if (depth <= 1e-8) return null;
   const minEach = Math.max(8, Math.floor(triN * 0.015));
-  const f = Math.max(0.1, Math.min(0.52, frac));
-  const thresh = zMin + depth * f;
-  /** @type {number[]} */
-  const frontTris = [];
-  /** @type {number[]} */
-  const backTris = [];
-  for (let t = 0; t < triN; t++) {
-    if (zCent[t] <= thresh) frontTris.push(t);
-    else backTris.push(t);
-  }
-  if (frontTris.length < minEach || backTris.length < minEach) return null;
+  const f = Math.max(0.08, Math.min(0.34, frac));
 
-  return { frontTris, backTris, indices, pos, el, prim };
+  /** @type {number[]} */
+  const lensTris = [];
+  /** @type {number[]} */
+  const frameTris = [];
+  for (let t = 0; t < triN; t++) {
+    const z = zCent[t];
+    const isLens =
+      lensSide === "minZ"
+        ? z <= zMin + depth * f
+        : z >= zMax - depth * f;
+    if (isLens) lensTris.push(t);
+    else frameTris.push(t);
+  }
+  if (lensTris.length < minEach || frameTris.length < minEach) return null;
+
+  const lensRatio = lensTris.length / triN;
+  if (lensRatio > 0.32 || lensRatio < 0.025) return null;
+
+  return { lensTris, frameTris, indices, pos, el, prim, lensSide, lensRatio, frac: f };
+}
+
+/**
+ * Escolhe o split onde a malha de lente é fina (≈ shell frontal), testando −Z e +Z.
+ * @param {import('@gltf-transform/core').Primitive} prim
+ * @param {number[]} worldMatrix
+ */
+function pickBestLensSplit(prim, worldMatrix) {
+  let fracDefault = 0.18;
+  try {
+    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.18");
+  } catch {
+    /* ignore */
+  }
+  const fracs = [
+    ...new Set(
+      [fracDefault, 0.12, 0.14, 0.16, 0.2, 0.22, 0.24, 0.28].map(
+        (f) => Math.round(f * 1000) / 1000,
+      ),
+    ),
+  ];
+  /** @type {ReturnType<typeof trySplitPrimitiveByZSide> | null} */
+  let best = null;
+  let bestScore = -Infinity;
+  for (const side of /** @type {const} */ (["minZ", "maxZ"])) {
+    for (const frac of fracs) {
+      const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, side);
+      if (!cand) continue;
+      const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.14) * 0.35;
+      if (score > bestScore) {
+        bestScore = score;
+        best = cand;
+      }
+    }
+  }
+  return best;
 }
 
 /**
  * @param {import('@gltf-transform/core').Document} doc
  * @param {import('@gltf-transform/core').Primitive} srcPrim
- * @param {ReturnType<typeof trySplitPrimitiveByFrontZ>} split
+ * @param {ReturnType<typeof trySplitPrimitiveByZSide>} split
  * @param {number[]} triList
  * @param {string} matName
  */
 function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
   const { indices, pos, el } = split;
-  const root = doc.getRoot();
   /** @type {Map<number, number>} */
   const vmap = new Map();
   /** @type {number[]} */
@@ -173,10 +239,13 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
 
   const normalSrc = srcPrim.getAttribute("NORMAL");
   const uvSrc = srcPrim.getAttribute("TEXCOORD_0");
+  const colorSrc = srcPrim.getAttribute("COLOR_0");
   /** @type {number[]} */
   const newNorm = normalSrc ? [] : null;
   /** @type {number[]} */
   const newUv = uvSrc ? [] : null;
+  /** @type {number[]} */
+  const newColor = colorSrc ? [] : null;
 
   for (const t of triList) {
     for (let k = 0; k < 3; k++) {
@@ -195,6 +264,11 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
           const arr = uvSrc.getArray();
           const sz = uvSrc.getElementSize() || 2;
           for (let c = 0; c < sz; c++) newUv.push(arr[vi * sz + c]);
+        }
+        if (newColor && colorSrc) {
+          const arr = colorSrc.getArray();
+          const sz = colorSrc.getElementSize() || 4;
+          for (let c = 0; c < sz; c++) newColor.push(arr[vi * sz + c]);
         }
       }
       newIdx.push(nv);
@@ -227,6 +301,15 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
         .setArray(new Float32Array(newUv)),
     );
   }
+  if (newColor?.length) {
+    prim.setAttribute(
+      "COLOR_0",
+      doc
+        .createAccessor()
+        .setType("VEC4")
+        .setArray(new Float32Array(newColor)),
+    );
+  }
   prim.setIndices(
     doc
       .createAccessor()
@@ -235,19 +318,7 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
   );
 
   const srcMat = srcPrim.getMaterial();
-  let mat = srcMat;
-  if (!mat || matName === "lens_glass") {
-    mat = doc.createMaterial(matName);
-    ensureMaterialName(mat, matName);
-    if (srcMat && matName === "frame_metal") {
-      mat.setBaseColorFactor(srcMat.getBaseColorFactor());
-      mat.setMetallicFactor(srcMat.getMetallicFactor());
-      mat.setRoughnessFactor(srcMat.getRoughnessFactor());
-    }
-  } else {
-    ensureMaterialName(mat, matName);
-  }
-  prim.setMaterial(mat);
+  prim.setMaterial(materialForSplitPart(doc, srcMat, matName));
 
   const mesh = doc.createMesh(matName);
   mesh.addPrimitive(prim);
@@ -277,34 +348,21 @@ function splitMonolithicGlassesLens(doc) {
   if (!srcMesh || srcMesh.listPrimitives().length !== 1) return false;
   const srcPrim = srcMesh.listPrimitives()[0];
   const wm = srcNode.getWorldMatrix();
-
-  let fracDefault = 0.28;
-  try {
-    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.28");
-  } catch {
-    /* ignore */
-  }
-  const fracs = [...new Set([fracDefault, 0.22, 0.32, 0.38, 0.45].map((f) => Math.round(f * 1000) / 1000))];
-
-  let split = null;
-  for (const frac of fracs) {
-    split = trySplitPrimitiveByFrontZ(srcPrim, wm, frac);
-    if (split) break;
-  }
+  const split = pickBestLensSplit(srcPrim, wm);
   if (!split) return false;
 
   const frameMesh = buildMeshFromTriangles(
     doc,
     srcPrim,
     split,
-    split.backTris,
+    split.frameTris,
     "frame_metal",
   );
   const lensMesh = buildMeshFromTriangles(
     doc,
     srcPrim,
     split,
-    split.frontTris,
+    split.lensTris,
     "lens_glass",
   );
 
@@ -375,7 +433,11 @@ function tagExistingMultiMeshMaterials(doc) {
     ensureMaterialName(prim.getMaterial() || doc.createMaterial("frame_metal"), "frame_metal");
   }
   for (const prim of lensNode.getMesh()?.listPrimitives() || []) {
-    ensureMaterialName(prim.getMaterial() || doc.createMaterial("lens_glass"), "lens_glass");
+    ensureMaterialName(
+      prim.getMaterial() || doc.createMaterial("lens_glass"),
+      "lens_glass",
+      { lensExport: true },
+    );
   }
 }
 

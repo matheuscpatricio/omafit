@@ -122,6 +122,11 @@ function applyWidgetFrameRemap(doc) {
     { v: sy, i: 1 },
     { v: sz, i: 2 },
   ].sort((a, b) => a.v - b.v);
+  // Já no frame widget: Z fino, Y altura, X largura
+  if (dims[0].i === 2 && dims[1].i === 1 && dims[2].i === 0) {
+    return dims[1].v > dims[0].v * 1.05;
+  }
+  // Pré-remap Rodin: Y fino, Z médio, X largo
   if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
   if (dims[1].v <= dims[0].v * 1.05) return false;
   applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
@@ -411,15 +416,15 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
  * @param {number[]} worldMatrix
  */
 function pickBestLensSplit(prim, worldMatrix) {
-  let fracDefault = 0.18;
+  let fracDefault = 0.14;
   try {
-    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.18");
+    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.14");
   } catch {
     /* ignore */
   }
   const fracs = [
     ...new Set(
-      [fracDefault, 0.12, 0.14, 0.16, 0.2, 0.22, 0.24, 0.28].map(
+      [fracDefault, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2].map(
         (f) => Math.round(f * 1000) / 1000,
       ),
     ),
@@ -427,15 +432,14 @@ function pickBestLensSplit(prim, worldMatrix) {
   /** @type {ReturnType<typeof trySplitPrimitiveByZSide> | null} */
   let best = null;
   let bestScore = -Infinity;
-  for (const side of /** @type {const} */ (["minZ", "maxZ"])) {
-    for (const frac of fracs) {
-      const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, side);
-      if (!cand) continue;
-      const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.14) * 0.35;
-      if (score > bestScore) {
-        bestScore = score;
-        best = cand;
-      }
+  // Paridade Python/trimesh: frente das lentes em −Z após remap widget.
+  for (const frac of fracs) {
+    const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ");
+    if (!cand) continue;
+    const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.12) * 0.4;
+    if (score > bestScore) {
+      bestScore = score;
+      best = cand;
     }
   }
   return best;

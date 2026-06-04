@@ -381,10 +381,11 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
     { v: sz.y, i: 1 },
     { v: sz.z, i: 2 },
   ].sort((a, b) => a.v - b.v);
+  // Contrato widget: X largo, Y altura (médio), Z profundidade (fino).
+  // Não confundir com Rodin pré-remap (Y fino, Z médio, X largo).
   if (dims[2].i !== 0) return false;
-  if (dims[0].i === 2 && dims[1].i === 1) return dims[1].v > dims[0].v * 1.05;
-  if (dims[0].i === 1 && dims[1].i === 2) return dims[1].v > dims[0].v * 1.05;
-  return false;
+  if (dims[0].i !== 2 || dims[1].i !== 1) return false;
+  return dims[1].v > dims[0].v * 1.05;
 }
 
 /**

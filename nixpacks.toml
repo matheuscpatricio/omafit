@@ -1,0 +1,11 @@
+# Fallback se o Railway não usar Dockerfile (python3 + trimesh para run_recipe no Node).
+[phases.setup]
+nixPkgs = ["python311", "python311Packages.pip", "python311Packages.numpy"]
+
+[phases.install]
+cmds = [
+  "python3 -m pip install --user 'trimesh>=4.0.0'",
+]
+
+[variables]
+AR_MESH_PYTHON = "python3"

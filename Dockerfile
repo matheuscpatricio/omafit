@@ -1,4 +1,4 @@
-# redeploy-trigger: 2026-06-03 (Python + trimesh para run_recipe glasses_canonical no Node)
+# redeploy-trigger: 2026-06-03b (venv /opt/ar-mesh-venv + AR_MESH_PYTHON)
 # Estágio 1: build (precisa de devDependencies: vite, react-router, etc.)
 # Espelho oficial em ECR Public — evita auth.docker.io (IPv6 / rede inacessível em alguns CI).
 # @see https://gallery.ecr.aws/docker/library/node
@@ -18,13 +18,16 @@ RUN npm run build
 # Estágio 2: produção (só o necessário para rodar)
 FROM public.ecr.aws/docker/library/node:20-alpine
 RUN apk add --no-cache openssl python3 py3-pip py3-numpy \
-  && pip3 install --no-cache-dir --break-system-packages "trimesh>=4.0.0"
+  && python3 -m venv /opt/ar-mesh-venv \
+  && /opt/ar-mesh-venv/bin/pip install --no-cache-dir "trimesh>=4.0.0" "numpy>=1.24.0"
 
 EXPOSE 3000
 
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV AR_MESH_PYTHON=/opt/ar-mesh-venv/bin/python3
+ENV PATH="/opt/ar-mesh-venv/bin:${PATH}"
 
 COPY package.json package-lock.json* ./
 

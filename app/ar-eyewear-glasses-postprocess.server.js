@@ -9,7 +9,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
-import { resolvePythonLaunch } from "./ar-mesh-python-bin.server.js";
+import {
+  logPythonProbeOnce,
+  probePythonForRunRecipe,
+  resolvePythonLaunch,
+} from "./ar-mesh-python-bin.server.js";
+
+logPythonProbeOnce();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OMAFIT_ROOT = path.join(__dirname, "..");
@@ -94,6 +100,19 @@ export async function postprocessRodinGlassesGlbBuffer(glbBuf, opts = {}) {
     !/^(0|false|no)$/i.test(String(process.env.AR_MESH_NODE_RUN_RECIPE || "1").trim());
 
   if (useSubprocess) {
+    const pyProbe = probePythonForRunRecipe();
+    if (!pyProbe.ok) {
+      const allowFallback = /^(1|true|yes|on)$/i.test(
+        String(process.env.AR_MESH_RUN_RECIPE_FALLBACK || "").trim(),
+      );
+      if (!allowFallback) {
+        throw new Error(
+          `run_recipe indisponível (${recipe}): ${pyProbe.message}. ` +
+            "Redeploy Railway (Dockerfile com venv) ou defina AR_MESH_PYTHON. " +
+            "AR_MESH_RUN_RECIPE_FALLBACK=1 usa canonicalize legado (sem split lens_glass).",
+        );
+      }
+    }
     const tmp = await mkdtemp(path.join(tmpdir(), "omafit-glasses-pp-"));
     const inp = path.join(tmp, "rodin_raw.glb");
     const out = path.join(tmp, "canonical.glb");

@@ -354,8 +354,8 @@ export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
     { v: sz.y, i: 1 },
     { v: sz.z, i: 2 },
   ].sort((a, b) => a.v - b.v);
-  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
-  if (dims[1].v <= dims[0].v * 1.05) return false;
+  if (dims[2].i !== 0) return false;
+  if (dims[0].i !== 1) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
   glasses.updateMatrixWorld(true);
@@ -386,6 +386,23 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
   if (dims[2].i !== 0) return false;
   if (dims[0].i !== 2 || dims[1].i !== 1) return false;
   return dims[1].v > dims[0].v * 1.05;
+}
+
+/**
+ * GLB pós-ingest Node/Python com extras `omafit_widget_frame` no nó canónico.
+ * @param {any} root
+ * @returns {boolean}
+ */
+export function omafitGlassesGlbHasIngestWidgetFrameTag(root) {
+  if (!root?.traverse) return false;
+  let tagged = false;
+  root.traverse((obj) => {
+    if (tagged || String(obj?.name || "") !== "omafit_ar_canonical") return;
+    const ud = obj.userData || {};
+    const ex = ud.omafit_widget_frame ?? ud.extras?.omafit_widget_frame;
+    if (ex === 1 || ex === true) tagged = true;
+  });
+  return tagged;
 }
 
 /**

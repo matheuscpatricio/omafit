@@ -105,6 +105,16 @@ function applyWorldRotationToCanonicalRoot(doc, rotMat16) {
   }
 }
 
+/** @param {import('@gltf-transform/core').Document} doc */
+function tagIngestWidgetFrame(doc) {
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return;
+  const canonical = scene.listChildren().find((n) => n.getName() === "omafit_ar_canonical");
+  const target = canonical || scene.listChildren()[0];
+  if (!target) return;
+  target.setExtras({ ...(target.getExtras() || {}), omafit_widget_frame: 1 });
+}
+
 /**
  * Rodin hard-canonical (Y fino, Z médio, X largo) → frame widget (+Y topo, −Z frente).
  * @param {import('@gltf-transform/core').Document} doc
@@ -122,15 +132,19 @@ function applyWidgetFrameRemap(doc) {
     { v: sy, i: 1 },
     { v: sz, i: 2 },
   ].sort((a, b) => a.v - b.v);
+  if (dims[2].i !== 0) return false;
   // Já no frame widget: Z fino, Y altura, X largura
-  if (dims[0].i === 2 && dims[1].i === 1 && dims[2].i === 0) {
-    return dims[1].v > dims[0].v * 1.05;
+  if (dims[0].i === 2 && dims[1].i === 1) {
+    tagIngestWidgetFrame(doc);
+    return true;
   }
-  // Pré-remap Rodin: Y fino, Z médio, X largo
-  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
-  if (dims[1].v <= dims[0].v * 1.05) return false;
-  applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
-  return true;
+  // Pré-remap Rodin: Y fino (sem exigir folga Y≪Z — evita saltar remap)
+  if (dims[0].i === 1) {
+    applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
+    tagIngestWidgetFrame(doc);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -364,7 +378,11 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
 
   /** @type {number[]} */
   const zCent = [];
+  /** @type {number[]} */
+  const yCent = [];
   for (let t = 0; t < triN; t++) {
+    let sx = 0;
+    let sy = 0;
     let sz = 0;
     for (let k = 0; k < 3; k++) {
       const vi = indices[t * 3 + k];
@@ -374,10 +392,22 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
         pos[vi * el + 1],
         pos[vi * el + 2],
       );
+      sx += wp[0];
+      sy += wp[1];
       sz += wp[2];
     }
+    yCent.push(sy / 3);
     zCent.push(sz / 3);
   }
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  for (const y of yCent) {
+    yMin = Math.min(yMin, y);
+    yMax = Math.max(yMax, y);
+  }
+  const spanY = yMax - yMin;
+  const yLensMin = spanY > 1e-8 ? yMin + spanY * 0.12 : -Infinity;
+
   let zMin = Infinity;
   let zMax = -Infinity;
   for (const z of zCent) {
@@ -387,7 +417,7 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
   const depth = zMax - zMin;
   if (depth <= 1e-8) return null;
   const minEach = Math.max(8, Math.floor(triN * 0.015));
-  const f = Math.max(0.08, Math.min(0.34, frac));
+  const f = Math.max(0.06, Math.min(0.22, frac));
 
   /** @type {number[]} */
   const lensTris = [];
@@ -395,10 +425,11 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
   const frameTris = [];
   for (let t = 0; t < triN; t++) {
     const z = zCent[t];
-    const isLens =
+    const isFrontShell =
       lensSide === "minZ"
         ? z <= zMin + depth * f
         : z >= zMax - depth * f;
+    const isLens = isFrontShell && yCent[t] >= yLensMin;
     if (isLens) lensTris.push(t);
     else frameTris.push(t);
   }
@@ -416,15 +447,15 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
  * @param {number[]} worldMatrix
  */
 function pickBestLensSplit(prim, worldMatrix) {
-  let fracDefault = 0.14;
+  let fracDefault = 0.1;
   try {
-    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.14");
+    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.1");
   } catch {
     /* ignore */
   }
   const fracs = [
     ...new Set(
-      [fracDefault, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2].map(
+      [fracDefault, 0.08, 0.1, 0.12, 0.14].map(
         (f) => Math.round(f * 1000) / 1000,
       ),
     ),

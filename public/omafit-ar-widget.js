@@ -3,6 +3,7 @@ import {
   computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
+  omafitGlassesGlbHasIngestWidgetFrameTag,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
@@ -600,7 +601,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-frame-fix-v184";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-frame-fix-v185";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11313,8 +11314,13 @@ async function runArSession({
      * resultado bate exato no AR.
      */
     let hasOmafitCanonicalNode = false;
+    let ingestWidgetFrameTagged = false;
     glasses.traverse((obj) => {
-      if (obj && obj.name === "omafit_ar_canonical") hasOmafitCanonicalNode = true;
+      if (!obj || obj.name !== "omafit_ar_canonical") return;
+      hasOmafitCanonicalNode = true;
+      const ud = obj.userData || {};
+      const ex = ud.omafit_widget_frame ?? ud.extras?.omafit_widget_frame;
+      if (ex === 1 || ex === true) ingestWidgetFrameTagged = true;
     });
     const necklaceCanonicalBlenderExport =
       accessoryType === "necklace" &&
@@ -11398,7 +11404,13 @@ async function runArSession({
       !glassesManualMindarRig
     ) {
       try {
-        if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
+        if (ingestWidgetFrameTagged) {
+          glassesWorkerFrameRemapped = true;
+          console.log(
+            "[omafit-ar] glasses GLB ingest widget frame (extras omafit_widget_frame)",
+            { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
+          );
+        } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
             "[omafit-ar] glasses GLB já em frame widget (+Y topo, −Z frente)",
@@ -11411,11 +11423,7 @@ async function runArSession({
             { build: OMAFIT_AR_WIDGET_BUILD },
           );
         }
-        if (
-          glassesWorkerFrameRemapped ||
-          hasOmafitCanonicalNode ||
-          omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)
-        ) {
+        if (glassesWorkerFrameRemapped && !hasOmafitCanonicalNode) {
           if (omafitEnsureGlassesBridgePointsUp(THREE, glasses)) {
             console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
               build: OMAFIT_AR_WIDGET_BUILD,

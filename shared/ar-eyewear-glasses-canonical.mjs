@@ -1,7 +1,7 @@
 /**
  * Pós-processo `glasses_canonical` em Node (@gltf-transform) — sem Python/trimesh.
  * Paridade mínima com `trimesh_pipeline.process_glasses_canonical`:
- * canonicalize → escala largura X → split monolítico −Z → nós omafit_lens / omafit_frame.
+ * canonicalize → remap widget frame → bridge-up → escala largura X → split −Z → nós omafit_lens / omafit_frame.
  */
 import { WebIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
@@ -22,6 +22,159 @@ function mulMat4Vec3(m, x, y, z) {
     m[1] * x + m[5] * y + m[9] * z + m[13],
     m[2] * x + m[6] * y + m[10] * z + m[14],
   ];
+}
+
+/** Column-major 4×4 multiply: out = a × b */
+function multiplyMat4(a, b) {
+  const out = new Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      out[c * 4 + r] =
+        a[0 * 4 + r] * b[c * 4 + 0] +
+        a[1 * 4 + r] * b[c * 4 + 1] +
+        a[2 * 4 + r] * b[c * 4 + 2] +
+        a[3 * 4 + r] * b[c * 4 + 3];
+    }
+  }
+  return out;
+}
+
+/** Rotação −90° em X (paridade `_remap_glasses_worker_frame_to_widget`). */
+function mat4RotateXNeg90() {
+  const c = 0;
+  const s = -1;
+  return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
+}
+
+/** Rotação 180° em X (paridade `_ensure_bridge_at_plus_y`). */
+function mat4RotateX180() {
+  return [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
+}
+
+/**
+ * @param {import('@gltf-transform/core').Scene} scene
+ * @returns {{ sx: number, sy: number, sz: number }}
+ */
+function bboxSizeFromScene(scene) {
+  const pts = collectWorldPositions(scene);
+  if (!pts.length) return { sx: 0, sy: 0, sz: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p[0]);
+    minY = Math.min(minY, p[1]);
+    minZ = Math.min(minZ, p[2]);
+    maxX = Math.max(maxX, p[0]);
+    maxY = Math.max(maxY, p[1]);
+    maxZ = Math.max(maxZ, p[2]);
+  }
+  return { sx: maxX - minX, sy: maxY - minY, sz: maxZ - minZ };
+}
+
+/**
+ * @param {import('@gltf-transform/core').Document} doc
+ * @param {number[]} rotMat16
+ */
+function applyWorldRotationToCanonicalRoot(doc, rotMat16) {
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return;
+  const canonical = scene.listChildren().find((n) => n.getName() === "omafit_ar_canonical");
+  if (canonical) {
+    canonical.setMatrix(multiplyMat4(rotMat16, canonical.getMatrix()));
+    return;
+  }
+  for (const child of scene.listChildren()) {
+    child.setMatrix(multiplyMat4(rotMat16, child.getMatrix()));
+  }
+}
+
+/**
+ * Rodin hard-canonical (Y fino, Z médio, X largo) → frame widget (+Y topo, −Z frente).
+ * @param {import('@gltf-transform/core').Document} doc
+ * @returns {boolean}
+ */
+function applyWidgetFrameRemap(doc) {
+  if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_REMAP_WIDGET_FRAME || "1"))) {
+    return false;
+  }
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return false;
+  const { sx, sy, sz } = bboxSizeFromScene(scene);
+  const dims = [
+    { v: sx, i: 0 },
+    { v: sy, i: 1 },
+    { v: sz, i: 2 },
+  ].sort((a, b) => a.v - b.v);
+  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
+  if (dims[1].v <= dims[0].v * 1.05) return false;
+  applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
+  return true;
+}
+
+/**
+ * @param {import('@gltf-transform/core').Scene} scene
+ * @returns {1|-1}
+ */
+function detectRimHeightSign(scene) {
+  const pts = collectWorldPositions(scene);
+  if (pts.length < 20) return 1;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    minY = Math.min(minY, p[1]);
+    maxY = Math.max(maxY, p[1]);
+  }
+  const spanY = maxY - minY;
+  if (spanY <= 1e-9) return 1;
+  const yHi = maxY - spanY * 0.08;
+  const yLo = minY + spanY * 0.08;
+  /** @type {number[]} */
+  const topX = [];
+  /** @type {number[]} */
+  const botX = [];
+  for (const p of pts) {
+    if (p[1] >= yHi) topX.push(p[0]);
+    if (p[1] <= yLo) botX.push(p[0]);
+  }
+  if (topX.length < 8 || botX.length < 8) return 1;
+  const topSpread = Math.max(...topX) - Math.min(...topX);
+  const botSpread = Math.max(...botX) - Math.min(...botX);
+  if (topSpread > botSpread * 1.08) return -1;
+  return 1;
+}
+
+/** @param {import('@gltf-transform/core').Document} doc */
+function applyBridgeUpFix(doc) {
+  if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_BRIDGE_UP || "1"))) {
+    return false;
+  }
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return false;
+  if (detectRimHeightSign(scene) >= 0) return false;
+  applyWorldRotationToCanonicalRoot(doc, mat4RotateX180());
+  return true;
+}
+
+/**
+ * @param {import('@gltf-transform/core').Document} doc
+ * @returns {import('@gltf-transform/core').Node}
+ */
+function ensureCanonicalWrapNode(doc) {
+  const scene = doc.getRoot().listScenes()[0];
+  let wrap = scene.listChildren().find((n) => n.getName() === "omafit_ar_canonical");
+  if (wrap) return wrap;
+  wrap = doc.createNode("omafit_ar_canonical");
+  const kids = scene.listChildren().slice();
+  for (const k of kids) {
+    scene.removeChild(k);
+    wrap.addChild(k);
+  }
+  scene.addChild(wrap);
+  return wrap;
 }
 
 /** @param {import('@gltf-transform/core').Scene} scene */
@@ -90,6 +243,8 @@ function ensureMaterialName(mat, name, opts = {}) {
   const bc = mat.getBaseColorFactor();
   if (bc[3] < 0.99) return;
   mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.52]);
+  mat.setAlphaMode("BLEND");
+  mat.setDoubleSided(true);
 }
 
 /**
@@ -366,13 +521,13 @@ function splitMonolithicGlassesLens(doc) {
     "lens_glass",
   );
 
-  const parent = srcNode.getParentNode();
-  if (parent) parent.removeChild(srcNode);
+  const parent = srcNode.getParentNode() || ensureCanonicalWrapNode(doc);
 
   const frameNode = doc.createNode("omafit_frame").setMesh(frameMesh);
   const lensNode = doc.createNode("omafit_lens").setMesh(lensMesh);
-  scene.addChild(frameNode);
-  scene.addChild(lensNode);
+  if (parent !== srcNode) parent.removeChild(srcNode);
+  parent.addChild(frameNode);
+  parent.addChild(lensNode);
   return true;
 }
 
@@ -454,6 +609,9 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
   const doc = await io.readBinary(toUint8(canonical));
 
+  ensureCanonicalWrapNode(doc);
+  applyWidgetFrameRemap(doc);
+  applyBridgeUpFix(doc);
   scaleDocToWidthX(doc, targetW);
 
   const splitOk = splitMonolithicGlassesLens(doc);

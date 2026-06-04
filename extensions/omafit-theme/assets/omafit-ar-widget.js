@@ -64,6 +64,7 @@ import {
   omafitResolveGlassesRenderFlags,
   omafitGlassesAllowsPhysicalLenses,
   omafitIsGlassesLensMaterial,
+  omafitResolveOcclusionFlags,
 } from "./omafit-ar-manifest.js";
 import {
   omafitApplyMetaRendererPixelRatio,
@@ -599,7 +600,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-lens-once-v182";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-03-ar-glasses-orient-lens-v183";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11397,7 +11398,7 @@ async function runArSession({
       !glassesManualMindarRig
     ) {
       try {
-        if (hasOmafitCanonicalNode || omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
+        if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
             "[omafit-ar] glasses GLB já em frame widget (+Y topo, −Z frente)",

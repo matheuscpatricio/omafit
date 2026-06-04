@@ -308,7 +308,7 @@ function splitMonolithicGlassesLens(doc) {
     "lens_glass",
   );
 
-  const parent = srcNode.getParent();
+  const parent = srcNode.getParentNode();
   if (parent) parent.removeChild(srcNode);
 
   const frameNode = doc.createNode("omafit_frame").setMesh(frameMesh);

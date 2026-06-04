@@ -1,4 +1,4 @@
-# redeploy-trigger: 2026-06-03c (Node glasses_canonical — sem Python)
+# redeploy-trigger: 2026-06-04 (fix getParentNode gltf-transform v4)
 # Estágio 1: build (precisa de devDependencies: vite, react-router, etc.)
 # Espelho oficial em ECR Public — evita auth.docker.io (IPv6 / rede inacessível em alguns CI).
 # @see https://gallery.ecr.aws/docker/library/node

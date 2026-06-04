@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
+import { resolvePythonLaunch } from "./ar-mesh-python-bin.server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OMAFIT_ROOT = path.join(__dirname, "..");
@@ -28,16 +29,17 @@ const RUN_RECIPE_SCRIPT = path.join(
  * @param {Record<string, unknown>} params
  * @returns {Promise<void>}
  */
-function runRecipeSubprocess(bin, recipe, inp, out, params) {
+function runRecipeSubprocess(launch, recipe, inp, out, params) {
   const paramsJson = JSON.stringify(params || {});
   const timeoutMs = Math.max(
     30_000,
     Number(process.env.AR_MESH_RUN_RECIPE_TIMEOUT_MS || 180_000) || 180_000,
   );
+  const { bin, prefixArgs } = launch;
   return new Promise((resolve, reject) => {
     const proc = spawn(
       bin,
-      [RUN_RECIPE_SCRIPT, recipe, inp, out, paramsJson],
+      [...prefixArgs, RUN_RECIPE_SCRIPT, recipe, inp, out, paramsJson],
       {
         cwd: path.dirname(RUN_RECIPE_SCRIPT),
         env: {
@@ -57,7 +59,11 @@ function runRecipeSubprocess(bin, recipe, inp, out, params) {
     }, timeoutMs);
     proc.on("error", (err) => {
       clearTimeout(timer);
-      reject(err);
+      const hint =
+        err?.code === "ENOENT"
+          ? ` Python não encontrado (${bin}). Instale Python 3 + trimesh ou defina AR_MESH_PYTHON. Em produção (Docker), redeploy com imagem que inclui python3.`
+          : "";
+      reject(new Error(`${err?.message || err}${hint}`));
     });
     proc.on("close", (code) => {
       clearTimeout(timer);
@@ -71,12 +77,6 @@ function runRecipeSubprocess(bin, recipe, inp, out, params) {
       }
     });
   });
-}
-
-function resolvePythonBin() {
-  const override = String(process.env.AR_MESH_PYTHON || "").trim();
-  if (override) return override;
-  return process.platform === "win32" ? "python" : "python3";
 }
 
 /**
@@ -99,7 +99,7 @@ export async function postprocessRodinGlassesGlbBuffer(glbBuf, opts = {}) {
     const out = path.join(tmp, "canonical.glb");
     try {
       await writeFile(inp, glbBuf);
-      await runRecipeSubprocess(resolvePythonBin(), recipe, inp, out, params);
+      await runRecipeSubprocess(resolvePythonLaunch(), recipe, inp, out, params);
       const outBuf = await readFile(out);
       if (outBuf.length < 1000) throw new Error("GLB pós-processado inválido (muito pequeno)");
       console.log("[ar-eyewear] glasses_canonical via run_recipe.py (paridade worker)", {

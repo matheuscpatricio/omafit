@@ -1,11 +1,14 @@
 /**
  * Pós-processo `glasses_canonical` em Node (@gltf-transform) — sem Python/trimesh.
- * Paridade mínima com `trimesh_pipeline.process_glasses_canonical`:
- * canonicalize → remap widget frame → bridge-up → escala largura X → split −Z → nós omafit_lens / omafit_frame.
+ * Paridade com `trimesh_pipeline.process_glasses_canonical`:
+ * snap 90° → remap widget → bridge-up → centro → escala X → split −Z (shell fina) → omafit_lens / omafit_frame.
+ *
+ * Não usa `canonicalizeArEyewearGlbBuffer` (Euler+sign) — evita rotação residual 90° antes do remap.
  */
 import { WebIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
-import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.mjs";
+
+const DEG = Math.PI / 180;
 
 /** @param {Buffer | Uint8Array | ArrayBuffer} buf */
 function toUint8(buf) {
@@ -37,6 +40,170 @@ function multiplyMat4(a, b) {
     }
   }
   return out;
+}
+
+function applyEulerXYZDegrees(v, rxDeg, ryDeg, rzDeg) {
+  let [x, y, z] = v;
+  if (Math.abs(rxDeg) > 1e-9) {
+    const r = rxDeg * DEG;
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    const y1 = y * c - z * s;
+    const z1 = y * s + z * c;
+    y = y1;
+    z = z1;
+  }
+  if (Math.abs(ryDeg) > 1e-9) {
+    const r = ryDeg * DEG;
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    const x1 = x * c + z * s;
+    const z1 = -x * s + z * c;
+    x = x1;
+    z = z1;
+  }
+  if (Math.abs(rzDeg) > 1e-9) {
+    const r = rzDeg * DEG;
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    const x1 = x * c - y * s;
+    const y1 = x * s + y * c;
+    x = x1;
+    y = y1;
+  }
+  return [x, y, z];
+}
+
+function buildCandidatesDeg() {
+  const out = [];
+  const steps = [0, 90, 180, -90];
+  for (const rx of steps) {
+    for (const ry of steps) {
+      for (const rz of steps) {
+        out.push([rx, ry, rz]);
+      }
+    }
+  }
+  return out;
+}
+
+/** @param {number} sx @param {number} sy @param {number} sz @param {number} rotMag */
+function scoreGlassesHardCanonicalExtents(sx, sy, sz, rotMag) {
+  const maxDim = Math.max(sx, sy, sz, 1e-9);
+  const minDim = Math.min(sx, sy, sz, 1e-9);
+  const midDim = sx + sy + sz - maxDim - minDim;
+  const xLargest = sx / maxDim;
+  const ySmallest = minDim / Math.max(sy, 1e-9);
+  const zMiddle = 1 - Math.min(1, Math.abs(sz - midDim) / Math.max(midDim, 1e-9));
+  return xLargest * 0.65 + ySmallest * 0.25 + zMiddle * 0.1 - rotMag * 0.00015;
+}
+
+/** @param {import('@gltf-transform/core').Scene} scene */
+function collectSceneWorldPositions(scene) {
+  /** @type {number[][]} */
+  const out = [];
+  scene.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const wm = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute("POSITION");
+      if (!pos) continue;
+      const arr = pos.getArray();
+      const el = Math.max(3, pos.getElementSize() || 3);
+      for (let i = 0; i < arr.length; i += el) {
+        out.push(mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2]));
+      }
+    }
+  });
+  return out;
+}
+
+/** @param {number[][]} pts */
+function bboxExtentsFromPoints(pts) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p[0]);
+    minY = Math.min(minY, p[1]);
+    minZ = Math.min(minZ, p[2]);
+    maxX = Math.max(maxX, p[0]);
+    maxY = Math.max(maxY, p[1]);
+    maxZ = Math.max(maxZ, p[2]);
+  }
+  return { sx: maxX - minX, sy: maxY - minY, sz: maxZ - minZ };
+}
+
+/** @param {import('@gltf-transform/core').Document} doc */
+function centerSceneAtOrigin(doc) {
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return;
+  const pts = collectSceneWorldPositions(scene);
+  if (!pts.length) return;
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (const p of pts) {
+    cx += p[0];
+    cy += p[1];
+    cz += p[2];
+  }
+  const n = pts.length;
+  cx /= n;
+  cy /= n;
+  cz /= n;
+  const wrap = ensureCanonicalWrapNode(doc);
+  const m = wrap.getMatrix().slice();
+  m[12] -= cx;
+  m[13] -= cy;
+  m[14] -= cz;
+  wrap.setMatrix(m);
+}
+
+/**
+ * Paridade `_snap_to_best_right_angle` / `_hard_canonical_orientation` (Python).
+ * @param {import('@gltf-transform/core').Document} doc
+ */
+function snapToBestRightAngleDoc(doc) {
+  if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_HARD_CANONICAL ?? "1"))) {
+    return;
+  }
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return;
+  const wrap = ensureCanonicalWrapNode(doc);
+  const basePts = collectSceneWorldPositions(scene);
+  if (basePts.length < 8) return;
+
+  let best = [0, 0, 0];
+  let bestScore = -Infinity;
+  let bestTie = Infinity;
+  for (const [rx, ry, rz] of buildCandidatesDeg()) {
+    const rotMag = Math.abs(rx) + Math.abs(ry) + Math.abs(rz);
+    const rotPts = basePts.map((p) => applyEulerXYZDegrees(p, rx, ry, rz));
+    const { sx, sy, sz } = bboxExtentsFromPoints(rotPts);
+    const score = scoreGlassesHardCanonicalExtents(sx, sy, sz, rotMag);
+    if (score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-6 && rotMag < bestTie)) {
+      bestScore = score;
+      best = [rx, ry, rz];
+      bestTie = rotMag;
+    }
+  }
+
+  const [rxDeg, ryDeg, rzDeg] = best;
+  let c0 = applyEulerXYZDegrees([1, 0, 0], rxDeg, ryDeg, rzDeg);
+  let c1 = applyEulerXYZDegrees([0, 1, 0], rxDeg, ryDeg, rzDeg);
+  let c2 = applyEulerXYZDegrees([0, 0, 1], rxDeg, ryDeg, rzDeg);
+  const eulerMat = [
+    c0[0], c0[1], c0[2], 0,
+    c1[0], c1[1], c1[2], 0,
+    c2[0], c2[1], c2[2], 0,
+    0, 0, 0, 1,
+  ];
+  wrap.setMatrix(multiplyMat4(eulerMat, wrap.getMatrix()));
 }
 
 /** Rotação −90° em X (paridade `_remap_glasses_worker_frame_to_widget`). */
@@ -105,16 +272,6 @@ function applyWorldRotationToCanonicalRoot(doc, rotMat16) {
   }
 }
 
-/** @param {import('@gltf-transform/core').Document} doc */
-function tagIngestWidgetFrame(doc) {
-  const scene = doc.getRoot().listScenes()[0];
-  if (!scene) return;
-  const canonical = scene.listChildren().find((n) => n.getName() === "omafit_ar_canonical");
-  const target = canonical || scene.listChildren()[0];
-  if (!target) return;
-  target.setExtras({ ...(target.getExtras() || {}), omafit_widget_frame: 1 });
-}
-
 /**
  * Rodin hard-canonical (Y fino, Z médio, X largo) → frame widget (+Y topo, −Z frente).
  * @param {import('@gltf-transform/core').Document} doc
@@ -132,19 +289,15 @@ function applyWidgetFrameRemap(doc) {
     { v: sy, i: 1 },
     { v: sz, i: 2 },
   ].sort((a, b) => a.v - b.v);
-  if (dims[2].i !== 0) return false;
   // Já no frame widget: Z fino, Y altura, X largura
-  if (dims[0].i === 2 && dims[1].i === 1) {
-    tagIngestWidgetFrame(doc);
-    return true;
+  if (dims[0].i === 2 && dims[1].i === 1 && dims[2].i === 0) {
+    return dims[1].v > dims[0].v * 1.05;
   }
-  // Pré-remap Rodin: Y fino (sem exigir folga Y≪Z — evita saltar remap)
-  if (dims[0].i === 1) {
-    applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
-    tagIngestWidgetFrame(doc);
-    return true;
-  }
-  return false;
+  // Pré-remap Rodin: Y fino, Z médio, X largo
+  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
+  if (dims[1].v <= dims[0].v * 1.05) return false;
+  applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
+  return true;
 }
 
 /**
@@ -376,10 +529,10 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
   const triN = Math.floor(indices.length / 3);
   if (triN < 24) return null;
 
-  /** @type {number[]} */
-  const zCent = [];
-  /** @type {number[]} */
-  const yCent = [];
+  /** @type {{ z: number, y: number }[]} */
+  const triCent = [];
+  let yMin = Infinity;
+  let yMax = -Infinity;
   for (let t = 0; t < triN; t++) {
     let sx = 0;
     let sy = 0;
@@ -396,26 +549,23 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
       sy += wp[1];
       sz += wp[2];
     }
-    yCent.push(sy / 3);
-    zCent.push(sz / 3);
-  }
-  let yMin = Infinity;
-  let yMax = -Infinity;
-  for (const y of yCent) {
+    const y = sy / 3;
+    const z = sz / 3;
     yMin = Math.min(yMin, y);
     yMax = Math.max(yMax, y);
+    triCent.push({ z, y });
   }
-  const spanY = yMax - yMin;
-  const yLensMin = spanY > 1e-8 ? yMin + spanY * 0.12 : -Infinity;
-
   let zMin = Infinity;
   let zMax = -Infinity;
-  for (const z of zCent) {
+  for (const { z } of triCent) {
     zMin = Math.min(zMin, z);
     zMax = Math.max(zMax, z);
   }
   const depth = zMax - zMin;
-  if (depth <= 1e-8) return null;
+  const spanY = yMax - yMin;
+  if (depth <= 1e-8 || spanY <= 1e-8) return null;
+  const yLo = yMin + spanY * 0.12;
+  const yHi = yMax - spanY * 0.12;
   const minEach = Math.max(8, Math.floor(triN * 0.015));
   const f = Math.max(0.06, Math.min(0.22, frac));
 
@@ -424,19 +574,19 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide) {
   /** @type {number[]} */
   const frameTris = [];
   for (let t = 0; t < triN; t++) {
-    const z = zCent[t];
-    const isFrontShell =
+    const { z, y } = triCent[t];
+    const inFrontShell =
       lensSide === "minZ"
         ? z <= zMin + depth * f
         : z >= zMax - depth * f;
-    const isLens = isFrontShell && yCent[t] >= yLensMin;
-    if (isLens) lensTris.push(t);
+    const inLensBand = y >= yLo && y <= yHi;
+    if (inFrontShell && inLensBand) lensTris.push(t);
     else frameTris.push(t);
   }
   if (lensTris.length < minEach || frameTris.length < minEach) return null;
 
   const lensRatio = lensTris.length / triN;
-  if (lensRatio > 0.32 || lensRatio < 0.025) return null;
+  if (lensRatio > 0.2 || lensRatio < 0.02) return null;
 
   return { lensTris, frameTris, indices, pos, el, prim, lensSide, lensRatio, frac: f };
 }
@@ -455,7 +605,7 @@ function pickBestLensSplit(prim, worldMatrix) {
   }
   const fracs = [
     ...new Set(
-      [fracDefault, 0.08, 0.1, 0.12, 0.14].map(
+      [fracDefault, 0.06, 0.08, 0.1, 0.12, 0.14].map(
         (f) => Math.round(f * 1000) / 1000,
       ),
     ),
@@ -467,7 +617,7 @@ function pickBestLensSplit(prim, worldMatrix) {
   for (const frac of fracs) {
     const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ");
     if (!cand) continue;
-    const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.12) * 0.4;
+      const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.1) * 0.45;
     if (score > bestScore) {
       bestScore = score;
       best = cand;
@@ -706,13 +856,15 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   const lensType = String(params.lens_type || "clear_fake").trim().toLowerCase();
   const targetW = Number(params.target_width_m) || 0.14;
 
-  const canonical = await canonicalizeArEyewearGlbBuffer(buf);
   const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
-  const doc = await io.readBinary(toUint8(canonical));
+  const doc = await io.readBinary(toUint8(buf));
 
   ensureCanonicalWrapNode(doc);
+  centerSceneAtOrigin(doc);
+  snapToBestRightAngleDoc(doc);
   applyWidgetFrameRemap(doc);
   applyBridgeUpFix(doc);
+  centerSceneAtOrigin(doc);
   scaleDocToWidthX(doc, targetW);
 
   const splitOk = splitMonolithicGlassesLens(doc);

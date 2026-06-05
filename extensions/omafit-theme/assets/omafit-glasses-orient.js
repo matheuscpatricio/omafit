@@ -465,19 +465,22 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
 }
 
 /**
- * GLB pós-ingest Omafit: nó `omafit_ar_canonical` (extras opcionais).
+ * GLB pós-ingest Omafit: nó canónico + split omafit_frame/omafit_lens.
  * @param {any} root
  * @returns {boolean}
  */
 export function omafitGlassesGlbHasIngestWidgetFrameTag(root) {
   if (!root?.traverse) return false;
-  let tagged = false;
+  let hasCanonical = false;
+  let hasFrame = false;
+  let hasLens = false;
   root.traverse((obj) => {
-    if (tagged) return;
-    if (String(obj?.name || "") !== "omafit_ar_canonical") return;
-    tagged = true;
+    const n = String(obj?.name || "").toLowerCase();
+    if (n === "omafit_ar_canonical") hasCanonical = true;
+    if (n.includes("omafit_frame")) hasFrame = true;
+    if (n.includes("omafit_lens")) hasLens = true;
   });
-  return tagged;
+  return hasCanonical && hasFrame && hasLens;
 }
 
 /** @param {any} root @returns {Record<string, unknown> | null} */
@@ -498,16 +501,43 @@ export function omafitGlassesGlbHasDeterministicRodinRemap(root) {
 }
 
 /**
- * Correção determinística (sem heurística): Rx(180°) após remap Rodin.
+ * MindAR: câmara olha para +Z. GLB widget com frente −Z precisa Ry(π) no bind;
+ * se a shell frontal já está em +Z, Ry(0) evita virar as lentes para trás (invisível).
  * @param {any} THREE
- * @param {any} glasses
+ * @param {any} glassesRoot
+ * @returns {number} 0 ou Math.PI
  */
-export function omafitApplyDeterministicRodinRx180(THREE, glasses) {
-  if (!THREE || !glasses) return false;
-  const ax = new THREE.Vector3(1, 0, 0);
-  glasses.rotateOnWorldAxis(ax, Math.PI);
-  glasses.updateMatrixWorld(true);
-  return true;
+export function omafitResolveGlassesMindarStaticBindRyRad(THREE, glassesRoot) {
+  if (!THREE || !glassesRoot) return Math.PI;
+  glassesRoot.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  /** @type {number[]} */
+  const zs = [];
+  glassesRoot.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry?.attributes?.position) return;
+    const pa = obj.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(pa.count / 450));
+    const mw = obj.matrixWorld;
+    for (let i = 0; i < pa.count; i += step) {
+      v.fromBufferAttribute(pa, i);
+      v.applyMatrix4(mw);
+      zMin = Math.min(zMin, v.z);
+      zMax = Math.max(zMax, v.z);
+      zs.push(v.z);
+    }
+  });
+  if (zs.length < 12 || zMax - zMin <= 1e-8) return Math.PI;
+  const thresh = zMin + (zMax - zMin) * 0.24;
+  let frontNeg = 0;
+  let frontPos = 0;
+  for (const z of zs) {
+    if (z <= thresh) frontNeg++;
+    if (z >= zMax - (zMax - zMin) * 0.24) frontPos++;
+  }
+  const frontShellIsMinusZ = frontNeg >= frontPos;
+  return frontShellIsMinusZ ? Math.PI : 0;
 }
 
 /**

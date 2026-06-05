@@ -381,7 +381,7 @@ function markIngestWidgetFrameTag(doc, opts = {}) {
     ...prev,
     omafit_ar_canonical: 1,
     omafit_widget_frame: 1,
-    omafit_glasses_contract: "widget_v192",
+    omafit_glasses_contract: "widget_v193",
     ...(opts.rodinDeterministic ? { omafit_rodin_deterministic_rx: 1 } : {}),
   });
 }
@@ -402,10 +402,9 @@ function applyWidgetFrameRemap(doc) {
 
   if (isRodin) {
     applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
-    applyWorldRotationToCanonicalRoot(doc, mat4RotateX180());
     ensureGlassesFrontMinusZ(doc);
-    markIngestWidgetFrameTag(doc, { rodinDeterministic: true });
-    return { ok: true, rodinDeterministic: true };
+    markIngestWidgetFrameTag(doc, { rodinDeterministic: false });
+    return { ok: true, rodinDeterministic: false };
   }
   if (!isWidget) return { ok: false, rodinDeterministic: false };
   ensureGlassesFrontMinusZ(doc);
@@ -1457,9 +1456,7 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   centerSceneAtOrigin(doc);
   snapToBestRightAngleDoc(doc);
   const remap = applyWidgetFrameRemap(doc);
-  if (!remap.rodinDeterministic) {
-    applyBridgeUpFix(doc);
-  }
+  applyBridgeUpFix(doc);
   centerSceneAtOrigin(doc);
   scaleDocToWidthX(doc, targetW);
 

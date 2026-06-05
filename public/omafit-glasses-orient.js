@@ -102,6 +102,81 @@ export function detectGlassesRimHeuristic(THREE, glasses, wIdx, hIdx) {
 }
 
 /**
+ * Ponte = faixa Y com menor spread em X (deve ficar no terço superior).
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {1|-1|0}
+ */
+export function detectGlassesBridgeBandSign(THREE, glasses) {
+  if (!glasses) return 0;
+  glasses.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  let minY = Infinity;
+  let maxY = -Infinity;
+  /** @type {{ y: number, x: number }[]} */
+  const samples = [];
+  glasses.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry?.attributes?.position) return;
+    const pa = obj.geometry.attributes.position;
+    const n = pa.count;
+    if (n < 3) return;
+    const step = Math.max(1, Math.floor(n / 600));
+    const mw = obj.matrixWorld;
+    for (let i = 0; i < n; i += step) {
+      v.fromBufferAttribute(pa, i);
+      v.applyMatrix4(mw);
+      minY = Math.min(minY, v.y);
+      maxY = Math.max(maxY, v.y);
+      samples.push({ y: v.y, x: v.x });
+    }
+  });
+  if (samples.length < 40 || maxY - minY <= 1e-8) return 0;
+  const bands = 12;
+  /** @type {{ spread: number, yMid: number, n: number }[]} */
+  const stats = [];
+  for (let b = 0; b < bands; b++) {
+    const yLo = minY + ((maxY - minY) * b) / bands;
+    const yHi = minY + ((maxY - minY) * (b + 1)) / bands;
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let n = 0;
+    for (const s of samples) {
+      if (s.y < yLo || s.y >= yHi) continue;
+      n++;
+      xMin = Math.min(xMin, s.x);
+      xMax = Math.max(xMax, s.x);
+    }
+    if (n < 4) {
+      stats.push({ spread: Infinity, yMid: (yLo + yHi) * 0.5, n: 0 });
+      continue;
+    }
+    stats.push({ spread: xMax - xMin, yMid: (yLo + yHi) * 0.5, n });
+  }
+  let best = stats[0];
+  for (const st of stats) {
+    if (st.n < 4) continue;
+    if (st.spread < best.spread) best = st;
+  }
+  if (!Number.isFinite(best.spread) || best.n < 4) return 0;
+  const yNorm = (best.yMid - minY) / (maxY - minY);
+  if (yNorm >= 0.58) return 1;
+  if (yNorm <= 0.42) return -1;
+  return 0;
+}
+
+/**
+ * Paridade Python quantis 92%/8% + fallback faixa da ponte.
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {1|-1}
+ */
+export function detectGlassesBridgeOrientationSign(THREE, glasses) {
+  const band = detectGlassesBridgeBandSign(THREE, glasses);
+  if (band !== 0) return band;
+  return detectGlassesRimHeuristic(THREE, glasses, 0, 1);
+}
+
+/**
  * @param {any} THREE
  * @param {any} glasses
  * @returns {GlassesAxesDetect | null}
@@ -343,6 +418,7 @@ export function computeGlassesCanonicalOffsetQuat(THREE, glasses) {
  */
 export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
   if (!THREE || !glasses) return false;
+  if (omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) return false;
   if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) return false;
   glasses.updateMatrixWorld(true);
   const sz = new THREE.Vector3();
@@ -354,8 +430,8 @@ export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
     { v: sz.y, i: 1 },
     { v: sz.z, i: 2 },
   ].sort((a, b) => a.v - b.v);
-  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
-  if (dims[1].v <= dims[0].v * 1.05) return false;
+  if (dims[2].i !== 0) return false;
+  if (dims[0].i !== 1) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
   glasses.updateMatrixWorld(true);
@@ -381,28 +457,100 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
     { v: sz.y, i: 1 },
     { v: sz.z, i: 2 },
   ].sort((a, b) => a.v - b.v);
+  // Contrato widget: X largo, Y altura (médio), Z profundidade (fino).
+  // Não confundir com Rodin pré-remap (Y fino, Z médio, X largo).
   if (dims[2].i !== 0) return false;
   if (dims[0].i !== 2 || dims[1].i !== 1) return false;
   return dims[1].v > dims[0].v * 1.05;
 }
 
-/** @see extensions/omafit-theme/assets/omafit-glasses-orient.js */
+/**
+ * GLB pós-ingest Omafit: nó canónico + split omafit_frame/omafit_lens.
+ * @param {any} root
+ * @returns {boolean}
+ */
 export function omafitGlassesGlbHasIngestWidgetFrameTag(root) {
   if (!root?.traverse) return false;
-  let tagged = false;
+  let hasCanonical = false;
+  let hasFrame = false;
+  let hasLens = false;
   root.traverse((obj) => {
-    if (tagged || String(obj?.name || "") !== "omafit_ar_canonical") return;
-    const ud = obj.userData || {};
-    const ex = ud.omafit_widget_frame ?? ud.extras?.omafit_widget_frame;
-    if (ex === 1 || ex === true) tagged = true;
+    const n = String(obj?.name || "").toLowerCase();
+    if (n === "omafit_ar_canonical") hasCanonical = true;
+    if (n.includes("omafit_frame")) hasFrame = true;
+    if (n.includes("omafit_lens")) hasLens = true;
   });
-  return tagged;
+  return hasCanonical && hasFrame && hasLens;
 }
 
-/** @see extensions/omafit-theme/assets/omafit-glasses-orient.js */
+/** @param {any} root @returns {Record<string, unknown> | null} */
+export function omafitGlassesGlbReadCanonicalExtras(root) {
+  if (!root?.traverse) return null;
+  let extras = null;
+  root.traverse((obj) => {
+    if (extras || String(obj?.name || "") !== "omafit_ar_canonical") return;
+    const ud = obj.userData || {};
+    extras = { ...ud, ...(ud.extras && typeof ud.extras === "object" ? ud.extras : {}) };
+  });
+  return extras;
+}
+
+/** GLB pós-ingest: orientação baked — runtime não reaplica Rx. */
+export function omafitGlassesGlbHasDeterministicRodinRemap(root) {
+  return omafitGlassesGlbHasIngestWidgetFrameTag(root);
+}
+
+/**
+ * MindAR: câmara olha para +Z. GLB widget com frente −Z precisa Ry(π) no bind;
+ * se a shell frontal já está em +Z, Ry(0) evita virar as lentes para trás (invisível).
+ * @param {any} THREE
+ * @param {any} glassesRoot
+ * @returns {number} 0 ou Math.PI
+ */
+export function omafitResolveGlassesMindarStaticBindRyRad(THREE, glassesRoot) {
+  if (!THREE || !glassesRoot) return Math.PI;
+  glassesRoot.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  /** @type {number[]} */
+  const zs = [];
+  glassesRoot.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry?.attributes?.position) return;
+    const pa = obj.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(pa.count / 450));
+    const mw = obj.matrixWorld;
+    for (let i = 0; i < pa.count; i += step) {
+      v.fromBufferAttribute(pa, i);
+      v.applyMatrix4(mw);
+      zMin = Math.min(zMin, v.z);
+      zMax = Math.max(zMax, v.z);
+      zs.push(v.z);
+    }
+  });
+  if (zs.length < 12 || zMax - zMin <= 1e-8) return Math.PI;
+  const thresh = zMin + (zMax - zMin) * 0.24;
+  let frontNeg = 0;
+  let frontPos = 0;
+  for (const z of zs) {
+    if (z <= thresh) frontNeg++;
+    if (z >= zMax - (zMax - zMin) * 0.24) frontPos++;
+  }
+  const frontShellIsMinusZ = frontNeg >= frontPos;
+  return frontShellIsMinusZ ? Math.PI : 0;
+}
+
+/**
+ * Correcção determinística pós-worker: ponte estreita em +Y.
+ * Se o topo for mais largo que a base → Rx(180°).
+ *
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {boolean}
+ */
 export function omafitEnsureGlassesBridgePointsUp(THREE, glasses) {
   if (!THREE || !glasses) return false;
-  const hSign = detectGlassesRimHeuristic(THREE, glasses, 0, 1);
+  const hSign = detectGlassesBridgeOrientationSign(THREE, glasses);
   if (hSign >= 0) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, Math.PI);

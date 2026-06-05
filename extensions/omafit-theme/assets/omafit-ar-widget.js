@@ -4,6 +4,7 @@ import {
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
   omafitGlassesGlbHasIngestWidgetFrameTag,
+  omafitResolveGlassesMindarStaticBindRyRad,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
@@ -601,7 +602,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v192";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v193";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11117,6 +11118,13 @@ async function runArSession({
         meshes: meshN,
         triangles: triN,
         draco: Boolean(dracoLoaderFace),
+        ingestSplit: omafitGlassesGlbHasIngestWidgetFrameTag(glasses),
+      });
+      glasses.traverse((o) => {
+        if (o?.isMesh) {
+          o.visible = true;
+          o.frustumCulled = false;
+        }
       });
     } catch {
       /* ignore */
@@ -12503,16 +12511,20 @@ async function runArSession({
           glassesSimpleFaceOnly &&
           (glassesCanonicalBlenderExport || glassesWorkerFrameRemapped)
         ) {
-          /**
-           * Paridade preview admin (`OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD`): GLB
-           * trimesh/Rodin tem frente em −Z; MindAR usa +Z para a câmara.
-           * Merchant rx/ry/rz ficam em `calibRot` (pai); bind fixo aqui (filho).
-           */
+          const bindRy = omafitResolveGlassesMindarStaticBindRyRad(THREE, glasses);
           glassesStaticBindWrap.quaternion.identity();
-          glassesStaticBindWrap.rotateOnWorldAxis(
-            new THREE.Vector3(0, 1, 0),
-            Math.PI,
-          );
+          if (bindRy > 1e-6) {
+            glassesStaticBindWrap.rotateOnWorldAxis(
+              new THREE.Vector3(0, 1, 0),
+              bindRy,
+            );
+          }
+          console.log("[omafit-ar] glasses MindAR static bind Ry", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            bindRyRad: bindRy,
+            bindRyDeg: (bindRy * 180) / Math.PI,
+            ingestSplit: glassesIngestWidgetFrameTag,
+          });
         } else if (glassesStaticBindQuatPostBind) {
           glassesStaticBindWrap.quaternion.copy(glassesStaticBindQuatPostBind);
         } else {

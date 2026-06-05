@@ -102,6 +102,81 @@ export function detectGlassesRimHeuristic(THREE, glasses, wIdx, hIdx) {
 }
 
 /**
+ * Ponte = faixa Y com menor spread em X (deve ficar no terço superior).
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {1|-1|0}
+ */
+export function detectGlassesBridgeBandSign(THREE, glasses) {
+  if (!glasses) return 0;
+  glasses.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  let minY = Infinity;
+  let maxY = -Infinity;
+  /** @type {{ y: number, x: number }[]} */
+  const samples = [];
+  glasses.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry?.attributes?.position) return;
+    const pa = obj.geometry.attributes.position;
+    const n = pa.count;
+    if (n < 3) return;
+    const step = Math.max(1, Math.floor(n / 600));
+    const mw = obj.matrixWorld;
+    for (let i = 0; i < n; i += step) {
+      v.fromBufferAttribute(pa, i);
+      v.applyMatrix4(mw);
+      minY = Math.min(minY, v.y);
+      maxY = Math.max(maxY, v.y);
+      samples.push({ y: v.y, x: v.x });
+    }
+  });
+  if (samples.length < 40 || maxY - minY <= 1e-8) return 0;
+  const bands = 12;
+  /** @type {{ spread: number, yMid: number, n: number }[]} */
+  const stats = [];
+  for (let b = 0; b < bands; b++) {
+    const yLo = minY + ((maxY - minY) * b) / bands;
+    const yHi = minY + ((maxY - minY) * (b + 1)) / bands;
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let n = 0;
+    for (const s of samples) {
+      if (s.y < yLo || s.y >= yHi) continue;
+      n++;
+      xMin = Math.min(xMin, s.x);
+      xMax = Math.max(xMax, s.x);
+    }
+    if (n < 4) {
+      stats.push({ spread: Infinity, yMid: (yLo + yHi) * 0.5, n: 0 });
+      continue;
+    }
+    stats.push({ spread: xMax - xMin, yMid: (yLo + yHi) * 0.5, n });
+  }
+  let best = stats[0];
+  for (const st of stats) {
+    if (st.n < 4) continue;
+    if (st.spread < best.spread) best = st;
+  }
+  if (!Number.isFinite(best.spread) || best.n < 4) return 0;
+  const yNorm = (best.yMid - minY) / (maxY - minY);
+  if (yNorm >= 0.58) return 1;
+  if (yNorm <= 0.42) return -1;
+  return 0;
+}
+
+/**
+ * Paridade Python quantis 92%/8% + fallback faixa da ponte.
+ * @param {any} THREE
+ * @param {any} glasses
+ * @returns {1|-1}
+ */
+export function detectGlassesBridgeOrientationSign(THREE, glasses) {
+  const band = detectGlassesBridgeBandSign(THREE, glasses);
+  if (band !== 0) return band;
+  return detectGlassesRimHeuristic(THREE, glasses, 0, 1);
+}
+
+/**
  * @param {any} THREE
  * @param {any} glasses
  * @returns {GlassesAxesDetect | null}
@@ -354,8 +429,8 @@ export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
     { v: sz.y, i: 1 },
     { v: sz.z, i: 2 },
   ].sort((a, b) => a.v - b.v);
-  if (dims[0].i !== 1 || dims[1].i !== 2 || dims[2].i !== 0) return false;
-  if (dims[1].v <= dims[0].v * 1.05) return false;
+  if (dims[2].i !== 0) return false;
+  if (dims[0].i !== 1) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
   glasses.updateMatrixWorld(true);
@@ -381,13 +456,15 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
     { v: sz.y, i: 1 },
     { v: sz.z, i: 2 },
   ].sort((a, b) => a.v - b.v);
+  // Contrato widget: X largo, Y altura (médio), Z profundidade (fino).
+  // Não confundir com Rodin pré-remap (Y fino, Z médio, X largo).
   if (dims[2].i !== 0) return false;
   if (dims[0].i !== 2 || dims[1].i !== 1) return false;
   return dims[1].v > dims[0].v * 1.05;
 }
 
 /**
- * GLB com tag de ingest (`extras.omafit_widget_frame` no nó canónico).
+ * GLB pós-ingest Node/Python com extras `omafit_widget_frame` no nó canónico.
  * @param {any} root
  * @returns {boolean}
  */
@@ -413,7 +490,7 @@ export function omafitGlassesGlbHasIngestWidgetFrameTag(root) {
  */
 export function omafitEnsureGlassesBridgePointsUp(THREE, glasses) {
   if (!THREE || !glasses) return false;
-  const hSign = detectGlassesRimHeuristic(THREE, glasses, 0, 1);
+  const hSign = detectGlassesBridgeOrientationSign(THREE, glasses);
   if (hSign >= 0) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, Math.PI);

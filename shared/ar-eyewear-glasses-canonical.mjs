@@ -381,7 +381,7 @@ function markIngestWidgetFrameTag(doc) {
     ...prev,
     omafit_ar_canonical: 1,
     omafit_widget_frame: 1,
-    omafit_glasses_contract: "widget_v189",
+    omafit_glasses_contract: "widget_v190",
   });
 }
 
@@ -473,6 +473,75 @@ function detectRimHeightSign(scene) {
   return -1;
 }
 
+/**
+ * Ponte = faixa Y com menor spread em X. Deve ficar no terço superior (+Y).
+ * Mais fiável que só comparar topo vs base em armações simétricas.
+ * @param {import('@gltf-transform/core').Scene} scene
+ * @returns {1|-1|0} 1=OK, -1=invertido (Rx 180°), 0=ambíguo
+ */
+function detectBridgeBandSign(scene) {
+  let minY = Infinity;
+  let maxY = -Infinity;
+  /** @type {{ y: number, x: number }[]} */
+  const samples = [];
+  scene.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const wm = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute("POSITION");
+      if (!pos) continue;
+      const arr = pos.getArray();
+      const el = Math.max(3, pos.getElementSize() || 3);
+      for (let i = 0; i < arr.length; i += el) {
+        const wp = mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2]);
+        minY = Math.min(minY, wp[1]);
+        maxY = Math.max(maxY, wp[1]);
+        samples.push({ y: wp[1], x: wp[0] });
+      }
+    }
+  });
+  if (samples.length < 40 || maxY - minY <= 1e-8) return 0;
+  const bands = 12;
+  /** @type {{ spread: number, yMid: number, n: number }[]} */
+  const stats = [];
+  for (let b = 0; b < bands; b++) {
+    const yLo = minY + ((maxY - minY) * b) / bands;
+    const yHi = minY + ((maxY - minY) * (b + 1)) / bands;
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let n = 0;
+    for (const s of samples) {
+      if (s.y < yLo || s.y >= yHi) continue;
+      n++;
+      xMin = Math.min(xMin, s.x);
+      xMax = Math.max(xMax, s.x);
+    }
+    if (n < 4) {
+      stats.push({ spread: Infinity, yMid: (yLo + yHi) * 0.5, n: 0 });
+      continue;
+    }
+    stats.push({ spread: xMax - xMin, yMid: (yLo + yHi) * 0.5, n });
+  }
+  let best = stats[0];
+  for (const st of stats) {
+    if (st.n < 4) continue;
+    if (st.spread < best.spread) best = st;
+  }
+  if (!Number.isFinite(best.spread) || best.n < 4) return 0;
+  const yNorm = (best.yMid - minY) / (maxY - minY);
+  if (yNorm >= 0.58) return 1;
+  if (yNorm <= 0.42) return -1;
+  return 0;
+}
+
+/** @param {import('@gltf-transform/core').Scene} scene @returns {1|-1} */
+function detectGlassesBridgeOrientationSign(scene) {
+  const band = detectBridgeBandSign(scene);
+  if (band !== 0) return band;
+  return detectRimHeightSign(scene);
+}
+
 /** @param {import('@gltf-transform/core').Document} doc */
 function applyBridgeUpFix(doc) {
   if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_BRIDGE_UP || "1"))) {
@@ -480,7 +549,7 @@ function applyBridgeUpFix(doc) {
   }
   const scene = doc.getRoot().listScenes()[0];
   if (!scene) return false;
-  if (detectRimHeightSign(scene) >= 0) return false;
+  if (detectGlassesBridgeOrientationSign(scene) >= 0) return false;
   applyWorldRotationToCanonicalRoot(doc, mat4RotateX180());
   return true;
 }
@@ -1380,7 +1449,7 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   centerSceneAtOrigin(doc);
   snapToBestRightAngleDoc(doc);
   applyWidgetFrameRemap(doc);
-  // Bridge-up só no runtime (GLBs ingest ficam com tag — Rx(180°) aqui invertia modelos válidos).
+  applyBridgeUpFix(doc);
   centerSceneAtOrigin(doc);
   scaleDocToWidthX(doc, targetW);
 

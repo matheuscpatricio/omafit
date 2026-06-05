@@ -601,7 +601,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v189";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v190";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11421,7 +11421,7 @@ async function runArSession({
           glassesIngestWidgetFrameTag = true;
           glassesWorkerFrameRemapped = true;
           console.log(
-            "[omafit-ar] glasses GLB ingest widget frame (omafit_widget_frame v189)",
+            "[omafit-ar] glasses GLB ingest widget frame (omafit_widget_frame v190)",
             { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
           );
         } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
@@ -11545,6 +11545,19 @@ async function runArSession({
         const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
         if (frontCenter) glasses.position.sub(frontCenter);
         else glasses.position.sub(box.getCenter(new THREE.Vector3()));
+        glasses.updateMatrixWorld(true);
+        if (
+          (glassesIngestWidgetFrameTag || glassesWorkerFrameRemapped) &&
+          omafitEnsureGlassesBridgePointsUp(THREE, glasses)
+        ) {
+          console.log("[omafit-ar] glasses bridge-up pós-centro Rx(180°)", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            ingestTag: glassesIngestWidgetFrameTag,
+          });
+          const fc2 = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+          if (fc2) glasses.position.sub(fc2);
+          glasses.updateMatrixWorld(true);
+        }
       } else {
         glasses.position.sub(box.getCenter(new THREE.Vector3()));
       }

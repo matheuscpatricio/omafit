@@ -433,6 +433,7 @@ export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
   if (dims[0].i !== 1) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
+  glasses.rotateOnWorldAxis(ax, Math.PI);
   glasses.updateMatrixWorld(true);
   return true;
 }
@@ -478,6 +479,42 @@ export function omafitGlassesGlbHasIngestWidgetFrameTag(root) {
     if (ex === 1 || ex === true) tagged = true;
   });
   return tagged;
+}
+
+/** @param {any} root @returns {Record<string, unknown> | null} */
+export function omafitGlassesGlbReadCanonicalExtras(root) {
+  if (!root?.traverse) return null;
+  let extras = null;
+  root.traverse((obj) => {
+    if (extras || String(obj?.name || "") !== "omafit_ar_canonical") return;
+    const ud = obj.userData || {};
+    extras = { ...ud, ...(ud.extras && typeof ud.extras === "object" ? ud.extras : {}) };
+  });
+  return extras;
+}
+
+/** GLB pós-ingest v191: Rodin com Rx(−90°)+Rx(180°) baked — runtime não reaplica bridge. */
+export function omafitGlassesGlbHasDeterministicRodinRemap(root) {
+  const ex = omafitGlassesGlbReadCanonicalExtras(root);
+  if (!ex) return false;
+  if (ex.omafit_rodin_deterministic_rx === 1 || ex.omafit_rodin_deterministic_rx === true) {
+    return true;
+  }
+  const contract = String(ex.omafit_glasses_contract || "");
+  return contract === "widget_v191" || contract.endsWith("_v191");
+}
+
+/**
+ * Correção determinística (sem heurística): Rx(180°) após remap Rodin.
+ * @param {any} THREE
+ * @param {any} glasses
+ */
+export function omafitApplyDeterministicRodinRx180(THREE, glasses) {
+  if (!THREE || !glasses) return false;
+  const ax = new THREE.Vector3(1, 0, 0);
+  glasses.rotateOnWorldAxis(ax, Math.PI);
+  glasses.updateMatrixWorld(true);
+  return true;
 }
 
 /**

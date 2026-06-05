@@ -371,7 +371,7 @@ function applyWorldRotationToCanonicalRoot(doc, rotMat16) {
  * Marca GLB pós-ingest para o runtime não reaplicar remap/bridge por heurística de bbox.
  * @param {import('@gltf-transform/core').Document} doc
  */
-function markIngestWidgetFrameTag(doc) {
+function markIngestWidgetFrameTag(doc, opts = {}) {
   const wrap = doc.getRoot().listScenes()[0]?.listChildren().find(
     (n) => n.getName() === "omafit_ar_canonical",
   );
@@ -381,28 +381,36 @@ function markIngestWidgetFrameTag(doc) {
     ...prev,
     omafit_ar_canonical: 1,
     omafit_widget_frame: 1,
-    omafit_glasses_contract: "widget_v190",
+    omafit_glasses_contract: "widget_v191",
+    ...(opts.rodinDeterministic ? { omafit_rodin_deterministic_rx: 1 } : {}),
   });
 }
 
+/**
+ * Rodin → widget: Rx(−90°) + Rx(180°) fixos (sem heurística de ponte).
+ * @returns {{ ok: boolean, rodinDeterministic: boolean }}
+ */
 function applyWidgetFrameRemap(doc) {
   if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_REMAP_WIDGET_FRAME || "1"))) {
-    return false;
+    return { ok: false, rodinDeterministic: false };
   }
   const scene = doc.getRoot().listScenes()[0];
-  if (!scene) return false;
+  if (!scene) return { ok: false, rodinDeterministic: false };
   const { sx, sy, sz } = bboxSizeFromScene(scene);
   const isRodin = glassesExtentsMatchRodinPreRemap(sx, sy, sz);
   const isWidget = glassesExtentsMatchWidgetFrame(sx, sy, sz);
 
   if (isRodin) {
     applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
-  } else if (!isWidget) {
-    return false;
+    applyWorldRotationToCanonicalRoot(doc, mat4RotateX180());
+    ensureGlassesFrontMinusZ(doc);
+    markIngestWidgetFrameTag(doc, { rodinDeterministic: true });
+    return { ok: true, rodinDeterministic: true };
   }
+  if (!isWidget) return { ok: false, rodinDeterministic: false };
   ensureGlassesFrontMinusZ(doc);
-  markIngestWidgetFrameTag(doc);
-  return true;
+  markIngestWidgetFrameTag(doc, { rodinDeterministic: false });
+  return { ok: true, rodinDeterministic: false };
 }
 
 /**
@@ -1448,8 +1456,10 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   ensureCanonicalWrapNode(doc);
   centerSceneAtOrigin(doc);
   snapToBestRightAngleDoc(doc);
-  applyWidgetFrameRemap(doc);
-  applyBridgeUpFix(doc);
+  const remap = applyWidgetFrameRemap(doc);
+  if (!remap.rodinDeterministic) {
+    applyBridgeUpFix(doc);
+  }
   centerSceneAtOrigin(doc);
   scaleDocToWidthX(doc, targetW);
 

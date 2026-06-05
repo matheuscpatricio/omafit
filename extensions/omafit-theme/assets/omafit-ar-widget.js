@@ -4,6 +4,8 @@ import {
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
   omafitGlassesGlbHasIngestWidgetFrameTag,
+  omafitGlassesGlbHasDeterministicRodinRemap,
+  omafitApplyDeterministicRodinRx180,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
@@ -601,7 +603,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v190";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v191";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11420,10 +11422,19 @@ async function runArSession({
         if (omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) {
           glassesIngestWidgetFrameTag = true;
           glassesWorkerFrameRemapped = true;
-          console.log(
-            "[omafit-ar] glasses GLB ingest widget frame (omafit_widget_frame v190)",
-            { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
-          );
+          const deterministicRodin = omafitGlassesGlbHasDeterministicRodinRemap(glasses);
+          if (!deterministicRodin) {
+            omafitApplyDeterministicRodinRx180(THREE, glasses);
+            console.log(
+              "[omafit-ar] glasses GLB ingest legacy: Rx(180°) determinístico (pré-v191)",
+              { build: OMAFIT_AR_WIDGET_BUILD },
+            );
+          } else {
+            console.log(
+              "[omafit-ar] glasses GLB ingest v191 — orientação baked (sem heurística runtime)",
+              { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
+            );
+          }
         } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
@@ -11433,23 +11444,21 @@ async function runArSession({
         } else if (omafitRemapRodinGlbToWidgetFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
-            "[omafit-ar] glasses worker/Rodin frame remap Rx(-90°) → +Y topo, −Z frente",
+            "[omafit-ar] glasses Rodin remap determinístico Rx(−90°)+Rx(180°)",
             { build: OMAFIT_AR_WIDGET_BUILD },
           );
         }
         if (
-          glassesWorkerFrameRemapped ||
-          omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)
+          !glassesIngestWidgetFrameTag &&
+          (glassesWorkerFrameRemapped ||
+            omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) &&
+          !hasOmafitCanonicalNode &&
+          omafitEnsureGlassesBridgePointsUp(THREE, glasses)
         ) {
-          if (
-            (glassesIngestWidgetFrameTag || !hasOmafitCanonicalNode) &&
-            omafitEnsureGlassesBridgePointsUp(THREE, glasses)
-          ) {
-            console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
-              build: OMAFIT_AR_WIDGET_BUILD,
-              ingestTag: glassesIngestWidgetFrameTag,
-            });
-          }
+          console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            ingestTag: false,
+          });
         }
       } catch (remapErr) {
         console.warn(
@@ -11546,18 +11555,6 @@ async function runArSession({
         if (frontCenter) glasses.position.sub(frontCenter);
         else glasses.position.sub(box.getCenter(new THREE.Vector3()));
         glasses.updateMatrixWorld(true);
-        if (
-          (glassesIngestWidgetFrameTag || glassesWorkerFrameRemapped) &&
-          omafitEnsureGlassesBridgePointsUp(THREE, glasses)
-        ) {
-          console.log("[omafit-ar] glasses bridge-up pós-centro Rx(180°)", {
-            build: OMAFIT_AR_WIDGET_BUILD,
-            ingestTag: glassesIngestWidgetFrameTag,
-          });
-          const fc2 = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
-          if (fc2) glasses.position.sub(fc2);
-          glasses.updateMatrixWorld(true);
-        }
       } else {
         glasses.position.sub(box.getCenter(new THREE.Vector3()));
       }

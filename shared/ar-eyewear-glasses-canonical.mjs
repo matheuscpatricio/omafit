@@ -649,7 +649,10 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
   const yHi = yMax - spanY * yTrim;
   const xLo = xMin + spanX * xTrim;
   const xHi = xMax - spanX * xTrim;
-  const minEach = Math.max(8, Math.floor(triN * 0.015));
+  const minEach = Math.max(
+    8,
+    Math.floor(triN * (opts.minEachFrac ?? 0.015)),
+  );
   const f = Math.max(0.1, Math.min(0.52, frac));
 
   /** @type {number[]} */
@@ -727,8 +730,9 @@ function pickBestLensSplit(prim, worldMatrix) {
     {
       useYBand: false,
       useXBand: false,
-      minLensRatio: 0.015,
-      maxLensRatio: 0.52,
+      minLensRatio: 0,
+      maxLensRatio: 1,
+      minEachFrac: 0.005,
       penalty: 0.12,
     },
   ];
@@ -760,6 +764,222 @@ function pickBestLensSplit(prim, worldMatrix) {
 }
 
 /**
+ * Posições já em espaço mundo (índices unificados). `pos` = xyz intercalado.
+ * @param {Float32Array | number[]} pos
+ * @param {number} el
+ * @param {number[]} indices
+ * @param {import('@gltf-transform/core').Primitive} prim
+ * @param {number} frac
+ * @param {"minZ" | "maxZ"} lensSide
+ * @param {Parameters<typeof trySplitPrimitiveByZSide>[4]} opts
+ */
+function trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, lensSide, opts = {}) {
+  const triN = Math.floor(indices.length / 3);
+  if (triN < 24) return null;
+
+  /** @type {{ z: number, y: number, x: number }[]} */
+  const triCent = [];
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  for (let t = 0; t < triN; t++) {
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    for (let k = 0; k < 3; k++) {
+      const vi = indices[t * 3 + k];
+      sx += pos[vi * el];
+      sy += pos[vi * el + 1];
+      sz += pos[vi * el + 2];
+    }
+    const x = sx / 3;
+    const y = sy / 3;
+    const z = sz / 3;
+    yMin = Math.min(yMin, y);
+    yMax = Math.max(yMax, y);
+    xMin = Math.min(xMin, x);
+    xMax = Math.max(xMax, x);
+    triCent.push({ z, y, x });
+  }
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  for (const { z } of triCent) {
+    zMin = Math.min(zMin, z);
+    zMax = Math.max(zMax, z);
+  }
+  const depth = zMax - zMin;
+  const spanY = yMax - yMin;
+  const spanX = xMax - xMin;
+  if (depth <= 1e-8 || spanY <= 1e-8 || spanX <= 1e-8) return null;
+
+  const useYBand = opts.useYBand !== false;
+  const useXBand = opts.useXBand === true;
+  const minLensRatio = opts.minLensRatio ?? 0.01;
+  const maxLensRatio = opts.maxLensRatio ?? 0.22;
+  const yTrim = Math.max(
+    0.04,
+    Math.min(0.16, opts.yTrimFrac ?? Number(process.env.AR_POSTPROCESS_LENS_Y_TRIM_FRAC || "0.1")),
+  );
+  const xTrim = Math.max(0.1, Math.min(0.28, opts.xTrimFrac ?? 0.16));
+  const yLo = yMin + spanY * yTrim;
+  const yHi = yMax - spanY * yTrim;
+  const xLo = xMin + spanX * xTrim;
+  const xHi = xMax - spanX * xTrim;
+  const minEach = Math.max(8, Math.floor(triN * (opts.minEachFrac ?? 0.015)));
+  const f = Math.max(0.1, Math.min(0.52, frac));
+
+  /** @type {number[]} */
+  const lensTris = [];
+  /** @type {number[]} */
+  const frameTris = [];
+  for (let t = 0; t < triN; t++) {
+    const { z, y, x } = triCent[t];
+    const inFrontShell =
+      lensSide === "minZ" ? z <= zMin + depth * f : z >= zMax - depth * f;
+    const inLensBand =
+      (!useYBand || (y >= yLo && y <= yHi)) &&
+      (!useXBand || (x >= xLo && x <= xHi));
+    if (inFrontShell && inLensBand) lensTris.push(t);
+    else frameTris.push(t);
+  }
+  if (lensTris.length < minEach || frameTris.length < minEach) return null;
+  const lensRatio = lensTris.length / triN;
+  if (lensRatio > maxLensRatio || lensRatio < minLensRatio) return null;
+  return {
+    lensTris,
+    frameTris,
+    indices,
+    pos,
+    el,
+    prim,
+    lensSide,
+    lensRatio,
+    frac: f,
+    worldBaked: true,
+  };
+}
+
+/**
+ * @param {ReturnType<typeof buildUnifiedWorldSplitSource>} unified
+ */
+function pickBestLensSplitUnified(unified) {
+  if (!unified) return null;
+  const { pos, el, indices, prim } = unified;
+  let fracDefault = 0.28;
+  try {
+    fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.28");
+  } catch {
+    /* ignore */
+  }
+  const fracs = [
+    ...new Set(
+      [fracDefault, 0.22, 0.32, 0.38, 0.45, 0.18, 0.15, 0.1].map(
+        (f) => Math.round(f * 1000) / 1000,
+      ),
+    ),
+  ];
+  const passes = [
+    { useYBand: true, useXBand: true, yTrimFrac: 0.1, xTrimFrac: 0.18, minLensRatio: 0.008, maxLensRatio: 0.22, penalty: 0 },
+    { useYBand: true, useXBand: false, yTrimFrac: 0.06, minLensRatio: 0.008, maxLensRatio: 0.28, penalty: 0.03 },
+    { useYBand: false, useXBand: true, xTrimFrac: 0.14, minLensRatio: 0.008, maxLensRatio: 0.35, penalty: 0.05 },
+    { useYBand: false, useXBand: false, minLensRatio: 0, maxLensRatio: 1, minEachFrac: 0.005, penalty: 0.12 },
+  ];
+  const sides = /** @type {const} */ (["minZ", "maxZ"]);
+  let best = null;
+  let bestScore = -Infinity;
+  for (const pass of passes) {
+    for (const side of sides) {
+      for (const frac of fracs) {
+        const cand = trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, side, pass);
+        if (!cand) continue;
+        const score =
+          1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.12) * 0.4 - pass.penalty - (side === "maxZ" ? 0.04 : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = cand;
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+/**
+ * Unifica todos os nós mesh (multi-prim / multi-nó Rodin) em triângulos mundo.
+ * @param {import('@gltf-transform/core').Node[]} meshNodes
+ */
+function buildUnifiedWorldSplitSource(meshNodes) {
+  /** @type {number[]} */
+  const pos = [];
+  /** @type {number[]} */
+  const indices = [];
+  /** @type {import('@gltf-transform/core').Primitive | null} */
+  let templatePrim = null;
+  let el = 3;
+  let vertBase = 0;
+
+  for (const node of meshNodes) {
+    const wm = node.getWorldMatrix();
+    const mesh = node.getMesh();
+    if (!mesh) continue;
+    for (const prim of mesh.listPrimitives()) {
+      const posAttr = prim.getAttribute("POSITION");
+      if (!posAttr) continue;
+      if (!templatePrim) templatePrim = prim;
+      const arr = posAttr.getArray();
+      el = Math.max(3, posAttr.getElementSize() || 3);
+      const vertN = Math.floor(arr.length / el);
+      const base = vertBase;
+      for (let i = 0; i < vertN; i++) {
+        const wp = mulMat4Vec3(wm, arr[i * el], arr[i * el + 1], arr[i * el + 2]);
+        pos.push(wp[0], wp[1], wp[2]);
+      }
+      const idxAttr = prim.getIndices();
+      if (idxAttr) {
+        const ia = idxAttr.getArray();
+        for (let j = 0; j < ia.length; j++) indices.push(base + ia[j]);
+      } else {
+        for (let i = 0; i < vertN; i++) indices.push(base + i);
+      }
+      vertBase += vertN;
+    }
+  }
+  if (!templatePrim || indices.length < 72) return null;
+  return { pos, el, indices, prim: templatePrim };
+}
+
+/**
+ * @param {import('@gltf-transform/core').Document} doc
+ * @returns {import('@gltf-transform/core').Node[]}
+ */
+function collectSplittableMeshNodes(doc) {
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return [];
+  /** @type {import('@gltf-transform/core').Node[]} */
+  const meshNodes = [];
+  scene.traverse((node) => {
+    if (!node.getMesh()) return;
+    const n = String(node.getName() || "").toLowerCase();
+    if (n.includes("omafit_frame") || n.includes("omafit_lens")) return;
+    meshNodes.push(node);
+  });
+  return meshNodes;
+}
+
+function glassesGlbAlreadySplit(doc) {
+  let hasFrame = false;
+  let hasLens = false;
+  doc.getRoot().listScenes()[0]?.traverse((node) => {
+    const n = String(node.getName() || "").toLowerCase();
+    if (n.includes("omafit_frame")) hasFrame = true;
+    if (n.includes("omafit_lens")) hasLens = true;
+  });
+  return hasFrame && hasLens;
+}
+
+/**
  * @param {import('@gltf-transform/core').Document} doc
  * @param {import('@gltf-transform/core').Primitive} srcPrim
  * @param {ReturnType<typeof trySplitPrimitiveByZSide>} split
@@ -768,6 +988,8 @@ function pickBestLensSplit(prim, worldMatrix) {
  */
 function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
   const { indices, pos, el } = split;
+  const worldBaked = split.worldBaked === true;
+  const templateVertN = srcPrim.getAttribute("POSITION")?.getCount() || 0;
   /** @type {Map<number, number>} */
   const vmap = new Map();
   /** @type {number[]} */
@@ -794,17 +1016,17 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
         nv = next++;
         vmap.set(vi, nv);
         for (let c = 0; c < el; c++) newPos.push(pos[vi * el + c]);
-        if (newNorm && normalSrc) {
+        if (newNorm && normalSrc && !worldBaked && vi < templateVertN) {
           const arr = normalSrc.getArray();
           const sz = normalSrc.getElementSize() || 3;
           for (let c = 0; c < sz; c++) newNorm.push(arr[vi * sz + c]);
         }
-        if (newUv && uvSrc) {
+        if (newUv && uvSrc && !worldBaked && vi < templateVertN) {
           const arr = uvSrc.getArray();
           const sz = uvSrc.getElementSize() || 2;
           for (let c = 0; c < sz; c++) newUv.push(arr[vi * sz + c]);
         }
-        if (newColor && colorSrc) {
+        if (newColor && colorSrc && !worldBaked && vi < templateVertN) {
           const arr = colorSrc.getArray();
           const sz = colorSrc.getElementSize() || 4;
           for (let c = 0; c < sz; c++) newColor.push(arr[vi * sz + c]);
@@ -872,46 +1094,39 @@ function splitMonolithicGlassesLens(doc) {
   if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS || "1"))) {
     return false;
   }
-  const scene = doc.getRoot().listScenes()[0];
-  if (!scene) return false;
+  if (glassesGlbAlreadySplit(doc)) return true;
 
-  /** @type {import('@gltf-transform/core').Node[]} */
-  const meshNodes = [];
-  scene.traverse((node) => {
-    if (node.getMesh()) meshNodes.push(node);
-  });
-  if (meshNodes.length !== 1) return false;
+  const meshNodes = collectSplittableMeshNodes(doc);
+  if (!meshNodes.length) return false;
 
-  const srcNode = meshNodes[0];
-  const srcMesh = srcNode.getMesh();
-  if (!srcMesh || srcMesh.listPrimitives().length !== 1) return false;
-  const srcPrim = srcMesh.listPrimitives()[0];
-  const wm = srcNode.getWorldMatrix();
-  const split = pickBestLensSplit(srcPrim, wm);
+  const unified = buildUnifiedWorldSplitSource(meshNodes);
+  if (!unified) return false;
+
+  const split = pickBestLensSplitUnified(unified);
   if (!split) return false;
 
   const frameMesh = buildMeshFromTriangles(
     doc,
-    srcPrim,
+    unified.prim,
     split,
     split.frameTris,
     "frame_metal",
   );
   const lensMesh = buildMeshFromTriangles(
     doc,
-    srcPrim,
+    unified.prim,
     split,
     split.lensTris,
     "lens_glass",
   );
 
-  const parent = srcNode.getParentNode() || ensureCanonicalWrapNode(doc);
-
-  const frameNode = doc.createNode("omafit_frame").setMesh(frameMesh);
-  const lensNode = doc.createNode("omafit_lens").setMesh(lensMesh);
-  if (parent !== srcNode) parent.removeChild(srcNode);
-  parent.addChild(frameNode);
-  parent.addChild(lensNode);
+  const parent = ensureCanonicalWrapNode(doc);
+  for (const node of meshNodes) {
+    const p = node.getParentNode();
+    if (p) p.removeChild(node);
+  }
+  parent.addChild(doc.createNode("omafit_frame").setMesh(frameMesh));
+  parent.addChild(doc.createNode("omafit_lens").setMesh(lensMesh));
   return true;
 }
 
@@ -936,8 +1151,9 @@ function assertLensGlassPresent(doc, lensType) {
     }
   });
   if (meshCount < 2) {
+    const splittable = collectSplittableMeshNodes(doc).length;
     throw new Error(
-      "ingest_qa: split monolítico falhou (meshes=1) — perfil translúcido exige omafit_lens + lens_glass",
+      `ingest_qa: split monolítico falhou (meshes=${meshCount}, splittableNodes=${splittable}) — perfil translúcido exige omafit_lens + lens_glass`,
     );
   }
   if (!hasLens) {
@@ -1001,8 +1217,8 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   scaleDocToWidthX(doc, targetW);
 
   const splitOk = splitMonolithicGlassesLens(doc);
+  tagExistingMultiMeshMaterials(doc);
   if (!splitOk) {
-    tagExistingMultiMeshMaterials(doc);
     /** monolítico opaco: só frame_metal */
     if (lensType === "opaque" || lensType === "none" || lensType === "off") {
       doc.getRoot().listScenes()[0]?.traverse((node) => {

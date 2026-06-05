@@ -381,7 +381,7 @@ function markIngestWidgetFrameTag(doc, opts = {}) {
     ...prev,
     omafit_ar_canonical: 1,
     omafit_widget_frame: 1,
-    omafit_glasses_contract: "widget_v191",
+    omafit_glasses_contract: "widget_v192",
     ...(opts.rodinDeterministic ? { omafit_rodin_deterministic_rx: 1 } : {}),
   });
 }

@@ -4,8 +4,6 @@ import {
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
   omafitGlassesGlbHasIngestWidgetFrameTag,
-  omafitGlassesGlbHasDeterministicRodinRemap,
-  omafitApplyDeterministicRodinRx180,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
@@ -603,7 +601,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v191";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v192";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11422,19 +11420,10 @@ async function runArSession({
         if (omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) {
           glassesIngestWidgetFrameTag = true;
           glassesWorkerFrameRemapped = true;
-          const deterministicRodin = omafitGlassesGlbHasDeterministicRodinRemap(glasses);
-          if (!deterministicRodin) {
-            omafitApplyDeterministicRodinRx180(THREE, glasses);
-            console.log(
-              "[omafit-ar] glasses GLB ingest legacy: Rx(180°) determinístico (pré-v191)",
-              { build: OMAFIT_AR_WIDGET_BUILD },
-            );
-          } else {
-            console.log(
-              "[omafit-ar] glasses GLB ingest v191 — orientação baked (sem heurística runtime)",
-              { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
-            );
-          }
+          console.log(
+            "[omafit-ar] glasses GLB ingest (omafit_ar_canonical) — orientação baked, sem remap runtime",
+            { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
+          );
         } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
@@ -11444,7 +11433,7 @@ async function runArSession({
         } else if (omafitRemapRodinGlbToWidgetFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
-            "[omafit-ar] glasses Rodin remap determinístico Rx(−90°)+Rx(180°)",
+            "[omafit-ar] glasses Rodin remap runtime Rx(−90°) (GLB sem ingest)",
             { build: OMAFIT_AR_WIDGET_BUILD },
           );
         }

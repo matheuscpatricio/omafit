@@ -418,6 +418,7 @@ export function computeGlassesCanonicalOffsetQuat(THREE, glasses) {
  */
 export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
   if (!THREE || !glasses) return false;
+  if (omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) return false;
   if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) return false;
   glasses.updateMatrixWorld(true);
   const sz = new THREE.Vector3();
@@ -433,7 +434,6 @@ export function omafitRemapRodinGlbToWidgetFrame(THREE, glasses) {
   if (dims[0].i !== 1) return false;
   const ax = new THREE.Vector3(1, 0, 0);
   glasses.rotateOnWorldAxis(ax, -Math.PI / 2);
-  glasses.rotateOnWorldAxis(ax, Math.PI);
   glasses.updateMatrixWorld(true);
   return true;
 }
@@ -465,7 +465,7 @@ export function omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) {
 }
 
 /**
- * GLB pós-ingest Node/Python com extras `omafit_widget_frame` no nó canónico.
+ * GLB pós-ingest Omafit: nó `omafit_ar_canonical` (extras opcionais).
  * @param {any} root
  * @returns {boolean}
  */
@@ -473,10 +473,9 @@ export function omafitGlassesGlbHasIngestWidgetFrameTag(root) {
   if (!root?.traverse) return false;
   let tagged = false;
   root.traverse((obj) => {
-    if (tagged || String(obj?.name || "") !== "omafit_ar_canonical") return;
-    const ud = obj.userData || {};
-    const ex = ud.omafit_widget_frame ?? ud.extras?.omafit_widget_frame;
-    if (ex === 1 || ex === true) tagged = true;
+    if (tagged) return;
+    if (String(obj?.name || "") !== "omafit_ar_canonical") return;
+    tagged = true;
   });
   return tagged;
 }
@@ -493,15 +492,9 @@ export function omafitGlassesGlbReadCanonicalExtras(root) {
   return extras;
 }
 
-/** GLB pós-ingest v191: Rodin com Rx(−90°)+Rx(180°) baked — runtime não reaplica bridge. */
+/** GLB pós-ingest: orientação baked — runtime não reaplica Rx. */
 export function omafitGlassesGlbHasDeterministicRodinRemap(root) {
-  const ex = omafitGlassesGlbReadCanonicalExtras(root);
-  if (!ex) return false;
-  if (ex.omafit_rodin_deterministic_rx === 1 || ex.omafit_rodin_deterministic_rx === true) {
-    return true;
-  }
-  const contract = String(ex.omafit_glasses_contract || "");
-  return contract === "widget_v191" || contract.endsWith("_v191");
+  return omafitGlassesGlbHasIngestWidgetFrameTag(root);
 }
 
 /**

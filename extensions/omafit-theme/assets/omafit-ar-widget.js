@@ -601,7 +601,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v188";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v189";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2758,18 +2758,35 @@ function omafitPrepareGlassesFrameMaterialsForAr(THREE, root) {
       const matName = String(mat.name || "");
       if (omafitIsGlassesLensMaterial(meshName, matName) || mat.userData?.omafitArLensMaterial) continue;
       if (mat.userData?.omafitMonolithicLensPatched) continue;
-      if (mat.isMeshStandardMaterial !== true && mat.isMeshPhysicalMaterial !== true) {
-        continue;
+      let workMat = mat;
+      if (workMat.isMeshStandardMaterial !== true && workMat.isMeshPhysicalMaterial !== true) {
+        if (!workMat.map && !workMat.color) continue;
+        workMat = new THREE.MeshStandardMaterial({
+          map: workMat.map || null,
+          color: workMat.color?.clone?.() ?? workMat.color,
+          metalness: 0.35,
+          roughness: 0.42,
+          transparent: !!workMat.transparent,
+          opacity: Number.isFinite(Number(workMat.opacity)) ? workMat.opacity : 1,
+          side: workMat.side,
+        });
+        workMat.name = matName || mat.name || "frame_metal";
+        if (Array.isArray(obj.material)) {
+          const idx = obj.material.indexOf(mat);
+          if (idx >= 0) obj.material[idx] = workMat;
+        } else {
+          obj.material = workMat;
+        }
       }
-      if (!Number.isFinite(Number(mat.metalness))) mat.metalness = 0.35;
-      if (!Number.isFinite(Number(mat.roughness))) mat.roughness = 0.42;
-      mat.metalness = THREE.MathUtils.clamp(Number(mat.metalness) || 0, 0, 1);
-      mat.roughness = THREE.MathUtils.clamp(Number(mat.roughness) || 0.5, 0.04, 1);
-      if ("envMapIntensity" in mat && !(Number(mat.envMapIntensity) > 0)) {
-        mat.envMapIntensity = 0.85;
+      if (!Number.isFinite(Number(workMat.metalness))) workMat.metalness = 0.35;
+      if (!Number.isFinite(Number(workMat.roughness))) workMat.roughness = 0.42;
+      workMat.metalness = THREE.MathUtils.clamp(Number(workMat.metalness) || 0, 0, 1);
+      workMat.roughness = THREE.MathUtils.clamp(Number(workMat.roughness) || 0.5, 0.04, 1);
+      if ("envMapIntensity" in workMat && !(Number(workMat.envMapIntensity) > 0)) {
+        workMat.envMapIntensity = 0.85;
       }
-      mat.toneMapped = true;
-      mat.needsUpdate = true;
+      workMat.toneMapped = true;
+      workMat.needsUpdate = true;
     }
   });
 }
@@ -10374,6 +10391,7 @@ async function runArSession({
       );
     /** GLB Rodin/worker remapeado para +Y topo, −Z frente (paridade export canónico). */
     let glassesWorkerFrameRemapped = false;
+    let glassesIngestWidgetFrameTag = false;
     /**
      * Rig estrutural MindAR (`data-ar-glasses-structural-mindar-rig="1"`) — definido cedo
      * para o pipeline de standardização GLB e outros flags o poderem referenciar.
@@ -11400,9 +11418,10 @@ async function runArSession({
     ) {
       try {
         if (omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) {
+          glassesIngestWidgetFrameTag = true;
           glassesWorkerFrameRemapped = true;
           console.log(
-            "[omafit-ar] glasses GLB ingest tag (frame widget, sem remap runtime)",
+            "[omafit-ar] glasses GLB ingest widget frame (omafit_widget_frame v189)",
             { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
           );
         } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
@@ -11423,12 +11442,12 @@ async function runArSession({
           omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)
         ) {
           if (
-            !hasOmafitCanonicalNode &&
-            !omafitGlassesGlbHasIngestWidgetFrameTag(glasses) &&
+            (glassesIngestWidgetFrameTag || !hasOmafitCanonicalNode) &&
             omafitEnsureGlassesBridgePointsUp(THREE, glasses)
           ) {
             console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
               build: OMAFIT_AR_WIDGET_BUILD,
+              ingestTag: glassesIngestWidgetFrameTag,
             });
           }
         }

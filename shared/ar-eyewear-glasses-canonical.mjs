@@ -258,6 +258,56 @@ function mat4RotateX180() {
   return [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
 }
 
+/** Column-major Ry(180°): frente −Z ↔ +Z (sem inverter Y). */
+function mat4RotateY180() {
+  return [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
+}
+
+/**
+ * Verifica se a shell frontal está em −Z (contrato widget).
+ * @param {import('@gltf-transform/core').Scene} scene
+ */
+function glassesFrontShellIsMinusZ(scene) {
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  /** @type {number[]} */
+  const zSamples = [];
+  scene.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const wm = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute("POSITION");
+      if (!pos) continue;
+      const arr = pos.getArray();
+      const el = Math.max(3, pos.getElementSize() || 3);
+      for (let i = 0; i < arr.length; i += el) {
+        const z = mulMat4Vec3(wm, arr[i], arr[i + 1], arr[i + 2])[2];
+        zMin = Math.min(zMin, z);
+        zMax = Math.max(zMax, z);
+        zSamples.push(z);
+      }
+    }
+  });
+  if (zSamples.length < 12 || zMax - zMin <= 1e-8) return true;
+  const thresh = zMin + (zMax - zMin) * 0.22;
+  let frontNeg = 0;
+  let frontPos = 0;
+  for (const z of zSamples) {
+    if (z <= thresh) frontNeg++;
+    if (z >= zMax - (zMax - zMin) * 0.22) frontPos++;
+  }
+  return frontNeg >= frontPos;
+}
+
+/** @param {import('@gltf-transform/core').Document} doc */
+function ensureGlassesFrontMinusZ(doc) {
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene || glassesFrontShellIsMinusZ(scene)) return false;
+  applyWorldRotationToCanonicalRoot(doc, mat4RotateY180());
+  return true;
+}
+
 /**
  * @param {import('@gltf-transform/core').Scene} scene
  * @returns {{ sx: number, sy: number, sz: number }}
@@ -327,7 +377,12 @@ function markIngestWidgetFrameTag(doc) {
   );
   if (!wrap) return;
   const prev = wrap.getExtras() || {};
-  wrap.setExtras({ ...prev, omafit_ar_canonical: 1, omafit_widget_frame: 1 });
+  wrap.setExtras({
+    ...prev,
+    omafit_ar_canonical: 1,
+    omafit_widget_frame: 1,
+    omafit_glasses_contract: "widget_v189",
+  });
 }
 
 function applyWidgetFrameRemap(doc) {
@@ -337,15 +392,15 @@ function applyWidgetFrameRemap(doc) {
   const scene = doc.getRoot().listScenes()[0];
   if (!scene) return false;
   const { sx, sy, sz } = bboxSizeFromScene(scene);
-  const isWidget = glassesExtentsMatchWidgetFrame(sx, sy, sz);
   const isRodin = glassesExtentsMatchRodinPreRemap(sx, sy, sz);
-  // Só confiar em bbox widget se NÃO for ainda Rodin pós-snap (evita “virado pra cima” sem Rx(-90°)).
-  if (isWidget && !isRodin) {
-    markIngestWidgetFrameTag(doc);
-    return true;
+  const isWidget = glassesExtentsMatchWidgetFrame(sx, sy, sz);
+
+  if (isRodin) {
+    applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
+  } else if (!isWidget) {
+    return false;
   }
-  if (!isRodin) return false;
-  applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
+  ensureGlassesFrontMinusZ(doc);
   markIngestWidgetFrameTag(doc);
   return true;
 }
@@ -641,7 +696,11 @@ function materialForSplitPart(doc, srcMat, matName) {
     ensureMaterialName(mat, "lens_glass", { lensExport: true });
     return mat;
   }
-  return copyPbrMaterialShallow(doc, srcMat, "frame_metal");
+  if (srcMat) {
+    srcMat.setName("frame_metal");
+    return srcMat;
+  }
+  return copyPbrMaterialShallow(doc, null, "frame_metal");
 }
 
 /**
@@ -860,7 +919,7 @@ function pickBestLensSplit(prim, worldMatrix) {
  * @param {"minZ" | "maxZ"} lensSide
  * @param {Parameters<typeof trySplitPrimitiveByZSide>[4]} opts
  */
-function trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, lensSide, opts = {}) {
+function trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, lensSide, opts = {}, uvs = null) {
   const triN = Math.floor(indices.length / 3);
   if (triN < 24) return null;
 
@@ -938,6 +997,7 @@ function trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, lensSide, o
     frameTris,
     indices,
     pos,
+    uvs,
     el,
     prim,
     lensSide,
@@ -952,7 +1012,7 @@ function trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, lensSide, o
  */
 function pickBestLensSplitUnified(unified) {
   if (!unified) return null;
-  const { pos, el, indices, prim } = unified;
+  const { pos, el, indices, prim, uvs } = unified;
   let fracDefault = 0.28;
   try {
     fracDefault = Number(process.env.AR_POSTPROCESS_LENS_FRONT_FRAC || "0.28");
@@ -978,7 +1038,7 @@ function pickBestLensSplitUnified(unified) {
   for (const pass of passes) {
     for (const side of sides) {
       for (const frac of fracs) {
-        const cand = trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, side, pass);
+        const cand = trySplitUnifiedWorldPositions(pos, el, indices, prim, frac, side, pass, uvs);
         if (!cand) continue;
         const score =
           1 - cand.lensRatio - Math.abs(cand.lensRatio - 0.12) * 0.4 - pass.penalty - (side === "maxZ" ? 0.04 : 0);
@@ -1001,6 +1061,8 @@ function buildUnifiedWorldSplitSource(meshNodes) {
   /** @type {number[]} */
   const pos = [];
   /** @type {number[]} */
+  const uvs = [];
+  /** @type {number[]} */
   const indices = [];
   /** @type {import('@gltf-transform/core').Primitive | null} */
   let templatePrim = null;
@@ -1018,10 +1080,16 @@ function buildUnifiedWorldSplitSource(meshNodes) {
       const arr = posAttr.getArray();
       el = Math.max(3, posAttr.getElementSize() || 3);
       const vertN = Math.floor(arr.length / el);
+      const uvAttr = prim.getAttribute("TEXCOORD_0");
+      const uvArr = uvAttr?.getArray();
+      const uvEl = uvAttr ? Math.max(2, uvAttr.getElementSize() || 2) : 0;
       const base = vertBase;
       for (let i = 0; i < vertN; i++) {
         const wp = mulMat4Vec3(wm, arr[i * el], arr[i * el + 1], arr[i * el + 2]);
         pos.push(wp[0], wp[1], wp[2]);
+        if (uvArr && uvEl >= 2) {
+          uvs.push(uvArr[i * uvEl], uvArr[i * uvEl + 1]);
+        }
       }
       const idxAttr = prim.getIndices();
       if (idxAttr) {
@@ -1034,7 +1102,7 @@ function buildUnifiedWorldSplitSource(meshNodes) {
     }
   }
   if (!templatePrim || indices.length < 72) return null;
-  return { pos, el, indices, prim: templatePrim };
+  return { pos, el, indices, prim: templatePrim, uvs: uvs.length ? uvs : null };
 }
 
 /**
@@ -1108,7 +1176,9 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
           const sz = normalSrc.getElementSize() || 3;
           for (let c = 0; c < sz; c++) newNorm.push(arr[vi * sz + c]);
         }
-        if (newUv && uvSrc && !worldBaked && vi < templateVertN) {
+        if (newUv && worldBaked && split.uvs && split.uvs.length >= vi * 2 + 2) {
+          newUv.push(split.uvs[vi * 2], split.uvs[vi * 2 + 1]);
+        } else if (newUv && uvSrc && !worldBaked && vi < templateVertN) {
           const arr = uvSrc.getArray();
           const sz = uvSrc.getElementSize() || 2;
           for (let c = 0; c < sz; c++) newUv.push(arr[vi * sz + c]);

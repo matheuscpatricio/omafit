@@ -562,12 +562,20 @@ function materialForSplitPart(doc, srcMat, matName) {
  * @param {number[]} worldMatrix
  * @param {number} frac
  * @param {"minZ" | "maxZ"} lensSide
- * @param {{ useYBand?: boolean, minLensRatio?: number, maxLensRatio?: number }} [opts]
+ * @param {{
+ *   useYBand?: boolean,
+ *   yTrimFrac?: number,
+ *   useXBand?: boolean,
+ *   xTrimFrac?: number,
+ *   minLensRatio?: number,
+ *   maxLensRatio?: number,
+ * }} [opts]
  */
 function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) {
   const useYBand = opts.useYBand !== false;
-  const minLensRatio = opts.minLensRatio ?? 0.02;
-  const maxLensRatio = opts.maxLensRatio ?? 0.2;
+  const useXBand = opts.useXBand === true;
+  const minLensRatio = opts.minLensRatio ?? 0.01;
+  const maxLensRatio = opts.maxLensRatio ?? 0.22;
   const posAttr = prim.getAttribute("POSITION");
   if (!posAttr) return null;
   const pos = posAttr.getArray();
@@ -584,10 +592,12 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
   const triN = Math.floor(indices.length / 3);
   if (triN < 24) return null;
 
-  /** @type {{ z: number, y: number }[]} */
+  /** @type {{ z: number, y: number, x: number }[]} */
   const triCent = [];
   let yMin = Infinity;
   let yMax = -Infinity;
+  let xMin = Infinity;
+  let xMax = -Infinity;
   for (let t = 0; t < triN; t++) {
     let sx = 0;
     let sy = 0;
@@ -604,11 +614,14 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
       sy += wp[1];
       sz += wp[2];
     }
+    const x = sx / 3;
     const y = sy / 3;
     const z = sz / 3;
     yMin = Math.min(yMin, y);
     yMax = Math.max(yMax, y);
-    triCent.push({ z, y });
+    xMin = Math.min(xMin, x);
+    xMax = Math.max(xMax, x);
+    triCent.push({ z, y, x });
   }
   let zMin = Infinity;
   let zMax = -Infinity;
@@ -618,13 +631,24 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
   }
   const depth = zMax - zMin;
   const spanY = yMax - yMin;
-  if (depth <= 1e-8 || spanY <= 1e-8) return null;
+  const spanX = xMax - xMin;
+  if (depth <= 1e-8 || spanY <= 1e-8 || spanX <= 1e-8) return null;
   const yTrim = Math.max(
-    0.06,
-    Math.min(0.14, Number(process.env.AR_POSTPROCESS_LENS_Y_TRIM_FRAC || "0.1")),
+    0.04,
+    Math.min(
+      0.16,
+      opts.yTrimFrac ??
+        Number(process.env.AR_POSTPROCESS_LENS_Y_TRIM_FRAC || "0.1"),
+    ),
+  );
+  const xTrim = Math.max(
+    0.1,
+    Math.min(0.28, opts.xTrimFrac ?? 0.16),
   );
   const yLo = yMin + spanY * yTrim;
   const yHi = yMax - spanY * yTrim;
+  const xLo = xMin + spanX * xTrim;
+  const xHi = xMax - spanX * xTrim;
   const minEach = Math.max(8, Math.floor(triN * 0.015));
   const f = Math.max(0.1, Math.min(0.52, frac));
 
@@ -633,12 +657,14 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
   /** @type {number[]} */
   const frameTris = [];
   for (let t = 0; t < triN; t++) {
-    const { z, y } = triCent[t];
+    const { z, y, x } = triCent[t];
     const inFrontShell =
       lensSide === "minZ"
         ? z <= zMin + depth * f
         : z >= zMax - depth * f;
-    const inLensBand = !useYBand || (y >= yLo && y <= yHi);
+    const inLensBand =
+      (!useYBand || (y >= yLo && y <= yHi)) &&
+      (!useXBand || (x >= xLo && x <= xHi));
     if (inFrontShell && inLensBand) lensTris.push(t);
     else frameTris.push(t);
   }
@@ -651,7 +677,7 @@ function trySplitPrimitiveByZSide(prim, worldMatrix, frac, lensSide, opts = {}) 
 }
 
 /**
- * Escolhe o split onde a malha de lente é fina (≈ shell frontal em −Z, faixa Y central).
+ * Escolhe split da shell frontal (−Z). Passagens progressivas: Y+X → Y → X → Python puro.
  * @param {import('@gltf-transform/core').Primitive} prim
  * @param {number[]} worldMatrix
  */
@@ -664,26 +690,73 @@ function pickBestLensSplit(prim, worldMatrix) {
   }
   const fracs = [
     ...new Set(
-      [fracDefault, 0.22, 0.32, 0.38, 0.45].map((f) => Math.round(f * 1000) / 1000),
+      [fracDefault, 0.22, 0.32, 0.38, 0.45, 0.18, 0.15].map(
+        (f) => Math.round(f * 1000) / 1000,
+      ),
     ),
   ];
   const targetRatio = 0.12;
+  const sides = /** @type {const} */ (["minZ", "maxZ"]);
+
+  const passes = [
+    {
+      useYBand: true,
+      useXBand: true,
+      yTrimFrac: 0.1,
+      xTrimFrac: 0.18,
+      minLensRatio: 0.008,
+      maxLensRatio: 0.22,
+      penalty: 0,
+    },
+    {
+      useYBand: true,
+      useXBand: false,
+      yTrimFrac: 0.06,
+      minLensRatio: 0.008,
+      maxLensRatio: 0.28,
+      penalty: 0.03,
+    },
+    {
+      useYBand: false,
+      useXBand: true,
+      xTrimFrac: 0.14,
+      minLensRatio: 0.008,
+      maxLensRatio: 0.35,
+      penalty: 0.05,
+    },
+    {
+      useYBand: false,
+      useXBand: false,
+      minLensRatio: 0.015,
+      maxLensRatio: 0.52,
+      penalty: 0.12,
+    },
+  ];
+
   /** @type {ReturnType<typeof trySplitPrimitiveByZSide>} */
   let bestEntry = null;
   let bestScore = -Infinity;
 
-  // Só split com faixa Y (evita hastes/aro inferior classificados como lens_glass).
-  const pass = { useYBand: true, minLensRatio: 0.02, maxLensRatio: 0.22 };
-  for (const frac of fracs) {
-    const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, "minZ", pass);
-    if (!cand) continue;
-    const score = 1 - cand.lensRatio - Math.abs(cand.lensRatio - targetRatio) * 0.45;
-    if (score > bestScore) {
-      bestScore = score;
-      bestEntry = cand;
+  for (const pass of passes) {
+    for (const side of sides) {
+      for (const frac of fracs) {
+        const cand = trySplitPrimitiveByZSide(prim, worldMatrix, frac, side, pass);
+        if (!cand) continue;
+        const score =
+          1 -
+          cand.lensRatio -
+          Math.abs(cand.lensRatio - targetRatio) * 0.4 -
+          pass.penalty -
+          (side === "maxZ" ? 0.04 : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          bestEntry = cand;
+        }
+      }
     }
+    if (bestEntry) return bestEntry;
   }
-  return bestEntry;
+  return null;
 }
 
 /**

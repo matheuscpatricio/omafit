@@ -521,9 +521,17 @@ function copyPbrMaterialShallow(doc, srcMat, name) {
   mat.setName(name);
   if (!srcMat) return mat;
   try {
-    mat.setBaseColorFactor([...srcMat.getBaseColorFactor()]);
-    mat.setMetallicFactor(srcMat.getMetallicFactor());
-    mat.setRoughnessFactor(srcMat.getRoughnessFactor());
+    const bc = srcMat.getBaseColorFactor();
+    mat.setBaseColorFactor([...bc]);
+    if (bc[0] + bc[1] + bc[2] < 0.06) {
+      mat.setBaseColorFactor([0.82, 0.82, 0.86, bc[3] ?? 1]);
+    }
+    mat.setMetallicFactor(
+      Number.isFinite(srcMat.getMetallicFactor()) ? srcMat.getMetallicFactor() : 0.35,
+    );
+    mat.setRoughnessFactor(
+      Number.isFinite(srcMat.getRoughnessFactor()) ? srcMat.getRoughnessFactor() : 0.42,
+    );
     mat.setDoubleSided(srcMat.getDoubleSided());
     mat.setAlphaMode(srcMat.getAlphaMode());
     const bcTex = srcMat.getBaseColorTexture();
@@ -541,6 +549,85 @@ function copyPbrMaterialShallow(doc, srcMat, name) {
     /* defaults */
   }
   return mat;
+}
+
+/**
+ * Normais por vértice a partir de triângulos (pos intercalado xyz).
+ * @param {number[]} pos
+ * @param {number} el
+ * @param {number[]} triIdx
+ */
+function computeVertexNormalsFromTriangles(pos, el, triIdx) {
+  const vertN = Math.floor(pos.length / el);
+  /** @type {number[]} */
+  const acc = new Array(vertN * 3).fill(0);
+  for (let t = 0; t + 2 < triIdx.length; t += 3) {
+    const i0 = triIdx[t];
+    const i1 = triIdx[t + 1];
+    const i2 = triIdx[t + 2];
+    const ax = pos[i1 * el] - pos[i0 * el];
+    const ay = pos[i1 * el + 1] - pos[i0 * el + 1];
+    const az = pos[i1 * el + 2] - pos[i0 * el + 2];
+    const bx = pos[i2 * el] - pos[i0 * el];
+    const by = pos[i2 * el + 1] - pos[i0 * el + 1];
+    const bz = pos[i2 * el + 2] - pos[i0 * el + 2];
+    const nx = ay * bz - az * by;
+    const ny = az * bx - ax * bz;
+    const nz = ax * by - ay * bx;
+    for (const vi of [i0, i1, i2]) {
+      acc[vi * 3] += nx;
+      acc[vi * 3 + 1] += ny;
+      acc[vi * 3 + 2] += nz;
+    }
+  }
+  /** @type {number[]} */
+  const out = [];
+  for (let i = 0; i < vertN; i++) {
+    let nx = acc[i * 3];
+    let ny = acc[i * 3 + 1];
+    let nz = acc[i * 3 + 2];
+    const len = Math.hypot(nx, ny, nz) || 1;
+    out.push(nx / len, ny / len, nz / len);
+  }
+  return out;
+}
+
+/**
+ * Paridade `trimesh_pipeline.apply_lens_type_materials`.
+ * @param {import('@gltf-transform/core').Document} doc
+ * @param {string} lensType
+ */
+function applyLensTypeMaterials(doc, lensType) {
+  const lt = String(lensType || "clear_fake").trim().toLowerCase();
+  doc.getRoot().listScenes()[0]?.traverse((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    const n = String(node.getName() || "").toLowerCase();
+    for (const prim of mesh.listPrimitives()) {
+      const mn = String(prim.getMaterial()?.getName() || "").toLowerCase();
+      if (!n.includes("omafit_lens") && !mn.includes("lens_glass")) continue;
+      let mat = prim.getMaterial();
+      if (!mat) {
+        mat = doc.createMaterial("lens_glass");
+        prim.setMaterial(mat);
+      }
+      mat.setName("lens_glass");
+      if (lt === "tinted") {
+        mat.setBaseColorFactor([0.12, 0.12, 0.14, 0.82]);
+        mat.setAlphaMode("BLEND");
+      } else if (lt === "mirror") {
+        mat.setMetallicFactor(0.85);
+        mat.setRoughnessFactor(0.12);
+      } else if (lt === "clear_physical") {
+        mat.setAlphaMode("BLEND");
+        mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.35]);
+      } else {
+        mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.52]);
+        mat.setAlphaMode("BLEND");
+        mat.setDoubleSided(true);
+      }
+    }
+  });
 }
 
 /**
@@ -699,7 +786,7 @@ function pickBestLensSplit(prim, worldMatrix) {
     ),
   ];
   const targetRatio = 0.12;
-  const sides = /** @type {const} */ (["minZ", "maxZ"]);
+  const sides = /** @type {const} */ (["minZ"]);
 
   const passes = [
     {
@@ -885,7 +972,7 @@ function pickBestLensSplitUnified(unified) {
     { useYBand: false, useXBand: true, xTrimFrac: 0.14, minLensRatio: 0.008, maxLensRatio: 0.35, penalty: 0.05 },
     { useYBand: false, useXBand: false, minLensRatio: 0, maxLensRatio: 1, minEachFrac: 0.005, penalty: 0.12 },
   ];
-  const sides = /** @type {const} */ (["minZ", "maxZ"]);
+  const sides = /** @type {const} */ (["minZ"]);
   let best = null;
   let bestScore = -Infinity;
   for (const pass of passes) {
@@ -1044,7 +1131,18 @@ function buildMeshFromTriangles(doc, srcPrim, split, triList, matName) {
       .setType("VEC3")
       .setArray(new Float32Array(newPos)),
   );
-  if (newNorm?.length) {
+  const needComputedNormals =
+    worldBaked || !newNorm?.length || newNorm.length !== newPos.length;
+  if (needComputedNormals && newIdx.length >= 3) {
+    const computed = computeVertexNormalsFromTriangles(newPos, el, newIdx);
+    prim.setAttribute(
+      "NORMAL",
+      doc
+        .createAccessor()
+        .setType("VEC3")
+        .setArray(new Float32Array(computed)),
+    );
+  } else if (newNorm?.length) {
     prim.setAttribute(
       "NORMAL",
       doc
@@ -1212,7 +1310,7 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   centerSceneAtOrigin(doc);
   snapToBestRightAngleDoc(doc);
   applyWidgetFrameRemap(doc);
-  applyBridgeUpFix(doc);
+  // Bridge-up só no runtime (GLBs ingest ficam com tag — Rx(180°) aqui invertia modelos válidos).
   centerSceneAtOrigin(doc);
   scaleDocToWidthX(doc, targetW);
 
@@ -1235,6 +1333,7 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   }
 
   assertLensGlassPresent(doc, lensType);
+  applyLensTypeMaterials(doc, lensType);
 
   const out = await io.writeBinary(doc);
   return new Uint8Array(out);

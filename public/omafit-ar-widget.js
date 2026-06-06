@@ -3,6 +3,7 @@ import {
   computeGlassesCanonicalOffsetQuat,
   omafitApplyGlassesTripoOffsetContainer,
   omafitGlassesGlbIsWidgetCanonicalFrame,
+  omafitGlassesGlbHasIngestWidgetFrameTag,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
 } from "./omafit-glasses-orient.js";
@@ -24,6 +25,7 @@ import {
   resetMindarGlassesPivotSmoother,
 } from "./omafit-mindar-glasses-pivot-rig.js";
 import {
+  OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
   OMAFIT_GLASSES_DEPTH_FORWARD_DEFAULT_M,
   OMAFIT_GLASSES_REFERENCE_IPD_M,
   OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
@@ -600,7 +602,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-widget-frame-v187";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v194";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2757,18 +2759,35 @@ function omafitPrepareGlassesFrameMaterialsForAr(THREE, root) {
       const matName = String(mat.name || "");
       if (omafitIsGlassesLensMaterial(meshName, matName) || mat.userData?.omafitArLensMaterial) continue;
       if (mat.userData?.omafitMonolithicLensPatched) continue;
-      if (mat.isMeshStandardMaterial !== true && mat.isMeshPhysicalMaterial !== true) {
-        continue;
+      let workMat = mat;
+      if (workMat.isMeshStandardMaterial !== true && workMat.isMeshPhysicalMaterial !== true) {
+        if (!workMat.map && !workMat.color) continue;
+        workMat = new THREE.MeshStandardMaterial({
+          map: workMat.map || null,
+          color: workMat.color?.clone?.() ?? workMat.color,
+          metalness: 0.35,
+          roughness: 0.42,
+          transparent: !!workMat.transparent,
+          opacity: Number.isFinite(Number(workMat.opacity)) ? workMat.opacity : 1,
+          side: workMat.side,
+        });
+        workMat.name = matName || mat.name || "frame_metal";
+        if (Array.isArray(obj.material)) {
+          const idx = obj.material.indexOf(mat);
+          if (idx >= 0) obj.material[idx] = workMat;
+        } else {
+          obj.material = workMat;
+        }
       }
-      if (!Number.isFinite(Number(mat.metalness))) mat.metalness = 0.35;
-      if (!Number.isFinite(Number(mat.roughness))) mat.roughness = 0.42;
-      mat.metalness = THREE.MathUtils.clamp(Number(mat.metalness) || 0, 0, 1);
-      mat.roughness = THREE.MathUtils.clamp(Number(mat.roughness) || 0.5, 0.04, 1);
-      if ("envMapIntensity" in mat && !(Number(mat.envMapIntensity) > 0)) {
-        mat.envMapIntensity = 0.85;
+      if (!Number.isFinite(Number(workMat.metalness))) workMat.metalness = 0.35;
+      if (!Number.isFinite(Number(workMat.roughness))) workMat.roughness = 0.42;
+      workMat.metalness = THREE.MathUtils.clamp(Number(workMat.metalness) || 0, 0, 1);
+      workMat.roughness = THREE.MathUtils.clamp(Number(workMat.roughness) || 0.5, 0.04, 1);
+      if ("envMapIntensity" in workMat && !(Number(workMat.envMapIntensity) > 0)) {
+        workMat.envMapIntensity = 0.85;
       }
-      mat.toneMapped = true;
-      mat.needsUpdate = true;
+      workMat.toneMapped = true;
+      workMat.needsUpdate = true;
     }
   });
 }
@@ -10373,6 +10392,7 @@ async function runArSession({
       );
     /** GLB Rodin/worker remapeado para +Y topo, −Z frente (paridade export canónico). */
     let glassesWorkerFrameRemapped = false;
+    let glassesIngestWidgetFrameTag = false;
     /**
      * Rig estrutural MindAR (`data-ar-glasses-structural-mindar-rig="1"`) — definido cedo
      * para o pipeline de standardização GLB e outros flags o poderem referenciar.
@@ -11098,6 +11118,13 @@ async function runArSession({
         meshes: meshN,
         triangles: triN,
         draco: Boolean(dracoLoaderFace),
+        ingestSplit: omafitGlassesGlbHasIngestWidgetFrameTag(glasses),
+      });
+      glasses.traverse((o) => {
+        if (o?.isMesh) {
+          o.visible = true;
+          o.frustumCulled = false;
+        }
       });
     } catch {
       /* ignore */
@@ -11391,6 +11418,11 @@ async function runArSession({
     glasses.updateMatrix();
     glasses.updateMatrixWorld(true);
 
+    if (accessoryType === "glasses" && omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) {
+      glassesIngestWidgetFrameTag = true;
+      glassesWorkerFrameRemapped = true;
+    }
+
     if (
       accessoryType === "glasses" &&
       !glassesCanonicalBlenderExport &&
@@ -11398,7 +11430,12 @@ async function runArSession({
       !glassesManualMindarRig
     ) {
       try {
-        if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
+        if (glassesIngestWidgetFrameTag) {
+          console.log(
+            "[omafit-ar] glasses GLB ingest (omafit_ar_canonical) — orientação baked, sem remap runtime",
+            { build: OMAFIT_AR_WIDGET_BUILD, hasOmafitCanonicalNode },
+          );
+        } else if (omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
             "[omafit-ar] glasses GLB já em frame widget (+Y topo, −Z frente)",
@@ -11407,22 +11444,21 @@ async function runArSession({
         } else if (omafitRemapRodinGlbToWidgetFrame(THREE, glasses)) {
           glassesWorkerFrameRemapped = true;
           console.log(
-            "[omafit-ar] glasses worker/Rodin frame remap Rx(-90°) → +Y topo, −Z frente",
+            "[omafit-ar] glasses Rodin remap runtime Rx(−90°) (GLB sem ingest)",
             { build: OMAFIT_AR_WIDGET_BUILD },
           );
         }
         if (
-          glassesWorkerFrameRemapped ||
-          omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)
+          !glassesIngestWidgetFrameTag &&
+          (glassesWorkerFrameRemapped ||
+            omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses)) &&
+          !hasOmafitCanonicalNode &&
+          omafitEnsureGlassesBridgePointsUp(THREE, glasses)
         ) {
-          if (
-            !hasOmafitCanonicalNode &&
-            omafitEnsureGlassesBridgePointsUp(THREE, glasses)
-          ) {
-            console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
-              build: OMAFIT_AR_WIDGET_BUILD,
-            });
-          }
+          console.log("[omafit-ar] glasses bridge-up fix Rx(180°) aplicado", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            ingestTag: false,
+          });
         }
       } catch (remapErr) {
         console.warn(
@@ -11518,6 +11554,7 @@ async function runArSession({
         const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
         if (frontCenter) glasses.position.sub(frontCenter);
         else glasses.position.sub(box.getCenter(new THREE.Vector3()));
+        glasses.updateMatrixWorld(true);
       } else {
         glasses.position.sub(box.getCenter(new THREE.Vector3()));
       }
@@ -11914,43 +11951,27 @@ async function runArSession({
       new THREE.Box3().setFromObject(glasses).getSize(szC);
       glassesFaceWideAxisX = szC.x >= szC.z;
       if (tripOffUseAuto && !omafitArSkipTripCanonicalQuatDebug) {
-        const trustIngestWidgetFrame =
-          omafitGlassesGlbIsWidgetCanonicalFrame(THREE, glasses) &&
-          (glassesWorkerFrameRemapped || hasOmafitCanonicalNode);
-        if (trustIngestWidgetFrame) {
-          tripCanonicalQuat = new THREE.Quaternion();
-          console.log(
-            "[omafit-ar] glasses canonical offset omitido (GLB já em frame widget / ingest)",
-            {
-              build: OMAFIT_AR_WIDGET_BUILD,
-              hasOmafitCanonicalNode,
-              glassesWorkerFrameRemapped,
+        try {
+          const canon = computeGlassesCanonicalOffsetQuat(THREE, glasses);
+          if (canon && canon.quat) {
+            tripCanonicalQuat = canon.quat;
+            tripCanonicalDetected = canon.detected;
+            console.log("[omafit-ar] glasses canonical offset quat (auto, determinístico)", {
+              widthAxis: canon.detected?.widthAxisIdx,
+              heightAxis: canon.detected?.heightAxisIdx,
+              depthAxis: canon.detected?.depthAxisIdx,
+              depthFrontSign: canon.detected?.depthFrontSign,
+              rimHeightSign: canon.rimHeightSign,
+              widthSign: canon.signs?.widthSign,
+              flippedWidthForRotation: canon.signs?.flippedWidthForRotation,
+              confidence: canon.detected?.confidence,
               sizeBbox: { x: szC.x, y: szC.y, z: szC.z },
-            },
-          );
-        } else {
-          try {
-            const canon = computeGlassesCanonicalOffsetQuat(THREE, glasses);
-            if (canon && canon.quat) {
-              tripCanonicalQuat = canon.quat;
-              tripCanonicalDetected = canon.detected;
-              console.log("[omafit-ar] glasses canonical offset quat (auto, determinístico)", {
-                widthAxis: canon.detected?.widthAxisIdx,
-                heightAxis: canon.detected?.heightAxisIdx,
-                depthAxis: canon.detected?.depthAxisIdx,
-                depthFrontSign: canon.detected?.depthFrontSign,
-                rimHeightSign: canon.rimHeightSign,
-                widthSign: canon.signs?.widthSign,
-                flippedWidthForRotation: canon.signs?.flippedWidthForRotation,
-                confidence: canon.detected?.confidence,
-                sizeBbox: { x: szC.x, y: szC.y, z: szC.z },
-              });
-            } else {
-              console.warn("[omafit-ar] canonical quat: confiança baixa — fallback Y-90 X180");
-            }
-          } catch (e) {
-            console.warn("[omafit-ar] canonical quat falhou:", e?.message || e);
+            });
+          } else {
+            console.warn("[omafit-ar] canonical quat: confiança baixa — fallback Y-90 X180");
           }
+        } catch (e) {
+          console.warn("[omafit-ar] canonical quat falhou:", e?.message || e);
         }
       } else if (tripOffUseAuto && omafitArSkipTripCanonicalQuatDebug) {
         try {
@@ -12495,14 +12516,21 @@ async function runArSession({
         ) {
           /**
            * Paridade preview admin (`OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD`): GLB
-           * trimesh/Rodin tem frente em −Z; MindAR usa +Z para a câmara.
-           * Merchant rx/ry/rz ficam em `calibRot` (pai); bind fixo aqui (filho).
+           * trimesh/ingest tem frente em −Z; MindAR usa +Z para a câmara.
+           * Heurística por amostragem de Z (v193) devolvia Ry=0 em GLBs ingest —
+           * lentes viradas para trás (invisíveis). Merchant rx/ry/rz ficam em `calibRot`.
            */
           glassesStaticBindWrap.quaternion.identity();
           glassesStaticBindWrap.rotateOnWorldAxis(
             new THREE.Vector3(0, 1, 0),
-            Math.PI,
+            OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
           );
+          console.log("[omafit-ar] glasses MindAR static bind Ry", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            bindRyRad: OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+            bindRyDeg: (OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD * 180) / Math.PI,
+            ingestSplit: glassesIngestWidgetFrameTag,
+          });
         } else if (glassesStaticBindQuatPostBind) {
           glassesStaticBindWrap.quaternion.copy(glassesStaticBindQuatPostBind);
         } else {

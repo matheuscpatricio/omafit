@@ -6,8 +6,9 @@
  *
  * Semântica (previsível para o lojista):
  *   - `scale` multiplica o auto-fit (admin + loja). Padrão = 0,5 (50% no slider).
- *     Export canónico + face simples: 1 = GLB como exportado × `scale` do lojista.
- *   - GLB não canónico / bbox gigante: `scale` × (`fitW` / largura bbox).
+ *   - Escala base = `fitW / largura bbox X` (fitW ≈ 145 mm quando bbox é anómala).
+ *   - Bbox &lt; 80 mm ou &gt; 280 mm → fitW fixo (~145 mm), previsível ingest + Rodin.
+ *   - `meshScale` final = base × `scale` do lojista (admin e widget).
  *   - `wearZ` = 0 → sem deslocamento extra em profundidade (metros).
  *     Negativo aproxima, positivo afasta (mesmo eixo que o preview estático).
  *   - `wearX` / `wearY` / `wearZ` = metros. Preview: `wearPosition.position` directo.
@@ -50,6 +51,9 @@ export const OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M = 0.145;
 /** Bbox X acima disto → usar largura de referência em vez da bbox bruta. */
 export const OMAFIT_GLASSES_OVERSIZED_BBOX_WIDTH_M = 0.28;
 
+/** Bbox X abaixo disto → GLB sub-físico (ex. ingest antigo ~10 mm); fit à referência. */
+export const OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M = 0.08;
+
 /** Modo simples (ponte 168): largura do frame ≈ IPD × este factor. */
 export const OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE = 1;
 
@@ -68,6 +72,9 @@ export const OMAFIT_GLASSES_DEPTH_FORWARD_DEFAULT_M = 0;
 export function resolveGlassesFrameWidthForFit(bboxWidthLocal) {
   const w = Math.max(Number(bboxWidthLocal) || 0, 1e-4);
   if (w > OMAFIT_GLASSES_OVERSIZED_BBOX_WIDTH_M) {
+    return OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M;
+  }
+  if (w < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
     return OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M;
   }
   return w;
@@ -231,9 +238,6 @@ export function computeGlassesEffectiveDisplayScale(p) {
 export function resolveGlassesMerchantMeshScale(p) {
   const mul =
     Number(p.merchantScaleMul) > 0 ? Number(p.merchantScaleMul) : 1;
-  if (p.canonicalBlenderExport && p.simpleFaceOnly) {
-    return mul;
-  }
   const base = computeGlassesPreviewBaseScale(p.bboxWidthLocal);
   return computeGlassesEffectiveDisplayScale({
     autoFitBase: base,
@@ -252,9 +256,6 @@ export function resolveGlassesMerchantMeshScale(p) {
  * @returns {number}
  */
 export function resolveGlassesCalibScaleBase(p) {
-  if (p.canonicalBlenderExport && p.simpleFaceOnly) {
-    return 1;
-  }
   return computeGlassesPreviewBaseScale(p.bboxWidthLocal);
 }
 

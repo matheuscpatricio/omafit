@@ -259,6 +259,28 @@ export function resolveGlassesCalibScaleBase(p) {
   return computeGlassesPreviewBaseScale(p.bboxWidthLocal);
 }
 
+/** Tecto base para clamp (modo legado widget — preferir `clampGlassesDisplayMeshScale`). */
+export const OMAFIT_GLASSES_MESH_SCALE_ABS_MIN = 0.04;
+export const OMAFIT_GLASSES_MESH_SCALE_ABS_MAX = 2.5;
+
+/**
+ * Clamp de escala do mesh — o tecto sobe com o auto-fit (bbox sub-física ~10 mm → base ~14).
+ *
+ * @param {number} displayScale
+ * @param {number} [autoFitBase] `fitW/rawW` antes do merchant (default 1)
+ * @returns {number}
+ */
+export function clampGlassesDisplayMeshScale(displayScale, autoFitBase = 1) {
+  const base = Math.max(Number(autoFitBase) || 0, 1);
+  const absMax = Math.max(
+    OMAFIT_GLASSES_MESH_SCALE_ABS_MAX,
+    Math.ceil(base * 1.15),
+  );
+  const s = Number(displayScale);
+  if (!Number.isFinite(s)) return OMAFIT_GLASSES_MESH_SCALE_ABS_MIN;
+  return Math.min(absMax, Math.max(OMAFIT_GLASSES_MESH_SCALE_ABS_MIN, s));
+}
+
 /**
  * Soma wearX/Y/Z (metros) ao `position` usando as colunas 3×3 de `localFaceMatrix`
  * (face → espaço do pai do tracking wrap, ex. `glassesModelWrap`).

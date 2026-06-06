@@ -39,6 +39,7 @@ import {
   resolveGlassesCalibScaleBase,
   resolveGlassesFrameWidthForFit,
   resolveGlassesMerchantMeshScale,
+  clampGlassesDisplayMeshScale,
 } from "./omafit-glasses-calibration.js";
 import {
   OMAFIT_NECKLACE_ORIENT_SLERP,
@@ -602,7 +603,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v195";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v196";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -1003,9 +1004,7 @@ const OMAFIT_GLASSES_IPD_CHEEK_EQUIV = 2.1;
 const OMAFIT_GLASSES_SCALE_IPD_MUL = 1.5;
 /** IPD em **espaço mundo da face**: `distanceTo` após `applyMatrix4(face.matrixWorld)` × este factor no mesh. */
 const OMAFIT_GLASSES_SCALE_IPD_METRIC_MUL = 2;
-/** Clamp absoluto na escala uniforme do mesh (óculos após IPD×factor). */
-const OMAFIT_GLASSES_MESH_SCALE_ABS_MIN = 0.04;
-const OMAFIT_GLASSES_MESH_SCALE_ABS_MAX = 2.5;
+/** @deprecated constantes movidas para `omafit-glasses-calibration.js` — import acima. */
 /**
  * Avanço +Z local (m) no espaço do rosto: `Vector3(0,0,m).applyQuaternion(model.quaternion)` + `position.add`.
  * Aplicado após `glasses.position` / `glasses.quaternion` vindos da faceMatrix.
@@ -12202,15 +12201,17 @@ async function runArSession({
       if (!glassesManualMindarRig) {
         if (glassesSimpleFaceOnly) {
           const mc = readGlassesMerchantCal();
-          const bootScale = THREE.MathUtils.clamp(
+          const autoFitBase = resolveGlassesCalibScaleBase({
+            bboxWidthLocal: glassesFrameWidthRawLocal,
+          });
+          const bootScale = clampGlassesDisplayMeshScale(
             resolveGlassesMerchantMeshScale({
               bboxWidthLocal: glassesFrameWidthRawLocal,
               merchantScaleMul: mc?.scale,
               canonicalBlenderExport: glassesCanonicalBlenderExport,
               simpleFaceOnly: true,
             }),
-            OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,
-            OMAFIT_GLASSES_MESH_SCALE_ABS_MAX,
+            autoFitBase,
           );
           glasses.scale.set(bootScale, bootScale, bootScale);
         } else {
@@ -12251,7 +12252,7 @@ async function runArSession({
         if (o) o.visible = true;
       });
     }
-    console.log("[omafit-ar] face scale resolved", {
+          console.log("[omafit-ar] face scale resolved", {
       glbMaxDim: maxDim,
       necklaceNeckSpanM: accessoryType === "necklace" ? necklaceNeckSpanM : null,
       necklaceArcSpanHorizM: accessoryType === "necklace" ? necklaceNeckSpanM : null,
@@ -13470,10 +13471,16 @@ async function runArSession({
       accessoryType !== "necklace"
     ) {
       try {
-        omafitStoreMaterialOpacityBaseline(glasses);
-        omafitApplyModelOpacityFactor(glasses, 0);
+        /** Modo simples: fade opacity=0 deixa lentes clear_fake invisíveis para sempre se o intro falhar. */
+        if (accessoryType === "glasses" && glassesSimpleFaceOnly) {
+          faceArEnhancementState.microUx.preparedOpacity = false;
+          faceArEnhancementState.microUx.introComplete = true;
+        } else {
+          omafitStoreMaterialOpacityBaseline(glasses);
+          omafitApplyModelOpacityFactor(glasses, 0);
+          faceArEnhancementState.microUx.preparedOpacity = true;
+        }
         faceArEnhancementState.microUx.introStartMs = performance.now();
-        faceArEnhancementState.microUx.preparedOpacity = true;
         microUxModelWrap.scale.setScalar(0.88);
       } catch (e) {
         console.warn("[omafit-ar] micro-ux init:", e?.message || e);
@@ -13999,15 +14006,20 @@ async function runArSession({
                     const merchantCal = st.readGlassesMerchantCal
                       ? st.readGlassesMerchantCal()
                       : { scale: 1, wearX: 0, wearY: 0, wearZ: 0 };
-                    const displayScale = THREE.MathUtils.clamp(
+                    const autoFitBase =
+                      Number(st.glassesCalibAutoScaleBase) > 0
+                        ? st.glassesCalibAutoScaleBase
+                        : resolveGlassesCalibScaleBase({
+                            bboxWidthLocal: st.glassesFrameWidthRawLocal,
+                          });
+                    const displayScale = clampGlassesDisplayMeshScale(
                       resolveGlassesMerchantMeshScale({
                         bboxWidthLocal: st.glassesFrameWidthRawLocal,
                         merchantScaleMul: merchantCal?.scale,
                         canonicalBlenderExport: st.glassesCanonicalBlenderExport,
                         simpleFaceOnly: st.glassesSimpleFaceOnly,
                       }),
-                      OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,
-                      OMAFIT_GLASSES_MESH_SCALE_ABS_MAX,
+                      autoFitBase,
                     );
                     st.glassesLastMeshScale = displayScale;
                     if (st.glassesModelWrap) st.glassesModelWrap.scale.set(1, 1, 1);
@@ -14286,10 +14298,11 @@ async function runArSession({
                           ? initialFaceCal.scale
                           : 1;
                       scale = scale * calScale;
-                      scale = THREE.MathUtils.clamp(
+                      scale = clampGlassesDisplayMeshScale(
                         scale,
-                        OMAFIT_GLASSES_MESH_SCALE_ABS_MIN,
-                        OMAFIT_GLASSES_MESH_SCALE_ABS_MAX,
+                        Number(st.glassesMeshWidthNormMul) > 0
+                          ? st.glassesMeshWidthNormMul
+                          : 1,
                       );
                       glasses.scale.setScalar(scale);
                     }

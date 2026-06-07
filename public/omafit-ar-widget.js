@@ -6,6 +6,7 @@ import {
   omafitGlassesGlbHasIngestWidgetFrameTag,
   omafitEnsureGlassesBridgePointsUp,
   omafitRemapRodinGlbToWidgetFrame,
+  omafitResolveGlassesMindarStaticBindRyRad,
 } from "./omafit-glasses-orient.js";
 import {
   omafitCenterObject3OnBboxOrigin,
@@ -2340,6 +2341,7 @@ function omafitEnsureGlassesMeshesRenderable(THREE, root) {
       if ("depthWrite" in mat && mat.depthWrite === false && !mat.transparent) {
         mat.depthWrite = true;
       }
+      if ("side" in mat) mat.side = THREE.DoubleSide;
       mat.needsUpdate = true;
     }
   });
@@ -12524,22 +12526,26 @@ async function runArSession({
           (glassesCanonicalBlenderExport || glassesWorkerFrameRemapped)
         ) {
           /**
-           * Paridade preview admin (`OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD`): GLB
-           * canónico/ingest tem frente em −Z; MindAR usa +Z para a câmara. Ry180
-           * só aqui (staticBindWrap) — `glassesTrackingWrap` fica identidade.
-           * Merchant rx/ry/rz ficam em `calibRot`.
+           * Bind Ry adaptativo (amostragem Z): GLB canónico −Z → Ry180; shell +Z → 0.
+           * Substitui Ry fixo 0 (v198, invisível) ou π sempre (edge cases ingest baked).
            */
-          glassesStaticBindWrap.quaternion.identity();
-          glassesStaticBindWrap.rotateOnWorldAxis(
-            new THREE.Vector3(0, 1, 0),
-            OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+          const bindRyRad = omafitResolveGlassesMindarStaticBindRyRad(
+            THREE,
+            glasses,
           );
+          glassesStaticBindWrap.quaternion.identity();
+          if (Math.abs(bindRyRad) > 1e-6) {
+            glassesStaticBindWrap.rotateOnWorldAxis(
+              new THREE.Vector3(0, 1, 0),
+              bindRyRad,
+            );
+          }
           console.log("[omafit-ar] glasses MindAR static bind Ry", {
             build: OMAFIT_AR_WIDGET_BUILD,
-            bindRyRad: OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
-            bindRyDeg: 180,
+            bindRyRad,
+            bindRyDeg: (bindRyRad * 180) / Math.PI,
             ingestSplit: glassesIngestWidgetFrameTag,
-            note: "AR simples: Ry180 staticBindWrap (paridade preview admin)",
+            note: "Ry adaptativo (omafitResolveGlassesMindarStaticBindRyRad)",
           });
         } else if (glassesStaticBindQuatPostBind) {
           glassesStaticBindWrap.quaternion.copy(glassesStaticBindQuatPostBind);
@@ -14046,7 +14052,22 @@ async function runArSession({
                     };
                     let displayScale;
                     let scaleSource = "bbox-merchant";
-                    if (st.glassesSimpleFaceOnly && lmLoc) {
+                    const useAdminParityScale =
+                      st.glassesSimpleFaceOnly &&
+                      (st.glassesCanonicalBlenderExport ||
+                        st.glassesWorkerFrameRemapped);
+                    if (useAdminParityScale) {
+                      displayScale = clampGlassesDisplayMeshScale(
+                        resolveGlassesMerchantMeshScale({
+                          bboxWidthLocal: st.glassesFrameWidthRawLocal,
+                          merchantScaleMul: merchantCal?.scale,
+                          canonicalBlenderExport: st.glassesCanonicalBlenderExport,
+                          simpleFaceOnly: true,
+                        }),
+                        autoFitBase,
+                      );
+                      scaleSource = "admin-parity-base×merchant";
+                    } else if (st.glassesSimpleFaceOnly && lmLoc) {
                       const er = fa.eyeR;
                       const el = fa.eyeL;
                       if (
@@ -14124,10 +14145,14 @@ async function runArSession({
                         canonicalBindRy:
                           st.glassesSimpleFaceOnly &&
                           (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
-                          ? "Ry180 staticBindWrap (paridade preview admin)"
+                          ? "Ry adaptativo staticBindWrap"
                           : "legacy",
                         formula:
-                          st.glassesSimpleFaceOnly
+                          st.glassesSimpleFaceOnly &&
+                          (st.glassesCanonicalBlenderExport ||
+                            st.glassesWorkerFrameRemapped)
+                          ? "meshScale = (fitW/rawW) × merchantScale (paridade admin)"
+                          : st.glassesSimpleFaceOnly
                           ? "meshScale = (ipdLandmark/faceScale × ipdMul / rawW) × merchant"
                           : "meshScale = (fitW/bboxX) × merchantScale",
                         scaleSource: st.glassesLastScaleSource,
@@ -14277,11 +14302,15 @@ async function runArSession({
                         glasses.updateWorldMatrix(true, true);
                         const wb = new THREE.Box3().setFromObject(glasses);
                         const wSize = wb.getSize(new THREE.Vector3());
+                        const wCenter = wb.getCenter(new THREE.Vector3());
                         console.log("[omafit-ar] glasses world bbox (1º frame calibrado)", {
                           build: OMAFIT_AR_WIDGET_BUILD,
                           min: wb.min.toArray().map((v) => Number(v.toFixed(4))),
                           max: wb.max.toArray().map((v) => Number(v.toFixed(4))),
                           sizeM: wSize.toArray().map((v) => Number(v.toFixed(4))),
+                          centerM: wCenter.toArray().map((v) => Number(v.toFixed(4))),
+                          meshScale: st.glassesLastMeshScale,
+                          scaleSource: st.glassesLastScaleSource,
                           visible: glasses.visible,
                         });
                       }

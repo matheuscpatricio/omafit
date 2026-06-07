@@ -17,9 +17,9 @@
  */
 
 /**
- * Bind Ry 180° no preview admin (cena estática). No AR canónico + face simples
- * a âncora MindAR (168) já orienta o GLB — aplicar o mesmo bind no widget inverte
- * as hastes (180°). Só o preview usa este valor.
+ * Bind Ry 180° — GLB canónico/ingest tem frente das lentes em **−Z**; MindAR/Three
+ * usa **+Z** para a câmara. Preview admin: no root do GLB. AR widget: em
+ * `glassesStaticBindWrap` com `glassesTrackingWrap` em identidade.
  */
 export const OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD = Math.PI;
 

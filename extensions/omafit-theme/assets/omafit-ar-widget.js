@@ -606,7 +606,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v198";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v199";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12524,17 +12524,22 @@ async function runArSession({
           (glassesCanonicalBlenderExport || glassesWorkerFrameRemapped)
         ) {
           /**
-           * AR canónico + face simples: **sem Ry180** — a âncora MindAR (168) já
-           * orienta o frame; Ry180 (só preview admin) virava lentes para trás → invisível.
+           * Paridade preview admin (`OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD`): GLB
+           * canónico/ingest tem frente em −Z; MindAR usa +Z para a câmara. Ry180
+           * só aqui (staticBindWrap) — `glassesTrackingWrap` fica identidade.
            * Merchant rx/ry/rz ficam em `calibRot`.
            */
           glassesStaticBindWrap.quaternion.identity();
+          glassesStaticBindWrap.rotateOnWorldAxis(
+            new THREE.Vector3(0, 1, 0),
+            OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+          );
           console.log("[omafit-ar] glasses MindAR static bind Ry", {
             build: OMAFIT_AR_WIDGET_BUILD,
-            bindRyRad: 0,
-            bindRyDeg: 0,
+            bindRyRad: OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+            bindRyDeg: 180,
             ingestSplit: glassesIngestWidgetFrameTag,
-            note: "AR simples: bind identidade (Ry180 só no preview admin)",
+            note: "AR simples: Ry180 staticBindWrap (paridade preview admin)",
           });
         } else if (glassesStaticBindQuatPostBind) {
           glassesStaticBindWrap.quaternion.copy(glassesStaticBindQuatPostBind);
@@ -13947,9 +13952,9 @@ async function runArSession({
 
                 if (glassesTrackingWrap && st.glassesSimpleFaceOnly) {
                   /**
-                   * Canónico + calibração loja:
-                   *   - Orientação = âncora MindAR (168) + bind identidade + `calibRot` (rx/ry/rz).
-                   *   - Ry180 só no preview admin; no AR virava lentes para trás (invisível).
+                   * Canónico + calibração loja: paridade com o preview admin (modelo estático).
+                   *   - Orientação = âncora MindAR (168) + bind Ry180 (staticBindWrap) + `calibRot`.
+                   *   - Não copiar rotação da malha 468 no wrap (duplicava yaw).
                    * Outros GLBs simples (não canónicos): mantém rotação da face no wrap.
                    * Translação: ponte 168 / wear em metros nos eixos de `fa.localMat`.
                    */
@@ -14119,7 +14124,7 @@ async function runArSession({
                         canonicalBindRy:
                           st.glassesSimpleFaceOnly &&
                           (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
-                          ? "Ry180 staticBindWrap (paridade preview)"
+                          ? "Ry180 staticBindWrap (paridade preview admin)"
                           : "legacy",
                         formula:
                           st.glassesSimpleFaceOnly

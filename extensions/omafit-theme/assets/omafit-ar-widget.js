@@ -607,7 +607,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v199";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v200";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12529,10 +12529,10 @@ async function runArSession({
            * Bind Ry adaptativo (amostragem Z): GLB canónico −Z → Ry180; shell +Z → 0.
            * Substitui Ry fixo 0 (v198, invisível) ou π sempre (edge cases ingest baked).
            */
-          const bindRyRad = omafitResolveGlassesMindarStaticBindRyRad(
-            THREE,
-            glasses,
-          );
+          const bindRyRad =
+            glassesIngestWidgetFrameTag || glassesCanonicalBlenderExport
+              ? OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD
+              : omafitResolveGlassesMindarStaticBindRyRad(THREE, glasses);
           glassesStaticBindWrap.quaternion.identity();
           if (Math.abs(bindRyRad) > 1e-6) {
             glassesStaticBindWrap.rotateOnWorldAxis(
@@ -12545,7 +12545,10 @@ async function runArSession({
             bindRyRad,
             bindRyDeg: (bindRyRad * 180) / Math.PI,
             ingestSplit: glassesIngestWidgetFrameTag,
-            note: "Ry adaptativo (omafitResolveGlassesMindarStaticBindRyRad)",
+            bindSource:
+              glassesIngestWidgetFrameTag || glassesCanonicalBlenderExport
+                ? "contract-canonical-minusZ"
+                : "heuristic-z-sample",
           });
         } else if (glassesStaticBindQuatPostBind) {
           glassesStaticBindWrap.quaternion.copy(glassesStaticBindQuatPostBind);
@@ -14145,7 +14148,7 @@ async function runArSession({
                         canonicalBindRy:
                           st.glassesSimpleFaceOnly &&
                           (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
-                          ? "Ry adaptativo staticBindWrap"
+                          ? "Ry180 contract-canonical-minusZ (ingest/canonicalBlenderExport)"
                           : "legacy",
                         formula:
                           st.glassesSimpleFaceOnly &&

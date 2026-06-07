@@ -509,6 +509,14 @@ export function omafitGlassesGlbHasDeterministicRodinRemap(root) {
  */
 export function omafitResolveGlassesMindarStaticBindRyRad(THREE, glassesRoot) {
   if (!THREE || !glassesRoot) return Math.PI;
+  /**
+   * GLB pós-ingest / nó `omafit_ar_canonical`: contrato fixo frente −Z → Ry π
+   * (paridade preview admin). A heurística por contagem de vértices falha em
+   * frame+lente split (espessura Z da armação domina a amostra → Ry=0 errado).
+   */
+  if (omafitGlassesGlbHasIngestWidgetFrameTag(glassesRoot)) {
+    return Math.PI;
+  }
   glassesRoot.updateMatrixWorld(true);
   const v = new THREE.Vector3();
   let zMin = Infinity;

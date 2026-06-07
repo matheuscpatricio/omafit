@@ -281,6 +281,50 @@ export function clampGlassesDisplayMeshScale(displayScale, autoFitBase = 1) {
   return Math.min(absMax, Math.max(OMAFIT_GLASSES_MESH_SCALE_ABS_MIN, s));
 }
 
+/** Factor IPD → largura armação no modo simples MindAR (paridade widget legado). */
+export const OMAFIT_GLASSES_SIMPLE_FACE_IPD_MUL = 1.5;
+
+/**
+ * Escala uniforme do mesh no modo simples: IPD em `metricLandmarks` / faceScale.
+ * Preview admin usa metros estáticos; MindAR exige esta fórmula (não bbox×merchant só).
+ *
+ * @param {{
+ *   ipdLandmark: number,
+ *   faceScale: number,
+ *   frameWidthLocal?: number,
+ *   ipdMul?: number,
+ *   merchantScaleMul?: number,
+ * }} p
+ * @returns {number}
+ */
+export function computeGlassesSimpleFaceIpdMeshScale(p) {
+  const ipdL = Math.max(Number(p.ipdLandmark) || 0, 1e-6);
+  const faceS = Math.max(Number(p.faceScale) || 1, 1e-6);
+  const ipdMetric = ipdL / faceS;
+  const frameW = Math.max(
+    Number(p.frameWidthLocal) || OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
+    1e-4,
+  );
+  const ipdMul =
+    Number(p.ipdMul) > 0 ? Number(p.ipdMul) : OMAFIT_GLASSES_SIMPLE_FACE_IPD_MUL;
+  const merchant = Number(p.merchantScaleMul) > 0 ? Number(p.merchantScaleMul) : 1;
+  return (ipdMetric * ipdMul / frameW) * merchant;
+}
+
+/**
+ * Escala uniforme média das colunas 3×3 de uma matrixWorld (malha 468 / âncora).
+ * @param {number[] | Float32Array} elements
+ * @returns {number}
+ */
+export function computeFaceMatrixUniformScale(elements) {
+  const e = elements;
+  if (!e || e.length < 12) return 1;
+  const sx = Math.hypot(e[0], e[1], e[2]);
+  const sy = Math.hypot(e[4], e[5], e[6]);
+  const sz = Math.hypot(e[8], e[9], e[10]);
+  return Math.max(1e-6, (sx + sy + sz) / 3);
+}
+
 /**
  * Soma wearX/Y/Z (metros) ao `position` usando as colunas 3×3 de `localFaceMatrix`
  * (face → espaço do pai do tracking wrap, ex. `glassesModelWrap`).

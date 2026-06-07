@@ -40,6 +40,9 @@ import {
   resolveGlassesFrameWidthForFit,
   resolveGlassesMerchantMeshScale,
   clampGlassesDisplayMeshScale,
+  computeGlassesSimpleFaceIpdMeshScale,
+  computeFaceMatrixUniformScale,
+  OMAFIT_GLASSES_SIMPLE_FACE_IPD_MUL,
 } from "./omafit-glasses-calibration.js";
 import {
   OMAFIT_NECKLACE_ORIENT_SLERP,
@@ -603,7 +606,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v196";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v197";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11512,7 +11515,13 @@ async function runArSession({
     }
     /** Span do arco (m) após center+Tripo — usado para escala (não recomputar após partition). */
     let necklaceArcSpanPrepM = null;
-    if (!glassesCanonicalBlenderExport) {
+    if (accessoryType === "glasses") {
+      /** Paridade preview admin: centrar na ponte/lentes (sempre, inclusive ingest/canónico). */
+      const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+      if (frontCenter) glasses.position.sub(frontCenter);
+      else glasses.position.sub(box.getCenter(new THREE.Vector3()));
+      glasses.updateMatrixWorld(true);
+    } else if (!glassesCanonicalBlenderExport) {
       if (accessoryType === "necklace") {
         const neckCenter = omafitCenterObject3OnBboxOrigin(THREE, glasses);
         let tripBind = null;
@@ -11549,15 +11558,10 @@ async function runArSession({
         } catch {
           /* ignore */
         }
-      } else if (accessoryType === "glasses") {
-        const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
-        if (frontCenter) glasses.position.sub(frontCenter);
-        else glasses.position.sub(box.getCenter(new THREE.Vector3()));
-        glasses.updateMatrixWorld(true);
       } else {
         glasses.position.sub(box.getCenter(new THREE.Vector3()));
       }
-    } else {
+    } else if (glassesCanonicalBlenderExport && accessoryType !== "glasses") {
       try {
         console.log(
           "[omafit-ar] GLB canónico Blender: origem na ponte (sem `position.sub` do centróide da bbox).",
@@ -14012,16 +14016,70 @@ async function runArSession({
                         : resolveGlassesCalibScaleBase({
                             bboxWidthLocal: st.glassesFrameWidthRawLocal,
                           });
-                    const displayScale = clampGlassesDisplayMeshScale(
-                      resolveGlassesMerchantMeshScale({
-                        bboxWidthLocal: st.glassesFrameWidthRawLocal,
-                        merchantScaleMul: merchantCal?.scale,
-                        canonicalBlenderExport: st.glassesCanonicalBlenderExport,
-                        simpleFaceOnly: st.glassesSimpleFaceOnly,
-                      }),
-                      autoFitBase,
-                    );
+                    const pickEyeLm = (idx, out) => {
+                      const p = st.lmSmoother?.get(idx);
+                      if (
+                        p &&
+                        Number.isFinite(p.x) &&
+                        Number.isFinite(p.y) &&
+                        Number.isFinite(p.z)
+                      ) {
+                        out.set(p.x, p.y, p.z);
+                        return true;
+                      }
+                      const raw = lmLoc?.[idx];
+                      if (!raw) return false;
+                      if (typeof raw.length === "number" && raw.length >= 3) {
+                        out.set(raw[0], raw[1], raw[2]);
+                        return true;
+                      }
+                      if (typeof raw.x === "number") {
+                        out.set(raw.x, raw.y, Number.isFinite(raw.z) ? raw.z : 0);
+                        return true;
+                      }
+                      return false;
+                    };
+                    let displayScale;
+                    let scaleSource = "bbox-merchant";
+                    if (st.glassesSimpleFaceOnly && lmLoc) {
+                      const er = fa.eyeR;
+                      const el = fa.eyeL;
+                      if (
+                        pickEyeLm(OMAFIT_FACE_LM_EYE_R_OUT, er) &&
+                        pickEyeLm(OMAFIT_FACE_LM_EYE_L_OUT, el)
+                      ) {
+                        const ipdLandmark = er.distanceTo(el);
+                        const faceScale = computeFaceMatrixUniformScale(
+                          fa.faceWorld.elements,
+                        );
+                        displayScale = clampGlassesDisplayMeshScale(
+                          computeGlassesSimpleFaceIpdMeshScale({
+                            ipdLandmark,
+                            faceScale,
+                            frameWidthLocal: st.glassesFrameWidthLocal,
+                            ipdMul: OMAFIT_GLASSES_SIMPLE_FACE_IPD_MUL,
+                            merchantScaleMul: merchantCal?.scale,
+                          }),
+                          autoFitBase,
+                        );
+                        scaleSource = "ipd-landmark";
+                        st.glassesLastIpdLandmark = ipdLandmark;
+                        st.glassesLastFaceScale = faceScale;
+                      }
+                    }
+                    if (!Number.isFinite(displayScale)) {
+                      displayScale = clampGlassesDisplayMeshScale(
+                        resolveGlassesMerchantMeshScale({
+                          bboxWidthLocal: st.glassesFrameWidthRawLocal,
+                          merchantScaleMul: merchantCal?.scale,
+                          canonicalBlenderExport: st.glassesCanonicalBlenderExport,
+                          simpleFaceOnly: st.glassesSimpleFaceOnly,
+                        }),
+                        autoFitBase,
+                      );
+                    }
                     st.glassesLastMeshScale = displayScale;
+                    st.glassesLastScaleSource = scaleSource;
                     if (st.glassesModelWrap) st.glassesModelWrap.scale.set(1, 1, 1);
                     glasses.scale.set(displayScale, displayScale, displayScale);
                     if (st.calibRotGroup) {
@@ -14064,8 +14122,11 @@ async function runArSession({
                           : "legacy",
                         formula:
                           st.glassesSimpleFaceOnly
-                          ? "meshScale = (fitW/bboxX) × merchantScale"
+                          ? "meshScale = (ipdLandmark/faceScale × ipdMul / fitW) × merchant"
                           : "meshScale = (fitW/bboxX) × merchantScale",
+                        scaleSource: st.glassesLastScaleSource,
+                        ipdLandmark: st.glassesLastIpdLandmark,
+                        faceScale: st.glassesLastFaceScale,
                         anchorUnitsPerMeter: anchorU,
                         wearPositionM: st.glassesSimpleFaceOnly
                           ? {
@@ -14179,6 +14240,9 @@ async function runArSession({
                         frameWidthRaw: st.glassesFrameWidthRawLocal,
                         frameWidthFit: st.glassesFrameWidthLocal,
                         meshScale: st.glassesLastMeshScale,
+                        scaleSource: st.glassesLastScaleSource,
+                        ipdLandmark: st.glassesLastIpdLandmark,
+                        faceScale: st.glassesLastFaceScale,
                         glassesMeshScale: glasses
                           ? {
                               x: glasses.scale.x.toFixed(4),

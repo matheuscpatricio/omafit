@@ -606,7 +606,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v197";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v198";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11126,6 +11126,10 @@ async function runArSession({
         if (o?.isMesh) {
           o.visible = true;
           o.frustumCulled = false;
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            if (m && "side" in m) m.side = THREE.DoubleSide;
+          }
         }
       });
     } catch {
@@ -12520,21 +12524,17 @@ async function runArSession({
           (glassesCanonicalBlenderExport || glassesWorkerFrameRemapped)
         ) {
           /**
-           * Paridade preview admin (`OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD`): GLB
-           * trimesh/ingest tem frente em −Z; MindAR usa +Z para a câmara.
-           * Heurística por amostragem de Z (v193) devolvia Ry=0 em GLBs ingest —
-           * lentes viradas para trás (invisíveis). Merchant rx/ry/rz ficam em `calibRot`.
+           * AR canónico + face simples: **sem Ry180** — a âncora MindAR (168) já
+           * orienta o frame; Ry180 (só preview admin) virava lentes para trás → invisível.
+           * Merchant rx/ry/rz ficam em `calibRot`.
            */
           glassesStaticBindWrap.quaternion.identity();
-          glassesStaticBindWrap.rotateOnWorldAxis(
-            new THREE.Vector3(0, 1, 0),
-            OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
-          );
           console.log("[omafit-ar] glasses MindAR static bind Ry", {
             build: OMAFIT_AR_WIDGET_BUILD,
-            bindRyRad: OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
-            bindRyDeg: (OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD * 180) / Math.PI,
+            bindRyRad: 0,
+            bindRyDeg: 0,
             ingestSplit: glassesIngestWidgetFrameTag,
+            note: "AR simples: bind identidade (Ry180 só no preview admin)",
           });
         } else if (glassesStaticBindQuatPostBind) {
           glassesStaticBindWrap.quaternion.copy(glassesStaticBindQuatPostBind);
@@ -13947,9 +13947,9 @@ async function runArSession({
 
                 if (glassesTrackingWrap && st.glassesSimpleFaceOnly) {
                   /**
-                   * Canónico + calibração loja: paridade com o preview admin (modelo estático).
-                   *   - Orientação = âncora MindAR (168) + bind Ry180 + `calibRot` (rx/ry/rz).
-                   *   - Não copiar a rotação da malha 468 no wrap (duplicava yaw e desviava o ry do lojista).
+                   * Canónico + calibração loja:
+                   *   - Orientação = âncora MindAR (168) + bind identidade + `calibRot` (rx/ry/rz).
+                   *   - Ry180 só no preview admin; no AR virava lentes para trás (invisível).
                    * Outros GLBs simples (não canónicos): mantém rotação da face no wrap.
                    * Translação: ponte 168 / wear em metros nos eixos de `fa.localMat`.
                    */
@@ -14056,6 +14056,7 @@ async function runArSession({
                           computeGlassesSimpleFaceIpdMeshScale({
                             ipdLandmark,
                             faceScale,
+                            frameWidthRawLocal: st.glassesFrameWidthRawLocal,
                             frameWidthLocal: st.glassesFrameWidthLocal,
                             ipdMul: OMAFIT_GLASSES_SIMPLE_FACE_IPD_MUL,
                             merchantScaleMul: merchantCal?.scale,
@@ -14122,7 +14123,7 @@ async function runArSession({
                           : "legacy",
                         formula:
                           st.glassesSimpleFaceOnly
-                          ? "meshScale = (ipdLandmark/faceScale × ipdMul / fitW) × merchant"
+                          ? "meshScale = (ipdLandmark/faceScale × ipdMul / rawW) × merchant"
                           : "meshScale = (fitW/bboxX) × merchantScale",
                         scaleSource: st.glassesLastScaleSource,
                         ipdLandmark: st.glassesLastIpdLandmark,
@@ -14266,6 +14267,19 @@ async function runArSession({
                         scaleLandmarks: { right: OMAFIT_FACE_LM_EYE_R_OUT, left: OMAFIT_FACE_LM_EYE_L_OUT },
                         hint: "Origem do wrap = ponte 168; IPD 33/263 só para escala. Debug: ?omafit_ar_glasses_eye_debug=1",
                       });
+                      if (!st.glassesWorldBboxLogged && glasses) {
+                        st.glassesWorldBboxLogged = true;
+                        glasses.updateWorldMatrix(true, true);
+                        const wb = new THREE.Box3().setFromObject(glasses);
+                        const wSize = wb.getSize(new THREE.Vector3());
+                        console.log("[omafit-ar] glasses world bbox (1º frame calibrado)", {
+                          build: OMAFIT_AR_WIDGET_BUILD,
+                          min: wb.min.toArray().map((v) => Number(v.toFixed(4))),
+                          max: wb.max.toArray().map((v) => Number(v.toFixed(4))),
+                          sizeM: wSize.toArray().map((v) => Number(v.toFixed(4))),
+                          visible: glasses.visible,
+                        });
+                      }
                     }
                   }
                 } else {

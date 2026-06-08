@@ -607,7 +607,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v202";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v203";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -11909,9 +11909,14 @@ async function runArSession({
         glassesManualMindarRig,
         glassesCanonicalBlenderExport,
         glassesGlbStandardize,
+        glassesAdminParityFlat:
+          glassesSimpleFaceOnly &&
+          !glassesManualMindarRig &&
+          !glassesGlbStandardize &&
+          !!glassesCanonicalBlenderExport,
         useTripoOffsetContainer,
         hint: glassesSimpleFaceOnly
-          ? "Pipeline simples: faceMesh → tracking wrap + mesh estático (sem wear/calib Tripo)."
+          ? "Pipeline simples: admin parity flat quando canónico/ingest."
           : null,
       });
     }
@@ -12318,6 +12323,19 @@ async function runArSession({
     const glassesStaticBindQuatPostBind =
       accessoryType === "glasses" ? glasses.quaternion.clone() : null;
 
+    /**
+     * Paridade exacta preview admin: MindAR anchor → wearPosition (m) → calibRot → GLB (Ry180 + scale).
+     * Sem glassesPivot / trackingWrap / micro-ux — evita transform composto que invisibiliza o mesh.
+     */
+    const glassesAdminParityFlat =
+      accessoryType === "glasses" &&
+      glassesSimpleFaceOnly &&
+      !glassesManualMindarRig &&
+      !glassesGlbStandardize &&
+      (glassesCanonicalBlenderExport ||
+        glassesIngestWidgetFrameTag ||
+        glassesWorkerFrameRemapped);
+
     /** 4) Hierarquia (óculos):
      *   anchor.group → wearPosition → faceParent → calibRot → [tripOffsetGroup] →
      *   glassesPivot → glasses (GLB).
@@ -12424,6 +12442,45 @@ async function runArSession({
     /** Cópia da posição inicial do pivot (Z inclui `arGlassesZFitExtra` se aplicável) — repor antes do alinhamento debug 168. */
     let glassesPivotBaseLocalPos = null;
     if (accessoryType === "glasses") {
+      if (glassesAdminParityFlat) {
+        glasses.name = "omafit-ar-glasses-model";
+        glasses.rotation.order = "XYZ";
+        glasses.rotation.set(0, 0, 0);
+        glasses.quaternion.identity();
+        glasses.rotateOnWorldAxis(
+          new THREE.Vector3(0, 1, 0),
+          OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+        );
+        glasses.updateMatrix();
+        glasses.updateMatrixWorld(true);
+        const mcFlat = readGlassesMerchantCal();
+        const autoFitFlat = resolveGlassesCalibScaleBase({
+          bboxWidthLocal: glassesFrameWidthRawLocal,
+        });
+        const flatScale = clampGlassesDisplayMeshScale(
+          resolveGlassesMerchantMeshScale({
+            bboxWidthLocal: glassesFrameWidthRawLocal,
+            merchantScaleMul: mcFlat?.scale,
+            canonicalBlenderExport: true,
+            simpleFaceOnly: true,
+          }),
+          autoFitFlat,
+        );
+        glasses.scale.setScalar(flatScale);
+        applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
+        calibRot.add(glasses);
+        try {
+          omafitEnsureGlassesMeshesRenderable(THREE, glasses);
+          console.log("[omafit-ar] glasses admin parity flat (MindAR→wear→calibRot→GLB)", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            flatScale,
+            merchantCal: mcFlat,
+            ingestSplit: glassesIngestWidgetFrameTag,
+          });
+        } catch {
+          /* ignore */
+        }
+      } else {
       glassesPivot = new GroupCtor();
       glassesPivot.name = "omafit-ar-glasses-pivot";
       glassesPivot.rotation.order = "XYZ";
@@ -12634,6 +12691,7 @@ async function runArSession({
           },
         );
       }
+      }
     } else if (accessoryType === "necklace") {
       /** Montagem directa em `anchor.group` (paridade pulseira) — feita após `wearPosition`. */
     }
@@ -12677,6 +12735,12 @@ async function runArSession({
     const wearPosition = new GroupCtor();
     if (accessoryType === "glasses" && glassesManualMindarRig) {
       wearPosition.position.set(0, 0, 0);
+    } else if (glassesAdminParityFlat) {
+      applyGlassesMerchantWearToAnchorPosition(
+        wearPosition.position,
+        null,
+        readGlassesMerchantCal(),
+      );
     } else if (wearPosMEffective) {
       wearPosition.position.set(wearPosMEffective.x, wearPosMEffective.y, wearPosMEffective.z);
     } else {
@@ -13027,6 +13091,7 @@ async function runArSession({
       glassesNegateWearOffsetX,
       glassesEyeMidpointAlign,
       glassesSimpleFaceOnly,
+      glassesAdminParityFlat: !!glassesAdminParityFlat,
       glassesForceAnchorUnitScale: !!glassesForceAnchorUnitScale,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -13501,6 +13566,7 @@ async function runArSession({
 
     if (
       !microUxDisabled &&
+      !glassesAdminParityFlat &&
       microUxModelWrap &&
       glasses &&
       accessoryType !== "necklace"
@@ -13886,7 +13952,80 @@ async function runArSession({
             }
           }
           if (accessoryType === "glasses") {
-            if (
+            if (st.glassesAdminParityFlat && glasses && calibRot && wearPosition) {
+              const merchantCal = st.readGlassesMerchantCal
+                ? st.readGlassesMerchantCal()
+                : { scale: 1, wearX: 0, wearY: 0, wearZ: 0 };
+              applyGlassesMerchantWearToAnchorPosition(
+                wearPosition.position,
+                null,
+                merchantCal,
+              );
+              applyGlassesMerchantCalibRotation(THREE, calibRot, merchantCal);
+              const autoFitBase =
+                Number(st.glassesCalibAutoScaleBase) > 0
+                  ? st.glassesCalibAutoScaleBase
+                  : resolveGlassesCalibScaleBase({
+                      bboxWidthLocal: st.glassesFrameWidthRawLocal,
+                    });
+              const displayScale = clampGlassesDisplayMeshScale(
+                resolveGlassesMerchantMeshScale({
+                  bboxWidthLocal: st.glassesFrameWidthRawLocal,
+                  merchantScaleMul: merchantCal?.scale,
+                  canonicalBlenderExport: true,
+                  simpleFaceOnly: true,
+                }),
+                autoFitBase,
+              );
+              st.glassesLastMeshScale = displayScale;
+              st.glassesLastScaleSource = "admin-parity-flat";
+              glasses.scale.setScalar(displayScale);
+              if (!st.glassesCalibRuntimeLogged) {
+                st.glassesCalibRuntimeLogged = true;
+                console.log("[omafit-ar] glasses admin parity flat (runtime)", {
+                  build: OMAFIT_AR_WIDGET_BUILD,
+                  merchantCal,
+                  meshScale: displayScale,
+                  wearPositionM: {
+                    x: wearPosition.position.x.toFixed(4),
+                    y: wearPosition.position.y.toFixed(4),
+                    z: wearPosition.position.z.toFixed(4),
+                  },
+                  glassesForceAnchorUnitScale: st.glassesForceAnchorUnitScale,
+                });
+              }
+              if (!st.glassesWorldBboxLogged) {
+                st.glassesWorldBboxLogged = true;
+                glasses.updateWorldMatrix(true, true);
+                const wb = new THREE.Box3().setFromObject(glasses);
+                const wSize = wb.getSize(new THREE.Vector3());
+                const wCenter = wb.getCenter(new THREE.Vector3());
+                const wNdc = wCenter.clone();
+                const cam = mindarThree?.camera;
+                if (cam) wNdc.project(cam);
+                console.log("[omafit-ar] glasses world bbox (admin parity flat)", {
+                  build: OMAFIT_AR_WIDGET_BUILD,
+                  min: wb.min.toArray().map((v) => Number(v.toFixed(4))),
+                  max: wb.max.toArray().map((v) => Number(v.toFixed(4))),
+                  sizeM: wSize.toArray().map((v) => Number(v.toFixed(4))),
+                  centerM: wCenter.toArray().map((v) => Number(v.toFixed(4))),
+                  ndc: cam
+                    ? {
+                        x: Number(wNdc.x.toFixed(4)),
+                        y: Number(wNdc.y.toFixed(4)),
+                        z: Number(wNdc.z.toFixed(4)),
+                        onScreen:
+                          Math.abs(wNdc.x) <= 1.05 &&
+                          Math.abs(wNdc.y) <= 1.05 &&
+                          wNdc.z > -1 &&
+                          wNdc.z < 1,
+                      }
+                    : null,
+                  meshScale: displayScale,
+                  visible: glasses.visible,
+                });
+              }
+            } else if (
               !st.glassesManualMindarRig &&
               !st.glassesStructuralMindarRig &&
               !st.glassesGeometryAnchor &&

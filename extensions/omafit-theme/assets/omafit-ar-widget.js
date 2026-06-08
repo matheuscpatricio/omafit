@@ -40,6 +40,7 @@ import {
   resolveGlassesCalibScaleBase,
   resolveGlassesFrameWidthForFit,
   resolveGlassesMerchantMeshScale,
+  resolveGlassesMindarAnchorMeshScale,
   clampGlassesDisplayMeshScale,
   computeGlassesSimpleFaceIpdMeshScale,
   computeFaceMatrixUniformScale,
@@ -607,7 +608,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v200";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-ingest-v201";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -14108,6 +14109,21 @@ async function runArSession({
                         autoFitBase,
                       );
                     }
+                    if (st.glassesSimpleFaceOnly && anchor?.group) {
+                      anchor.group.updateMatrixWorld(true);
+                      const anchorU = omafitAnchorUnitsPerMeter(anchor.group.matrixWorld);
+                      const adminParityMeshScale = displayScale;
+                      displayScale = clampGlassesDisplayMeshScale(
+                        resolveGlassesMindarAnchorMeshScale(
+                          adminParityMeshScale,
+                          anchor.group.matrixWorld,
+                        ),
+                        autoFitBase / Math.max(anchorU, 1e-6),
+                      );
+                      scaleSource = `${scaleSource}+mindar÷u`;
+                      st.glassesLastAdminParityMeshScale = adminParityMeshScale;
+                      st.glassesLastAnchorUnitsPerMeter = anchorU;
+                    }
                     st.glassesLastMeshScale = displayScale;
                     st.glassesLastScaleSource = scaleSource;
                     if (st.glassesModelWrap) st.glassesModelWrap.scale.set(1, 1, 1);
@@ -14154,11 +14170,12 @@ async function runArSession({
                           st.glassesSimpleFaceOnly &&
                           (st.glassesCanonicalBlenderExport ||
                             st.glassesWorkerFrameRemapped)
-                          ? "meshScale = (fitW/rawW) × merchantScale (paridade admin)"
+                          ? "meshScale = ((fitW/rawW) × merchantScale) ÷ anchorU"
                           : st.glassesSimpleFaceOnly
-                          ? "meshScale = (ipdLandmark/faceScale × ipdMul / rawW) × merchant"
+                          ? "meshScale = ((ipdLandmark/faceScale × ipdMul / rawW) × merchant) ÷ anchorU"
                           : "meshScale = (fitW/bboxX) × merchantScale",
                         scaleSource: st.glassesLastScaleSource,
+                        adminParityMeshScale: st.glassesLastAdminParityMeshScale,
                         ipdLandmark: st.glassesLastIpdLandmark,
                         faceScale: st.glassesLastFaceScale,
                         anchorUnitsPerMeter: anchorU,
@@ -14175,7 +14192,7 @@ async function runArSession({
                           z: glassesTrackingWrap.position.z.toFixed(4),
                         },
                         hint:
-                          "Canónico: wearX/Y/Z em wearPosition (m × anchorUnitsPerMeter), paridade preview admin.",
+                          "Canónico: wear em m÷anchorU no wearPosition; meshScale admin÷anchorU (paridade preview).",
                       });
                     }
                   };

@@ -12,7 +12,7 @@
  *   - `wearZ` = 0 → sem deslocamento extra em profundidade (metros).
  *     Negativo aproxima, positivo afasta (mesmo eixo que o preview estático).
  *   - `wearX` / `wearY` / `wearZ` = metros. Preview: `wearPosition.position` directo.
- *     AR simples: wear em metros → posição local = metros / u (escala da âncora MindAR).
+ *     AR simples: wear em metros directos em `wearPosition` (âncora MindAR com escala unitária).
  *   - `rx` / `ry` / `rz` (graus): eixos de mundo fixos, ordem Y → X → Z (igual preview admin).
  */
 
@@ -189,35 +189,17 @@ export function omafitAnchorUnitsPerMeter(matrixWorld) {
 }
 
 /**
- * Escala do mesh `glasses` compensando a escala ~u da âncora MindAR (paridade admin).
- *
- * @param {number} meshScale escala admin (metros estáticos)
- * @param {import("three").Matrix4} anchorMatrixWorld
- * @returns {number}
- */
-export function resolveGlassesMindarAnchorMeshScale(meshScale, anchorMatrixWorld) {
-  const s = Number(meshScale);
-  if (!Number.isFinite(s)) return 1;
-  const u = omafitAnchorUnitsPerMeter(anchorMatrixWorld);
-  return s / u;
-}
-
-/**
- * Paridade preview admin: wearX/Y/Z (m) → posição local sob a âncora MindAR.
- * A âncora já inclui escala ~`u` na matriz; deslocamento local = metros / u
- * (admin: parent sem escala → local = metros).
+ * Paridade preview admin: wearX/Y/Z (m) → `wearPosition` (parent sem escala).
  *
  * @param {import("three").Vector3} position
- * @param {import("three").Matrix4} anchorMatrixWorld
  * @param {{ wearX?: number, wearY?: number, wearZ?: number }} cal
  */
-export function applyGlassesMerchantWearToAnchorPosition(position, anchorMatrixWorld, cal) {
+export function applyGlassesMerchantWearToAnchorPosition(position, _anchorMatrixWorld, cal) {
   if (!position) return;
-  const u = omafitAnchorUnitsPerMeter(anchorMatrixWorld);
   position.set(
-    (Number(cal?.wearX) || 0) / u,
-    (Number(cal?.wearY) || 0) / u,
-    (Number(cal?.wearZ) || 0) / u,
+    Number(cal?.wearX) || 0,
+    Number(cal?.wearY) || 0,
+    Number(cal?.wearZ) || 0,
   );
 }
 

@@ -40,7 +40,6 @@ import {
   resolveGlassesCalibScaleBase,
   resolveGlassesFrameWidthForFit,
   resolveGlassesMerchantMeshScale,
-  resolveGlassesMindarAnchorMeshScale,
   clampGlassesDisplayMeshScale,
   computeGlassesSimpleFaceIpdMeshScale,
   computeFaceMatrixUniformScale,
@@ -618,19 +617,10 @@ try {
 
 /**
  * Quando `true`, **não** cria malha facial 468 só-depth nem extensões temporais (óculos).
- * Opt-in via `?omafit_ar_glasses_occlusion_debug_off=1` — produção usa oclusor activo.
+ * Serve para isolar problemas: óculos **dentro da cara** → provável Z; **invisível** → escala/rotação.
+ * Temporariamente `true` até escala/posição estarem validadas; voltar a `false` depois.
  */
-const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = (() => {
-  try {
-    return (
-      new URLSearchParams(typeof window !== "undefined" ? window.location.search || "" : "").get(
-        "omafit_ar_glasses_occlusion_debug_off",
-      ) === "1"
-    );
-  } catch {
-    return false;
-  }
-})();
+const OMAFIT_GLASSES_FACE_OCCLUSION_DEBUG_OFF = true;
 
 /**
  * Quando `true`, ignora offsets/rotação/escala vindos dos data-attrs para o
@@ -2358,73 +2348,6 @@ function omafitEnsureGlassesMeshesRenderable(THREE, root) {
 }
 
 /**
- * Modo simples + canónico: a malha 468 MindAR (só depth) ocultava a armação
- * apesar de `visible:true` e bbox válido — paridade colar (`depthTest: false`).
- *
- * @param {typeof import("three")} THREE
- * @param {import("three").Object3D} root
- */
-function omafitEnsureGlassesSimpleFaceFrameDepthVisible(THREE, root) {
-  if (!THREE || !root?.traverse) return;
-  root.traverse((child) => {
-    if (!child?.isMesh) return;
-    const meshName = String(child.name || "");
-    const mats = Array.isArray(child.material) ? child.material : [child.material];
-    const isLens = mats.some(
-      (mat) =>
-        mat &&
-        (mat.userData?.omafitArLensMaterial ||
-          omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, String(mat.name || ""))),
-    );
-    if (isLens) return;
-    child.renderOrder = Math.max(Number(child.renderOrder) || 0, 96);
-    child.frustumCulled = false;
-    for (const mat of mats) {
-      if (!mat) continue;
-      mat.depthTest = false;
-      mat.depthWrite = false;
-      mat.needsUpdate = true;
-    }
-  });
-}
-
-/**
- * Diagnóstico: `?omafit_ar_glasses_force_visible=1` — armação magenta (MeshBasicMaterial).
- *
- * @param {typeof import("three")} THREE
- * @param {import("three").Object3D} root
- * @returns {number}
- */
-function omafitGlassesForceFrameVisibleDebug(THREE, root) {
-  if (!THREE || !root?.traverse) return 0;
-  let n = 0;
-  root.traverse((child) => {
-    if (!child?.isMesh) return;
-    const meshName = String(child.name || "");
-    const mats = Array.isArray(child.material) ? child.material : [child.material];
-    const isLens = mats.some(
-      (mat) =>
-        mat &&
-        (mat.userData?.omafitArLensMaterial ||
-          omafitIsGlassesLensMeshMaterial(THREE, root, mat, meshName, String(mat.name || ""))),
-    );
-    if (isLens) return;
-    n += 1;
-    child.renderOrder = 999;
-    child.frustumCulled = false;
-    const dbgMat = new THREE.MeshBasicMaterial({
-      color: 0xff00ff,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    child.material = dbgMat;
-  });
-  return n;
-}
-
-/**
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
  * @param {import("three").Material} mat
@@ -2865,7 +2788,13 @@ function omafitPrepareGlassesFrameMaterialsForAr(THREE, root) {
       workMat.metalness = THREE.MathUtils.clamp(Number(workMat.metalness) || 0, 0, 1);
       workMat.roughness = THREE.MathUtils.clamp(Number(workMat.roughness) || 0.5, 0.04, 1);
       if ("envMapIntensity" in workMat && !(Number(workMat.envMapIntensity) > 0)) {
-        workMat.envMapIntensity = 0.85;
+        workMat.envMapIntensity = workMat.envMap ? 0.85 : 0;
+      }
+      if (!workMat.envMap && "metalness" in workMat) {
+        workMat.metalness = THREE.MathUtils.clamp(Number(workMat.metalness) || 0.35, 0.2, 0.55);
+      }
+      if (!workMat.envMap && "roughness" in workMat) {
+        workMat.roughness = THREE.MathUtils.clamp(Number(workMat.roughness) || 0.42, 0.22, 0.62);
       }
       workMat.toneMapped = true;
       workMat.needsUpdate = true;
@@ -10665,16 +10594,6 @@ async function runArSession({
       omafitGlassesAllowsPhysicalLenses(arManifestV1, cfgAttr);
     /** Micro-interacções (entrada, anel de tracking, snap). `data-ar-micro-ux="0"` desliga. */
     const microUxDisabled = /^(0|false|off|no)$/i.test(String(cfgAttr("arMicroUx", "1")).trim());
-    let glassesForceVisibleDebug = false;
-    try {
-      glassesForceVisibleDebug =
-        accessoryType === "glasses" &&
-        new URLSearchParams(typeof window !== "undefined" ? window.location.search || "" : "").get(
-          "omafit_ar_glasses_force_visible",
-        ) === "1";
-    } catch {
-      glassesForceVisibleDebug = false;
-    }
 
     const faceCameraFovDeg = (() => {
       const v = Number(String(cfgAttr("arFaceCameraFovDeg", "63")).trim());
@@ -11516,6 +11435,12 @@ async function runArSession({
     if (accessoryType === "glasses" && omafitGlassesGlbHasIngestWidgetFrameTag(glasses)) {
       glassesIngestWidgetFrameTag = true;
       glassesWorkerFrameRemapped = true;
+      if (faceArEnhancementState) {
+        faceArEnhancementState.glassesWorkerFrameRemapped = true;
+        if (glassesSimpleFaceOnly) {
+          faceArEnhancementState.glassesForceAnchorUnitScale = true;
+        }
+      }
     }
 
     if (
@@ -11609,16 +11534,10 @@ async function runArSession({
     /** Span do arco (m) após center+Tripo — usado para escala (não recomputar após partition). */
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
-      /** Paridade preview admin: sem recentrar GLB canónico/ingest (origem já na ponte). */
-      const skipCanonicalRecenter =
-        glassesCanonicalBlenderExport ||
-        glassesWorkerFrameRemapped ||
-        glassesIngestWidgetFrameTag;
-      if (!skipCanonicalRecenter) {
-        const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
-        if (frontCenter) glasses.position.sub(frontCenter);
-        else glasses.position.sub(box.getCenter(new THREE.Vector3()));
-      }
+      /** Paridade preview admin: centrar na ponte/lentes (sempre, inclusive ingest/canónico). */
+      const frontCenter = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+      if (frontCenter) glasses.position.sub(frontCenter);
+      else glasses.position.sub(box.getCenter(new THREE.Vector3()));
       glasses.updateMatrixWorld(true);
     } else if (!glassesCanonicalBlenderExport) {
       if (accessoryType === "necklace") {
@@ -11837,6 +11756,10 @@ async function runArSession({
       !glassesGeometryAnchor &&
       !glassesCheekOrthogonalBasis &&
       !glassesGlbStandardize;
+
+    /** Canónico simples: âncora MindAR só T+R (escala 1) — paridade preview admin. */
+    const glassesForceAnchorUnitScale =
+      glassesSimpleFaceOnly && glassesCanonicalBlenderExport;
 
     const readGlassesMerchantCal = () => {
       const parsed = parseOmafitCalibrationRaw(
@@ -12680,13 +12603,6 @@ async function runArSession({
         glassesPivot.position.z += glassesZFitExtra;
       }
       glassesPivotBaseLocalPos = glassesPivot.position.clone();
-      if (glassesSimpleFaceOnly && glassesModelWrap && glasses) {
-        const bootFromMesh = Number(glasses.scale.x);
-        if (Number.isFinite(bootFromMesh) && bootFromMesh > 0) {
-          glassesModelWrap.scale.setScalar(bootFromMesh);
-          glasses.scale.set(1, 1, 1);
-        }
-      }
       if (glassesGeometryAnchor) {
         console.log("[omafit-ar] glasses geometry anchor (pivot directo no anchor.group)", {
           pivotPos: glassesGeometryPivotPosTemplate
@@ -13111,9 +13027,7 @@ async function runArSession({
       glassesNegateWearOffsetX,
       glassesEyeMidpointAlign,
       glassesSimpleFaceOnly,
-      glassesForceVisibleDebug,
-      glassesSimpleFaceDepthFrontApplied: false,
-      glassesFaceMeshDepthSuppressedLogged: false,
+      glassesForceAnchorUnitScale: !!glassesForceAnchorUnitScale,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
       readNecklaceMerchantScaleMul,
@@ -13607,23 +13521,6 @@ async function runArSession({
         console.warn("[omafit-ar] micro-ux init:", e?.message || e);
       }
     }
-    if (accessoryType === "glasses" && glassesSimpleFaceOnly && glasses) {
-      try {
-        if (glassesForceVisibleDebug) {
-          const nDbg = omafitGlassesForceFrameVisibleDebug(THREE, glasses);
-          console.warn("[omafit-ar] DEBUG force_visible: frame meshes → magenta BasicMaterial", {
-            build: OMAFIT_AR_WIDGET_BUILD,
-            frameMeshes: nDbg,
-            hint: "?omafit_ar_glasses_force_visible=1",
-          });
-        } else {
-          omafitEnsureGlassesSimpleFaceFrameDepthVisible(THREE, glasses);
-          faceArEnhancementState.glassesSimpleFaceDepthFrontApplied = true;
-        }
-      } catch (e) {
-        console.warn("[omafit-ar] glasses simple-face depth front:", e?.message || e);
-      }
-    }
     if (!microUxDisabled && mindarHost) {
       try {
         const ring = document.createElement("div");
@@ -13888,6 +13785,10 @@ async function runArSession({
             st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
           }
           st.smoothAnchorMat.copy(anchor.group.matrix);
+          if (st.glassesForceAnchorUnitScale && st.anchorDec) {
+            omafitAnchorMatrixForceUnitScale(anchor.group.matrix, st.anchorDec);
+            st.smoothAnchorMat.copy(anchor.group.matrix);
+          }
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
             const fm = mindarThree.faceMeshes[fi];
             if (!st.smoothFaceMats[fi]) st.smoothFaceMats[fi] = new THREE.Matrix4();
@@ -13937,7 +13838,9 @@ async function runArSession({
             st.smoothAnchorMat.compose(
               st.anchorDec.p.set(pF[0], pF[1], pF[2]),
               st.anchorEuroQuatState.qPrev,
-              st.anchorDec.s,
+              st.glassesForceAnchorUnitScale
+                ? st.anchorDec.s.set(1, 1, 1)
+                : st.anchorDec.s,
             );
             anchor.group.matrix.copy(st.smoothAnchorMat);
           } else {
@@ -13957,6 +13860,10 @@ async function runArSession({
               );
             }
             anchor.group.matrix.copy(st.smoothAnchorMat);
+            if (st.glassesForceAnchorUnitScale && st.anchorDec) {
+              omafitAnchorMatrixForceUnitScale(anchor.group.matrix, st.anchorDec);
+              st.smoothAnchorMat.copy(anchor.group.matrix);
+            }
           }
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
             const fm = mindarThree.faceMeshes[fi];
@@ -13979,46 +13886,6 @@ async function runArSession({
             }
           }
           if (accessoryType === "glasses") {
-            if (
-              st.glassesSimpleFaceOnly &&
-              !st.glassesForceVisibleDebug &&
-              !st.glassesSimpleFaceDepthFrontApplied &&
-              glasses
-            ) {
-              try {
-                omafitEnsureGlassesSimpleFaceFrameDepthVisible(THREE, glasses);
-                st.glassesSimpleFaceDepthFrontApplied = true;
-              } catch {
-                /* ignore */
-              }
-            }
-            if (st.glassesSimpleFaceOnly && mindarThree) {
-              try {
-                const skip = new Set([glasses, faceOccluderMesh, neckOccluderMesh].filter(Boolean));
-                if (st.glassesModelWrap?.traverse) {
-                  st.glassesModelWrap.traverse((o) => {
-                    if (o?.isMesh) skip.add(o);
-                  });
-                }
-                if (wearPosition?.traverse) {
-                  wearPosition.traverse((o) => {
-                    if (o?.isMesh) skip.add(o);
-                  });
-                }
-                const occG = omafitNecklaceSuppressFaceDepthOcclusion(mindarThree, skip);
-                if (!st.glassesFaceMeshDepthSuppressedLogged) {
-                  st.glassesFaceMeshDepthSuppressedLogged = true;
-                  console.log("[omafit-ar] óculos: depth facial 468 suprimido (paridade colar)", {
-                    build: OMAFIT_AR_WIDGET_BUILD,
-                    matsPatched: occG,
-                    faceMeshes: mindarThree?.faceMeshes?.length ?? 0,
-                    simpleFaceDepthFront: st.glassesSimpleFaceDepthFrontApplied,
-                  });
-                }
-              } catch {
-                /* ignore */
-              }
-            }
             if (
               !st.glassesManualMindarRig &&
               !st.glassesStructuralMindarRig &&
@@ -14268,27 +14135,10 @@ async function runArSession({
                         autoFitBase,
                       );
                     }
-                    if (st.glassesSimpleFaceOnly && anchor?.group) {
-                      anchor.group.updateMatrixWorld(true);
-                      const anchorU = omafitAnchorUnitsPerMeter(anchor.group.matrixWorld);
-                      const adminParityMeshScale = displayScale;
-                      displayScale = clampGlassesDisplayMeshScale(
-                        resolveGlassesMindarAnchorMeshScale(
-                          adminParityMeshScale,
-                          anchor.group.matrixWorld,
-                        ),
-                        autoFitBase / Math.max(anchorU, 1e-6),
-                      );
-                      scaleSource = `${scaleSource}+mindar÷u`;
-                      st.glassesLastAdminParityMeshScale = adminParityMeshScale;
-                      st.glassesLastAnchorUnitsPerMeter = anchorU;
-                    }
                     st.glassesLastMeshScale = displayScale;
                     st.glassesLastScaleSource = scaleSource;
-                    const scaleTarget = st.glassesModelWrap || glasses;
-                    if (st.glassesModelWrap) st.glassesModelWrap.scale.set(displayScale, displayScale, displayScale);
-                    if (glasses && scaleTarget !== glasses) glasses.scale.set(1, 1, 1);
-                    else if (glasses) glasses.scale.set(displayScale, displayScale, displayScale);
+                    if (st.glassesModelWrap) st.glassesModelWrap.scale.set(1, 1, 1);
+                    glasses.scale.set(displayScale, displayScale, displayScale);
                     if (st.calibRotGroup) {
                       applyGlassesMerchantCalibRotation(
                         THREE,
@@ -14317,6 +14167,7 @@ async function runArSession({
                         glassesCanonicalBlenderExport: st.glassesCanonicalBlenderExport,
                         glassesCalibAutoScaleBase: st.glassesCalibAutoScaleBase,
                         meshScale: displayScale,
+                        glassesForceAnchorUnitScale: st.glassesForceAnchorUnitScale,
                         trackingWrapRotationMode:
                           st.glassesSimpleFaceOnly &&
                           (st.glassesCanonicalBlenderExport || st.glassesWorkerFrameRemapped)
@@ -14331,12 +14182,12 @@ async function runArSession({
                           st.glassesSimpleFaceOnly &&
                           (st.glassesCanonicalBlenderExport ||
                             st.glassesWorkerFrameRemapped)
-                          ? "meshScale = ((fitW/rawW) × merchantScale) ÷ anchorU"
+                          ? "meshScale = (fitW/rawW) × merchantScale (paridade admin; âncora T+R)"
                           : st.glassesSimpleFaceOnly
-                          ? "meshScale = ((ipdLandmark/faceScale × ipdMul / rawW) × merchant) ÷ anchorU"
+                          ? "meshScale = (ipdLandmark/faceScale × ipdMul / rawW) × merchant"
                           : "meshScale = (fitW/bboxX) × merchantScale",
                         scaleSource: st.glassesLastScaleSource,
-                        adminParityMeshScale: st.glassesLastAdminParityMeshScale,
+                        glassesForceAnchorUnitScale: st.glassesForceAnchorUnitScale,
                         ipdLandmark: st.glassesLastIpdLandmark,
                         faceScale: st.glassesLastFaceScale,
                         anchorUnitsPerMeter: anchorU,
@@ -14353,7 +14204,7 @@ async function runArSession({
                           z: glassesTrackingWrap.position.z.toFixed(4),
                         },
                         hint:
-                          "Canónico: wear em m÷anchorU no wearPosition; meshScale admin÷anchorU (paridade preview).",
+                          "Canónico: wear em m no wearPosition; meshScale admin; âncora MindAR escala=1.",
                       });
                     }
                   };
@@ -14484,25 +14335,31 @@ async function runArSession({
                         const wb = new THREE.Box3().setFromObject(glasses);
                         const wSize = wb.getSize(new THREE.Vector3());
                         const wCenter = wb.getCenter(new THREE.Vector3());
+                        const wNdc = wCenter.clone();
+                        const cam = mindarThree?.camera;
+                        if (cam) wNdc.project(cam);
                         console.log("[omafit-ar] glasses world bbox (1º frame calibrado)", {
                           build: OMAFIT_AR_WIDGET_BUILD,
                           min: wb.min.toArray().map((v) => Number(v.toFixed(4))),
                           max: wb.max.toArray().map((v) => Number(v.toFixed(4))),
                           sizeM: wSize.toArray().map((v) => Number(v.toFixed(4))),
                           centerM: wCenter.toArray().map((v) => Number(v.toFixed(4))),
-                          meshScale: st.glassesLastMeshScale,
-                          modelWrapScale: st.glassesModelWrap
+                          ndc: cam
                             ? {
-                                x: st.glassesModelWrap.scale.x.toFixed(4),
-                                y: st.glassesModelWrap.scale.y.toFixed(4),
-                                z: st.glassesModelWrap.scale.z.toFixed(4),
+                                x: Number(wNdc.x.toFixed(4)),
+                                y: Number(wNdc.y.toFixed(4)),
+                                z: Number(wNdc.z.toFixed(4)),
+                                onScreen:
+                                  Math.abs(wNdc.x) <= 1.05 &&
+                                  Math.abs(wNdc.y) <= 1.05 &&
+                                  wNdc.z > -1 &&
+                                  wNdc.z < 1,
                               }
                             : null,
+                          meshScale: st.glassesLastMeshScale,
                           scaleSource: st.glassesLastScaleSource,
-                          anchorUnitsPerMeter: st.glassesLastAnchorUnitsPerMeter,
-                          simpleFaceDepthFront: st.glassesSimpleFaceDepthFrontApplied,
+                          glassesForceAnchorUnitScale: st.glassesForceAnchorUnitScale,
                           visible: glasses.visible,
-                          hint: "sizeM.x ≈ largura mundo (m); se ~0.07–0.15 OK. force_visible: ?omafit_ar_glasses_force_visible=1",
                         });
                       }
                     }
@@ -15030,17 +14887,6 @@ async function runArSession({
           upgradeFaceArEyewearRendering(THREE, glasses, pmremRT.texture, {
             physicalLenses: glassesPhysicalLenses,
           });
-          if (
-            faceArEnhancementState?.glassesSimpleFaceOnly &&
-            !faceArEnhancementState?.glassesForceVisibleDebug
-          ) {
-            try {
-              omafitEnsureGlassesSimpleFaceFrameDepthVisible(THREE, glasses);
-              faceArEnhancementState.glassesSimpleFaceDepthFrontApplied = true;
-            } catch {
-              /* ignore */
-            }
-          }
           try {
             const lensSt = faceArEnhancementState?.glassesLensLoadState;
             const lensTypePmrem =

@@ -218,17 +218,14 @@ export function omafitResolveGlassesRenderFlags(manifest, cfgAttr, deviceTier = 
       manifest?.materialProfile && typeof manifest.materialProfile === "object"
         ? manifest.materialProfile
         : {};
-    const attrLens = String(cfgAttr("arGlassesLensType", "") || "").trim().toLowerCase();
-    const lensType = String(mp.lensType || attrLens || "clear_fake")
-      .trim()
-      .toLowerCase();
     const attrPmrem = /^(1|on|true|yes)$/i.test(String(cfgAttr("arGlassesPmrem", "0")).trim());
     return {
       pmremOn: attrPmrem,
-      stripTransmission: true,
-      lensType,
+      stripTransmission: false,
+      lensType: null,
       renderMode: String(mp.renderMode || "lite").trim().toLowerCase() || "lite",
       physicalLenses: false,
+      preserveRodinGlb: true,
     };
   }
   const mp = manifest?.materialProfile && typeof manifest.materialProfile === "object"
@@ -373,7 +370,6 @@ export function omafitArManifestToDataAttrs(manifest) {
   if (mp && typeof mp === "object") {
     if (mp.renderMode === "pmrem") out["data-ar-glasses-pmrem"] = "1";
     if (mp.renderMode === "lite") out["data-ar-glasses-pmrem"] = "0";
-    if (mp.lensType) out["data-ar-glasses-lens-type"] = String(mp.lensType);
   }
   if (manifest.wearableClass) out["data-ar-wearable-class"] = String(manifest.wearableClass);
   const occ = manifest.occlusionPolicy;

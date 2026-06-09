@@ -12,7 +12,7 @@
  *   - `wearZ` = 0 → sem deslocamento extra em profundidade (metros).
  *     Negativo aproxima, positivo afasta (mesmo eixo que o preview estático).
  *   - `wearX` / `wearY` / `wearZ` = metros. Preview: `wearPosition.position` directo.
- *     AR simples: wear em metros directos em `wearPosition` (âncora MindAR com escala unitária).
+ *     AR MindAR: wear em metros → local = metros / u (escala média da âncora).
  *   - `rx` / `ry` / `rz` (graus): eixos de mundo fixos, ordem Y → X → Z (igual preview admin).
  */
 
@@ -189,18 +189,38 @@ export function omafitAnchorUnitsPerMeter(matrixWorld) {
 }
 
 /**
- * Paridade preview admin: wearX/Y/Z (m) → `wearPosition` (parent sem escala).
+ * wearX/Y/Z (m) → posição local sob âncora MindAR (escala ~u na matriz).
+ * Admin (sem MindAR): passar `anchorMatrixWorld` null → metros directos.
  *
  * @param {import("three").Vector3} position
+ * @param {import("three").Matrix4 | null | undefined} anchorMatrixWorld
  * @param {{ wearX?: number, wearY?: number, wearZ?: number }} cal
  */
-export function applyGlassesMerchantWearToAnchorPosition(position, _anchorMatrixWorld, cal) {
+export function applyGlassesMerchantWearToAnchorPosition(position, anchorMatrixWorld, cal) {
   if (!position) return;
+  const u =
+    anchorMatrixWorld && anchorMatrixWorld.elements
+      ? omafitAnchorUnitsPerMeter(anchorMatrixWorld)
+      : 1;
   position.set(
-    Number(cal?.wearX) || 0,
-    Number(cal?.wearY) || 0,
-    Number(cal?.wearZ) || 0,
+    (Number(cal?.wearX) || 0) / u,
+    (Number(cal?.wearY) || 0) / u,
+    (Number(cal?.wearZ) || 0) / u,
   );
+}
+
+/**
+ * Escala local do mesh `glasses` para paridade admin com âncora MindAR escala ~u.
+ *
+ * @param {number} adminMeshScale escala preview admin (m)
+ * @param {import("three").Matrix4} anchorMatrixWorld
+ * @returns {number}
+ */
+export function resolveGlassesMindarLocalMeshScale(adminMeshScale, anchorMatrixWorld) {
+  const s = Number(adminMeshScale);
+  if (!Number.isFinite(s)) return 1;
+  const u = omafitAnchorUnitsPerMeter(anchorMatrixWorld);
+  return s / u;
 }
 
 /**

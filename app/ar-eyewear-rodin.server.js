@@ -4,7 +4,6 @@
 import { fal } from "@fal-ai/client";
 import { postprocessRodinGlassesGlbBuffer } from "./ar-eyewear-glasses-postprocess.server.js";
 import { resolveWearableClass } from "./ar-wearable-class.shared.js";
-import { glassesLensProfileManifestMaterial } from "./ar-glasses-lens-profile.shared.js";
 import {
   getAssetById,
   patchAsset,
@@ -312,19 +311,8 @@ export async function invokeArEyewearRodinPipeline(assetId, shopDomain) {
   });
   const preset = getClassPreset(wearableClass);
   const blenderCfg = preset.blender || {};
-  const recipeParams = blenderCfg.params || {};
-  let lensProfileManifest = glassesLensProfileManifestMaterial(row.lens_profile);
-  if (lensProfileManifest?.lensType) {
-    recipeParams.lens_type = lensProfileManifest.lensType;
-  } else if (!lensProfileManifest) {
-    const lensType = String(recipeParams.lens_type || "").trim();
-    if (lensType) {
-      lensProfileManifest = {
-        lensType,
-        renderMode: lensType === "clear_physical" ? "pmrem" : "lite",
-      };
-    }
-  }
+  const recipeParams = { ...(blenderCfg.params || {}) };
+  delete recipeParams.lens_type;
 
   console.log("[ar-eyewear] invokeArEyewearRodinPipeline:start", {
     assetId: id,
@@ -352,7 +340,6 @@ export async function invokeArEyewearRodinPipeline(assetId, shopDomain) {
     glbUrl: falOut.publicUrl,
     shopDomain: resolvedShop,
     assetId: id,
-    lensProfile: lensProfileManifest,
   });
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   const manifestUpload = await storageUpload(

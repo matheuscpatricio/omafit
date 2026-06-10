@@ -503,7 +503,16 @@
     },
     "productTypeLabel": "Tipo",
     "categoryLabel": "Categoria",
-    "queueWorkerBanner": "Estamos a preparar um ou mais modelos. Atualize a página dentro de instantes para ver o estado mais recente.",
+    "queueWorkerBanner": "Estamos a preparar um ou mais modelos. A página atualiza sozinha a cada poucos segundos.",
+    "processingGlb": "A gerar o modelo 3D…",
+    "processingQueued": "Na fila para gerar o modelo 3D…",
+    "processingUploaded": "A preparar imagens para geração…",
+    "generationStage": {
+      "rodin_running": "A gerar malha 3D (Rodin)…",
+      "postprocess": "A otimizar o modelo para o provador…",
+      "validating": "A validar qualidade do modelo…",
+      "completed": "Geração concluída"
+    },
     "accessoryType": {
       "glasses": "Óculos",
       "necklace": "Colar",
@@ -517,10 +526,10 @@
     "calibrate": {
       "openButton": "Ajustar posição no provador",
       "title": "Deixe o provador virtual com o aspeto certo",
-      "subtitle": "Mostramos o acessório sobre uma silhueta de referência. Só pode ajustar a rotação (três controlos) — igual ao provador na loja. Posição e escala usam os valores automáticos do tipo de produto.",
+      "subtitle": "Ajuste rotação, tamanho e profundidade. Os valores aplicam-se no provador da loja — abra a página do produto para validar o resultado.",
       "back": "Voltar aos Acessórios",
       "howToTitle": "Como funciona",
-      "howToIntro": "Apenas a rotação é configurável aqui. Cada controlo fixa em −90°, 0° ou 90°. A pré-visualização usa a mesma ordem de eixos de mundo (Y, depois X, depois Z) que o widget na loja.",
+      "howToIntro": "Use os controlos abaixo e guarde. Cada controlo avança em passos de 5° (−180° a 180°). A ordem dos eixos (Y, depois X, depois Z) é a mesma do provador na loja.",
       "howToStep1": "Use \"Girar para cima/baixo\" (rx) quando a peça parecer inclinada para a frente ou para trás.",
       "howToStep2": "Use \"Girar para esquerda/direita\" (ry) quando a peça estiver de perfil em vez de de frente.",
       "howToStep3": "Use \"Inclinar lateralmente\" (rz) quando parecer tombada para um dos lados.",
@@ -528,10 +537,10 @@
       "previewHint": "Ajuste até a peça alinhar com os olhos da silhueta — é o ponto de referência mais útil para óculos. O tamanho inicial corresponde a 50% no provador da loja (valor automático).",
       "previewHintGlassesPremium": "Óculos premium: lentes translúcidas com reflexo do ambiente em telemóveis recentes; em dispositivos mais antigos o provador usa um aspeto estável (sem vidro físico). A oclusão atrás das hastes é automática — não há controlos de oclusão neste ecrã.",
       "previewHintGlassesClear": "Óculos claros: aspeto estável em todos os dispositivos (lentes leves, sem depender de reflexos do ambiente).",
-      "previewHintBracelet": "Alinhe a pulseira com a linha tracejada do pulso na silhueta. O controlo abaixo usa a mesma rotação que o provador na loja.",
+      "previewHintBracelet": "Use o controlo abaixo para rodar a pulseira no pulso — o mesmo valor aplica-se no provador da loja.",
       "previewHintNecklace": "O colar é dimensionado automaticamente no pescoço. Use rotação (passos de 5°) e tamanho (65%–145%) para alinhar com o provador na loja.",
-      "necklaceSlidersIntro": "Rotação em passos de 5° (−180° a 180°). Tamanho: 100% é o fit automático do provador; pode reduzir até 65% ou aumentar até 145%.",
-      "braceletSlidersIntro": "Só a rotação no pulso é configurável aqui. Escolha −90°, 0° ou 90° no controlo ou nos botões. Posição e tamanho são automáticos no provador AR.",
+      "necklaceSlidersIntro": "Rotação em passos de 5° (−180° a 180°). Tamanho: 100% é o encaixe automático do provador; pode reduzir até 65% ou aumentar até 145%.",
+      "braceletSlidersIntro": "Apenas a rotação no pulso é configurável aqui. Ajuste em passos de 5° (−180° a 180°). Posição e tamanho são automáticos no provador AR.",
       "targetLabel": "Este ajuste aplica-se a…",
       "targetHelp": "Escolha \"Todo o produto\" se todas as cores ou tamanhos devem partilhar a mesma posição. Escolha \"Só esta variante\" quando cada opção precisa de um alinhamento diferente.",
       "targetProduct": "Todo o produto (todas as variantes)",
@@ -547,7 +556,7 @@
       "tip2": "Se parecer invertida, corrija com \"Girar para cima/baixo\" ou \"Inclinar lateralmente\".",
       "tip3": "Precisa de outro tamanho ou posição no pulso ou rosto? Gere ou substitua o modelo 3D — este ecrã só ajusta rotação.",
       "previewErrorNoScene": "Não conseguimos mostrar este modelo na pré-visualização — o ficheiro parece incompleto. Tente voltar a disponibilizar o modelo a partir de Acessórios.",
-      "previewErrorNoGeometry": "Não encontrámos formas visíveis neste modelo para mostrar na pré-visualização. Verifique se o ficheiro está correto ou volte a gerar o modelo.",
+      "previewErrorNoGeometry": "Não encontrámos formas visíveis neste modelo para pré-visualizar. Verifique se o ficheiro está correto ou volte a gerar o modelo.",
       "previewErrorProcess": "Não foi possível preparar a pré-visualização. Mais informação: {detail}",
       "previewErrorLoadModel": "Não foi possível carregar o modelo para pré-visualizar. Detalhe: {detail}",
       "previewErrorEngine": "A pré-visualização não arrancou neste navegador. Detalhe: {detail}",
@@ -580,7 +589,7 @@
           },
           "helpByType": {
             "watch": "Inclina o relógio ao longo do braço — uma lateral sobe e a outra desce.",
-            "bracelet": "Roda a pulseira até ficar natural na silhueta, como no provador da loja. É o mesmo ajuste que o cliente vê no AR.",
+            "bracelet": "Rode a pulseira até ficar natural no pulso, como no provador da loja. É o mesmo ajuste que o cliente vê no AR.",
             "necklace": "Inclina o colar ao longo do pescoço."
           }
         },
@@ -631,7 +640,7 @@
           "helpByType": {
             "watch": "Aumenta ou reduz o relógio — muito pequeno desaparece no pulso; muito grande perde naturalidade.",
             "bracelet": "Aumenta ou reduz a pulseira — valores muito altos deixam o visual pesado.",
-            "necklace": "Multiplicador sobre o tamanho automático no provador. 100% = padrão; pode ir de 65% (menor) a 145% (maior), em passos de 1%."
+            "necklace": "Multiplicador sobre o tamanho automático no provador. 100% = valor predefinido; pode ir de 65% (menor) a 145% (maior), em passos de 1%."
           }
         }
       }

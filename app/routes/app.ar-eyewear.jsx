@@ -68,6 +68,12 @@ function statusTone(status) {
   }
 }
 
+/** Envio ainda a gerar ou pós-processar o GLB. */
+function isArEyewearAssetProcessing(asset) {
+  const status = String(asset?.status || "").toLowerCase();
+  return status === "queued" || status === "processing" || status === "uploaded";
+}
+
 const MAX_GENERATION_IMAGES = 5;
 
 function defaultGenerationImageUrls(product, variantId) {
@@ -167,8 +173,9 @@ export default function ArEyewearPage() {
   const [submissionsSearch, setSubmissionsSearch] = useState("");
   const [submissionsStatusFilter, setSubmissionsStatusFilter] = useState("all");
 
-  const loadAssets = useCallback(async () => {
-    setAssetsLoading(true);
+  const loadAssets = useCallback(async (opts = {}) => {
+    const silent = opts?.silent === true;
+    if (!silent) setAssetsLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/ar-eyewear", { credentials: "include", cache: "no-store" });
@@ -176,9 +183,11 @@ export default function ArEyewearPage() {
       if (!res.ok) throw new Error(data.error || res.statusText);
       setAssets(data.assets || []);
     } catch (e) {
-      setError(e.message || t("arEyewear.errorLoadAssets"));
+      if (!silent) {
+        setError(e.message || t("arEyewear.errorLoadAssets"));
+      }
     } finally {
-      setAssetsLoading(false);
+      if (!silent) setAssetsLoading(false);
     }
   }, [t]);
 
@@ -206,6 +215,19 @@ export default function ArEyewearPage() {
     loadAssets();
     loadProducts();
   }, [loadAssets, loadProducts]);
+
+  const hasProcessingAssets = useMemo(
+    () => (assets || []).some(isArEyewearAssetProcessing),
+    [assets],
+  );
+
+  useEffect(() => {
+    if (!hasProcessingAssets) return undefined;
+    const timer = setInterval(() => {
+      loadAssets({ silent: true });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [hasProcessingAssets, loadAssets]);
 
   const filteredProducts = useMemo(() => {
     const q = productSearchQuery.toLowerCase();
@@ -679,6 +701,12 @@ export default function ArEyewearPage() {
                             </Badge>
                           </InlineStack>
                         </InlineStack>
+                        {isArEyewearAssetProcessing(a) ? (
+                          <Spinner
+                            size="small"
+                            accessibilityLabel={t("arEyewear.processingGlb")}
+                          />
+                        ) : null}
                         {a.error_message && (
                           <Text
                             as="p"

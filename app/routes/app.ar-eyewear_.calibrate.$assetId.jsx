@@ -1,9 +1,8 @@
 /**
  * /app/ar-eyewear/calibrate/:assetId
  *
- * Página admin: o lojista alinha visualmente o acessório na pré-visualização
- * (textos comerciais em i18n: arEyewear.calibrate.*). Persistência técnica
- * continua em `ar-eyewear.server.js` (calibração produto/variante).
+ * Página admin: o lojista ajusta rotação/escala do acessório no provador AR
+ * (textos em i18n: arEyewear.calibrate.*). Persistência em metafields Shopify.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "react-router-dom";
@@ -19,7 +18,6 @@ import {
   Banner,
   RangeSlider,
   Select,
-  Box,
   Divider,
   Badge,
 } from "@shopify/polaris";
@@ -29,9 +27,7 @@ import {
   sanitizeArCalibrationInput,
   defaultArCalibration,
   buildCalibrationForRotationEditor,
-  snapArRotationPresetDeg,
   snapArRotationFineDeg,
-  AR_ROTATION_PRESET_DEGREES,
   AR_GLASSES_ROTATION_MIN_DEG,
   AR_GLASSES_ROTATION_MAX_DEG,
   AR_GLASSES_ROTATION_STEP_DEG,
@@ -52,27 +48,6 @@ import {
 } from "../ar-accessory-type.shared.js";
 import { useAppI18n } from "../contexts/AppI18n";
 import { getShopDomain } from "../utils/getShopDomain";
-import {
-  computeGlassesCanonicalOffsetQuat,
-  omafitApplyGlassesTripoOffsetContainer,
-} from "../../extensions/omafit-theme/assets/omafit-glasses-orient.js";
-import {
-  applyGlassesMerchantCalibRotation,
-  OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
-  resolveGlassesCalibScaleBase,
-  resolveGlassesFrameWidthForFit,
-  resolveGlassesMerchantMeshScale,
-} from "../../extensions/omafit-theme/assets/omafit-glasses-calibration.js";
-import {
-  applyNecklaceAutoBind,
-  applyNecklaceMerchantCalibRotation,
-  applyNecklacePreviewStaticOrient,
-  omafitNecklaceMerchantCalibQuaternion,
-  computeNecklacePreviewBaseScale,
-  normalizeNecklaceMerchantCalibration,
-  omafitApplyNecklaceTripoBind,
-  omafitNecklaceArcSpanFromBbox,
-} from "../../extensions/omafit-theme/assets/omafit-necklace-calibration.js";
 
 function tryResignIfPrivate(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -304,34 +279,6 @@ export async function action({ request, params }) {
     );
   }
 }
-
-/**
- * Three.js via esm.sh — mesma versão e mesmo caminho de módulo que o widget
- * (omafit-ar-widget.js usa 0.150.1 via esm.sh). Usar outra versão traria dois
- * "three" diferentes no navegador, o que quebra instanceof checks no GLTFLoader.
- */
-const ESM_THREE_VER = "0.150.1";
-const ESM_SH = "https://esm.sh";
-const ESM_THREE_URL = `${ESM_SH}/three@${ESM_THREE_VER}/es2022/three.mjs`;
-const ESM_GLTF_URL = `${ESM_SH}/three@${ESM_THREE_VER}/examples/jsm/loaders/GLTFLoader.js`;
-
-function loadThreeModules() {
-  if (typeof window === "undefined") return Promise.reject(new Error("SSR"));
-  if (!window.__omafitAdminThreeBundle) {
-    window.__omafitAdminThreeBundle = Promise.all([
-      import(/* @vite-ignore */ ESM_THREE_URL),
-      import(/* @vite-ignore */ ESM_GLTF_URL),
-    ]).then(([threeMod, gltfMod]) => ({
-      THREE: threeMod,
-      GLTFLoader: gltfMod.GLTFLoader,
-    })).catch((e) => {
-      window.__omafitAdminThreeBundle = null;
-      throw e;
-    });
-  }
-  return window.__omafitAdminThreeBundle;
-}
-
 export default function ArEyewearCalibratePage() {
   const { t } = useAppI18n();
   const data = useLoaderData();
@@ -482,151 +429,96 @@ export default function ArEyewearCalibratePage() {
         </Layout.Section>
 
         <Layout.Section>
-          <InlineStack gap="400" wrap={false} align="space-between" blockAlign="start">
-            <Box width="58%" minWidth="360px">
-              <Card padding="0">
-                <div
-                  style={{
-                    position: "relative",
-                    width: "100%",
-                    aspectRatio: "4 / 5",
-                    background:
-                      "radial-gradient(ellipse at center, #2b3744 0%, #11161d 70%, #070a0d 100%)",
-                    overflow: "hidden",
-                    borderRadius: "8px",
-                  }}
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
+                  {data.productTitle || data.asset.product_name || t("arEyewear.productUnknown")}
+                </Text>
+                <InlineStack gap="200" wrap>
+                  <Badge tone="info">{t(`arEyewear.status.${data.asset.status}`)}</Badge>
+                  <Badge tone="attention">
+                    {t(`arEyewear.accessoryType.${data.accessoryType}`) ||
+                      data.accessoryType}
+                  </Badge>
+                </InlineStack>
+              </BlockStack>
+
+              {data.variants.length > 1 ? (
+                <>
+                  <Select
+                    label={t("arEyewear.calibrate.targetLabel")}
+                    helpText={t("arEyewear.calibrate.targetHelp")}
+                    options={[
+                      {
+                        label: t("arEyewear.calibrate.targetProduct"),
+                        value: "product",
+                      },
+                      {
+                        label: t("arEyewear.calibrate.targetVariant"),
+                        value: "variant",
+                      },
+                    ]}
+                    value={target}
+                    onChange={setTarget}
+                  />
+                  {target === "variant" ? (
+                    <Select
+                      label={t("arEyewear.calibrate.variantLabel")}
+                      options={data.variants.map((v) => ({
+                        label: `${v.title}${v.hasCalibration ? ` ✓` : ""}`,
+                        value: v.id,
+                      }))}
+                      value={variantGid}
+                      onChange={setVariantGid}
+                    />
+                  ) : null}
+                </>
+              ) : null}
+
+              <Divider />
+
+              <CalibrationSliders
+                cal={cal}
+                setField={setField}
+                setCal={setCal}
+                t={t}
+                accessoryType={data.accessoryType}
+              />
+
+              <Divider />
+
+              <InlineStack gap="200" wrap>
+                <Button
+                  variant="primary"
+                  onClick={handleSave}
+                  loading={isSaving}
+                  disabled={!hasChanges || !data.glbPreviewUrl}
                 >
-                  {data.accessoryType === "watch" || data.accessoryType === "bracelet" ? (
-                    <HandSilhouette />
-                  ) : (
-                  <FaceSilhouette />
-                  )}
-                  <PreviewModel
-                    src={data.glbPreviewUrl}
-                    cal={cal}
-                    wearScaleCalibration={data.defaultCalibration}
-                    accessoryType={data.accessoryType}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: "12px",
-                      left: "12px",
-                      right: "12px",
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: "12px",
-                      textAlign: "center",
-                      textShadow: "0 1px 2px rgba(0,0,0,0.7)",
-                      pointerEvents: "none",
-                    }}
-                  >
-                    {data.accessoryType === "bracelet"
-                      ? t("arEyewear.calibrate.previewHintBracelet")
-                      : data.accessoryType === "necklace"
-                        ? t("arEyewear.calibrate.previewHintNecklace")
-                        : data.wearableClass === "glasses_premium"
-                          ? t("arEyewear.calibrate.previewHintGlassesPremium")
-                          : data.wearableClass === "glasses_clear"
-                            ? t("arEyewear.calibrate.previewHintGlassesClear")
-                            : t("arEyewear.calibrate.previewHint")}
-                  </div>
-                </div>
-              </Card>
-            </Box>
+                  {t("arEyewear.calibrate.save")}
+                </Button>
+                <Button onClick={handleReset} disabled={isSaving}>
+                  {t("arEyewear.calibrate.reset")}
+                </Button>
+                <Button
+                  onClick={() => navigate(backHref)}
+                  disabled={isSaving}
+                  variant="tertiary"
+                >
+                  {t("arEyewear.calibrate.cancel")}
+                </Button>
+              </InlineStack>
 
-            <Box width="42%" minWidth="340px">
-              <Card>
-                <BlockStack gap="400">
-                  <BlockStack gap="100">
-                    <Text as="h2" variant="headingMd">
-                      {data.productTitle || data.asset.product_name || t("arEyewear.productUnknown")}
-                    </Text>
-                    <InlineStack gap="200" wrap>
-                    <Badge tone="info">{t(`arEyewear.status.${data.asset.status}`)}</Badge>
-                      <Badge tone="attention">
-                        {t(`arEyewear.accessoryType.${data.accessoryType}`) ||
-                          data.accessoryType}
-                      </Badge>
-                    </InlineStack>
-                  </BlockStack>
-
-                  {data.variants.length > 1 ? (
-                    <>
-                      <Select
-                        label={t("arEyewear.calibrate.targetLabel")}
-                        helpText={t("arEyewear.calibrate.targetHelp")}
-                        options={[
-                          {
-                            label: t("arEyewear.calibrate.targetProduct"),
-                            value: "product",
-                          },
-                          {
-                            label: t("arEyewear.calibrate.targetVariant"),
-                            value: "variant",
-                          },
-                        ]}
-                        value={target}
-                        onChange={setTarget}
-                      />
-                      {target === "variant" ? (
-                        <Select
-                          label={t("arEyewear.calibrate.variantLabel")}
-                          options={data.variants.map((v) => ({
-                            label: `${v.title}${v.hasCalibration ? ` ✓` : ""}`,
-                            value: v.id,
-                          }))}
-                          value={variantGid}
-                          onChange={setVariantGid}
-                        />
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  <Divider />
-
-                  <CalibrationSliders
-                    cal={cal}
-                    setField={setField}
-                    setCal={setCal}
-                    t={t}
-                    accessoryType={data.accessoryType}
-                  />
-
-                  <Divider />
-
-                  <InlineStack gap="200" wrap>
-                    <Button
-                      variant="primary"
-                      onClick={handleSave}
-                      loading={isSaving}
-                      disabled={!hasChanges || !data.glbPreviewUrl}
-                    >
-                      {t("arEyewear.calibrate.save")}
-                    </Button>
-                    <Button onClick={handleReset} disabled={isSaving}>
-                      {t("arEyewear.calibrate.reset")}
-                    </Button>
-                    <Button
-                      onClick={() => navigate(backHref)}
-                      disabled={isSaving}
-                      variant="tertiary"
-                    >
-                      {t("arEyewear.calibrate.cancel")}
-                    </Button>
-                  </InlineStack>
-
-                  {saveResult?.ok ? (
-                    <Banner tone="success">{t("arEyewear.calibrate.saveSuccess")}</Banner>
-                  ) : null}
-                  {saveResult?.error ? (
-                    <Banner tone="critical">
-                      {t("arEyewear.calibrate.saveError")}: {saveResult.error}
-                    </Banner>
-                  ) : null}
-                </BlockStack>
-              </Card>
-            </Box>
-          </InlineStack>
+              {saveResult?.ok ? (
+                <Banner tone="success">{t("arEyewear.calibrate.saveSuccess")}</Banner>
+              ) : null}
+              {saveResult?.error ? (
+                <Banner tone="critical">
+                  {t("arEyewear.calibrate.saveError")}: {saveResult.error}
+                </Banner>
+              ) : null}
+            </BlockStack>
+          </Card>
         </Layout.Section>
 
         <Layout.Section>
@@ -651,1131 +543,7 @@ export default function ArEyewearCalibratePage() {
     </Page>
   );
 }
-
-/**
- * Preview 3D com Three.js puro — usa EXATAMENTE a mesma cadeia de transformações
- * que o widget da loja v21 (glassesSimpleFaceOnly: bind Ry 180°, sem Tripo).
- *
- * Hierarquia mínima (idêntica ao widget):
- *   scene                                           (widget: anchor.group)
- *     → wearPosition(group, pos=wearX/Y/Z)
- *       → calibRot(group, rotateOnWorldAxis Y→X→Z)
- *         → glb (bind Ry 180°, bbox centrada, escalado para ~face-width * cal.scale)
- *
- * SEM `centerOffset`/`bridgeY`: todo o deslocamento vertical é controlado por
- * `wearY` em unidades de âncora. A versão anterior tinha `centerOffset` com
- * `pos.y=-bridgeY*size.y`, o que dependia da altura do GLB e criava um braço
- * de alavanca vertical que dava efeitos visuais contra-intuitivos no AR
- * (óculos "acima dos olhos" e "movimentação invertida" quando a cabeça rotava).
- *
- * Não há `mirrorX` em nenhum dos dois lados — análise do código-fonte da MindAR
- * (Estimator.js / face-data.js) confirma que, para cara a olhar para a câmara com
- * `flipFace=true`, `faceMatrix` colapsa para identidade de rotação, logo a âncora
- * já entrega o frame certo. Adicionar um espelho introduziria o "óculos virado
- * pra esquerda" que o lojista via.
- *
- * Diagnósticos (dev-only, visíveis no preview):
- *   - AxesHelper (X vermelho, Y verde, Z azul)
- *   - Bbox wireframe (azul ciano) a envolver o GLB
- *   - URL completa do GLB loggada em caso de erro
- *
- * Escala do preview: `computeGlassesPreviewBaseScale(larguraX)` — mesma fórmula
- * IPD×factor/frameWidth que o widget (`omafit-glasses-calibration.js`). 100% no
- * slider: 50% = escala padrão da loja (`AR_GLASSES_SCALE_DEFAULT`); 100% = o dobro.
- */
-/**
- * Tamanho do placeholder (cubo wireframe ciano) que aparece sempre no calibRot:
- * 0.14 × 0.04 × 0.04 m — uma "caixa de óculos" aproximada com as proporções de
- * uma armação típica (~14 cm de largura, ~4 cm de altura/profundidade).
- * Fica semi-transparente por baixo do GLB quando este carrega, mostrando ao
- * lojista a bbox esperada; se o GLB falhar a carregar, serve de referência
- * visual para o lojista conseguir pelo menos experimentar a calibração.
- */
-const PLACEHOLDER_SIZE = { x: 0.14, y: 0.04, z: 0.04 };
-
-/**
- * Coincidir COM `OMAFIT_WRIST_AR_WORLD_MAX_DIM` e
- * `OMAFIT_BRACELET_AR_WORLD_MEDIAN_DIM` em
- * `extensions/omafit-theme/assets/omafit-ar-widget.js`. Se mudares aqui,
- * muda também lá (e vice-versa) — senão o tamanho no admin deixa de bater
- * certo com o tamanho no widget da loja.
- *
- * NOTA: pulseiras usam MEDIANA do bbox (= diâmetro real do anel), não o
- * máximo. Ver `fitWristGlb` no widget para detalhe da heurística.
- */
-/** Legado colar/outros; óculos usam `computeGlassesPreviewBaseScale`. */
-const PREVIEW_WORLD_MAX_DIM_FACE = 0.16;
-const PREVIEW_WORLD_MAX_DIM_WRIST = 0.072;
-const PREVIEW_WORLD_MEDIAN_DIM_BRACELET = 0.062;
-/**
- * Raio padrão de pulso (m) usado no preview de admin (pulso médio adulto).
- * No widget o valor é adaptado per-frame via `smoothWristRadius`. No admin,
- * não há utilizador; usamos este default para dimensionar o cilindro de
- * wrap + escalar o GLB. Coincidir com `OMAFIT_DEFAULT_WRIST_R_M` no widget.
- */
-const PREVIEW_DEFAULT_WRIST_R_M = 0.026;
-/** Espelha `OMAFIT_BRACELET_TRIPO_TARGET_DIAMETER_M` no widget. */
-const PREVIEW_BRACELET_TRIPO_TARGET_DIAMETER_M = 0.065;
-const PREVIEW_BRACELET_WRIST_GAP_M = 0.0025;
-const PREVIEW_BRACELET_RIGID_SLOT_ELONG_THRESHOLD = 3.0;
-const PREVIEW_BRACELET_GLB_LOCAL_Y_SIZE_MUL = 0.42;
-const PREVIEW_BRACELET_GLB_LOCAL_Z_SIZE_MUL = 0.5;
-const PREVIEW_BRACELET_GLB_MICRO_POS_Y_M = 0.005;
-const PREVIEW_BRACELET_GLB_MICRO_POS_Z_M = 0.003;
-/** Posição Y do preview pulseira (alinha com linha do pulso na silhueta). */
-const PREVIEW_BRACELET_WEAR_Y_M = -0.038;
-
-/**
- * Dobra (bending) vértices de uma mesh em torno de um cilindro virtual.
- * Espelha `bendGeometryCylinder` em omafit-ar-widget.js. Mantém formato
- * idêntico para garantir consistência entre preview admin e widget live.
- */
-function bendGeometryCylinderPreview(THREE, root, bendAxis, armAxis, dorsalAxis, localR) {
-  const bA = bendAxis.clone().normalize();
-  const aA = armAxis.clone().normalize();
-  const dA = dorsalAxis.clone().normalize();
-  const v = new THREE.Vector3();
-  root.traverse((obj) => {
-    if (!obj.isMesh || !obj.geometry) return;
-    const pos = obj.geometry.attributes.position;
-    if (!pos) return;
-    const arr = pos.array;
-    for (let i = 0; i < arr.length; i += 3) {
-      v.set(arr[i], arr[i + 1], arr[i + 2]);
-      const bendC = v.dot(bA);
-      const armC = v.dot(aA);
-      const dorsalC = v.dot(dA);
-      const theta = bendC / localR;
-      const r = localR + dorsalC;
-      const newBend = r * Math.sin(theta);
-      const newDorsal = r * Math.cos(theta) - localR;
-      v.copy(bA).multiplyScalar(newBend)
-        .addScaledVector(aA, armC)
-        .addScaledVector(dA, newDorsal);
-      arr[i] = v.x;
-      arr[i + 1] = v.y;
-      arr[i + 2] = v.z;
-    }
-    pos.needsUpdate = true;
-    obj.geometry.computeBoundingBox();
-    obj.geometry.computeBoundingSphere();
-    obj.geometry.computeVertexNormals();
-  });
-}
-
-/**
- * Espelha `computeLocalInnerRadius` do widget live. Devolve o raio da
- * superfície INTERNA do anel (não do eixo). Usado para escalar o GLB
- * de modo a que a face que toca a pele fique exactamente no raio de
- * pulso padrão — igual comportamento ao widget para consistência
- * merchant/utilizador final.
- */
-function computeBraceletRigidSlotPreview(THREE, root) {
-  root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
-  const size = new THREE.Vector3();
-  box.getSize(size);
-  const dims = [size.x, size.y, size.z].sort((a, b) => a - b);
-  const elong = dims[2] / Math.max(1e-6, dims[1]);
-  return elong <= PREVIEW_BRACELET_RIGID_SLOT_ELONG_THRESHOLD;
-}
-
-/**
- * Espelha `omafitNormalizeBraceletTripoGlbScale` + ramo pulseira de `fitWristGlb`.
- * Mantém preview admin alinhado ao widget (rigid slot, recentro, escala no glbRoot).
- */
-function fitBraceletGlbPreview(THREE, glbScene, glbRoot, calScale) {
-  glbScene.scale.set(1, 1, 1);
-  glbScene.updateMatrixWorld(true);
-  let bbox = new THREE.Box3().setFromObject(glbScene);
-  const size = new THREE.Vector3();
-  bbox.getSize(size);
-  const maxDim = Math.max(size.x, size.y, size.z, 1e-9);
-  const tripScale = THREE.MathUtils.clamp(
-    PREVIEW_BRACELET_TRIPO_TARGET_DIAMETER_M / maxDim,
-    0.01,
-    10,
-  );
-  glbScene.scale.setScalar(tripScale);
-  glbScene.updateMatrixWorld(true);
-  bbox = new THREE.Box3().setFromObject(glbScene);
-  bbox.getSize(size);
-
-  const sx = size.x;
-  const sy = size.y;
-  const sz = size.z;
-  let smallestAxis = "z";
-  if (sx <= sy && sx <= sz) smallestAxis = "x";
-  else if (sy <= sx && sy <= sz) smallestAxis = "y";
-
-  let rotApplied = false;
-  if (smallestAxis === "x") {
-    glbScene.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
-    rotApplied = true;
-  } else if (smallestAxis === "y") {
-    glbScene.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
-    rotApplied = true;
-  }
-  if (rotApplied) {
-    glbScene.updateMatrixWorld(true);
-    bbox = new THREE.Box3().setFromObject(glbScene);
-    bbox.getSize(size);
-  }
-
-  const isRigidSlot = computeBraceletRigidSlotPreview(THREE, glbScene);
-
-  if (!isRigidSlot) {
-    glbScene.rotation.set(0, 0, 0);
-    glbScene.quaternion.identity();
-    glbScene.updateMatrixWorld(true);
-    bbox = new THREE.Box3().setFromObject(glbScene);
-    bbox.getSize(size);
-  }
-
-  const sorted = [size.x, size.y, size.z].sort((a, b) => a - b);
-  const medianDim = sorted[1] || 1;
-  const localRingR = Math.max(medianDim / 2, 1e-6);
-  glbScene.updateMatrixWorld(true);
-  const currentBox = new THREE.Box3().setFromObject(glbScene);
-  const measuredInner = computeLocalInnerRadiusPreview(THREE, glbScene, currentBox);
-  const localInnerR =
-    measuredInner &&
-    measuredInner > localRingR * 0.5 &&
-    measuredInner < localRingR * 0.99
-      ? measuredInner
-      : Math.max(localRingR * 0.9, 1e-6);
-
-  const targetInnerR = PREVIEW_DEFAULT_WRIST_R_M + PREVIEW_BRACELET_WRIST_GAP_M;
-  const calcBaseScale = targetInnerR / localInnerR;
-  const finalMul =
-    Number.isFinite(Number(calScale)) && Number(calScale) > 0 ? Number(calScale) : 1;
-  glbRoot.scale.setScalar(calcBaseScale * finalMul);
-
-  const center = new THREE.Vector3();
-  bbox.getCenter(center);
-  glbScene.position.sub(center);
-  if (!isRigidSlot) {
-    glbScene.rotation.set(0, 0, 0);
-    glbScene.quaternion.identity();
-    glbScene.updateMatrixWorld(true);
-    bbox.setFromObject(glbScene);
-    bbox.getCenter(center);
-    if (center.lengthSq() > 1e-14) glbScene.position.sub(center);
-    glbScene.updateMatrixWorld(true);
-    bbox.setFromObject(glbScene);
-    bbox.getSize(size);
-    glbScene.position.y -= size.y * PREVIEW_BRACELET_GLB_LOCAL_Y_SIZE_MUL;
-    glbScene.position.z -= size.z * PREVIEW_BRACELET_GLB_LOCAL_Z_SIZE_MUL;
-    glbScene.position.y += PREVIEW_BRACELET_GLB_MICRO_POS_Y_M;
-    glbScene.position.z += PREVIEW_BRACELET_GLB_MICRO_POS_Z_M;
-  }
-  glbScene.updateMatrixWorld(true);
-
-  return {
-    baseScale: calcBaseScale,
-    localInnerR,
-    localRingR,
-    isRigidSlot,
-    size: size.clone(),
-  };
-}
-
-function computeLocalInnerRadiusPreview(THREE, root, bbox) {
-  const center = new THREE.Vector3();
-  bbox.getCenter(center);
-  const distances = [];
-  const v = new THREE.Vector3();
-  root.updateMatrixWorld(true);
-  root.traverse((obj) => {
-    if (!obj.isMesh || !obj.geometry) return;
-    const pos = obj.geometry.attributes.position;
-    if (!pos) return;
-    obj.updateMatrixWorld(true);
-    const arr = pos.array;
-    for (let i = 0; i < arr.length; i += 3) {
-      v.set(arr[i], arr[i + 1], arr[i + 2]).applyMatrix4(obj.matrixWorld);
-      const dx = v.x - center.x;
-      const dy = v.y - center.y;
-      distances.push(Math.sqrt(dx * dx + dy * dy));
-    }
-  });
-  if (distances.length < 10) return null;
-  distances.sort((a, b) => a - b);
-  const idx = Math.max(0, Math.floor(distances.length * 0.02));
-  return distances[idx];
-}
-
-function PreviewModel({ src, cal, wearScaleCalibration, accessoryType = "glasses" }) {
-  const { t } = useAppI18n();
-  const hostRef = useRef(null);
-  const wearScaleRef = useRef(wearScaleCalibration);
-  useEffect(() => {
-    wearScaleRef.current = wearScaleCalibration;
-  }, [wearScaleCalibration]);
-  const stateRef = useRef({
-    THREE: null,
-    renderer: null,
-    scene: null,
-    camera: null,
-    calibRot: null,
-    wearPosition: null,
-    faceParent: null,
-    glbRoot: null,
-    tripoOffsetGroup: null,
-    model: null,
-    placeholder: null,
-    bboxHelper: null,
-    size: null,
-    baseScale: 1,
-    raf: 0,
-    ro: null,
-    disposed: false,
-  });
-  const calRef = useRef(cal);
-  const [phase, setPhase] = useState(src ? "loading" : "empty");
-  const [errorMsg, setErrorMsg] = useState("");
-
-  useEffect(() => {
-    if (!src || typeof window === "undefined") {
-      setPhase(src ? "loading" : "empty");
-      return undefined;
-    }
-    const host = hostRef.current;
-    if (!host) return undefined;
-    stateRef.current.disposed = false;
-    setPhase("loading");
-    setErrorMsg("");
-
-    let cancelled = false;
-
-    loadThreeModules()
-      .then(({ THREE, GLTFLoader }) => {
-        if (cancelled) return;
-        const s = stateRef.current;
-        s.THREE = THREE;
-
-        const width = host.clientWidth || 400;
-        const height = host.clientHeight || 500;
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(35, width / height, 0.01, 10);
-        camera.position.set(0, 0, 0.45);
-        camera.lookAt(0, 0, 0);
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-        renderer.setSize(width, height, false);
-        renderer.outputEncoding = THREE.sRGBEncoding || renderer.outputEncoding;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.1;
-        renderer.domElement.style.position = "absolute";
-        renderer.domElement.style.inset = "0";
-        renderer.domElement.style.width = "100%";
-        renderer.domElement.style.height = "100%";
-        renderer.domElement.style.zIndex = "1";
-        host.appendChild(renderer.domElement);
-
-        scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-        const key = new THREE.DirectionalLight(0xffffff, 0.9);
-        key.position.set(0.5, 0.8, 1.2);
-        scene.add(key);
-        const fill = new THREE.DirectionalLight(0xffffff, 0.35);
-        fill.position.set(-0.8, -0.2, 0.6);
-        scene.add(fill);
-
-        const wearPosition = new THREE.Group();
-        wearPosition.name = "wearPosition";
-        scene.add(wearPosition);
-
-        const faceParent = new THREE.Group();
-        faceParent.name = "omafit-ar-face-parent";
-        wearPosition.add(faceParent);
-
-        const calibRot = new THREE.Group();
-        calibRot.name = "calibRot";
-        calibRot.rotation.order = "YXZ";
-        faceParent.add(calibRot);
-
-        // Diagnóstico 1: eixos do MUNDO (fixos na cena, não rodam com a
-        // calibração). Servem de referência absoluta para o lojista ver
-        // onde é +X (direita), +Y (cima), +Z (fora do ecrã). Ficam um
-        // pouco atenuados (depthTest activo) para não poluírem.
-        const worldAxes = new THREE.AxesHelper(0.12);
-        worldAxes.name = "omafit-world-axes";
-        scene.add(worldAxes);
-
-        // Diagnóstico 2: eixos DO MODELO (dentro do calibRot, rodam com
-        // ele). São o que indica ao lojista para onde "aponta" o frente
-        // (+Z), cima (+Y), direita (+X) do GLB depois de aplicadas as
-        // rotações. Usamos depthTest: false e renderOrder alto para que
-        // fiquem SEMPRE visíveis, mesmo por cima do GLB opaco — era este
-        // o bug anterior: o AxesHelper ficava oculto dentro do modelo
-        // opaco, e o lojista só via as rotações sem saber em torno de
-        // que eixo estavam a acontecer.
-        const modelAxes = new THREE.AxesHelper(0.14);
-        modelAxes.name = "omafit-model-axes";
-        modelAxes.renderOrder = 999;
-        // AxesHelper tem 1 material partilhado por via de LineBasicMaterial:
-        // set depthTest:false para o eixo ser desenhado por cima de tudo.
-        if (modelAxes.material) {
-          modelAxes.material.depthTest = false;
-          modelAxes.material.transparent = true;
-        }
-        calibRot.add(modelAxes);
-
-        // Placeholder: cubo wireframe ciano com proporções de armação
-        // real (~14×4×4 cm). Fica SEMPRE visível enquanto o GLB não
-        // carrega, e semi-transparente depois (acompanha a rotação e
-        // dá contexto de "tamanho e orientação esperados").
-        const placeholder = new THREE.Group();
-        placeholder.name = "omafit-placeholder";
-
-        const phGeom = new THREE.BoxGeometry(
-          PLACEHOLDER_SIZE.x, PLACEHOLDER_SIZE.y, PLACEHOLDER_SIZE.z,
-        );
-        const phEdges = new THREE.EdgesGeometry(phGeom);
-        const phBox = new THREE.LineSegments(
-          phEdges,
-          new THREE.LineBasicMaterial({
-            color: 0x00e0ff,
-            transparent: true,
-            opacity: 0.8,
-          }),
-        );
-        placeholder.add(phBox);
-
-        calibRot.add(placeholder);
-        placeholder.userData.boxMaterial = phBox.material;
-
-        s.renderer = renderer;
-        s.scene = scene;
-        s.camera = camera;
-        s.wearPosition = wearPosition;
-        s.faceParent = faceParent;
-        s.calibRot = calibRot;
-        s.glbRoot = null;
-        s.placeholder = placeholder;
-        s.baseScale = 1; // placeholder usa escala 1
-
-        if (accessoryType === "bracelet") {
-          wearPosition.position.set(0, PREVIEW_BRACELET_WEAR_Y_M, 0);
-        }
-
-        renderer.setAnimationLoop(() => {
-          const st = stateRef.current;
-          if (st.disposed || !st.renderer) return;
-          st.renderer.render(st.scene, st.camera);
-        });
-
-        const ro = new ResizeObserver(() => {
-          const st = stateRef.current;
-          if (!st.renderer || !st.camera) return;
-          const w = host.clientWidth || 400;
-          const h = host.clientHeight || 500;
-          st.camera.aspect = w / h;
-          st.camera.updateProjectionMatrix();
-          st.renderer.setSize(w, h, false);
-        });
-        ro.observe(host);
-        s.ro = ro;
-
-        // Aplicar calibração imediatamente ao placeholder — dá ao lojista
-        // feedback visual dos sliders mesmo antes do GLB carregar.
-        applyCalibrationToState(s, calRef.current || cal, calRef.current || cal);
-
-        const loader = new GLTFLoader();
-        loader.setCrossOrigin("anonymous");
-        console.log("[omafit-calibrate] loading GLB:", src);
-        loader.load(
-          src,
-          (gltf) => {
-            if (cancelled || stateRef.current.disposed) return;
-            try {
-              const root = gltf.scene || gltf.scenes?.[0];
-              if (!root) {
-                console.warn("[omafit-calibrate] GLB sem cena:", src);
-                setErrorMsg(t("arEyewear.calibrate.previewErrorNoScene"));
-                setPhase("error");
-                return;
-              }
-
-              // Bake + flatten das transformações do GLB (root + nós filhos).
-              // Aplica a matrixWorld de cada mesh (não-skinned, sem morphs)
-              // ao próprio geometry clonado e reseta todas as rotações.
-              // Resultado: qualquer rotação intrínseca fica bakeada na
-              // geometria, e as rotações do calibRot passam a actuar em
-              // torno dos eixos do mundo — rz = roll puro (uma ponta sobe,
-              // outra desce), ry = yaw puro, rx = pitch puro. Ver comentário
-              // paralelo em omafit-ar-widget.js.
-              const originalQuat = root.quaternion.clone();
-              const rootWasRotated =
-                Math.abs(originalQuat.x) > 1e-4 ||
-                Math.abs(originalQuat.y) > 1e-4 ||
-                Math.abs(originalQuat.z) > 1e-4 ||
-                Math.abs(originalQuat.w - 1) > 1e-4;
-              let bakedMeshCount = 0;
-              let skippedAnimatedMeshCount = 0;
-              try {
-                bakeGLBTransforms(THREE, root, (info) => {
-                  bakedMeshCount = info.baked;
-                  skippedAnimatedMeshCount = info.skipped;
-                });
-              } catch (bakeErr) {
-                console.warn(
-                  "[omafit-calibrate] bake do GLB falhou, seguindo só com reset do root:",
-                  bakeErr?.message || bakeErr,
-                );
-                root.rotation.set(0, 0, 0);
-                root.quaternion.identity();
-                root.scale.setScalar(1);
-              }
-              root.updateMatrix();
-              root.updateMatrixWorld(true);
-
-              const box = new THREE.Box3().setFromObject(root);
-              if (typeof box.isEmpty === "function" && box.isEmpty()) {
-                console.warn("[omafit-calibrate] GLB sem geometria:", src);
-                setErrorMsg(t("arEyewear.calibrate.previewErrorNoGeometry"));
-                setPhase("error");
-                return;
-              }
-              let size = new THREE.Vector3();
-              box.getSize(size);
-
-              /**
-               * === RELÓGIO PLANO: dobra cilíndrica ===
-               *
-               * Se ratio max/median > 2, GLB foi autorada com correia esticada
-               * a direito. Dobramos os vértices em torno de um cilindro
-               * virtual para o relógio envolver o pulso. Espelha lógica do
-               * widget (`fitWristGlb`) para consistência preview ↔ live.
-               */
-              let didBendWatch = false;
-              let bendLocalR = 0;
-              if (accessoryType === "watch") {
-                const axes = [
-                  { name: "x", size: size.x, vec: new THREE.Vector3(1, 0, 0) },
-                  { name: "y", size: size.y, vec: new THREE.Vector3(0, 1, 0) },
-                  { name: "z", size: size.z, vec: new THREE.Vector3(0, 0, 1) },
-                ];
-                axes.sort((a, b) => a.size - b.size);
-                const dorsal = axes[0];
-                const arm = axes[1];
-                const bend = axes[2];
-                const flatRatio = bend.size / Math.max(arm.size, 1e-6);
-                if (flatRatio > 2.0) {
-                  const wrapFraction = 0.83;
-                  const localR = bend.size / (2 * Math.PI * wrapFraction);
-
-                  const bboxCenter = new THREE.Vector3();
-                  box.getCenter(bboxCenter);
-                  const dorsalN = dorsal.vec.clone();
-                  if (bboxCenter.dot(dorsalN) < 0) dorsalN.negate();
-
-                  const bendN = bend.vec.clone();
-                  const armN = arm.vec.clone();
-                  const expectedArm = new THREE.Vector3().crossVectors(bendN, dorsalN);
-                  if (expectedArm.dot(armN) < 0) armN.negate();
-
-                  bendGeometryCylinderPreview(THREE, root, bendN, armN, dorsalN, localR);
-                  didBendWatch = true;
-                  bendLocalR = localR;
-
-                  const M = new THREE.Matrix4().makeBasis(bendN, dorsalN, armN);
-                  const invM = new THREE.Matrix4().copy(M).transpose();
-                  const q = new THREE.Quaternion().setFromRotationMatrix(invM);
-                  if (Math.abs(q.x) + Math.abs(q.y) + Math.abs(q.z) > 1e-6) {
-                    root.quaternion.premultiply(q);
-                    root.updateMatrixWorld(true);
-                  }
-                  const newBox2 = new THREE.Box3().setFromObject(root);
-                  newBox2.getSize(size);
-                  const newCenter2 = new THREE.Vector3();
-                  newBox2.getCenter(newCenter2);
-                  root.position.sub(newCenter2);
-                  console.log("[omafit-calibrate] watch strap bent", {
-                    localR,
-                    wrapFraction,
-                    postBbox: { x: size.x, y: size.y, z: size.z },
-                  });
-                } else {
-                  /**
-                   * === CANONIZAÇÃO DE ORIENTAÇÃO: RELÓGIOS ENROLADOS ===
-                   *
-                   * Relógios que já vêm enrolados (flatRatio <= 2.0) não passam
-                   * pelo bend cilíndrico, mas precisam de orientação previsível
-                   * para evitar aparecerem de cabeça para baixo no preview.
-                   *
-                   * Esta lógica espelha exatamente o widget (omafit-ar-widget.js
-                   * linhas ~13370-13430) para garantir que o preview mostre
-                   * EXATAMENTE o que o lojista verá no AR.
-                   *
-                   * Objetivo: alinhar consistentemente ao frame da âncora:
-                   *   - Eixo dorsal (MIN) → +Y local (face visível para cima)
-                   *   - Eixo arm (MED) → +Z local (direção do braço)
-                   *   - Eixo lateral (MAX) → +X local (ao redor do pulso)
-                   */
-                  const bboxCenter = new THREE.Vector3();
-                  box.getCenter(bboxCenter);
-
-                  // Detectar sentido dorsal (face do relógio aponta "para fora")
-                  const dorsalN = dorsal.vec.clone();
-                  if (bboxCenter.dot(dorsalN) < 0) dorsalN.negate();
-
-                  // Para relógios enrolados: eixo MAX = lateral (X)
-                  const lateralN = bend.vec.clone();
-                  const armN = arm.vec.clone();
-
-                  // Garantir base right-handed: lateral × dorsal = arm
-                  const expectedArm = new THREE.Vector3().crossVectors(lateralN, dorsalN);
-                  if (expectedArm.dot(armN) < 0) armN.negate();
-
-                  /**
-                   * Construir matriz de mudança de base:
-                   * Mapeia (lateral, dorsal, arm) do GLB → (X, Y, Z) da âncora
-                   *
-                   * M = [lateral | dorsal | arm]  (colunas)
-                   * Rotação: M^T (transposta = inversa para matriz ortonormal)
-                   */
-                  const M = new THREE.Matrix4().makeBasis(lateralN, dorsalN, armN);
-                  const invM = new THREE.Matrix4().copy(M).transpose();
-                  const q = new THREE.Quaternion().setFromRotationMatrix(invM);
-
-                  // Aplicar rotação apenas se não for identidade
-                  if (Math.abs(q.x) + Math.abs(q.y) + Math.abs(q.z) > 1e-6) {
-                    root.quaternion.premultiply(q);
-                    root.updateMatrixWorld(true);
-                    
-                    // Recalcular bbox e recentrar após rotação
-                    const newBox3 = new THREE.Box3().setFromObject(root);
-                    newBox3.getSize(size);
-                    const newCenter3 = new THREE.Vector3();
-                    newBox3.getCenter(newCenter3);
-                    root.position.sub(newCenter3);
-                  }
-
-                  console.log("[omafit-calibrate] watch orientation canonicalized (already wrapped)", {
-                    lateralAxis: bend.name,
-                    dorsalAxis: dorsal.name,
-                    armAxis: arm.name,
-                    armFlipped: armN.dot(arm.vec) < 0,
-                    flatRatio: Number(flatRatio.toFixed(3)),
-                    preBbox: { max: bend.size, mid: arm.size, min: dorsal.size },
-                    postBbox: { x: size.x, y: size.y, z: size.z },
-                  });
-                }
-              }
-
-              if (accessoryType !== "bracelet" && !didBendWatch) {
-                const center = new THREE.Vector3();
-                box.getCenter(center);
-                root.position.sub(center);
-              }
-
-              const sortedSizes = [size.x, size.y, size.z].sort((a, b) => a - b);
-              const medianDim = sortedSizes[1] || 1e-4;
-              const maxDim = Math.max(sortedSizes[2], 1e-4);
-              let baseScale;
-              let glbRoot = null;
-
-              if (accessoryType === "bracelet") {
-                glbRoot = new THREE.Group();
-                glbRoot.name = "glbRoot";
-                /** Escala de loja (`scale`) aplicada em `applyCalibrationToState`, não no fit. */
-                const fitB = fitBraceletGlbPreview(THREE, root, glbRoot, 1);
-                baseScale = fitB.baseScale;
-                glbRoot.add(root);
-                s.glbRoot = glbRoot;
-                console.log("[omafit-calibrate] bracelet fit (widget parity)", {
-                  rigidSlot: fitB.isRigidSlot,
-                  baseScale: fitB.baseScale,
-                  localInnerR_mm: (fitB.localInnerR * 1000).toFixed(1),
-                });
-              } else if (accessoryType === "necklace") {
-                let tripBind = applyNecklaceAutoBind(THREE, root);
-                if (!tripBind) tripBind = omafitApplyNecklaceTripoBind(THREE, root);
-                root.updateMatrixWorld(true);
-                const boxNeck = new THREE.Box3().setFromObject(root);
-                boxNeck.getSize(size);
-                const centerNeck = new THREE.Vector3();
-                boxNeck.getCenter(centerNeck);
-                root.position.sub(centerNeck);
-                root.updateMatrixWorld(true);
-                boxNeck.setFromObject(root);
-                boxNeck.getSize(size);
-                const neckSpanM = omafitNecklaceArcSpanFromBbox(size);
-                baseScale = computeNecklacePreviewBaseScale(neckSpanM);
-                const neckOrient = new THREE.Group();
-                neckOrient.name = "omafit-calibrate-necklace-orient";
-                applyNecklacePreviewStaticOrient(THREE, neckOrient);
-                const neckBind = new THREE.Group();
-                neckBind.name = "omafit-calibrate-necklace-bind";
-                neckOrient.add(neckBind);
-                neckBind.add(root);
-                root.scale.setScalar(baseScale);
-                s.necklaceBindGroup = neckBind;
-                s.necklaceOrientGroup = neckOrient;
-                console.log("[omafit-calibrate] necklace auto-fit (widget parity)", {
-                  tripBind: tripBind?.bind,
-                  bindAuto: tripBind?.auto ?? null,
-                  neckSpanM,
-                  baseScaleAt100: baseScale,
-                });
-              } else if (accessoryType === "watch") {
-                const localRingR =
-                  didBendWatch
-                    ? Math.max(bendLocalR, 1e-4)
-                    : Math.max(medianDim / 2, 1e-4);
-                root.updateMatrixWorld(true);
-                const currentBox = new THREE.Box3().setFromObject(root);
-                const measuredInner = computeLocalInnerRadiusPreview(
-                  THREE,
-                  root,
-                  currentBox,
-                );
-                const localInnerR =
-                  measuredInner &&
-                  measuredInner > localRingR * 0.5 &&
-                  measuredInner < localRingR * 0.99
-                    ? measuredInner
-                    : Math.max(localRingR * 0.9, 1e-4);
-                baseScale = (PREVIEW_DEFAULT_WRIST_R_M + 0.001) / localInnerR;
-                root.scale.setScalar(baseScale);
-                console.log("[omafit-calibrate] wrist fit by inner radius", {
-                  accessoryType,
-                  localRingR_mm: (localRingR * 1000).toFixed(1),
-                  localInnerR_mm: (localInnerR * 1000).toFixed(1),
-                  didBendWatch,
-                });
-              } else {
-                const frameRawW = Math.max(size.x, 1e-4);
-                /** Paridade AR v46: export canónico → base 1; slider = multiplicador directo. */
-                baseScale = resolveGlassesCalibScaleBase({
-                  bboxWidthLocal: frameRawW,
-                  canonicalBlenderExport: true,
-                  simpleFaceOnly: true,
-                });
-                root.scale.setScalar(baseScale);
-                console.log("[omafit-calibrate] glasses auto-fit", {
-                  frameRawW,
-                  frameFitW: resolveGlassesFrameWidthForFit(frameRawW),
-                  baseScaleAt100: baseScale,
-                  formula: "canonical: meshScale = merchantScale",
-                });
-              }
-
-              /**
-               * Óculos: paridade widget v28 — bind Ry 180° no root (antes de calibRot).
-               * Calibração rx/ry/rz do lojista soma-se em calibRot (ajuste fino).
-               */
-              if (accessoryType === "glasses") {
-                root.rotation.set(0, 0, 0);
-                root.quaternion.identity();
-                root.rotateOnWorldAxis(
-                  new THREE.Vector3(0, 1, 0),
-                  OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
-                );
-                root.updateMatrix();
-                root.updateMatrixWorld(true);
-                console.log("[omafit-calibrate] glasses bind Ry 180° (shared canonical bind)");
-                s.tripoOffsetGroup = null;
-                calibRot.add(root);
-              } else if (accessoryType === "bracelet" && glbRoot) {
-                s.tripoOffsetGroup = null;
-                calibRot.add(glbRoot);
-              } else if (accessoryType === "necklace" && s.necklaceOrientGroup) {
-                s.tripoOffsetGroup = null;
-                calibRot.add(s.necklaceOrientGroup);
-              } else {
-                s.tripoOffsetGroup = null;
-                calibRot.add(root);
-              }
-
-              s.model = root;
-              s.size = size.clone().multiplyScalar(baseScale);
-              s.baseScale = baseScale;
-
-              // Placeholder fica mais discreto quando GLB carrega (20% opacity).
-              // Mantemos os AxesHelper visíveis (não mexemos) para o lojista
-              // continuar a ver +X/+Y/+Z enquanto calibra.
-              const phMat = s.placeholder?.userData?.boxMaterial;
-              if (phMat) phMat.opacity = 0.2;
-
-              const rotCal =
-                accessoryType === "necklace"
-                  ? normalizeNecklaceMerchantCalibration(calRef.current || cal)
-                  : calRef.current || cal;
-              const wearScaleCal =
-                accessoryType === "necklace"
-                  ? { ...(wearScaleRef.current || {}), scale: (calRef.current || cal).scale }
-                  : calRef.current || cal;
-              applyCalibrationToState(stateRef.current, rotCal, wearScaleCal);
-              setPhase("ready");
-              console.log("[omafit-calibrate] GLB carregado:", {
-                src, maxDim, baseScale, sizeRaw: size.toArray(),
-                childMeshCount: countVisibleMeshes(root),
-                rootWasRotated,
-                rootQuatOriginal: {
-                  x: originalQuat.x, y: originalQuat.y,
-                  z: originalQuat.z, w: originalQuat.w,
-                },
-                bakedMeshCount,
-                skippedAnimatedMeshCount,
-              });
-            } catch (e) {
-              console.error("[omafit-calibrate] erro no setup do GLB:", e, src);
-              setErrorMsg(
-                t("arEyewear.calibrate.previewErrorProcess", {
-                  detail: String(e?.message || e || ""),
-                }),
-              );
-              setPhase("error");
-            }
-          },
-          (ev) => {
-            if (ev && ev.lengthComputable && ev.total > 0) {
-              const pct = Math.round((ev.loaded / ev.total) * 100);
-              console.log(`[omafit-calibrate] GLB a descarregar: ${pct}%`);
-            }
-          },
-          (err) => {
-            console.warn("[omafit-calibrate] GLTFLoader falhou:", err, src);
-            if (!cancelled) {
-              const status = err?.target?.status;
-              const statusTxt = err?.target?.statusText;
-              const msg =
-                err?.message ||
-                (status ? `HTTP ${status} ${statusTxt || ""}`.trim() : null) ||
-                String(err) ||
-                "falha desconhecida";
-              setErrorMsg(
-                t("arEyewear.calibrate.previewErrorLoadModel", { detail: String(msg) }),
-              );
-              setPhase("error");
-            }
-          },
-        );
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        console.warn("[omafit-calibrate] falha a carregar Three.js:", e);
-        setErrorMsg(
-          t("arEyewear.calibrate.previewErrorEngine", {
-            detail: String(e?.message || e || ""),
-          }),
-        );
-        setPhase("error");
-      });
-
-    return () => {
-      cancelled = true;
-      const s = stateRef.current;
-      s.disposed = true;
-      if (s.raf) cancelAnimationFrame(s.raf);
-      try { s.ro?.disconnect(); } catch { /* no-op */ }
-      try {
-        if (s.renderer) {
-          try { s.renderer.setAnimationLoop(null); } catch { /* no-op */ }
-          s.renderer.dispose();
-          if (s.renderer.domElement?.parentElement === host) {
-            host.removeChild(s.renderer.domElement);
-          }
-        }
-      } catch { /* no-op */ }
-      stateRef.current = {
-        THREE: null, renderer: null, scene: null, camera: null,
-        calibRot: null, wearPosition: null, faceParent: null, glbRoot: null,
-        tripoOffsetGroup: null,
-        model: null, placeholder: null, bboxHelper: null,
-        size: null, baseScale: 1, raf: 0, ro: null, disposed: true,
-      };
-    };
-  }, [src, accessoryType, t, wearScaleCalibration]);
-
-  useEffect(() => {
-    calRef.current = cal;
-    const rotCal =
-      accessoryType === "necklace"
-        ? normalizeNecklaceMerchantCalibration(cal)
-        : cal;
-    const wearScaleCal =
-      accessoryType === "necklace"
-        ? { ...(wearScaleRef.current || {}), scale: cal.scale }
-        : cal;
-    applyCalibrationToState(stateRef.current, rotCal, wearScaleCal);
-  }, [cal, wearScaleCalibration, accessoryType]);
-
-    return (
-    <div ref={hostRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-      {/*
-        Overlay de status/erro — zIndex: 2 para garantir que fica ACIMA do
-        canvas WebGL (o canvas é inserido via appendChild no useEffect, depois
-        deste JSX, então sem zIndex explicito o canvas cobria esta div).
-      */}
-      {phase === "loading" ? (
-        <div style={{ ...overlayTopStyle, color: "rgba(255,255,255,0.85)" }}>
-          Carregando modelo 3D…
-        </div>
-      ) : null}
-      {phase === "error" ? (
-        <div style={{ ...overlayTopStyle, background: "rgba(220,38,38,0.92)" }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            Não foi possível carregar o modelo 3D.
-          </div>
-          {errorMsg ? (
-            <div style={{ fontSize: "11px", opacity: 0.95, wordBreak: "break-word" }}>
-              {errorMsg}
-            </div>
-          ) : null}
-          {src ? (
-            <div style={{
-              fontSize: "10px",
-              opacity: 0.8,
-              marginTop: 4,
-              wordBreak: "break-all",
-              fontFamily: "monospace",
-            }}>
-              URL: {src}
-            </div>
-          ) : null}
-          <div style={{ fontSize: "11px", opacity: 0.9, marginTop: 6 }}>
-            Continue a calibrar usando a caixa ciano como referência — os seus
-            ajustes serão aplicados ao modelo real no AR.
-          </div>
-        </div>
-      ) : null}
-      {phase === "empty" ? (
-        <div style={{ ...overlayTopStyle, color: "rgba(255,255,255,0.7)" }}>—</div>
-      ) : null}
-      {/*
-        Legenda de eixos (canto inferior direito). Ajuda o lojista a
-        interpretar o que cada slider de rotação faz visualmente.
-        Os eixos coloridos aparecem dentro do próprio preview 3D.
-      */}
-      <div style={legendStyle}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>Eixos</div>
-        <div><span style={{ color: "#ff4a4a", fontWeight: 700 }}>X</span> vermelho — direita</div>
-        <div><span style={{ color: "#3cf06c", fontWeight: 700 }}>Y</span> verde — cima</div>
-        <div><span style={{ color: "#4a9bff", fontWeight: 700 }}>Z</span> azul — frente</div>
-      </div>
-      </div>
-    );
-  }
-
-const legendStyle = {
-        position: "absolute",
-  right: 10,
-  bottom: 10,
-  padding: "6px 10px",
-  borderRadius: 6,
-  background: "rgba(0,0,0,0.55)",
-  color: "#fff",
-  fontSize: "10px",
-  lineHeight: 1.45,
-  pointerEvents: "none",
-  zIndex: 2,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-};
-
-function countVisibleMeshes(root) {
-  let n = 0;
-  root.traverse((obj) => {
-    if (obj.isMesh && obj.visible) n += 1;
-  });
-  return n;
-}
-
-const overlayTopStyle = {
-  position: "absolute",
-  top: 12,
-  left: 12,
-  right: 12,
-  padding: "8px 12px",
-  borderRadius: 6,
-  color: "#fff",
-  fontSize: "12px",
-  background: "rgba(0,0,0,0.6)",
-  pointerEvents: "none",
-  zIndex: 2,
-  maxHeight: "60%",
-  overflow: "auto",
-};
-
-/**
- * Bake + flatten das transformações intrínsecas de um GLB.
- *
- * Versão idêntica à do widget AR (`omafit-ar-widget.js`) — mantém as duas
- * pipelines a produzir exactamente o mesmo resultado visual. Ver comentário
- * extenso no widget para detalhes sobre o "porquê" e nas implicações para
- * os sliders de rotação (rz=roll puro, ry=yaw puro, rx=pitch puro).
- */
-function bakeGLBTransforms(THREE, root, onDone) {
-  if (!root || typeof root.traverse !== "function") return;
-  root.updateMatrixWorld(true);
-
-  const meshes = [];
-  const skinnedOrMorph = [];
-  root.traverse((obj) => {
-    if (!obj || !obj.isMesh) return;
-    const isSkinned = !!obj.isSkinnedMesh;
-    const hasMorph =
-      Array.isArray(obj.morphTargetInfluences) &&
-      obj.morphTargetInfluences.length > 0;
-    if (isSkinned || hasMorph) skinnedOrMorph.push(obj);
-    else meshes.push(obj);
-  });
-
-  for (const mesh of meshes) {
-    mesh.updateMatrixWorld(true);
-    const clonedGeom = mesh.geometry.clone();
-    clonedGeom.applyMatrix4(mesh.matrixWorld);
-    mesh.geometry = clonedGeom;
-  }
-
-  for (const mesh of meshes) {
-    if (mesh.parent && mesh.parent !== root) mesh.parent.remove(mesh);
-    mesh.position.set(0, 0, 0);
-    mesh.rotation.set(0, 0, 0);
-    mesh.scale.set(1, 1, 1);
-    mesh.quaternion.identity();
-    mesh.updateMatrix();
-    if (mesh.parent !== root) root.add(mesh);
-  }
-
-  root.position.set(0, 0, 0);
-  root.rotation.set(0, 0, 0);
-  root.scale.set(1, 1, 1);
-  root.quaternion.identity();
-  root.updateMatrix();
-  root.updateMatrixWorld(true);
-
-  if (typeof onDone === "function") {
-    onDone({ baked: meshes.length, skipped: skinnedOrMorph.length });
-  }
-}
-
-/**
- * Aplica a calibração ao estado do preview.
- *
- * `rotationCal`: rx / ry / rz (graus) aplicados em `calibRot` com eixos de mundo
- * (Y → X → Z), igual ao widget.
- * `wearScaleCal`: posição `wear*` e `scale` na pré-visualização — na página de
- * calibração usamos sempre os defaults do tipo (alinhado ao AR: só a rotação
- * é personalizável pelo lojista).
- *
- * Rotação: usa `rotateOnWorldAxis` em vez de Euler YXZ. Porquê?
- *
- *   Com Euler YXZ (convenção Three.js), `rotation.set(rx, ry, rz, "YXZ")`
- *   aplica rotações INTRÍNSECAS: primeiro em torno de Y do mundo, depois
- *   em torno de X *já rodado por Y*, depois em torno de Z *duplamente
- *   rodado*. Se `ry` é não-zero, o eixo Z "local" deixa de estar
- *   alinhado com Z do mundo — o slider "Inclinar lateralmente" deixa
- *   de produzir roll puro e passa a produzir uma mistura que visualmente
- *   parece yaw (especialmente se `ry` herdou um valor de calibrações
- *   anteriores do mesmo produto).
- *
- *   Com `rotateOnWorldAxis`, cada rotação é sempre em torno de um eixo
- *   FIXO do mundo, independentemente dos outros sliders. Resultado:
- *     • Slider "Rodar cima/baixo" (rx) → sempre pitch em torno do X mundo.
- *     • Slider "Rodar esquerda/direita" (ry) → sempre yaw em torno do Y mundo.
- *     • Slider "Inclinar lateralmente" (rz) → sempre roll em torno do Z mundo.
- *
- *   Ordem de composição: Y → X → Z (mantém intuição de "primeiro enquadro
- *   horizontal, depois afino vertical, depois incliner"). Duas calibrações
- *   com os mesmos 3 valores produzem exactamente a mesma orientação — os
- *   produtos já guardados continuam a render igual.
- */
-function applyCalibrationToState(s, rotationCal, wearScaleCal) {
-  if (!s || !s.THREE || !s.calibRot) return;
-  const THREE = s.THREE;
-  const rc = rotationCal && typeof rotationCal === "object" ? rotationCal : {};
-  const ws =
-    wearScaleCal && typeof wearScaleCal === "object" ? wearScaleCal : rc;
-  if (s.necklaceBindGroup) {
-    s.necklaceBindGroup.quaternion.copy(
-      omafitNecklaceMerchantCalibQuaternion(THREE, rc),
-    );
-    s.necklaceBindGroup.updateMatrix();
-    s.necklaceBindGroup.updateMatrixWorld(true);
-    s.calibRot.quaternion.identity();
-    s.calibRot.rotation.set(0, 0, 0);
-  } else {
-    applyGlassesMerchantCalibRotation(THREE, s.calibRot, rc);
-  }
-  s.calibRot.updateMatrix();
-  s.calibRot.updateMatrixWorld(true);
-
-  s.wearPosition.position.set(
-    Number(ws.wearX) || 0,
-    Number(ws.wearY) || 0,
-    Number(ws.wearZ) || 0,
-  );
-  const sc = Number(ws.scale);
-  const mul = Number.isFinite(sc) && sc > 0 ? sc : 1;
-
-  const target = s.glbRoot || s.model;
-  if (target) {
-    /** Igual ao widget v41: `glassesModelWrap.scale = autoFitBase × scale` do slider. */
-    target.scale.setScalar(s.baseScale * mul);
-  }
-  if (s.placeholder) {
-    s.placeholder.scale.setScalar(mul);
-  }
-
-  if (typeof console !== "undefined" && console.debug) {
-    // Exporta onde cada axis do calibRot aponta actualmente, em world-space.
-    // Ajuda a confirmar visualmente: se rz=45°, o eixo Z do calibRot deve
-    // continuar a apontar ~paralelo ao Z do mundo (não rodar para o lado).
-    const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(s.calibRot.quaternion);
-    const ay = new THREE.Vector3(0, 1, 0).applyQuaternion(s.calibRot.quaternion);
-    const az = new THREE.Vector3(0, 0, 1).applyQuaternion(s.calibRot.quaternion);
-    console.debug("[omafit-calibrate] apply", {
-      rxDeg: rc.rx,
-      ryDeg: rc.ry,
-      rzDeg: rc.rz,
-      calibRotXinWorld: [ax.x.toFixed(3), ax.y.toFixed(3), ax.z.toFixed(3)],
-      calibRotYinWorld: [ay.x.toFixed(3), ay.y.toFixed(3), ay.z.toFixed(3)],
-      calibRotZinWorld: [az.x.toFixed(3), az.y.toFixed(3), az.z.toFixed(3)],
-    });
-  }
-}
-
-
-function RotationPresetSlider({ label, helpText, value, onChange }) {
-  const snapped = snapArRotationPresetDeg(value);
-  return (
-    <BlockStack gap="200">
-      <RangeSlider
-        output
-        label={label}
-        helpText={helpText}
-        min={-90}
-        max={90}
-        step={90}
-        value={snapped}
-        onChange={(v) => {
-          const raw = Array.isArray(v) ? v[0] : v;
-          onChange(snapArRotationPresetDeg(raw));
-        }}
-        suffix={`${snapped}°`}
-      />
-      <InlineStack gap="200" wrap={false}>
-        {AR_ROTATION_PRESET_DEGREES.map((deg) => (
-          <Button
-            key={deg}
-            size="slim"
-            variant={snapped === deg ? "primary" : "secondary"}
-            onClick={() => onChange(deg)}
-          >
-            {deg}°
-          </Button>
-        ))}
-      </InlineStack>
-    </BlockStack>
-  );
-}
-
-/** Óculos: rotação fina −180°…180° em passos de 5°. */
+/** Rotação −180°…180° em passos de 5° (todos os tipos de acessório). */
 function RotationFineSlider({ label, helpText, value, onChange }) {
   const snapped = snapArRotationFineDeg(value);
   return (
@@ -1882,7 +650,7 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
   const isBracelet = accessoryType === "bracelet";
   const isGlasses = accessoryType === "glasses";
   const isNecklace = accessoryType === "necklace";
-  const RotationSlider = isGlasses ? RotationFineSlider : RotationPresetSlider;
+  const RotationSlider = RotationFineSlider;
   const resetRotation = () => {
     const def = defaultArCalibration(accessoryType);
     setCal((prev) =>
@@ -1964,7 +732,7 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
             {t("arEyewear.calibrate.sliders.rotationReset")}
           </Button>
         </InlineStack>
-        <RotationPresetSlider
+        <RotationFineSlider
           label={tt("arEyewear.calibrate.sliders.roll.label")}
           helpText={tt("arEyewear.calibrate.sliders.roll.help")}
           value={cal.rz}
@@ -2029,86 +797,3 @@ function CalibrationSliders({ cal, setField, setCal, t, accessoryType = "glasses
   );
 }
 
-function FaceSilhouette() {
-  return (
-    <svg
-      viewBox="0 0 400 500"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-      }}
-      aria-hidden="true"
-    >
-      <defs>
-        <radialGradient id="faceGrad" cx="50%" cy="45%" r="55%">
-          <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
-          <stop offset="60%" stopColor="rgba(255,255,255,0.08)" />
-          <stop offset="100%" stopColor="rgba(255,255,255,0)" />
-        </radialGradient>
-      </defs>
-      {/* Face oval */}
-      <ellipse cx="200" cy="240" rx="120" ry="155" fill="url(#faceGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Eyes (reference height) */}
-      <ellipse cx="155" cy="230" rx="14" ry="7" fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="1.5" />
-      <ellipse cx="245" cy="230" rx="14" ry="7" fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="1.5" />
-      {/* Nose bridge */}
-      <path d="M200 232 Q196 275 188 302 L210 302" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="1.5" />
-      {/* Mouth */}
-      <path d="M170 340 Q200 358 230 340" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" />
-      {/* Eye line reference */}
-      <line x1="60" y1="230" x2="340" y2="230" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 6" />
-    </svg>
-  );
-}
-
-function HandSilhouette() {
-  return (
-    <svg
-      viewBox="0 0 400 500"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-      }}
-      aria-hidden="true"
-    >
-      <defs>
-        <radialGradient id="handGrad" cx="50%" cy="50%" r="55%">
-          <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
-          <stop offset="60%" stopColor="rgba(255,255,255,0.08)" />
-          <stop offset="100%" stopColor="rgba(255,255,255,0)" />
-        </radialGradient>
-      </defs>
-      {/* Forearm */}
-      <rect x="150" y="330" width="100" height="160" rx="50" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Wrist line (reference for watch/bracelet) */}
-      <line x1="140" y1="340" x2="260" y2="340" stroke="rgba(255,255,255,0.45)" strokeWidth="2" strokeDasharray="6 4" />
-      {/* Palm */}
-      <path
-        d="M170 335 Q162 260 178 200 Q188 170 200 170 Q214 170 220 200 Q236 260 230 335 Z"
-        fill="url(#handGrad)"
-        stroke="rgba(255,255,255,0.25)"
-        strokeWidth="1.5"
-      />
-      {/* Thumb */}
-      <path d="M172 300 Q130 270 128 230 Q130 210 148 212 Q168 218 178 250" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Index */}
-      <path d="M184 200 Q180 130 188 100 Q196 90 200 100 Q204 130 200 200" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Middle */}
-      <path d="M200 200 Q198 115 206 80 Q214 72 218 82 Q222 115 216 200" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Ring */}
-      <path d="M216 200 Q216 125 224 95 Q232 88 234 98 Q236 125 230 200" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Pinky */}
-      <path d="M230 205 Q232 150 238 128 Q244 122 246 130 Q248 160 240 205" fill="url(#handGrad)" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-      {/* Center dot (wrist anchor reference) */}
-      <circle cx="200" cy="340" r="4" fill="rgba(255,255,255,0.55)" />
-    </svg>
-  );
-}

@@ -78,9 +78,8 @@ export function snapArRotationPresetDeg(deg) {
 }
 
 function snapRotationDegForAccessoryType(deg, accessoryType) {
-  const type = normalizeAccessoryType(accessoryType) || AR_ACCESSORY_TYPE_DEFAULT;
-  if (type === "glasses" || type === "necklace") return snapArRotationFineDeg(deg);
-  return snapArRotationPresetDeg(deg);
+  void accessoryType;
+  return snapArRotationFineDeg(deg);
 }
 
 export function sanitizeArCalibrationInput(raw, accessoryType) {

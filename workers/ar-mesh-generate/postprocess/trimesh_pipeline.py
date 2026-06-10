@@ -239,13 +239,82 @@ def _hard_canonical_orientation(scene):
     return True
 
 
+def _bbox_extents_from_scene(scene):
+    combined = _scene_concat_meshes(scene)
+    if combined is None:
+        return None
+    ext = np.asarray(combined.bounding_box.extents, dtype=float)
+    if ext.shape != (3,) or np.any(ext <= 1e-9):
+        return None
+    return float(ext[0]), float(ext[1]), float(ext[2])
+
+
+def _glasses_extents_match_widget_frame(sx: float, sy: float, sz: float) -> bool:
+    dims = sorted([(sx, 0), (sy, 1), (sz, 2)], key=lambda t: t[0])
+    if dims[2][1] != 0:
+        return False
+    if dims[0][1] != 2 or dims[1][1] != 1:
+        return False
+    return dims[1][0] > dims[0][0] * 1.05
+
+
+def _glasses_extents_match_rodin_pre_remap(sx: float, sy: float, sz: float) -> bool:
+    dims = sorted([(sx, 0), (sy, 1), (sz, 2)], key=lambda t: t[0])
+    if dims[0][1] != 1 or dims[1][1] != 2 or dims[2][1] != 0:
+        return False
+    return dims[1][0] > dims[0][0] * 1.05
+
+
+def _glasses_front_shell_is_minus_z(scene) -> bool:
+    combined = _scene_concat_meshes(scene)
+    if combined is None or len(combined.vertices) < 12:
+        return True
+    try:
+        centers = np.asarray(combined.triangles_center, dtype=float)
+    except Exception:
+        verts = np.asarray(combined.vertices, dtype=float)
+        if len(verts) < 12:
+            return True
+        z_samples = verts[:, 2]
+    else:
+        z_samples = centers[:, 2]
+    z_min = float(z_samples.min())
+    z_max = float(z_samples.max())
+    if z_max - z_min <= 1e-8:
+        return True
+    depth = z_max - z_min
+    thresh = z_min + depth * 0.22
+    front_neg = int(np.sum(z_samples <= thresh))
+    front_pos = int(np.sum(z_samples >= z_max - depth * 0.22))
+    return front_neg >= front_pos
+
+
+def _ensure_glasses_front_minus_z(scene) -> bool:
+    """
+    Garante shell frontal em −Z (contrato widget). Ry(180°) se a frente estiver em +Z.
+    Desligar: AR_POSTPROCESS_FRONT_MINUS_Z=0
+    """
+    if str(os.environ.get("AR_POSTPROCESS_FRONT_MINUS_Z", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return False
+    if _glasses_front_shell_is_minus_z(scene):
+        return False
+    import trimesh
+
+    scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0]))
+    return True
+
+
 def _remap_glasses_worker_frame_to_widget(scene):
     """
     Após hard-canonical (X largo, Y fino, Z médio), alinha ao contrato do provador:
     +X largura, +Y topo do aro, −Z frente das lentes (espessura em Z).
 
     Sem isto, o widget aplica Ry(180) assumindo −Z frente e o óculos fica virado
-  para a esquerda / de cabeça para baixo.
+    para a esquerda / de cabeça para baixo.
     Desligar: AR_POSTPROCESS_REMAP_WIDGET_FRAME=0
     """
     if str(os.environ.get("AR_POSTPROCESS_REMAP_WIDGET_FRAME", "1")).strip() in (
@@ -257,30 +326,92 @@ def _remap_glasses_worker_frame_to_widget(scene):
 
     import trimesh
 
-    combined = _scene_concat_meshes(scene)
-    if combined is None:
+    ext = _bbox_extents_from_scene(scene)
+    if ext is None:
         return False
-    ext = np.asarray(combined.bounding_box.extents, dtype=float)
-    if ext.shape != (3,) or np.any(ext <= 1e-9):
-        return False
-    order = np.argsort(ext)
-    i_small, i_mid, i_large = int(order[0]), int(order[1]), int(order[2])
-    # Já no frame widget: Z fino, Y altura, X largura
-    if i_small == 2 and i_large == 0:
+    sx, sy, sz = ext
+    if _glasses_extents_match_widget_frame(sx, sy, sz):
+        _ensure_glasses_front_minus_z(scene)
         return True
-    # Pré-remap hard-canonical: Y fino, Z médio, X largo
-    if i_small != 1 or i_mid != 2 or i_large != 0:
+    if not _glasses_extents_match_rodin_pre_remap(sx, sy, sz):
         return False
     scene.apply_transform(
         trimesh.transformations.rotation_matrix(-math.pi / 2.0, [1.0, 0.0, 0.0])
     )
+    _ensure_glasses_front_minus_z(scene)
     return True
+
+
+def _detect_rim_height_sign(scene) -> int:
+    combined = _scene_concat_meshes(scene)
+    if combined is None or len(combined.vertices) < 20:
+        return 1
+    verts = np.asarray(combined.vertices, dtype=float)
+    y = verts[:, 1]
+    min_y = float(y.min())
+    max_y = float(y.max())
+    span_y = max_y - min_y
+    if span_y <= 1e-9:
+        return 1
+    y_hi = max_y - span_y * 0.08
+    y_lo = min_y + span_y * 0.08
+    top = verts[y >= y_hi]
+    bot = verts[y <= y_lo]
+    if len(top) < 8 or len(bot) < 8:
+        return 1
+    top_x = float(top[:, 0].max() - top[:, 0].min())
+    bot_x = float(bot[:, 0].max() - bot[:, 0].min())
+    if bot_x <= 1e-9 or top_x <= bot_x * 1.04:
+        return 1
+    return -1
+
+
+def _detect_bridge_band_sign(scene) -> int:
+    """
+    Ponte = faixa Y com menor spread em X. Deve ficar no terço superior (+Y).
+    Retorna 1=OK, -1=invertido (Rx 180°), 0=ambíguo.
+    """
+    combined = _scene_concat_meshes(scene)
+    if combined is None or len(combined.vertices) < 40:
+        return 0
+    verts = np.asarray(combined.vertices, dtype=float)
+    min_y = float(verts[:, 1].min())
+    max_y = float(verts[:, 1].max())
+    if max_y - min_y <= 1e-8:
+        return 0
+    bands = 12
+    stats = []
+    for b in range(bands):
+        y_lo = min_y + ((max_y - min_y) * b) / bands
+        y_hi = min_y + ((max_y - min_y) * (b + 1)) / bands
+        band = verts[(verts[:, 1] >= y_lo) & (verts[:, 1] < y_hi)]
+        if len(band) < 4:
+            stats.append((float("inf"), (y_lo + y_hi) * 0.5, 0))
+            continue
+        spread = float(band[:, 0].max() - band[:, 0].min())
+        stats.append((spread, (y_lo + y_hi) * 0.5, len(band)))
+    valid = [s for s in stats if s[2] >= 4 and math.isfinite(s[0])]
+    if not valid:
+        return 0
+    spread, y_mid, _n = min(valid, key=lambda s: s[0])
+    y_norm = (y_mid - min_y) / (max_y - min_y)
+    if y_norm >= 0.58:
+        return 1
+    if y_norm <= 0.42:
+        return -1
+    return 0
+
+
+def _detect_glasses_bridge_orientation_sign(scene) -> int:
+    band = _detect_bridge_band_sign(scene)
+    if band != 0:
+        return band
+    return _detect_rim_height_sign(scene)
 
 
 def _ensure_bridge_at_plus_y(scene) -> bool:
     """
-    Regra única e previsível: ponte (estreita) em +Y.
-    Se o topo do aro for mais largo em X que a base → Rx(180°).
+    Ponte no terço superior (+Y). Rx(180°) se invertido.
     Desligar: AR_POSTPROCESS_BRIDGE_UP=0 (legado: AR_POSTPROCESS_SIGN_FIX=0)
     """
     sign_off = str(os.environ.get("AR_POSTPROCESS_SIGN_FIX", "1")).strip() in (
@@ -295,26 +426,10 @@ def _ensure_bridge_at_plus_y(scene) -> bool:
     )
     if sign_off or bridge_off:
         return False
-
+    if _detect_glasses_bridge_orientation_sign(scene) >= 0:
+        return False
     import trimesh
 
-    combined = _scene_concat_meshes(scene)
-    if combined is None or len(combined.vertices) < 20:
-        return False
-
-    verts = np.asarray(combined.vertices, dtype=float)
-    y = verts[:, 1]
-    x = verts[:, 0]
-    y_hi = float(np.quantile(y, 0.92))
-    y_lo = float(np.quantile(y, 0.08))
-    top = verts[y >= y_hi]
-    bot = verts[y <= y_lo]
-    if len(top) < 8 or len(bot) < 8:
-        return False
-    top_x = float(top[:, 0].max() - top[:, 0].min())
-    bot_x = float(bot[:, 0].max() - bot[:, 0].min())
-    if bot_x <= 1e-9 or top_x <= bot_x * 1.04:
-        return False
     scene.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]))
     return True
 
@@ -401,10 +516,110 @@ def _scale_scene_to_width_x(scene, target_width_m: float) -> None:
     scene.apply_scale(s)
 
 
+def _copy_geom_visual(src_geom, dst_geom, mat_name: str) -> None:
+    """Preserva PBR/texturas Rodin na parte frame; lente recebe material dedicado."""
+    if "lens" in mat_name.lower():
+        _set_glasses_visual_material_name(dst_geom, mat_name)
+        return
+    src_vis = getattr(src_geom, "visual", None)
+    if src_vis is None:
+        _set_glasses_visual_material_name(dst_geom, mat_name)
+        return
+    try:
+        dst_geom.visual = src_vis.copy()
+    except Exception:
+        _set_glasses_visual_material_name(dst_geom, mat_name)
+        return
+    _set_glasses_visual_material_name(dst_geom, mat_name)
+
+
+def _lens_material_has_rich_pbr(mat) -> bool:
+    if mat is None:
+        return False
+    if getattr(mat, "baseColorTexture", None) is not None:
+        return True
+    bc = getattr(mat, "baseColorFactor", None)
+    if bc is None:
+        return False
+    try:
+        r, g, b = float(bc[0]), float(bc[1]), float(bc[2])
+        return r + g + b > 0.12
+    except (TypeError, IndexError, ValueError):
+        return False
+
+
+def _try_split_monolithic_by_z_bands(geom, frac: float, pass_opts: dict):
+    import trimesh
+
+    face_n = len(geom.faces)
+    if face_n < 24:
+        return None
+    try:
+        centers = np.asarray(geom.triangles_center, dtype=float)
+    except Exception:
+        return None
+    z = centers[:, 2]
+    y = centers[:, 1]
+    x = centers[:, 0]
+    z_min = float(z.min())
+    z_max = float(z.max())
+    depth = z_max - z_min
+    y_min = float(y.min())
+    y_max = float(y.max())
+    x_min = float(x.min())
+    x_max = float(x.max())
+    span_y = y_max - y_min
+    span_x = x_max - x_min
+    if depth <= 1e-8 or span_y <= 1e-8 or span_x <= 1e-8:
+        return None
+
+    use_y_band = pass_opts.get("use_y_band", True)
+    use_x_band = bool(pass_opts.get("use_x_band", False))
+    min_lens_ratio = float(pass_opts.get("min_lens_ratio", 0.01))
+    max_lens_ratio = float(pass_opts.get("max_lens_ratio", 0.22))
+    min_each_frac = float(pass_opts.get("min_each_frac", 0.015))
+    y_trim = max(0.04, min(0.16, float(pass_opts.get("y_trim_frac", 0.1))))
+    x_trim = max(0.1, min(0.28, float(pass_opts.get("x_trim_frac", 0.16))))
+    try:
+        y_trim = float(os.environ.get("AR_POSTPROCESS_LENS_Y_TRIM_FRAC", str(y_trim)))
+    except (TypeError, ValueError):
+        pass
+    y_lo = y_min + span_y * y_trim
+    y_hi = y_max - span_y * y_trim
+    x_lo = x_min + span_x * x_trim
+    x_hi = x_max - span_x * x_trim
+    min_each = max(8, int(face_n * min_each_frac))
+    f = max(0.1, min(0.52, float(frac)))
+    z_thresh = z_min + depth * f
+
+    front_mask = z <= z_thresh
+    if use_y_band:
+        front_mask &= (y >= y_lo) & (y <= y_hi)
+    if use_x_band:
+        front_mask &= (x >= x_lo) & (x <= x_hi)
+    front_idx = np.where(front_mask)[0]
+    back_idx = np.where(~front_mask)[0]
+    if len(front_idx) < min_each or len(back_idx) < min_each:
+        return None
+    lens_ratio = len(front_idx) / max(face_n, 1)
+    if lens_ratio > max_lens_ratio or lens_ratio < min_lens_ratio:
+        return None
+    try:
+        lens_geom = geom.submesh([front_idx], append=True)
+        frame_geom = geom.submesh([back_idx], append=True)
+    except Exception:
+        return None
+    if lens_geom is None or frame_geom is None:
+        return None
+    if len(lens_geom.faces) < min_each or len(frame_geom.faces) < min_each:
+        return None
+    return lens_geom, frame_geom, lens_ratio
+
+
 def _split_monolithic_glasses_lens(scene) -> bool:
     """
     GLB Rodin monolítico (1 mesh): separa a shell frontal (−Z) como `omafit_lens` / `lens_glass`.
-    Sem isto o runtime não consegue aplicar translúcido só nas lentes (contorno real da malha).
+    Usa bandas Y/X para evitar capturar hastes/ponte como lente (manchas brancas no AR).
     Desligar: AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS=0
     """
     if str(os.environ.get("AR_POSTPROCESS_SPLIT_MONOLITHIC_LENS", "1")).strip() in (
@@ -420,59 +635,83 @@ def _split_monolithic_glasses_lens(scene) -> bool:
     if len(meshes) != 1:
         return False
     orig_name, geom = meshes[0]
-    face_n = len(geom.faces)
-    if face_n < 24:
-        return False
-    try:
-        centers = np.asarray(geom.triangles_center, dtype=float)
-    except Exception:
-        return False
-    z = centers[:, 2]
-    z_min = float(z.min())
-    z_max = float(z.max())
-    depth = z_max - z_min
-    if depth <= 1e-8:
-        return False
-    min_each = max(8, int(face_n * 0.015))
-
-    def _try_split(frac: float):
-        frac = max(0.1, min(0.52, float(frac)))
-        thresh = z_min + depth * frac
-        front_mask = z <= thresh
-        front_idx = np.where(front_mask)[0]
-        back_idx = np.where(~front_mask)[0]
-        if len(front_idx) < min_each or len(back_idx) < min_each:
-            return None
-        try:
-            lens_geom = geom.submesh([front_idx], append=True)
-            frame_geom = geom.submesh([back_idx], append=True)
-        except Exception:
-            return None
-        if lens_geom is None or frame_geom is None:
-            return None
-        if len(lens_geom.faces) < min_each or len(frame_geom.faces) < min_each:
-            return None
-        return lens_geom, frame_geom
+    if not _glasses_front_shell_is_minus_z(scene):
+        _ensure_glasses_front_minus_z(scene)
 
     frac_default = 0.28
     try:
         frac_default = float(os.environ.get("AR_POSTPROCESS_LENS_FRONT_FRAC", "0.28"))
     except (TypeError, ValueError):
         pass
-    candidates = [frac_default, 0.22, 0.32, 0.38, 0.45]
-    seen = set()
     fracs = []
-    for f in candidates:
+    seen = set()
+    for f in (frac_default, 0.22, 0.32, 0.38, 0.45, 0.18, 0.15, 0.1):
         k = round(float(f), 4)
         if k not in seen:
             seen.add(k)
             fracs.append(k)
 
+    passes = [
+        {
+            "use_y_band": True,
+            "use_x_band": True,
+            "y_trim_frac": 0.1,
+            "x_trim_frac": 0.18,
+            "min_lens_ratio": 0.008,
+            "max_lens_ratio": 0.22,
+            "penalty": 0.0,
+        },
+        {
+            "use_y_band": True,
+            "use_x_band": False,
+            "y_trim_frac": 0.06,
+            "min_lens_ratio": 0.008,
+            "max_lens_ratio": 0.28,
+            "penalty": 0.03,
+        },
+        {
+            "use_y_band": False,
+            "use_x_band": True,
+            "x_trim_frac": 0.14,
+            "min_lens_ratio": 0.008,
+            "max_lens_ratio": 0.35,
+            "penalty": 0.05,
+        },
+        {
+            "use_y_band": False,
+            "use_x_band": False,
+            "min_lens_ratio": 0.0,
+            "max_lens_ratio": 1.0,
+            "min_each_frac": 0.005,
+            "penalty": 0.12,
+        },
+    ]
+    target_ratio = 0.12
     split_pair = None
-    for frac in fracs:
-        split_pair = _try_split(frac)
-        if split_pair is not None:
+    best_score = -1e18
+    for pass_opts in passes:
+        pass_best = None
+        pass_best_score = -1e18
+        for frac in fracs:
+            result = _try_split_monolithic_by_z_bands(geom, frac, pass_opts)
+            if result is None:
+                continue
+            lens_geom, frame_geom, lens_ratio = result
+            score = (
+                1.0
+                - lens_ratio
+                - abs(lens_ratio - target_ratio) * 0.4
+                - float(pass_opts.get("penalty", 0.0))
+            )
+            if score > pass_best_score:
+                pass_best_score = score
+                pass_best = (lens_geom, frame_geom)
+        if pass_best is not None:
+            split_pair = pass_best
             break
+        if pass_best_score > best_score:
+            best_score = pass_best_score
+
     if split_pair is None:
         return False
 
@@ -480,8 +719,8 @@ def _split_monolithic_glasses_lens(scene) -> bool:
     del scene.geometry[orig_name]
     scene.geometry["omafit_frame"] = frame_geom
     scene.geometry["omafit_lens"] = lens_geom
-    for g, mat_name in ((frame_geom, "frame_metal"), (lens_geom, "lens_glass")):
-        _set_glasses_visual_material_name(g, mat_name)
+    _copy_geom_visual(geom, frame_geom, "frame_metal")
+    _set_glasses_visual_material_name(lens_geom, "lens_glass")
     return True
 
 
@@ -596,13 +835,15 @@ def apply_lens_type_materials(scene, lens_type: str) -> None:
             if hasattr(mat, "alphaMode"):
                 mat.alphaMode = "BLEND"
         else:
-            # clear_fake — visível sem PMREM (paridade preview admin)
-            if hasattr(mat, "baseColorFactor"):
+            # clear_fake — visível sem PMREM; não sobrescrever PBR Rodin já válido
+            if hasattr(mat, "baseColorFactor") and not _lens_material_has_rich_pbr(mat):
                 mat.baseColorFactor = [0.99, 0.995, 1.0, 0.52]
             if hasattr(mat, "alphaMode"):
                 mat.alphaMode = "BLEND"
             if hasattr(mat, "transmission"):
                 mat.transmission = 0.0
+            if hasattr(mat, "doubleSided"):
+                mat.doubleSided = True
 
 
 def process_glasses_canonical(inp: Path, out: Path, params: dict | None = None) -> None:

@@ -264,6 +264,25 @@ function mat4RotateY180() {
 }
 
 /**
+ * Marca GLB pós-ingest para o runtime não reaplicar remap/bridge por heurística de bbox.
+ * @param {import('@gltf-transform/core').Document} doc
+ */
+function markIngestWidgetFrameTag(doc, opts = {}) {
+  const wrap = doc.getRoot().listScenes()[0]?.listChildren().find(
+    (n) => n.getName() === "omafit_ar_canonical",
+  );
+  if (!wrap) return;
+  const prev = wrap.getExtras() || {};
+  wrap.setExtras({
+    ...prev,
+    omafit_ar_canonical: 1,
+    omafit_widget_frame: 1,
+    omafit_glasses_contract: "widget_v193",
+    ...(opts.rodinDeterministic ? { omafit_rodin_deterministic_rx: 1 } : {}),
+  });
+}
+
+/**
  * Verifica se a shell frontal está em −Z (contrato widget).
  * @param {import('@gltf-transform/core').Scene} scene
  */
@@ -362,54 +381,89 @@ function applyWorldRotationToCanonicalRoot(doc, rotMat16) {
   }
 }
 
-/**
- * Rodin hard-canonical (Y fino, Z médio, X largo) → frame widget (+Y topo, −Z frente).
- * @param {import('@gltf-transform/core').Document} doc
- * @returns {boolean}
- */
-/**
- * Marca GLB pós-ingest para o runtime não reaplicar remap/bridge por heurística de bbox.
- * @param {import('@gltf-transform/core').Document} doc
- */
-function markIngestWidgetFrameTag(doc, opts = {}) {
-  const wrap = doc.getRoot().listScenes()[0]?.listChildren().find(
-    (n) => n.getName() === "omafit_ar_canonical",
-  );
-  if (!wrap) return;
-  const prev = wrap.getExtras() || {};
-  wrap.setExtras({
-    ...prev,
-    omafit_ar_canonical: 1,
-    omafit_widget_frame: 1,
-    omafit_glasses_contract: "widget_v193",
-    ...(opts.rodinDeterministic ? { omafit_rodin_deterministic_rx: 1 } : {}),
-  });
+/** Cor translúcida estável — evita “mancha branca” quando o split captura triângulos da armação. */
+const LENS_CLEAR_FAKE_RGBA = [0.86, 0.89, 0.93, 0.32];
+
+/** @param {import('@gltf-transform/core').Scene} scene */
+function scoreGlassesWidgetOrientation(scene) {
+  const { sx, sy, sz } = bboxSizeFromScene(scene);
+  let score = 0;
+  if (glassesExtentsMatchWidgetFrame(sx, sy, sz)) score += 3;
+  else if (glassesExtentsMatchRodinPreRemap(sx, sy, sz)) score -= 2;
+  const bridge = detectBridgeBandSign(scene);
+  if (bridge === 1) score += 2;
+  else if (bridge === -1) score -= 2;
+  if (glassesFrontShellIsMinusZ(scene)) score += 1.5;
+  else score -= 1;
+  return score;
 }
 
 /**
- * Rodin → widget: Rx(−90°) + Rx(180°) fixos (sem heurística de ponte).
- * @returns {{ ok: boolean, rodinDeterministic: boolean }}
+ * Escolhe remap Rodin + correcções de ponte/frente antes de marcar ingest (runtime não re-aplica).
+ * @param {import('@gltf-transform/core').Document} doc
+ * @returns {boolean}
  */
-function applyWidgetFrameRemap(doc) {
+function resolveGlassesWidgetFrameOrientation(doc) {
   if (/^(0|false|no)$/i.test(String(process.env.AR_POSTPROCESS_REMAP_WIDGET_FRAME || "1"))) {
-    return { ok: false, rodinDeterministic: false };
+    return false;
   }
   const scene = doc.getRoot().listScenes()[0];
-  if (!scene) return { ok: false, rodinDeterministic: false };
-  const { sx, sy, sz } = bboxSizeFromScene(scene);
-  const isRodin = glassesExtentsMatchRodinPreRemap(sx, sy, sz);
-  const isWidget = glassesExtentsMatchWidgetFrame(sx, sy, sz);
+  if (!scene) return false;
+  const wrap = ensureCanonicalWrapNode(doc);
+  const baseM = wrap.getMatrix().slice();
 
-  if (isRodin) {
-    applyWorldRotationToCanonicalRoot(doc, mat4RotateXNeg90());
-    ensureGlassesFrontMinusZ(doc);
-    markIngestWidgetFrameTag(doc, { rodinDeterministic: false });
-    return { ok: true, rodinDeterministic: false };
+  /** @type {number[][][]} */
+  const prefixCandidates = [[], [mat4RotateXNeg90()], [mat4RotateXNeg90(), mat4RotateX180()]];
+
+  /** @type {number[][]} */
+  let bestOps = [];
+  let bestScore = -Infinity;
+
+  for (const prefix of prefixCandidates) {
+    wrap.setMatrix(baseM.slice());
+    for (const m of prefix) {
+      applyWorldRotationToCanonicalRoot(doc, m);
+    }
+    /** @type {number[][]} */
+    const ops = prefix.map((m) => m.slice());
+    if (detectGlassesBridgeOrientationSign(scene) < 0) {
+      applyWorldRotationToCanonicalRoot(doc, mat4RotateX180());
+      ops.push(mat4RotateX180());
+    }
+    if (!glassesFrontShellIsMinusZ(scene)) {
+      applyWorldRotationToCanonicalRoot(doc, mat4RotateY180());
+      ops.push(mat4RotateY180());
+    }
+    const score = scoreGlassesWidgetOrientation(scene);
+    if (score > bestScore) {
+      bestScore = score;
+      bestOps = ops;
+    }
   }
-  if (!isWidget) return { ok: false, rodinDeterministic: false };
-  ensureGlassesFrontMinusZ(doc);
-  markIngestWidgetFrameTag(doc, { rodinDeterministic: false });
-  return { ok: true, rodinDeterministic: false };
+
+  wrap.setMatrix(baseM.slice());
+  for (const m of bestOps) {
+    applyWorldRotationToCanonicalRoot(doc, m);
+  }
+
+  const { sx, sy, sz } = bboxSizeFromScene(scene);
+  const ok =
+    bestScore >= 4 &&
+    glassesExtentsMatchWidgetFrame(sx, sy, sz) &&
+    detectGlassesBridgeOrientationSign(scene) >= 0 &&
+    glassesFrontShellIsMinusZ(scene);
+  if (ok) {
+    markIngestWidgetFrameTag(doc, { rodinDeterministic: bestOps.length > 0 });
+  }
+  return ok;
+}
+
+/**
+ * Rodin hard-canonical (Y fino, Z médio, X largo) → frame widget (+Y topo, −Z frente).
+ * @deprecated Prefer `resolveGlassesWidgetFrameOrientation`
+ */
+function applyWidgetFrameRemap(doc) {
+  return { ok: resolveGlassesWidgetFrameOrientation(doc), rodinDeterministic: false };
 }
 
 /**
@@ -635,8 +689,8 @@ function ensureMaterialName(mat, name, opts = {}) {
   if (!/lens_glass/i.test(name)) return;
   if (!opts.lensExport) return;
   const bc = mat.getBaseColorFactor();
-  if (bc[3] < 0.99) return;
-  mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.52]);
+  if (bc[3] < 0.99 && bc[0] + bc[1] + bc[2] > 0.12) return;
+  mat.setBaseColorFactor([...LENS_CLEAR_FAKE_RGBA]);
   mat.setAlphaMode("BLEND");
   mat.setDoubleSided(true);
 }
@@ -753,7 +807,7 @@ function applyLensTypeMaterials(doc, lensType) {
         mat.setAlphaMode("BLEND");
         mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.35]);
       } else {
-        mat.setBaseColorFactor([0.99, 0.995, 1.0, 0.52]);
+        mat.setBaseColorFactor([...LENS_CLEAR_FAKE_RGBA]);
         mat.setAlphaMode("BLEND");
         mat.setDoubleSided(true);
       }
@@ -769,7 +823,12 @@ function applyLensTypeMaterials(doc, lensType) {
 function materialForSplitPart(doc, srcMat, matName) {
   if (/lens_glass/i.test(matName)) {
     const mat = doc.createMaterial("lens_glass");
-    ensureMaterialName(mat, "lens_glass", { lensExport: true });
+    mat.setName("lens_glass");
+    mat.setBaseColorFactor([...LENS_CLEAR_FAKE_RGBA]);
+    mat.setAlphaMode("BLEND");
+    mat.setDoubleSided(true);
+    mat.setMetallicFactor(0.05);
+    mat.setRoughnessFactor(0.08);
     return mat;
   }
   if (srcMat) {
@@ -1455,8 +1514,7 @@ export async function postprocessGlassesCanonicalGlbBuffer(buf, params = {}) {
   ensureCanonicalWrapNode(doc);
   centerSceneAtOrigin(doc);
   snapToBestRightAngleDoc(doc);
-  const remap = applyWidgetFrameRemap(doc);
-  applyBridgeUpFix(doc);
+  resolveGlassesWidgetFrameOrientation(doc);
   centerSceneAtOrigin(doc);
   scaleDocToWidthX(doc, targetW);
 

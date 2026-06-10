@@ -434,6 +434,86 @@ def _ensure_bridge_at_plus_y(scene) -> bool:
     return True
 
 
+LENS_CLEAR_FAKE_RGBA = [0.86, 0.89, 0.93, 0.32]
+
+
+def _score_glasses_widget_orientation(scene) -> float:
+    ext = _bbox_extents_from_scene(scene)
+    if ext is None:
+        return -1e18
+    sx, sy, sz = ext
+    score = 0.0
+    if _glasses_extents_match_widget_frame(sx, sy, sz):
+        score += 3.0
+    elif _glasses_extents_match_rodin_pre_remap(sx, sy, sz):
+        score -= 2.0
+    band = _detect_bridge_band_sign(scene)
+    if band == 1:
+        score += 2.0
+    elif band == -1:
+        score -= 2.0
+    if _glasses_front_shell_is_minus_z(scene):
+        score += 1.5
+    else:
+        score -= 1.0
+    return score
+
+
+def _resolve_glasses_widget_frame_orientation(scene) -> bool:
+    """
+    Escolhe remap Rodin + correcções ponte/frente (−Z) por score — paridade Node.
+    """
+    if str(os.environ.get("AR_POSTPROCESS_REMAP_WIDGET_FRAME", "1")).strip() in (
+        "0",
+        "false",
+        "no",
+    ):
+        return False
+
+    import trimesh
+
+    prefixes = [
+        [],
+        [trimesh.transformations.rotation_matrix(-math.pi / 2.0, [1.0, 0.0, 0.0])],
+        [
+            trimesh.transformations.rotation_matrix(-math.pi / 2.0, [1.0, 0.0, 0.0]),
+            trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0]),
+        ],
+    ]
+    best_score = -1e18
+    best_ops = []
+    for prefix in prefixes:
+        test = scene.copy()
+        ops = []
+        for t in prefix:
+            test.apply_transform(t)
+            ops.append(t)
+        if _detect_glasses_bridge_orientation_sign(test) < 0:
+            t = trimesh.transformations.rotation_matrix(math.pi, [1.0, 0.0, 0.0])
+            test.apply_transform(t)
+            ops.append(t)
+        if not _glasses_front_shell_is_minus_z(test):
+            t = trimesh.transformations.rotation_matrix(math.pi, [0.0, 1.0, 0.0])
+            test.apply_transform(t)
+            ops.append(t)
+        score = _score_glasses_widget_orientation(test)
+        if score > best_score:
+            best_score = score
+            best_ops = ops
+    for t in best_ops:
+        scene.apply_transform(t)
+    ext = _bbox_extents_from_scene(scene)
+    if ext is None:
+        return False
+    sx, sy, sz = ext
+    return (
+        best_score >= 4
+        and _glasses_extents_match_widget_frame(sx, sy, sz)
+        and _detect_glasses_bridge_orientation_sign(scene) >= 0
+        and _glasses_front_shell_is_minus_z(scene)
+    )
+
+
 def _fix_sign_conventions(scene):
     """Compat: delega à regra determinística de ponte em +Y."""
     _ensure_bridge_at_plus_y(scene)
@@ -835,9 +915,8 @@ def apply_lens_type_materials(scene, lens_type: str) -> None:
             if hasattr(mat, "alphaMode"):
                 mat.alphaMode = "BLEND"
         else:
-            # clear_fake — visível sem PMREM; não sobrescrever PBR Rodin já válido
             if hasattr(mat, "baseColorFactor") and not _lens_material_has_rich_pbr(mat):
-                mat.baseColorFactor = [0.99, 0.995, 1.0, 0.52]
+                mat.baseColorFactor = list(LENS_CLEAR_FAKE_RGBA)
             if hasattr(mat, "alphaMode"):
                 mat.alphaMode = "BLEND"
             if hasattr(mat, "transmission"):
@@ -867,8 +946,7 @@ def process_glasses_canonical(inp: Path, out: Path, params: dict | None = None) 
         _canonical_axes_smallest_y_largest_x(scene)
         _align_elongation_xz_to_positive_x(scene)
         _snap_to_best_right_angle(scene)
-    _remap_glasses_worker_frame_to_widget(scene)
-    _fix_sign_conventions(scene)
+    _resolve_glasses_widget_frame_orientation(scene)
     try:
         b = scene.bounds
         c = (np.asarray(b[0], dtype=float) + np.asarray(b[1], dtype=float)) * 0.5

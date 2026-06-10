@@ -163,7 +163,8 @@ export function omafitApplyMetaRendererPresentationHints(renderer) {
   if (!renderer) return;
   try {
     renderer.sortObjects = true;
-    if ("physicallyCorrectLights" in renderer) renderer.physicallyCorrectLights = false;
+    if ("useLegacyLights" in renderer) renderer.useLegacyLights = true;
+    else if ("physicallyCorrectLights" in renderer) renderer.physicallyCorrectLights = false;
     if (renderer.shadowMap) renderer.shadowMap.enabled = false;
   } catch {
     /* ignore */

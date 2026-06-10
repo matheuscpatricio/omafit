@@ -611,7 +611,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-bake-v228";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-draw-v229";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2336,6 +2336,12 @@ function omafitFinalizeGlassesWidgetDrawable(THREE, root) {
 
 function omafitGlassesFlatModeForceDrawableOnFace(THREE, root) {
   if (!THREE || !root?.traverse) return;
+  let sceneEnv = null;
+  if (root?.parent) {
+    let scene = root.parent;
+    while (scene && !scene.isScene) scene = scene.parent;
+    if (scene?.environment) sceneEnv = scene.environment;
+  }
   root.traverse((child) => {
     if (!child?.isMesh) return;
     child.visible = true;
@@ -2353,29 +2359,28 @@ function omafitGlassesFlatModeForceDrawableOnFace(THREE, root) {
       const isRodinLens =
         !isRuntimeLens &&
         omafitIsGlassesLensMeshMaterial(THREE, root, mat, child.name, mat.name);
+      /** Flat AR: compõe por cima do vídeo — depth off em TODAS as meshes (clip Z ainda aplica). */
+      mat.depthTest = false;
+      mat.depthWrite = false;
+      if (sceneEnv && mat.envMap == null) mat.envMap = sceneEnv;
       if (isRuntimeLens) {
-        mat.depthTest = true;
-        mat.depthWrite = false;
         if (Number(mat.opacity) < 0.35) {
           mat.opacity = 0.52;
           mat.transparent = true;
         }
       } else if (isRodinLens) {
-        /** GLB Rodin/ingest: sem overlay de opacity — só depthWrite off para o rosto. */
-        if ("depthWrite" in mat) mat.depthWrite = false;
-        if ("depthTest" in mat) mat.depthTest = true;
-        if (mat.envMap == null && root?.parent) {
-          let scene = root.parent;
-          while (scene && !scene.isScene) scene = scene.parent;
-          if (scene?.environment) mat.envMap = scene.environment;
+        if ("transmission" in mat && Number(mat.transmission) > 0.02) {
+          mat.transmission = 0;
+          if ("thickness" in mat) mat.thickness = 0;
+        }
+        if (Number(mat.opacity) < 0.35) {
+          mat.opacity = 0.48;
+          mat.transparent = true;
         }
         if ("envMapIntensity" in mat && Number(mat.envMapIntensity) < 0.35) {
           mat.envMapIntensity = 1;
         }
       } else {
-        /** Paridade colar: armação por cima do depth facial MindAR / vídeo. */
-        mat.depthTest = false;
-        mat.depthWrite = false;
         if (mat.color?.getHex && mat.color.getHex() < 0x222222) mat.color.setHex(0x444444);
         if (mat.emissive?.setHex) {
           mat.emissive.setHex(0x252525);
@@ -2383,6 +2388,10 @@ function omafitGlassesFlatModeForceDrawableOnFace(THREE, root) {
         }
         if ("metalness" in mat) {
           mat.metalness = THREE.MathUtils.clamp(Number(mat.metalness) || 0.28, 0.12, 0.45);
+        }
+        if (Number(mat.opacity) < 0.85) {
+          mat.opacity = 1;
+          mat.transparent = false;
         }
       }
       mat.side = THREE.DoubleSide;
@@ -12774,11 +12783,13 @@ async function runArSession({
          * Ry180 × meshScale empurrava centerM.y ≈ 4 m (v227).
          */
         const lbPreBind = omafitGlassesLocalBboxCenterM(THREE, glasses);
+        let ry180Applied = false;
         if (lbPreBind && lbPreBind.length() <= OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M) {
           glasses.rotateOnWorldAxis(
             new THREE.Vector3(0, 1, 0),
             OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
           );
+          ry180Applied = true;
         }
         glasses.updateMatrix();
         glasses.updateMatrixWorld(true);
@@ -12820,6 +12831,10 @@ async function runArSession({
             ingestSplit: glassesIngestWidgetFrameTag,
             glassesForceAnchorUnitScale,
             bboxCentered: true,
+            ry180Applied,
+            localBboxCenterPreBindM: lbPreBind
+              ? Number(lbPreBind.length().toFixed(5))
+              : null,
             note: glassesForceAnchorUnitScale
               ? "meshScale admin; wear em m; Ry180 só se localBboxCenter ≈ 0 pós-bake."
               : "meshScale = adminMeshScale / u (MindAR) por frame",
@@ -14694,6 +14709,21 @@ async function runArSession({
                       anchorWorldPos,
                       anchorUnitsPerMeter: anchorU,
                       glassesForceAnchorUnitScale: st.glassesForceAnchorUnitScale,
+                    },
+                  );
+                }
+                if (ndcInfo && ndcInfo.onScreenXY && !ndcInfo.onScreen) {
+                  console.warn(
+                    "[omafit-ar] glasses CLIP Z (admin parity flat) — XY no ecrã mas ndc.z fora de [-1,1]",
+                    {
+                      build: OMAFIT_AR_WIDGET_BUILD,
+                      ndc: ndcInfo,
+                      centerM: wCenter.toArray(),
+                      cameraDistanceM,
+                      anchorWorldPos,
+                      glassesWorldPos,
+                      posDeltaM,
+                      localBboxCenterM,
                     },
                   );
                 }

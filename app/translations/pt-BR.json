@@ -422,7 +422,7 @@
     "variantSelect": "Variante do produto",
     "variantSelectHelp": "Cada pedido corresponde à variante que escolher (por exemplo, uma cor). Para várias opções no provador, crie um pedido por variante — disponibilizar uma não apaga o modelo já ativo das outras.",
     "errorVariantRequired": "Indique qual variante do produto (cor, tamanho, etc.) este modelo representa.",
-    "publishMetafieldExplain": "Ao disponibilizar na loja, o modelo principal fica sempre associado ao produto (para o provador virtual aparecer na página). Se tiver escolhido uma variante, atualizamos também essa opção, para o cliente ver o modelo certo ao mudar de cor ou tamanho. Várias opções? Faça um pedido e disponibilize uma vez por variante.",
+    "publishMetafieldExplain": "Em média, cada geração do produto em 3D leva entre 1 minuto e 1 minuto e meio. Clique no botão \"Atualizar\" para verificar o progresso.",
     "publishDoneProductOnly": "Pronto: o modelo está disponível no produto. Este pedido não tinha variante específica — todas as opções usam o mesmo modelo até criar pedidos por variante.",
     "publishDoneProductAndVariant": "Pronto: o modelo está disponível no produto e na variante que escolheu.",
     "publishDoneVariantFailed": "O modelo ficou disponível no produto, mas não foi possível associá-lo à variante. Verifique as definições da loja ou o suporte Omafit — ao mudar de variante, o provador pode não atualizar o modelo.",

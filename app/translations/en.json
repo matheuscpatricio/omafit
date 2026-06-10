@@ -422,7 +422,7 @@
     "variantSelect": "Product variant",
     "variantSelectHelp": "Each request is tied to the variant you pick (for example a colour). For several options in the try-on, create one request per variant — publishing one does not remove models already live for the others.",
     "errorVariantRequired": "Choose which product variant (colour, size, etc.) this virtual model represents.",
-    "publishMetafieldExplain": "When you publish to the store, the main virtual model is always linked to the product so the try-on appears on the page. If you picked a variant, we also update that option so shoppers see the right model when they switch colour or size. Several options? Create one request and publish once per variant.",
+    "publishMetafieldExplain": "On average, each 3D product generation takes between 1 and 1.5 minutes. Click the \"Refresh\" button to check progress.",
     "publishDoneProductOnly": "Done: the model is live on the product. This request had no specific variant — every option shares the same model until you add per-variant requests.",
     "publishDoneProductAndVariant": "Done: the model is live on the product and on the variant you selected.",
     "publishDoneVariantFailed": "The model is live on the product, but we could not link it to the variant. Check your store settings or Omafit support — switching variants in the try-on may not update the model.",

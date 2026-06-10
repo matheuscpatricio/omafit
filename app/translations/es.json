@@ -422,7 +422,7 @@
     "variantSelect": "Variante del producto",
     "variantSelectHelp": "Cada solicitud va ligada a la variante que elija (por ejemplo un color). Para varias opciones en la prueba virtual, cree una solicitud por variante — publicar una no quita el modelo ya activo en las demás.",
     "errorVariantRequired": "Indique qué variante del producto (color, talla, etc.) representa este modelo virtual.",
-    "publishMetafieldExplain": "Al publicar en la tienda, el modelo virtual principal queda siempre vinculado al producto para que la prueba aparezca en la página. Si eligió una variante, también actualizamos esa opción para que el cliente vea el modelo correcto al cambiar de color o talla. ¿Varias opciones? Cree una solicitud y publique una vez por variante.",
+    "publishMetafieldExplain": "En promedio, cada generación del producto en 3D tarda entre 1 minuto y 1 minuto y medio. Haga clic en el botón \"Actualizar\" para comprobar el progreso.",
     "publishDoneProductOnly": "Listo: el modelo está disponible en el producto. Esta solicitud no tenía variante concreta — todas las opciones comparten el mismo modelo hasta crear solicitudes por variante.",
     "publishDoneProductAndVariant": "Listo: el modelo está disponible en el producto y en la variante que seleccionó.",
     "publishDoneVariantFailed": "El modelo quedó disponible en el producto, pero no pudimos vincularlo a la variante. Revise la configuración de la tienda o el soporte Omafit — al cambiar de variante, la prueba virtual puede no actualizar el modelo.",

@@ -11,7 +11,7 @@ import {
 import {
   omafitCenterObject3OnBboxOrigin,
   omafitComputeGlassesLensAnchorPoint,
-  omafitGlassesBakeGeometricCenterToOrigin,
+  omafitGlassesBakeLocalBboxCenterToOrigin,
   omafitGlassesLocalBboxCenterM,
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
@@ -611,7 +611,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-rodin-lenses-v225";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-bake-v228";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -2363,6 +2363,15 @@ function omafitGlassesFlatModeForceDrawableOnFace(THREE, root) {
       } else if (isRodinLens) {
         /** GLB Rodin/ingest: sem overlay de opacity — só depthWrite off para o rosto. */
         if ("depthWrite" in mat) mat.depthWrite = false;
+        if ("depthTest" in mat) mat.depthTest = true;
+        if (mat.envMap == null && root?.parent) {
+          let scene = root.parent;
+          while (scene && !scene.isScene) scene = scene.parent;
+          if (scene?.environment) mat.envMap = scene.environment;
+        }
+        if ("envMapIntensity" in mat && Number(mat.envMapIntensity) < 0.35) {
+          mat.envMapIntensity = 1;
+        }
       } else {
         /** Paridade colar: armação por cima do depth facial MindAR / vídeo. */
         mat.depthTest = false;
@@ -11816,17 +11825,21 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * v224: ingest/canónico — bake geométrico nos vértices (lens anchor heurístico
-       * devolve ~0,58 m de falso drift; position.sub acumula offset no parent).
-       * Outros GLBs: pivot funcional lentes via position.sub (uma vez).
+       * v228: bake AABB local nos vértices (`localBboxCenterM` → 0). `position.sub` só
+       * move pivot — drift ~0,58 m × meshScale ≈ 4 m off-screen no runtime flat.
        */
       if (glassesIngestWidgetFrameTag || glassesCanonicalBlenderExport) {
         try {
-          const baked = omafitGlassesBakeGeometricCenterToOrigin(THREE, glasses);
-          if (baked?.ok && baked.driftM > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M) {
-            console.log("[omafit-ar] glasses geometric center baked to origin (load)", {
+          const baked = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, glasses);
+          if (
+            baked?.ok &&
+            (baked.driftM > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M ||
+              (baked.driftAfterM ?? 0) > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M)
+          ) {
+            console.log("[omafit-ar] glasses local bbox baked to origin (load)", {
               build: OMAFIT_AR_WIDGET_BUILD,
               driftM: Number(baked.driftM.toFixed(5)),
+              driftAfterM: Number((baked.driftAfterM ?? 0).toFixed(5)),
               offsetM: baked.center?.toArray?.().map((v) => Number(v.toFixed(5))),
               bakedMeshes: baked.bakedMeshes,
               ingestSplit: glassesIngestWidgetFrameTag,
@@ -12757,9 +12770,16 @@ async function runArSession({
         glasses.rotation.set(0, 0, 0);
         glasses.quaternion.identity();
         /**
-         * v222: AR canónico — bind identidade (v160). Ry180 é só preview admin estático;
-         * com âncora MindAR invertia frente e NDC off-screen (y≈−80).
+         * v228: Ry180 só após bake local bbox ≈ 0 (vértices). Com drift ~0,58 m residual,
+         * Ry180 × meshScale empurrava centerM.y ≈ 4 m (v227).
          */
+        const lbPreBind = omafitGlassesLocalBboxCenterM(THREE, glasses);
+        if (lbPreBind && lbPreBind.length() <= OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M) {
+          glasses.rotateOnWorldAxis(
+            new THREE.Vector3(0, 1, 0),
+            OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
+          );
+        }
         glasses.updateMatrix();
         glasses.updateMatrixWorld(true);
         calibRot.rotation.order = "YXZ";
@@ -12801,7 +12821,7 @@ async function runArSession({
             glassesForceAnchorUnitScale,
             bboxCentered: true,
             note: glassesForceAnchorUnitScale
-              ? "meshScale admin; wear em m; bind identidade AR (sem Ry180 admin)."
+              ? "meshScale admin; wear em m; Ry180 só se localBboxCenter ≈ 0 pós-bake."
               : "meshScale = adminMeshScale / u (MindAR) por frame",
           });
         } catch {
@@ -14614,6 +14634,8 @@ async function runArSession({
                         Math.abs(wNdc.y) <= 1.05 &&
                         wNdc.z > -1 &&
                         wNdc.z < 1,
+                      onScreenXY:
+                        Math.abs(wNdc.x) <= 1.05 && Math.abs(wNdc.y) <= 1.05,
                     }
                   : null;
                 let cameraDistanceM = null;
@@ -14675,7 +14697,7 @@ async function runArSession({
                     },
                   );
                 }
-                if (ndcInfo && !ndcInfo.onScreen) {
+                if (ndcInfo && !ndcInfo.onScreen && !ndcInfo.onScreenXY) {
                   console.warn(
                     "[omafit-ar] glasses FORA do ecrã (admin parity flat) — verificar escala MindAR / wear",
                     {

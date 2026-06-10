@@ -611,7 +611,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-draw-v229";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-clip-v230";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -5285,6 +5285,30 @@ function omafitAnchorMatrixForceUnitScale(matrix, dec) {
 const OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_M = 0.62;
 
 /**
+ * MindAR `getCameraParams().near/far` calibram para tradução bruta em cm (~||T||≈63).
+ * Com `transMul`→metros (~0,62 m), near/far cm deixa ndc.z≈−2 (clip) enquanto XY parece OK.
+ *
+ * @param {import("three").PerspectiveCamera | null | undefined} camera
+ * @param {number} [faceDistM]
+ * @returns {{ near: number, far: number, faceDistM: number } | null}
+ */
+function omafitGlassesApplyFaceMeterClipPlanes(camera, faceDistM) {
+  if (!camera) return null;
+  const d = Math.max(
+    0.08,
+    Math.min(2.4, Number(faceDistM) || OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_M),
+  );
+  const near = Math.max(0.0015, Math.min(0.045, d * 0.028));
+  const far = Math.max(d + 0.8, Math.min(28, d * 9.5));
+  camera.near = near;
+  camera.far = far;
+  if (typeof camera.updateProjectionMatrix === "function") {
+    camera.updateProjectionMatrix();
+  }
+  return { near, far, faceDistM: d };
+}
+
+/**
  * Converte tradução bruta MindAR → metros. Cheek heuristic (0,01) falha quando
  * `||rawP||` ≫ 63 (ex.: ~359 → 3,6 m após ×0,01). Com `stripUnitScale`, reescala
  * para ~0,62 m mantendo direcção.
@@ -9090,10 +9114,29 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
         ) {
           camera.aspect = p.aspect;
           camera.fov = THREE.MathUtils.clamp(p.fov, 20, 120);
-          camera.near = p.near;
-          camera.far = p.far;
-          if (typeof camera.updateProjectionMatrix === "function") {
-            camera.updateProjectionMatrix();
+          if (opts?.glassesMeterAnchors) {
+            const clip = omafitGlassesApplyFaceMeterClipPlanes(
+              camera,
+              opts.faceAnchorDistM,
+            );
+            if (clip && !Lsync._meterClipLogged) {
+              Lsync._meterClipLogged = true;
+              console.log("[omafit-ar] glasses meter clip planes (MindAR near/far override)", {
+                build: OMAFIT_AR_WIDGET_BUILD,
+                mindarNear: p.near,
+                mindarFar: p.far,
+                near: clip.near,
+                far: clip.far,
+                faceDistM: clip.faceDistM,
+                note: "transMul→m; getCameraParams near/far é escala cm.",
+              });
+            }
+          } else {
+            camera.near = p.near;
+            camera.far = p.far;
+            if (typeof camera.updateProjectionMatrix === "function") {
+              camera.updateProjectionMatrix();
+            }
           }
           return true;
         }
@@ -9174,6 +9217,9 @@ function omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, opts) {
     omafitApplyOpenGlPerspectiveFromVideoIntrinsics(THREE, camera, fov, aspect, sx, sy);
   } else if (typeof camera.updateProjectionMatrix === "function") {
     camera.updateProjectionMatrix();
+  }
+  if (opts?.glassesMeterAnchors) {
+    omafitGlassesApplyFaceMeterClipPlanes(camera, opts.faceAnchorDistM);
   }
   return true;
 }
@@ -12091,6 +12137,11 @@ async function runArSession({
       glassesSimpleFaceOnly &&
       !glassesManualMindarRig;
 
+    if (glassesForceAnchorUnitScale) {
+      faceProjectionOpts.glassesMeterAnchors = true;
+      faceProjectionOpts.faceAnchorDistM = OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_M;
+    }
+
     const readGlassesMerchantCal = () => {
       const parsed = parseOmafitCalibrationRaw(
         arCfg?.dataset?.arOmafitCalibration || "",
@@ -14161,6 +14212,12 @@ async function runArSession({
         const runProjectionSync = () => {
           if (!st.faceProjectionOpts) return;
           try {
+            if (st.glassesForceAnchorUnitScale && st.faceProjectionOpts.glassesMeterAnchors) {
+              const e = anchor?.group?.matrix?.elements;
+              if (e) {
+                st.faceProjectionOpts.faceAnchorDistM = Math.hypot(e[12], e[13], e[14]);
+              }
+            }
             omafitSyncMindARFaceProjection(THREE, mindarThree, mindarHost, st.faceProjectionOpts);
             if (!st.projectionSyncLogged) {
               st.projectionSyncLogged = true;

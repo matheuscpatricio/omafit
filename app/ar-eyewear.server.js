@@ -18,6 +18,7 @@ import {
   AR_ACCESSORY_TYPE_DEFAULT,
   AR_ACCESSORY_TYPES,
 } from "./ar-accessory-type.shared.js";
+import { buildSupersededArEyewearErrorMessage } from "./ar-eyewear-messages.shared.js";
 
 export {
   sanitizeArCalibrationInput,
@@ -396,7 +397,7 @@ export async function supersedeOtherPublishedAssets({
     },
     body: JSON.stringify({
       status: "rejected",
-      error_message: `Superseded by published asset ${keepAssetId}`,
+      error_message: buildSupersededArEyewearErrorMessage(keepAssetId),
     }),
   });
   if (!res.ok) {

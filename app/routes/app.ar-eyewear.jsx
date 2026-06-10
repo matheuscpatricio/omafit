@@ -26,6 +26,10 @@ import { ensureShopHasActiveBilling } from "../billing-access.server";
 import { getShopDomain } from "../utils/getShopDomain";
 import { useAppI18n } from "../contexts/AppI18n";
 import { detectAccessoryType } from "../ar-accessory-type.shared.js";
+import {
+  formatArEyewearErrorMessage,
+  isSupersededArEyewearErrorMessage,
+} from "../ar-eyewear-messages.shared.js";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -676,8 +680,15 @@ export default function ArEyewearPage() {
                           </InlineStack>
                         </InlineStack>
                         {a.error_message && (
-                          <Text as="p" tone="critical">
-                            {a.error_message}
+                          <Text
+                            as="p"
+                            tone={
+                              isSupersededArEyewearErrorMessage(a.error_message)
+                                ? "subdued"
+                                : "critical"
+                            }
+                          >
+                            {formatArEyewearErrorMessage(a.error_message, t)}
                           </Text>
                         )}
                         {a.glb_draft_url && (

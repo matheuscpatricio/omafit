@@ -611,7 +611,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-clip-v230";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-04-ar-glasses-parity-v231";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -5308,6 +5308,47 @@ function omafitGlassesApplyFaceMeterClipPlanes(camera, faceDistM) {
   return { near, far, faceDistM: d };
 }
 
+/** Paridade preview admin (`PerspectiveCamera` z=0,45 m, fov 35°). */
+const OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M = 0.45;
+const OMAFIT_GLASSES_ADMIN_PREVIEW_FOV_DEG = 35;
+
+/**
+ * Compensa distância/fov MindAR vs preview estático admin (óculos pareciam ~35% menores).
+ *
+ * @param {number} faceDistM
+ * @param {number} cameraFovDeg
+ * @returns {number}
+ */
+function omafitGlassesAdminParityAngularScaleMul(faceDistM, cameraFovDeg) {
+  const d = Math.max(
+    0.12,
+    Number(faceDistM) || OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_M,
+  );
+  const fov = Math.max(20, Number(cameraFovDeg) || OMAFIT_FACE_CAMERA_FOV_DEFAULT);
+  const tAdmin = Math.tan((OMAFIT_GLASSES_ADMIN_PREVIEW_FOV_DEG * Math.PI) / 360);
+  const tLive = Math.tan((fov * Math.PI) / 360);
+  if (!(tLive > 1e-6)) return 1;
+  return (d / OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M) * (tAdmin / tLive);
+}
+
+/**
+ * MindAR meter flat: pitch da âncora vinha invertido (cabeça sobe → óculos descem).
+ * Corrige só pitch (Euler YXZ, eixo X).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Quaternion} quat
+ */
+function omafitGlassesFixMeterAnchorPitchInvert(THREE, quat) {
+  if (!THREE || !quat) return;
+  if (!omafitGlassesFixMeterAnchorPitchInvert._euler) {
+    omafitGlassesFixMeterAnchorPitchInvert._euler = new THREE.Euler(0, 0, 0, "YXZ");
+  }
+  const e = omafitGlassesFixMeterAnchorPitchInvert._euler;
+  e.setFromQuaternion(quat, "YXZ");
+  e.x = -e.x;
+  quat.setFromEuler(e);
+}
+
 /**
  * Converte tradução bruta MindAR → metros. Cheek heuristic (0,01) falha quando
  * `||rawP||` ≫ 63 (ex.: ~359 → 3,6 m após ×0,01). Com `stripUnitScale`, reescala
@@ -5356,6 +5397,7 @@ function omafitGlassesNormalizeMindarAnchorMatrix(matrix, dec, lm, opts) {
     (Math.abs(dec.s.x) + Math.abs(dec.s.y) + Math.abs(dec.s.z)) / 3,
   );
   if (stripUnit) {
+    omafitGlassesFixMeterAnchorPitchInvert(THREE, dec.q);
     dec.s.set(1, 1, 1);
     matrix.compose(dec.p, dec.q, dec.s);
   }
@@ -12858,7 +12900,13 @@ async function runArSession({
           }),
           autoFitFlat,
         );
-        glasses.scale.setScalar(adminMeshScaleInit);
+        const angularMulInit = omafitGlassesAdminParityAngularScaleMul(
+          OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_M,
+          mindarThree?.camera?.fov,
+        );
+        glasses.scale.setScalar(
+          clampGlassesDisplayMeshScale(adminMeshScaleInit * angularMulInit, autoFitFlat),
+        );
         applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
         calibRot.add(glasses);
         try {
@@ -14653,9 +14701,15 @@ async function runArSession({
                 }),
                 autoFitBase,
               );
+              const angularMul = omafitGlassesAdminParityAngularScaleMul(
+                anchorNormInfo?.fixedDist ||
+                  st.faceProjectionOpts?.faceAnchorDistM ||
+                  OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_M,
+                mindarThree?.camera?.fov,
+              );
               const anchorU = omafitAnchorUnitsPerMeter(anchor.group.matrixWorld);
               const displayScale = st.glassesForceAnchorUnitScale
-                ? adminMeshScale
+                ? clampGlassesDisplayMeshScale(adminMeshScale * angularMul, autoFitBase)
                 : clampGlassesDisplayMeshScale(
                     resolveGlassesMindarLocalMeshScale(
                       adminMeshScale,
@@ -14667,7 +14721,7 @@ async function runArSession({
               st.glassesLastAdminMeshScale = adminMeshScale;
               st.glassesLastAnchorUnitsPerMeter = anchorU;
               st.glassesLastScaleSource = st.glassesForceAnchorUnitScale
-                ? "admin-parity-flat×merchant"
+                ? "admin-parity-flat×merchant×angular"
                 : "admin-parity-flat÷u";
               glasses.scale.setScalar(displayScale);
               omafitGlassesFlatModeForceDrawableOnFace(THREE, glasses);

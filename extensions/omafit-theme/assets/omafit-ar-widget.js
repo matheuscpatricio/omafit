@@ -618,7 +618,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-bridge-depth-v271";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-bbox-bridge-v272";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12278,8 +12278,9 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest: bake canónico (visibilidade) + recenter na ponte via `position`
-       * (paridade preview, sem bake AABB nos vértices). Canónico Blender: bake AABB.
+       * Ingest: bake canónico + centróide AABB nos vértices (obrigatório com
+       * meshScale ~14 — `position.sub` na ponte não move `localBboxCenterM`).
+       * Depois pivot na ponte (offset pequeno) para rotação estável.
        */
       if (glassesIngestWidgetFrameTag) {
         try {
@@ -12296,20 +12297,42 @@ async function runArSession({
           );
         }
         try {
-          const rec = omafitRecenterObject3OnGlassesLensFront(THREE, glasses);
-          glassesIngestBridgePositionLocal = glasses.position.clone();
-          console.log("[omafit-ar] glasses ingest lens-bridge recenter (pós-canonical)", {
+          const baked = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, glasses);
+          console.log("[omafit-ar] glasses ingest local bbox center (vertex translate)", {
             build: OMAFIT_AR_WIDGET_BUILD,
-            ok: rec?.ok,
-            mode: rec?.mode,
-            bridgeLocal: glassesIngestBridgePositionLocal
+            ok: baked?.ok,
+            driftM: Number((baked?.driftM ?? 0).toFixed(5)),
+            driftAfterM: Number((baked?.driftAfterM ?? 0).toFixed(5)),
+            bakedMeshes: baked?.bakedMeshes ?? 0,
+          });
+        } catch (bboxBakeErr) {
+          console.warn(
+            "[omafit-ar] glasses ingest bbox center bake:",
+            bboxBakeErr?.message || bboxBakeErr,
+          );
+        }
+        try {
+          const bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+          if (bridgePt && bridgePt.length() > 0.001) {
+            glasses.position.sub(bridgePt);
+            glasses.updateMatrixWorld(true);
+          }
+          glassesIngestBridgePositionLocal = glasses.position.clone();
+          const lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
+          console.log("[omafit-ar] glasses ingest bridge pivot (pós-AABB bake)", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            bridgePivotLocal: glassesIngestBridgePositionLocal
               ?.toArray?.()
               .map((v) => Number(v.toFixed(5))),
+            localBboxCenterM: lbPost
+              ?.toArray?.()
+              .map((v) => Number(v.toFixed(5))),
+            localBboxCenterLenM: lbPost ? Number(lbPost.length().toFixed(5)) : 0,
           });
-        } catch (ingRecErr) {
+        } catch (ingPivotErr) {
           console.warn(
-            "[omafit-ar] glasses ingest lens recenter:",
-            ingRecErr?.message || ingRecErr,
+            "[omafit-ar] glasses ingest bridge pivot:",
+            ingPivotErr?.message || ingPivotErr,
           );
         }
       } else if (glassesCanonicalBlenderExport) {

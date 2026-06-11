@@ -2063,6 +2063,17 @@
       normalizeLanguageTag(OMAFIT_CONFIG.adminLocale) ||
       normalizeLanguageTag(detectStoreLanguage()) ||
       'pt-BR';
+    try {
+      var arRootForLocale = document.getElementById('omafit-ar-root');
+      if (arRootForLocale && storeLanguage) {
+        arRootForLocale.setAttribute('data-locale', storeLanguage);
+      }
+      if (widgetRootBrand && storeLanguage) {
+        widgetRootBrand.setAttribute('data-omafit-admin-locale', storeLanguage);
+      }
+    } catch (_localeSync) {
+      /* non-blocking */
+    }
     const detectedStoreName = detectStoreDisplayName(shopDomain);
     const resolvedStoreName =
       (OMAFIT_CONFIG.storeName && String(OMAFIT_CONFIG.storeName).trim()) ||
@@ -2417,6 +2428,7 @@
           passAttr('arManifestJson', 'data-ar-manifest-json');
           passAttr('arManifestUrl', 'data-ar-manifest-url');
           passAttr('arBraceletRadial', 'data-ar-bracelet-radial');
+          passAttr('locale', 'data-locale');
         }
       } catch (e) {
         if (OMAFIT_DEBUG) console.warn('Omafit: propagar data-ar-* para iframe falhou', e);

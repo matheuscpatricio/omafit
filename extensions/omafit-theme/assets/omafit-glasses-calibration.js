@@ -60,6 +60,63 @@ export const OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE = 1;
 /** Paridade `AR_GLASSES_SCALE_DEFAULT` em `app/ar-calibration.shared.js` (50% no slider). */
 export const OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE = 0.5;
 
+/**
+ * Paridade preview admin `/calibrate`: câmara em z=0,45 m, origem ≈ ponte.
+ * O inset técnico fica a 0 — `wearZ` do lojista aplica-se só em `wearPosition`
+ * (eixos da cena), como no admin.
+ */
+export const OMAFIT_GLASSES_ADMIN_PARITY_FLAT_Z_INSET_M = 0;
+
+/** Distância câmara→origem no preview estático admin (PerspectiveCamera z). */
+export const OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M = 0.45;
+
+/** Profundidade MindAR legacy (modos não-flat); flat admin usa {@link OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M}. */
+export const OMAFIT_GLASSES_FACE_ANCHOR_DEPTH_DEFAULT_M = 0.62;
+
+/**
+ * Estima distância (m) da tradução bruta MindAR **antes** de forçar z=0,45 admin.
+ * `rawDist≈86` × `0.01` → ~0,86 m — alinhado à malha facial 468 (não ao preview estático).
+ *
+ * @param {unknown} _lm reservado
+ * @param {{ x?: number, y?: number, z?: number }} rawP
+ * @param {(lm: unknown) => number} [metersScaleFn]
+ * @returns {number | null}
+ */
+export function estimateMindarTrackedFaceDistM(_lm, rawP, metersScaleFn) {
+  const x = Number(rawP?.x) || 0;
+  const y = Number(rawP?.y) || 0;
+  const z = Number(rawP?.z) || 0;
+  const rawDist = Math.hypot(x, y, z);
+  if (!Number.isFinite(rawDist) || rawDist < 1e-6) return null;
+  const mul =
+    typeof metersScaleFn === "function" ? metersScaleFn(_lm) : 0.01;
+  const cheek = mul > 0 && mul < 1 ? mul : 1;
+  return rawDist * cheek;
+}
+
+/**
+ * Flat admin parity: profundidade da âncora = tracking MindAR + calibração lojista.
+ * - Base: distância estimada da face (`trackedFaceDistM`), não z=0,45 fixo do preview.
+ * - `wearZ` negativo aproxima (contrato lojista) — soma à distância da âncora.
+ * - Escala do mesh usa {@link OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M} à parte (ver widget).
+ *
+ * @param {{ wearZ?: number }} [cal]
+ * @param {{ parityFlatZInsetM?: number, baseAnchorDepthM?: number, trackedFaceDistM?: number }} [opts]
+ * @returns {number}
+ */
+export function resolveGlassesMerchantFlatAnchorDepthM(cal, opts = {}) {
+  const wearZ = Number(cal?.wearZ) || 0;
+  const inset = Number(opts.parityFlatZInsetM) || 0;
+  const adminBase =
+    Number(opts.baseAnchorDepthM) || OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M;
+  const tracked = Number(opts.trackedFaceDistM);
+  const base =
+    Number.isFinite(tracked) && tracked > 0.2 ? tracked : adminBase;
+  /** Tecto 1,4 m: webcam típica fica a 0,5–1,2 m; o antigo 0,85 m prendia a
+   * âncora no limite (face a ~0,86 m) e descolava do rosto ao afastar. */
+  return Math.max(0.28, Math.min(1.4, base + inset + wearZ));
+}
+
 /** Profundidade técnica opcional (m) fora do modo simples; no simples usar só `wearZ`. */
 export const OMAFIT_GLASSES_DEPTH_FORWARD_DEFAULT_M = 0;
 
@@ -195,17 +252,67 @@ export function omafitAnchorUnitsPerMeter(matrixWorld) {
  * @param {import("three").Vector3} position
  * @param {import("three").Matrix4 | null | undefined} anchorMatrixWorld
  * @param {{ wearX?: number, wearY?: number, wearZ?: number }} cal
+ * @param {{ parityFlatZInsetM?: number }} [opts]
  */
-export function applyGlassesMerchantWearToAnchorPosition(position, anchorMatrixWorld, cal) {
+export function applyGlassesMerchantWearToAnchorPosition(position, anchorMatrixWorld, cal, opts = {}) {
   if (!position) return;
   const u =
     anchorMatrixWorld && anchorMatrixWorld.elements
       ? omafitAnchorUnitsPerMeter(anchorMatrixWorld)
       : 1;
+  const zInset = Number(opts.parityFlatZInsetM) || 0;
   position.set(
     (Number(cal?.wearX) || 0) / u,
     (Number(cal?.wearY) || 0) / u,
-    (Number(cal?.wearZ) || 0) / u,
+    ((Number(cal?.wearZ) || 0) + zInset) / u,
+  );
+}
+
+/**
+ * Flat admin parity: wearX/Y (m) nos eixos da cena → local da âncora (R^T).
+ * Por defeito `wearZ` aplica-se só na profundidade da âncora
+ * ({@link resolveGlassesMerchantFlatAnchorDepthM}) — evita duplicar offset Z.
+ *
+ * @param {import("three").Vector3} position
+ * @param {import("three").Matrix4 | null | undefined} anchorMatrixWorld
+ * @param {{ wearX?: number, wearY?: number, wearZ?: number }} cal
+ * @param {{ parityFlatZInsetM?: number, adminWearParity?: boolean, depthOnAnchor?: boolean }} [opts]
+ */
+export function applyGlassesMerchantWearAdminParityFlat(
+  position,
+  anchorMatrixWorld,
+  cal,
+  opts = {},
+) {
+  if (!position) return;
+  const wx = Number(cal?.wearX) || 0;
+  const wy = Number(cal?.wearY) || 0;
+  const depthOnAnchor = opts.depthOnAnchor !== false;
+  /** Admin `/calibrate`: `wearPosition.position.set(wearX, wearY, wearZ)` — sem inset. */
+  const wz = depthOnAnchor
+    ? 0
+    : (Number(cal?.wearZ) || 0) +
+      (opts.adminWearParity === false ? Number(opts.parityFlatZInsetM) || 0 : 0);
+  if (!anchorMatrixWorld?.elements) {
+    position.set(wx, wy, wz);
+    return;
+  }
+  const e = anchorMatrixWorld.elements;
+  const sx = Math.hypot(e[0], e[1], e[2]) || 1;
+  const sy = Math.hypot(e[4], e[5], e[6]) || 1;
+  const sz = Math.hypot(e[8], e[9], e[10]) || 1;
+  if (depthOnAnchor) {
+    position.set(
+      (e[0] / sx) * wx + (e[1] / sx) * wy,
+      (e[4] / sy) * wx + (e[5] / sy) * wy,
+      0,
+    );
+    return;
+  }
+  position.set(
+    (e[0] / sx) * wx + (e[1] / sx) * wy + (e[2] / sx) * wz,
+    (e[4] / sy) * wx + (e[5] / sy) * wy + (e[6] / sy) * wz,
+    (e[8] / sz) * wx + (e[9] / sz) * wy + (e[10] / sz) * wz,
   );
 }
 
@@ -275,6 +382,22 @@ export function resolveGlassesMerchantMeshScale(p) {
  */
 export function resolveGlassesCalibScaleBase(p) {
   return computeGlassesPreviewBaseScale(p.bboxWidthLocal);
+}
+
+/**
+ * Largura X para `resolveGlassesMerchantMeshScale` — ingest hierárquico pode
+ * reportar bbox ~10 mm antes do bake do nó canónico; usar referência física.
+ *
+ * @param {number} rawLocal
+ * @param {{ ingestSplit?: boolean }} [opts]
+ * @returns {number}
+ */
+export function resolveGlassesMerchantMeshScaleBboxWidth(rawLocal, opts = {}) {
+  const raw = Math.max(Number(rawLocal) || 0, 1e-4);
+  if (opts.ingestSplit && raw < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M;
+  }
+  return raw;
 }
 
 /** Tecto base para clamp (modo legado widget — preferir `clampGlassesDisplayMeshScale`). */

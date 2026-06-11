@@ -15,6 +15,7 @@ import {
   omafitGlassesLocalBboxCenterM,
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
+  omafitBakeGlassesIngestCanonicalPreserveHierarchy,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -618,7 +619,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-preview-parity-v277";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-hierarchy-parity-v278";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12278,8 +12279,8 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest v277: paridade exacta com prévia admin — GLB intacto (zero mutação de
-       * vértices/hierarquia). Escala só em runtime via meshScale (145 mm ref); pivot na ponte.
+       * Ingest v278: hierarquia canónica→frame/lens (só grupos, sem bake de vértices) +
+       * pivot na ponte + escala em runtime. Sem normalize/mesh-local/AABB (deformavam hastes).
        */
       if (glassesIngestWidgetFrameTag) {
         try {
@@ -12288,6 +12289,19 @@ async function runArSession({
           glasses.quaternion.identity();
           glasses.scale.set(1, 1, 1);
           glasses.updateMatrixWorld(true);
+          const hier = omafitBakeGlassesIngestCanonicalPreserveHierarchy(
+            THREE,
+            glasses,
+          );
+          console.log(
+            "[omafit-ar] glasses ingest hierarchy preserve (canonical→frame/lens)",
+            {
+              build: OMAFIT_AR_WIDGET_BUILD,
+              ok: hier?.ok,
+              mode: hier?.mode,
+              childCount: hier?.childCount ?? 0,
+            },
+          );
           const bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
           if (bridgePt && bridgePt.length() > 0.001) {
             glasses.position.sub(bridgePt);
@@ -12310,10 +12324,10 @@ async function runArSession({
             glassesFrameWidthLocal / glassesMeshScaleBboxWidth;
           const lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
           console.log(
-            "[omafit-ar] glasses ingest admin preview parity (GLB intacto)",
+            "[omafit-ar] glasses ingest admin preview parity (hierarchy, no vertex bake)",
             {
               build: OMAFIT_AR_WIDGET_BUILD,
-              mode: "zero-vertex-mutation",
+              mode: "hierarchy-preserve-bridge-pivot",
               rawWidthM: Number(rawIngW.toFixed(5)),
               meshScaleBboxWidthM: Number(
                 glassesMeshScaleBboxWidth.toFixed(5),

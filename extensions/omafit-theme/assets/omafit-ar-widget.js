@@ -16,7 +16,7 @@ import {
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
   omafitBakeGlassesIngestCanonicalPreserveHierarchy,
-  omafitBakeGlassesIngestCanonicalNodeOnly,
+  omafitBakeGlassesIngestMeshLocalTransforms,
   omafitNormalizeGlassesIngestSubPhysicalGeometry,
 } from "./omafit-glb-bbox-center.js";
 import {
@@ -620,7 +620,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-hierarchy-ry-v275";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-mesh-local-v276";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12280,8 +12280,8 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest v275: hierarquia intacta (paridade preview) + escala física nos vértices
-       * e grupos + AABB translate (sem flatten — achatava hastes). Ry π no bind estático.
+       * Ingest v276: hierarquia + escala física + bake local por mesh (sem flatten root).
+       * Flatten global deformava hastes; mesh-local + AABB mantém paridade preview.
        */
       if (glassesIngestWidgetFrameTag) {
         try {
@@ -12315,16 +12315,30 @@ async function runArSession({
           );
         }
         try {
+          const meshLocal = omafitBakeGlassesIngestMeshLocalTransforms(THREE, glasses);
+          console.log("[omafit-ar] glasses ingest mesh-local transform bake", {
+            build: OMAFIT_AR_WIDGET_BUILD,
+            ok: meshLocal?.ok,
+            mode: meshLocal?.mode,
+            bakedMeshes: meshLocal?.bakedMeshes ?? 0,
+          });
+        } catch (meshLocalErr) {
+          console.warn(
+            "[omafit-ar] glasses ingest mesh-local bake:",
+            meshLocalErr?.message || meshLocalErr,
+          );
+        }
+        try {
           let baked = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, glasses);
           if (
             baked?.ok &&
             (baked.driftAfterM ?? 0) > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M
           ) {
-            const flatRetry = omafitBakeGlassesIngestCanonicalNodeOnly(THREE, glasses);
+            const meshRetry = omafitBakeGlassesIngestMeshLocalTransforms(THREE, glasses);
             baked = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, glasses);
-            console.warn("[omafit-ar] glasses ingest AABB retry após flatten fallback", {
+            console.warn("[omafit-ar] glasses ingest AABB retry após mesh-local bake", {
               build: OMAFIT_AR_WIDGET_BUILD,
-              flatRetryMeshes: flatRetry?.bakedMeshes ?? 0,
+              meshRetryMeshes: meshRetry?.bakedMeshes ?? 0,
               driftAfterM: Number((baked?.driftAfterM ?? 0).toFixed(5)),
             });
           }

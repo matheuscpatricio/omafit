@@ -535,6 +535,130 @@ export function omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, root) {
 }
 
 /**
+ * @param {typeof import("three")} THREE
+ * @param {import("three").BufferGeometry} geom
+ * @param {import("three").Matrix4} m
+ */
+function omafitApplyMatrix4ToGeometryPreserveNormals(THREE, geom, m) {
+  if (!geom || !m) return;
+  geom.applyMatrix4(m);
+  const normAttr = geom.attributes?.normal;
+  if (!normAttr) return;
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(m);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < normAttr.count; i++) {
+    v.fromBufferAttribute(normAttr, i);
+    v.applyMatrix3(normalMatrix).normalize();
+    normAttr.setXYZ(i, v.x, v.y, v.z);
+  }
+  normAttr.needsUpdate = true;
+}
+
+/**
+ * @param {import("three").Matrix4} m
+ * @returns {boolean}
+ */
+function omafitMatrix4NearIdentity(m) {
+  if (!m?.elements) return true;
+  const e = m.elements;
+  const eps = 1e-5;
+  return (
+    Math.abs(e[0] - 1) < eps &&
+    Math.abs(e[5] - 1) < eps &&
+    Math.abs(e[10] - 1) < eps &&
+    Math.abs(e[15] - 1) < eps &&
+    Math.abs(e[1]) < eps &&
+    Math.abs(e[2]) < eps &&
+    Math.abs(e[3]) < eps &&
+    Math.abs(e[4]) < eps &&
+    Math.abs(e[6]) < eps &&
+    Math.abs(e[7]) < eps &&
+    Math.abs(e[8]) < eps &&
+    Math.abs(e[9]) < eps &&
+    Math.abs(e[11]) < eps &&
+    Math.abs(e[12]) < eps &&
+    Math.abs(e[13]) < eps &&
+    Math.abs(e[14]) < eps
+  );
+}
+
+/**
+ * Absorve o transform local de cada mesh (e de grupos `omafit_frame` / `omafit_lens`)
+ * nos vértices **sem** achatar para o root — paridade preview; permite AABB sem flatten.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {{ ok: boolean, bakedMeshes: number, mode: string }}
+ */
+export function omafitBakeGlassesIngestMeshLocalTransforms(THREE, root) {
+  if (!THREE || !root) {
+    return { ok: false, bakedMeshes: 0, mode: "missing-three-or-root" };
+  }
+  root.updateMatrixWorld(true);
+  let canonical = null;
+  root.traverse((child) => {
+    if (child === root) return;
+    if (String(child.name || "") === "omafit_ar_canonical") canonical = child;
+  });
+  const bakeMesh = (mesh, localM) => {
+    if (!mesh?.isMesh || !mesh.geometry || omafitMatrix4NearIdentity(localM)) return 0;
+    const geom = mesh.geometry.clone();
+    omafitApplyMatrix4ToGeometryPreserveNormals(THREE, geom, localM);
+    mesh.geometry = geom;
+    mesh.position.set(0, 0, 0);
+    mesh.rotation.set(0, 0, 0);
+    mesh.scale.set(1, 1, 1);
+    mesh.quaternion.identity();
+    mesh.updateMatrix();
+    return 1;
+  };
+  const bakeSubtree = (node, parentM) => {
+    let bakedMeshes = 0;
+    node.updateMatrix();
+    const nodeM = new THREE.Matrix4().multiplyMatrices(parentM, node.matrix);
+    if (node.isMesh) {
+      return bakeMesh(node, nodeM);
+    }
+    const kids = [...node.children];
+    for (const kid of kids) {
+      if (kid.isMesh) {
+        kid.updateMatrix();
+        const kidM = new THREE.Matrix4().multiplyMatrices(nodeM, kid.matrix);
+        bakedMeshes += bakeMesh(kid, kidM);
+      } else {
+        bakedMeshes += bakeSubtree(kid, nodeM);
+      }
+    }
+    if (!omafitMatrix4NearIdentity(node.matrix)) {
+      node.position.set(0, 0, 0);
+      node.rotation.set(0, 0, 0);
+      node.scale.set(1, 1, 1);
+      node.quaternion.identity();
+      node.updateMatrix();
+    }
+    return bakedMeshes;
+  };
+  let bakedMeshes = 0;
+  let mode = "mesh-local";
+  if (canonical && canonical.children.length > 0) {
+    const identity = new THREE.Matrix4();
+    for (const child of canonical.children) {
+      bakedMeshes += bakeSubtree(child, identity);
+    }
+    mode = "canonical-children";
+  } else {
+    root.traverse((child) => {
+      if (!child.isMesh || !child.geometry) return;
+      child.updateMatrix();
+      bakedMeshes += bakeMesh(child, child.matrix.clone());
+    });
+    mode = "root-meshes";
+  }
+  root.updateMatrixWorld(true);
+  return { ok: bakedMeshes > 0, bakedMeshes, mode };
+}
+
+/**
  * Bake transforms do nó `omafit_ar_canonical` (e pais intermédios) nos vértices,
  * **sem** achatar `omafit_frame` / `omafit_lens` para o root — paridade preview.
  *
@@ -554,10 +678,7 @@ export function omafitBakeGlassesIngestCanonicalNodeOnly(THREE, root) {
     child.updateMatrixWorld(true);
     const bakedLocal = new THREE.Matrix4().multiplyMatrices(rootInv, child.matrixWorld);
     const geom = child.geometry.clone();
-    geom.applyMatrix4(bakedLocal);
-    if (typeof geom.computeVertexNormals === "function") {
-      geom.computeVertexNormals();
-    }
+    omafitApplyMatrix4ToGeometryPreserveNormals(THREE, geom, bakedLocal);
     child.geometry = geom;
     child.position.set(0, 0, 0);
     child.rotation.set(0, 0, 0);
@@ -624,10 +745,20 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
     if (child.geometry.boundingSphere) child.geometry.computeBoundingSphere();
     bakedMeshes += 1;
   });
-  /** Vértices escalam; posições dos grupos intermédios também (senão drift ≫ após AABB). */
+  /** Vértices escalam; transforms dos nós intermédios também (senão drift ≫ após AABB). */
   root.traverse((child) => {
     if (child === root || child.isMesh) return;
     child.position.multiplyScalar(mul);
+    const sx = child.scale?.x ?? 1;
+    const sy = child.scale?.y ?? 1;
+    const sz = child.scale?.z ?? 1;
+    if (
+      Math.abs(sx - sy) < 1e-5 &&
+      Math.abs(sy - sz) < 1e-5 &&
+      Math.abs(sx - 1) > 1e-6
+    ) {
+      child.scale.multiplyScalar(mul);
+    }
     child.updateMatrix();
     scaledGroups += 1;
   });

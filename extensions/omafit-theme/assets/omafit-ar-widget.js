@@ -15,10 +15,6 @@ import {
   omafitGlassesLocalBboxCenterM,
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
-  omafitBakeGlassesIngestCanonicalPreserveHierarchy,
-  omafitDownscaleGlassesIngestGroupPositionsForced,
-  omafitGlassesIngestIntrinsicMeshMaxSpanM,
-  omafitGlassesIngestPreHierarchyScaleSpanM,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -622,7 +618,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-prehier-span-v284";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v285";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12282,86 +12278,24 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest v284: span pré-hierarquia (~10 mm) para escala e downscale de grupos.
-       * meshScale ~14 + factor ~0,07 evita offset ×14 off-screen; vértices intactos.
+       * Ingest v285: GLB intacto — escala/bbox já definidos acima; montagem via
+       * `glassesAdminParityFlat` (paridade preview admin /calibrate).
        */
       if (glassesIngestWidgetFrameTag) {
         try {
-          glasses.position.set(0, 0, 0);
-          glasses.rotation.set(0, 0, 0);
-          glasses.quaternion.identity();
-          glasses.scale.set(1, 1, 1);
-          glasses.updateMatrixWorld(true);
-          const scaleSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(
-            THREE,
-            glasses,
-          );
-          const hier = omafitBakeGlassesIngestCanonicalPreserveHierarchy(
-            THREE,
-            glasses,
-          );
-          console.log(
-            "[omafit-ar] glasses ingest hierarchy preserve (canonical→frame/lens)",
-            {
-              build: OMAFIT_AR_WIDGET_BUILD,
-              ok: hier?.ok,
-              mode: hier?.mode,
-              childCount: hier?.childCount ?? 0,
-              preHierarchyScaleSpanM: Number(scaleSpanM.toFixed(5)),
-            },
-          );
-          const intrinsicMaxM = omafitGlassesIngestIntrinsicMeshMaxSpanM(
-            THREE,
-            glasses,
-          );
-          const align = omafitDownscaleGlassesIngestGroupPositionsForced(
-            THREE,
-            glasses,
-            scaleSpanM,
-          );
-          console.log("[omafit-ar] glasses ingest group units align (vertices intact)", {
+          console.log("[omafit-ar] glasses ingest → admin parity flat (GLB intact)", {
             build: OMAFIT_AR_WIDGET_BUILD,
-            applied: align?.applied,
-            factor: Number((align?.factor ?? 1).toFixed(5)),
-            scaleSpanM: Number(scaleSpanM.toFixed(5)),
-            intrinsicMaxM: Number(intrinsicMaxM.toFixed(5)),
-            scaledGroups: align?.scaledGroups ?? 0,
-          });
-          const bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
-          if (bridgePt && bridgePt.length() > 0.001) {
-            glasses.position.sub(bridgePt);
-            glasses.updateMatrixWorld(true);
-          }
-          glassesIngestBridgePositionLocal = glasses.position.clone();
-          const boxIng = new THREE.Box3().setFromObject(glasses);
-          const szIng = new THREE.Vector3();
-          boxIng.getSize(szIng);
-          const hierarchyMaxM = Math.max(szIng.x, szIng.y, szIng.z, 1e-4);
-          glassesFrameWidthRawLocal = scaleSpanM;
-          glassesMeshScaleBboxWidth = scaleSpanM;
-          glassesFrameWidthLocal = resolveGlassesFrameWidthForFit(scaleSpanM);
-          glassesMeshWidthNormMul =
-            glassesFrameWidthLocal / Math.max(glassesMeshScaleBboxWidth, 1e-4);
-          const lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
-          console.log("[omafit-ar] glasses ingest preview-parity (meshScale~14)", {
-            build: OMAFIT_AR_WIDGET_BUILD,
-            scaleSpanM: Number(scaleSpanM.toFixed(5)),
-            intrinsicMaxM: Number(intrinsicMaxM.toFixed(5)),
-            hierarchyMaxM: Number(hierarchyMaxM.toFixed(5)),
+            bboxMaxDimM: Number(maxDim.toFixed(5)),
             meshScaleBboxWidthM: Number(glassesMeshScaleBboxWidth.toFixed(5)),
             previewBaseScale: Number(
-              (glassesFrameWidthLocal / Math.max(scaleSpanM, 1e-4)).toFixed(3),
+              (
+                glassesFrameWidthLocal / Math.max(glassesMeshScaleBboxWidth, 1e-4)
+              ).toFixed(3),
             ),
-            localBboxCenterLenM: lbPost
-              ? Number(lbPost.length().toFixed(5))
-              : 0,
-            bridgePivotLocal: glassesIngestBridgePositionLocal
-              ?.toArray?.()
-              .map((v) => Number(v.toFixed(5))),
           });
         } catch (ingParityErr) {
           console.warn(
-            "[omafit-ar] glasses ingest preview parity:",
+            "[omafit-ar] glasses ingest admin parity:",
             ingParityErr?.message || ingParityErr,
           );
         }
@@ -12808,8 +12742,8 @@ async function runArSession({
           glassesSimpleFaceOnly &&
           !glassesManualMindarRig &&
           !glassesGlbStandardize &&
-          !!glassesPipelineCanonicalBlender &&
-          !glassesIngestWidgetFrameTag,
+          !!glassesForceAnchorUnitScale &&
+          (!!glassesPipelineCanonicalBlender || !!glassesIngestWidgetFrameTag),
         glassesIngestWidgetFrameTag,
         glassesPipelineCanonicalBlender,
         useTripoOffsetContainer,
@@ -13261,9 +13195,8 @@ async function runArSession({
       glassesSimpleFaceOnly &&
       !glassesManualMindarRig &&
       !glassesGlbStandardize &&
-      !!glassesPipelineCanonicalBlender &&
-      !glassesIngestWidgetFrameTag &&
-      glassesForceAnchorUnitScale;
+      glassesForceAnchorUnitScale &&
+      (glassesPipelineCanonicalBlender || glassesIngestWidgetFrameTag);
 
     if (glassesForceAnchorUnitScale) {
       faceProjectionOpts.faceAnchorDistM = glassesAdminParityFlat

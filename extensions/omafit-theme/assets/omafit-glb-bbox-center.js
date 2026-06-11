@@ -616,6 +616,7 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
   }
   const mul = targetW / spanXBefore;
   let bakedMeshes = 0;
+  let scaledGroups = 0;
   root.traverse((child) => {
     if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
     child.geometry.scale(mul, mul, mul);
@@ -623,11 +624,18 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
     if (child.geometry.boundingSphere) child.geometry.computeBoundingSphere();
     bakedMeshes += 1;
   });
+  /** Vértices escalam; posições dos grupos intermédios também (senão drift ≫ após AABB). */
+  root.traverse((child) => {
+    if (child === root || child.isMesh) return;
+    child.position.multiplyScalar(mul);
+    child.updateMatrix();
+    scaledGroups += 1;
+  });
   root.updateMatrixWorld(true);
   const szAfter = new THREE.Vector3();
   new THREE.Box3().setFromObject(root).getSize(szAfter);
   const spanXAfter = Math.max(szAfter.x, 1e-6);
-  return { applied: true, spanXBefore, spanXAfter, mul, bakedMeshes };
+  return { applied: true, spanXBefore, spanXAfter, mul, bakedMeshes, scaledGroups };
 }
 
 export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {

@@ -16,6 +16,7 @@ import {
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
   omafitBakeGlassesIngestCanonicalPreserveHierarchy,
+  omafitDownscaleGlassesIngestGroupPositionsToVertexUnits,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -619,7 +620,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-hierarchy-parity-v278";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-group-units-v279";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12279,8 +12280,8 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest v278: hierarquia canónica→frame/lens (só grupos, sem bake de vértices) +
-       * pivot na ponte + escala em runtime. Sem normalize/mesh-local/AABB (deformavam hastes).
+       * Ingest v279: hierarquia canónica→frame/lens + alinhar unidades dos grupos aos vértices
+       * (~10 mm) + pivot na ponte + meshScale runtime (~14). Sem bake de vértices.
        */
       if (glassesIngestWidgetFrameTag) {
         try {
@@ -12300,6 +12301,25 @@ async function runArSession({
               ok: hier?.ok,
               mode: hier?.mode,
               childCount: hier?.childCount ?? 0,
+            },
+          );
+          const boxPre = new THREE.Box3().setFromObject(glasses);
+          const szPre = new THREE.Vector3();
+          boxPre.getSize(szPre);
+          const spanXPre = Math.max(szPre.x, 1e-6);
+          const grpUnits = omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
+            THREE,
+            glasses,
+            spanXPre,
+          );
+          console.log(
+            "[omafit-ar] glasses ingest group units align (vertex-space, no mesh bake)",
+            {
+              build: OMAFIT_AR_WIDGET_BUILD,
+              applied: grpUnits?.applied,
+              factor: Number((grpUnits?.factor ?? 1).toFixed(5)),
+              scaledGroups: grpUnits?.scaledGroups ?? 0,
+              spanXBeforeM: Number(spanXPre.toFixed(5)),
             },
           );
           const bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);

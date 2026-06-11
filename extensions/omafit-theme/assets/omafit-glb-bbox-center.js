@@ -769,6 +769,52 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
   return { applied: true, spanXBefore, spanXAfter, mul, bakedMeshes, scaledGroups };
 }
 
+/**
+ * Escala só `position` (e `scale` uniforme) dos grupos intermédios — vértices intactos.
+ * Ingest: transforms do nó canónico ficam em metros; vértices ~10 mm; `meshScale` ~14
+ * amplifica offsets de grupo (ex. 0,43 m → 6 m off-screen). Factor = rawSpanX / targetWidth.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {number} spanXRaw
+ * @param {number} [targetWidthM]
+ */
+export function omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
+  THREE,
+  root,
+  spanXRaw,
+  targetWidthM = OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+) {
+  if (!THREE || !root) {
+    return { applied: false, factor: 1, scaledGroups: 0 };
+  }
+  const raw = Math.max(Number(spanXRaw) || 0, 1e-6);
+  const targetW = Math.max(Number(targetWidthM) || 0, 1e-4);
+  if (raw >= OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M) {
+    return { applied: false, factor: 1, scaledGroups: 0, spanXRaw: raw };
+  }
+  const factor = raw / targetW;
+  let scaledGroups = 0;
+  root.traverse((child) => {
+    if (child === root || child.isMesh) return;
+    child.position.multiplyScalar(factor);
+    const sx = child.scale?.x ?? 1;
+    const sy = child.scale?.y ?? 1;
+    const sz = child.scale?.z ?? 1;
+    if (
+      Math.abs(sx - sy) < 1e-5 &&
+      Math.abs(sy - sz) < 1e-5 &&
+      Math.abs(sx - 1) > 1e-6
+    ) {
+      child.scale.multiplyScalar(factor);
+    }
+    child.updateMatrix();
+    scaledGroups += 1;
+  });
+  root.updateMatrixWorld(true);
+  return { applied: true, factor, scaledGroups, spanXRaw: raw, targetWidthM: targetW };
+}
+
 export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {
   if (!THREE || !root) return new THREE.Vector3(0, 0, 0);
   root.updateMatrixWorld(true);

@@ -786,6 +786,27 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
  * @param {import("three").Object3D} root
  * @returns {number}
  */
+/**
+ * Largura X máxima das geometrias no espaço local de cada mesh (ignora transforms de grupo).
+ * Ingest Rodin: ~10 mm — usar para downscale de `position` sem mutar vértices.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {number}
+ */
+export function omafitGlassesIngestIntrinsicMeshSpanXM(THREE, root) {
+  if (!THREE || !root) return 0;
+  let maxSpan = 0;
+  root.traverse((child) => {
+    if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
+    const geo = child.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const sx = geo.boundingBox.max.x - geo.boundingBox.min.x;
+    maxSpan = Math.max(maxSpan, sx);
+  });
+  return Math.max(maxSpan, 1e-6);
+}
+
 export function omafitGlassesIngestMeshVerticesSpanXM(THREE, root) {
   if (!THREE || !root) return 0;
   root.updateMatrixWorld(true);
@@ -847,6 +868,63 @@ export function omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
   });
   root.updateMatrixWorld(true);
   return { applied: true, factor, scaledGroups, spanXRaw: raw, targetWidthM: targetW };
+}
+
+/**
+ * Downscale de grupos com span intrínseco (vértices ~10 mm) — sem limiar de bbox hierárquica.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {number} spanXIntrinsic
+ * @param {number} [targetWidthM]
+ */
+export function omafitDownscaleGlassesIngestGroupPositionsForced(
+  THREE,
+  root,
+  spanXIntrinsic,
+  targetWidthM = OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+) {
+  if (!THREE || !root) {
+    return { applied: false, factor: 1, scaledGroups: 0 };
+  }
+  const raw = Math.max(Number(spanXIntrinsic) || 0, 1e-6);
+  const targetW = Math.max(Number(targetWidthM) || 0, 1e-4);
+  if (raw >= targetW) {
+    return {
+      applied: false,
+      factor: 1,
+      scaledGroups: 0,
+      spanXIntrinsic: raw,
+      targetWidthM: targetW,
+      reason: "already-physical",
+    };
+  }
+  const factor = raw / targetW;
+  let scaledGroups = 0;
+  root.traverse((child) => {
+    if (child === root || child.isMesh) return;
+    child.position.multiplyScalar(factor);
+    const sx = child.scale?.x ?? 1;
+    const sy = child.scale?.y ?? 1;
+    const sz = child.scale?.z ?? 1;
+    if (
+      Math.abs(sx - sy) < 1e-5 &&
+      Math.abs(sy - sz) < 1e-5 &&
+      Math.abs(sx - 1) > 1e-6
+    ) {
+      child.scale.multiplyScalar(factor);
+    }
+    child.updateMatrix();
+    scaledGroups += 1;
+  });
+  root.updateMatrixWorld(true);
+  return {
+    applied: true,
+    factor,
+    scaledGroups,
+    spanXIntrinsic: raw,
+    targetWidthM: targetW,
+  };
 }
 
 export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {

@@ -17,6 +17,7 @@ import {
   omafitRecenterObject3OnGlassesLensFront,
   omafitBakeGlassesIngestCanonicalPreserveHierarchy,
   omafitDownscaleGlassesIngestGroupPositionsToVertexUnits,
+  omafitGlassesIngestMeshVerticesSpanXM,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -620,7 +621,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-group-units-v279";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-vertex-span-v280";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12280,8 +12281,8 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest v279: hierarquia canónica→frame/lens + alinhar unidades dos grupos aos vértices
-       * (~10 mm) + pivot na ponte + meshScale runtime (~14). Sem bake de vértices.
+       * Ingest v280: hierarquia + downscale de grupos pela largura dos vértices (~10 mm,
+       * não bbox hierárquica ~160 mm) + pivot ponte; AABB translate só se drift residual.
        */
       if (glassesIngestWidgetFrameTag) {
         try {
@@ -12303,35 +12304,63 @@ async function runArSession({
               childCount: hier?.childCount ?? 0,
             },
           );
-          const boxPre = new THREE.Box3().setFromObject(glasses);
-          const szPre = new THREE.Vector3();
-          boxPre.getSize(szPre);
-          const spanXPre = Math.max(szPre.x, 1e-6);
+          const boxHier = new THREE.Box3().setFromObject(glasses);
+          const szHier = new THREE.Vector3();
+          boxHier.getSize(szHier);
+          const spanXHierM = Math.max(szHier.x, 1e-6);
+          const spanMeshVertsM = omafitGlassesIngestMeshVerticesSpanXM(
+            THREE,
+            glasses,
+          );
           const grpUnits = omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
             THREE,
             glasses,
-            spanXPre,
+            spanMeshVertsM,
           );
           console.log(
-            "[omafit-ar] glasses ingest group units align (vertex-space, no mesh bake)",
+            "[omafit-ar] glasses ingest group units align (mesh-vertex span)",
             {
               build: OMAFIT_AR_WIDGET_BUILD,
               applied: grpUnits?.applied,
               factor: Number((grpUnits?.factor ?? 1).toFixed(5)),
               scaledGroups: grpUnits?.scaledGroups ?? 0,
-              spanXBeforeM: Number(spanXPre.toFixed(5)),
+              spanMeshVertsM: Number(spanMeshVertsM.toFixed(5)),
+              spanXHierM: Number(spanXHierM.toFixed(5)),
             },
           );
-          const bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+          let bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
           if (bridgePt && bridgePt.length() > 0.001) {
             glasses.position.sub(bridgePt);
             glasses.updateMatrixWorld(true);
           }
+          let lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
+          if (
+            lbPost &&
+            lbPost.length() > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M
+          ) {
+            const aabb = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, glasses);
+            glasses.position.set(0, 0, 0);
+            bridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+            if (bridgePt && bridgePt.length() > 0.001) {
+              glasses.position.sub(bridgePt);
+              glasses.updateMatrixWorld(true);
+            }
+            lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
+            console.log(
+              "[omafit-ar] glasses ingest AABB translate (drift residual, uniform)",
+              {
+                build: OMAFIT_AR_WIDGET_BUILD,
+                driftBeforeM: Number((aabb?.driftM ?? 0).toFixed(5)),
+                driftAfterM: Number((aabb?.driftAfterM ?? 0).toFixed(5)),
+                bakedMeshes: aabb?.bakedMeshes ?? 0,
+              },
+            );
+          }
           glassesIngestBridgePositionLocal = glasses.position.clone();
-          const boxIng = new THREE.Box3().setFromObject(glasses);
-          const szIng = new THREE.Vector3();
-          boxIng.getSize(szIng);
-          const rawIngW = Math.max(szIng.x, 1e-4);
+          const rawIngW = Math.max(
+            omafitGlassesIngestMeshVerticesSpanXM(THREE, glasses),
+            1e-4,
+          );
           glassesFrameWidthRawLocal = rawIngW;
           glassesMeshScaleBboxWidth = resolveGlassesMerchantMeshScaleBboxWidth(
             rawIngW,
@@ -12342,9 +12371,8 @@ async function runArSession({
           );
           glassesMeshWidthNormMul =
             glassesFrameWidthLocal / glassesMeshScaleBboxWidth;
-          const lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
           console.log(
-            "[omafit-ar] glasses ingest admin preview parity (hierarchy, no vertex bake)",
+            "[omafit-ar] glasses ingest admin preview parity (hierarchy + vertex-span groups)",
             {
               build: OMAFIT_AR_WIDGET_BUILD,
               mode: "hierarchy-preserve-bridge-pivot",

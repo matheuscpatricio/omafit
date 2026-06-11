@@ -779,6 +779,40 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
  * @param {number} spanXRaw
  * @param {number} [targetWidthM]
  */
+/**
+ * Largura X só dos vértices das meshes no espaço local do root (ignora offsets de grupo).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {number}
+ */
+export function omafitGlassesIngestMeshVerticesSpanXM(THREE, root) {
+  if (!THREE || !root) return 0;
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const box = new THREE.Box3();
+  let vertCount = 0;
+  const v = new THREE.Vector3();
+  const toRoot = new THREE.Matrix4();
+  root.traverse((child) => {
+    if (!child.isMesh || child.isInstancedMesh || !child.geometry?.attributes?.position) {
+      return;
+    }
+    child.updateMatrixWorld(true);
+    toRoot.multiplyMatrices(inv, child.matrixWorld);
+    const pos = child.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(toRoot);
+      box.expandByPoint(v);
+      vertCount += 1;
+    }
+  });
+  if (vertCount === 0) return 0;
+  const sz = new THREE.Vector3();
+  box.getSize(sz);
+  return Math.max(sz.x, 1e-6);
+}
+
 export function omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
   THREE,
   root,

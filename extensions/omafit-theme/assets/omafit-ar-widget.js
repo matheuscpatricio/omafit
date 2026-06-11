@@ -15,7 +15,7 @@ import {
   omafitGlassesLocalBboxCenterM,
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
-  omafitBakeGlassesIngestCanonicalNodeOnly,
+  omafitBakeGlassesIngestCanonicalPreserveHierarchy,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -618,7 +618,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-bbox-bridge-v272";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-hierarchy-v273";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12278,16 +12278,17 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest: bake canónico + centróide AABB nos vértices (obrigatório com
-       * meshScale ~14 — `position.sub` na ponte não move `localBboxCenterM`).
-       * Depois pivot na ponte (offset pequeno) para rotação estável.
+       * Ingest: absorver `omafit_ar_canonical` nos grupos frame/lens (forma intacta)
+       * + AABB nos vértices (obrigatório com meshScale ~14) + pivot na ponte.
        */
       if (glassesIngestWidgetFrameTag) {
         try {
-          const canBake = omafitBakeGlassesIngestCanonicalNodeOnly(THREE, glasses);
-          console.log("[omafit-ar] glasses ingest canonical-node bake (hierarchy kept)", {
+          const canBake = omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, glasses);
+          console.log("[omafit-ar] glasses ingest canonical bake (hierarchy preserve)", {
             build: OMAFIT_AR_WIDGET_BUILD,
             ok: canBake?.ok,
+            mode: canBake?.mode,
+            childCount: canBake?.childCount ?? 0,
             bakedMeshes: canBake?.bakedMeshes ?? 0,
           });
         } catch (canBakeErr) {
@@ -13573,16 +13574,21 @@ async function runArSession({
         glasses.updateMatrix();
         glassesStaticBindWrap.position.set(0, 0, 0);
         glassesStaticBindWrap.scale.set(1, 1, 1);
-        if (glassesPipelineCanonicalBlender && glassesSimpleFaceOnly) {
+        if (
+          (glassesPipelineCanonicalBlender || glassesIngestWidgetFrameTag) &&
+          glassesSimpleFaceOnly
+        ) {
           /**
-           * v219 / v160: AR canónico Blender — sem Ry180 no bind estático.
-           * MindAR + export Blender (−Z frente) já alinham; Ry extra empurrava fora do ecrã.
+           * v219 / v273: ingest + Blender canónico — frame widget (−Z frente) sem Ry180
+           * extra (achata hastes / “arreganhado”). MindAR + hierarquia intacta alinham.
            */
           glassesStaticBindWrap.quaternion.identity();
-          console.log("[omafit-ar] glasses MindAR static bind (canonical identity)", {
+          console.log("[omafit-ar] glasses MindAR static bind (widget-frame identity)", {
             build: OMAFIT_AR_WIDGET_BUILD,
             bindRyRad: 0,
-            bindSource: "v160-parity-identity",
+            bindSource: glassesIngestWidgetFrameTag
+              ? "ingest-hierarchy-identity"
+              : "v160-parity-identity",
             ingestSplit: glassesIngestWidgetFrameTag,
           });
         } else if (

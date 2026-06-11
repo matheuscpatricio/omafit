@@ -474,3 +474,172 @@ export function omafitGlassesCorrectLocalBboxCenterIfNeeded(
     bakedMeshes: baked?.bakedMeshes ?? 0,
   };
 }
+
+/**
+ * Absorve o transform local de `omafit_ar_canonical` nos filhos directos
+ * (`omafit_frame` / `omafit_lens`) — **sem** achatar meshes nem zerar grupos.
+ * Preserva rotações das hastes (paridade preview).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {{ ok: boolean, mode: string, bakedMeshes: number, canonicalFound: boolean }}
+ */
+export function omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, root) {
+  if (!THREE || !root) {
+    return { ok: false, mode: "missing-three-or-root", bakedMeshes: 0, canonicalFound: false };
+  }
+  root.updateMatrixWorld(true);
+  let canonical = null;
+  root.traverse((child) => {
+    if (child === root) return;
+    if (String(child.name || "") === "omafit_ar_canonical") canonical = child;
+  });
+  if (!canonical) {
+    const flat = omafitBakeGlassesIngestCanonicalNodeOnly(THREE, root);
+    return {
+      ok: flat.ok,
+      mode: "flatten-fallback",
+      bakedMeshes: flat.bakedMeshes ?? 0,
+      canonicalFound: false,
+    };
+  }
+  canonical.updateMatrix();
+  const canLocal = new THREE.Matrix4().copy(canonical.matrix);
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scl = new THREE.Vector3();
+  const composeScratch = new THREE.Matrix4();
+  let childCount = 0;
+  for (const child of canonical.children) {
+    composeScratch.multiplyMatrices(canLocal, child.matrix);
+    composeScratch.decompose(pos, quat, scl);
+    child.position.copy(pos);
+    child.quaternion.copy(quat);
+    child.scale.copy(scl);
+    child.updateMatrix();
+    childCount += 1;
+  }
+  canonical.position.set(0, 0, 0);
+  canonical.rotation.set(0, 0, 0);
+  canonical.scale.set(1, 1, 1);
+  canonical.quaternion.identity();
+  canonical.updateMatrix();
+  root.updateMatrixWorld(true);
+  return {
+    ok: childCount > 0,
+    mode: "hierarchy-preserve",
+    bakedMeshes: 0,
+    canonicalFound: true,
+    childCount,
+  };
+}
+
+/**
+ * Bake transforms do nó `omafit_ar_canonical` (e pais intermédios) nos vértices,
+ * **sem** achatar `omafit_frame` / `omafit_lens` para o root — paridade preview.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {{ ok: boolean, bakedMeshes: number }}
+ */
+export function omafitBakeGlassesIngestCanonicalNodeOnly(THREE, root) {
+  if (!THREE || !root) return { ok: false, bakedMeshes: 0 };
+  root.updateMatrixWorld(true);
+  const rootInv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  let bakedMeshes = 0;
+  root.traverse((child) => {
+    if (!child.isMesh || child.isSkinnedMesh || !child.geometry) return;
+    const morphs = child.morphTargetInfluences;
+    if (Array.isArray(morphs) && morphs.length > 0) return;
+    child.updateMatrixWorld(true);
+    const bakedLocal = new THREE.Matrix4().multiplyMatrices(rootInv, child.matrixWorld);
+    const geom = child.geometry.clone();
+    geom.applyMatrix4(bakedLocal);
+    if (typeof geom.computeVertexNormals === "function") {
+      geom.computeVertexNormals();
+    }
+    child.geometry = geom;
+    child.position.set(0, 0, 0);
+    child.rotation.set(0, 0, 0);
+    child.scale.set(1, 1, 1);
+    child.quaternion.identity();
+    child.updateMatrix();
+    bakedMeshes += 1;
+  });
+  root.traverse((child) => {
+    if (child === root || child.isMesh) return;
+    child.position.set(0, 0, 0);
+    child.rotation.set(0, 0, 0);
+    child.scale.set(1, 1, 1);
+    child.quaternion.identity();
+    child.updateMatrix();
+  });
+  root.updateMatrixWorld(true);
+  return { ok: bakedMeshes > 0, bakedMeshes };
+}
+
+/** Largura física de referência (m) — paridade `OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M`. */
+const OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M = 0.145;
+/** Bbox X abaixo disto → geometria sub-física após bake canónico. */
+const OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M = 0.08;
+
+/**
+ * Escala uniforme nos vértices quando a bbox X do ingest fica &lt; 80 mm após
+ * bake canónico + center (escala do nó não reflectida na bbox local).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {number} [targetWidthM]
+ * @returns {{ applied: boolean, spanXBefore: number, spanXAfter: number, mul: number, bakedMeshes: number }}
+ */
+export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
+  THREE,
+  root,
+  targetWidthM = OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+) {
+  if (!THREE || !root) {
+    return { applied: false, spanXBefore: 0, spanXAfter: 0, mul: 1, bakedMeshes: 0 };
+  }
+  root.updateMatrixWorld(true);
+  const szBefore = new THREE.Vector3();
+  new THREE.Box3().setFromObject(root).getSize(szBefore);
+  const spanXBefore = Math.max(szBefore.x, 1e-6);
+  const targetW = Math.max(Number(targetWidthM) || 0, 1e-4);
+  if (spanXBefore >= OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M) {
+    return {
+      applied: false,
+      spanXBefore,
+      spanXAfter: spanXBefore,
+      mul: 1,
+      bakedMeshes: 0,
+    };
+  }
+  const mul = targetW / spanXBefore;
+  let bakedMeshes = 0;
+  root.traverse((child) => {
+    if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
+    child.geometry.scale(mul, mul, mul);
+    if (child.geometry.boundingBox) child.geometry.computeBoundingBox();
+    if (child.geometry.boundingSphere) child.geometry.computeBoundingSphere();
+    bakedMeshes += 1;
+  });
+  root.updateMatrixWorld(true);
+  const szAfter = new THREE.Vector3();
+  new THREE.Box3().setFromObject(root).getSize(szAfter);
+  const spanXAfter = Math.max(szAfter.x, 1e-6);
+  return { applied: true, spanXBefore, spanXAfter, mul, bakedMeshes };
+}
+
+export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {
+  if (!THREE || !root) return new THREE.Vector3(0, 0, 0);
+  root.updateMatrixWorld(true);
+  const bridge = omafitComputeGlassesLensAnchorPoint(THREE, root);
+  if (bridge && bridge.lengthSq() > 1e-10) {
+    return bridge.clone().negate();
+  }
+  const center = omafitGlassesLocalBboxCenterM(THREE, root);
+  if (center && center.lengthSq() > 1e-10) {
+    return center.clone().negate();
+  }
+  return new THREE.Vector3(0, 0, 0);
+}

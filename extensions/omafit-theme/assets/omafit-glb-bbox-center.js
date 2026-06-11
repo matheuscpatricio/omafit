@@ -855,6 +855,28 @@ export function omafitGlassesIngestMeshWorldMaxDimM(THREE, root) {
   return Math.max(maxDim, 1e-6);
 }
 
+/**
+ * Span físico do GLB **antes** de `omafitBakeGlassesIngestCanonicalPreserveHierarchy`.
+ * Após o bake, offsets de grupo inflacionam a bbox; o maxDim pré-hierarquia (~10 mm)
+ * é a referência correcta para meshScale ~14 e downscale de grupos.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {number}
+ */
+export function omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root) {
+  if (!THREE || !root) return 0;
+  root.updateMatrixWorld(true);
+  const sz = new THREE.Vector3();
+  new THREE.Box3().setFromObject(root).getSize(sz);
+  const maxDim = Math.max(sz.x, sz.y, sz.z, 1e-6);
+  const minDim = Math.max(Math.min(sz.x, sz.y, sz.z), 1e-6);
+  if (maxDim < OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M) {
+    return maxDim;
+  }
+  return minDim;
+}
+
 export function omafitGlassesIngestMeshVerticesSpanXM(THREE, root) {
   if (!THREE || !root) return 0;
   root.updateMatrixWorld(true);

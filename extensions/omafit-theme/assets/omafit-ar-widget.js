@@ -18,7 +18,7 @@ import {
   omafitBakeGlassesIngestCanonicalPreserveHierarchy,
   omafitDownscaleGlassesIngestGroupPositionsForced,
   omafitGlassesIngestIntrinsicMeshMaxSpanM,
-  omafitGlassesIngestMeshWorldMaxDimM,
+  omafitGlassesIngestPreHierarchyScaleSpanM,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -622,7 +622,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-phys-span-v283";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-prehier-span-v284";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12282,8 +12282,8 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       /**
-       * Ingest v283: hierarquia + downscale grupos + ponte; vértices intactos.
-       * meshScale ~14 via bbox física ~10 mm (não eixo X local nem AABB bake).
+       * Ingest v284: span pré-hierarquia (~10 mm) para escala e downscale de grupos.
+       * meshScale ~14 + factor ~0,07 evita offset ×14 off-screen; vértices intactos.
        */
       if (glassesIngestWidgetFrameTag) {
         try {
@@ -12292,6 +12292,10 @@ async function runArSession({
           glasses.quaternion.identity();
           glasses.scale.set(1, 1, 1);
           glasses.updateMatrixWorld(true);
+          const scaleSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(
+            THREE,
+            glasses,
+          );
           const hier = omafitBakeGlassesIngestCanonicalPreserveHierarchy(
             THREE,
             glasses,
@@ -12303,9 +12307,9 @@ async function runArSession({
               ok: hier?.ok,
               mode: hier?.mode,
               childCount: hier?.childCount ?? 0,
+              preHierarchyScaleSpanM: Number(scaleSpanM.toFixed(5)),
             },
           );
-          const physSpanM = omafitGlassesIngestMeshWorldMaxDimM(THREE, glasses);
           const intrinsicMaxM = omafitGlassesIngestIntrinsicMeshMaxSpanM(
             THREE,
             glasses,
@@ -12313,13 +12317,13 @@ async function runArSession({
           const align = omafitDownscaleGlassesIngestGroupPositionsForced(
             THREE,
             glasses,
-            physSpanM,
+            scaleSpanM,
           );
           console.log("[omafit-ar] glasses ingest group units align (vertices intact)", {
             build: OMAFIT_AR_WIDGET_BUILD,
             applied: align?.applied,
             factor: Number((align?.factor ?? 1).toFixed(5)),
-            physSpanM: Number(physSpanM.toFixed(5)),
+            scaleSpanM: Number(scaleSpanM.toFixed(5)),
             intrinsicMaxM: Number(intrinsicMaxM.toFixed(5)),
             scaledGroups: align?.scaledGroups ?? 0,
           });
@@ -12333,20 +12337,20 @@ async function runArSession({
           const szIng = new THREE.Vector3();
           boxIng.getSize(szIng);
           const hierarchyMaxM = Math.max(szIng.x, szIng.y, szIng.z, 1e-4);
-          glassesFrameWidthRawLocal = physSpanM;
-          glassesMeshScaleBboxWidth = physSpanM;
-          glassesFrameWidthLocal = resolveGlassesFrameWidthForFit(physSpanM);
+          glassesFrameWidthRawLocal = scaleSpanM;
+          glassesMeshScaleBboxWidth = scaleSpanM;
+          glassesFrameWidthLocal = resolveGlassesFrameWidthForFit(scaleSpanM);
           glassesMeshWidthNormMul =
             glassesFrameWidthLocal / Math.max(glassesMeshScaleBboxWidth, 1e-4);
           const lbPost = omafitGlassesLocalBboxCenterM(THREE, glasses);
           console.log("[omafit-ar] glasses ingest preview-parity (meshScale~14)", {
             build: OMAFIT_AR_WIDGET_BUILD,
-            physSpanM: Number(physSpanM.toFixed(5)),
+            scaleSpanM: Number(scaleSpanM.toFixed(5)),
             intrinsicMaxM: Number(intrinsicMaxM.toFixed(5)),
             hierarchyMaxM: Number(hierarchyMaxM.toFixed(5)),
             meshScaleBboxWidthM: Number(glassesMeshScaleBboxWidth.toFixed(5)),
             previewBaseScale: Number(
-              (glassesFrameWidthLocal / Math.max(physSpanM, 1e-4)).toFixed(3),
+              (glassesFrameWidthLocal / Math.max(scaleSpanM, 1e-4)).toFixed(3),
             ),
             localBboxCenterLenM: lbPost
               ? Number(lbPost.length().toFixed(5))
@@ -12389,20 +12393,14 @@ async function runArSession({
       }
       if (accessoryType === "glasses" && glassesIngestWidgetFrameTag) {
         glasses.updateMatrixWorld(true);
-        const physPost = omafitGlassesIngestMeshWorldMaxDimM(THREE, glasses);
         const boxIngPost = new THREE.Box3().setFromObject(glasses);
         const szIngPost = new THREE.Vector3();
         boxIngPost.getSize(szIngPost);
-        glassesFrameWidthRawLocal = physPost;
-        glassesFrameWidthLocal = resolveGlassesFrameWidthForFit(physPost);
-        glassesMeshScaleBboxWidth = physPost;
-        glassesMeshWidthNormMul =
-          glassesFrameWidthLocal / Math.max(glassesMeshScaleBboxWidth, 1e-4);
         try {
           console.log("[omafit-ar] glasses ingest bbox pós-center (preview parity)", {
             build: OMAFIT_AR_WIDGET_BUILD,
             bbox: { x: szIngPost.x, y: szIngPost.y, z: szIngPost.z },
-            physSpanM: physPost,
+            scaleSpanM: glassesMeshScaleBboxWidth,
             meshScaleBboxWidthM: glassesMeshScaleBboxWidth,
             frameWidthFitLocal: glassesFrameWidthLocal,
           });

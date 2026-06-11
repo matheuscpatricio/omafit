@@ -807,6 +807,54 @@ export function omafitGlassesIngestIntrinsicMeshSpanXM(THREE, root) {
   return Math.max(maxSpan, 1e-6);
 }
 
+/**
+ * Maior aresta da bbox local de cada mesh (X/Y/Z) — ingest pode ter largura ≠ eixo X.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {number}
+ */
+export function omafitGlassesIngestIntrinsicMeshMaxSpanM(THREE, root) {
+  if (!THREE || !root) return 0;
+  let maxSpan = 0;
+  root.traverse((child) => {
+    if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
+    const geo = child.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    const sx = bb.max.x - bb.min.x;
+    const sy = bb.max.y - bb.min.y;
+    const sz = bb.max.z - bb.min.z;
+    maxSpan = Math.max(maxSpan, sx, sy, sz);
+  });
+  return Math.max(maxSpan, 1e-6);
+}
+
+/**
+ * Maior dimensão da bbox **por mesh** em mundo (ignora distância entre meshes/grupos).
+ * Ingest Rodin: ~10 mm — base para meshScale ~14 e downscale de grupos.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @returns {number}
+ */
+export function omafitGlassesIngestMeshWorldMaxDimM(THREE, root) {
+  if (!THREE || !root) return 0;
+  root.updateMatrixWorld(true);
+  let maxDim = 0;
+  const sz = new THREE.Vector3();
+  const meshBox = new THREE.Box3();
+  root.traverse((child) => {
+    if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
+    const geo = child.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    meshBox.copy(geo.boundingBox).applyMatrix4(child.matrixWorld);
+    meshBox.getSize(sz);
+    maxDim = Math.max(maxDim, sz.x, sz.y, sz.z);
+  });
+  return Math.max(maxDim, 1e-6);
+}
+
 export function omafitGlassesIngestMeshVerticesSpanXM(THREE, root) {
   if (!THREE || !root) return 0;
   root.updateMatrixWorld(true);

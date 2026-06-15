@@ -641,10 +641,16 @@ export function omafitBakeGlassesIngestMeshLocalTransforms(THREE, root) {
   let bakedMeshes = 0;
   let mode = "mesh-local";
   if (canonical && canonical.children.length > 0) {
-    const identity = new THREE.Matrix4();
+    canonical.updateMatrix();
+    const canLocal = new THREE.Matrix4().copy(canonical.matrix);
     for (const child of canonical.children) {
-      bakedMeshes += bakeSubtree(child, identity);
+      bakedMeshes += bakeSubtree(child, canLocal);
     }
+    canonical.position.set(0, 0, 0);
+    canonical.rotation.set(0, 0, 0);
+    canonical.scale.set(1, 1, 1);
+    canonical.quaternion.identity();
+    canonical.updateMatrix();
     mode = "canonical-children";
   } else {
     root.traverse((child) => {
@@ -717,14 +723,22 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
   THREE,
   root,
   targetWidthM = OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+  spanXOverride = 0,
+  opts = {},
 ) {
+  const scaleNodeTransforms = opts?.scaleNodeTransforms !== false;
   if (!THREE || !root) {
     return { applied: false, spanXBefore: 0, spanXAfter: 0, mul: 1, bakedMeshes: 0 };
   }
   root.updateMatrixWorld(true);
   const szBefore = new THREE.Vector3();
   new THREE.Box3().setFromObject(root).getSize(szBefore);
-  const spanXBefore = Math.max(szBefore.x, 1e-6);
+  const bboxSpanX = Math.max(szBefore.x, 1e-6);
+  const override = Math.max(Number(spanXOverride) || 0, 0);
+  const spanXBefore =
+    override > 0 && override < OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M
+      ? override
+      : bboxSpanX;
   const targetW = Math.max(Number(targetWidthM) || 0, 1e-4);
   if (spanXBefore >= OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M) {
     return {
@@ -746,22 +760,24 @@ export function omafitNormalizeGlassesIngestSubPhysicalGeometry(
     bakedMeshes += 1;
   });
   /** Vértices escalam; transforms dos nós intermédios também (senão drift ≫ após AABB). */
-  root.traverse((child) => {
-    if (child === root || child.isMesh) return;
-    child.position.multiplyScalar(mul);
-    const sx = child.scale?.x ?? 1;
-    const sy = child.scale?.y ?? 1;
-    const sz = child.scale?.z ?? 1;
-    if (
-      Math.abs(sx - sy) < 1e-5 &&
-      Math.abs(sy - sz) < 1e-5 &&
-      Math.abs(sx - 1) > 1e-6
-    ) {
-      child.scale.multiplyScalar(mul);
-    }
-    child.updateMatrix();
-    scaledGroups += 1;
-  });
+  if (scaleNodeTransforms) {
+    root.traverse((child) => {
+      if (child === root || child.isMesh) return;
+      child.position.multiplyScalar(mul);
+      const sx = child.scale?.x ?? 1;
+      const sy = child.scale?.y ?? 1;
+      const sz = child.scale?.z ?? 1;
+      if (
+        Math.abs(sx - sy) < 1e-5 &&
+        Math.abs(sy - sz) < 1e-5 &&
+        Math.abs(sx - 1) > 1e-6
+      ) {
+        child.scale.multiplyScalar(mul);
+      }
+      child.updateMatrix();
+      scaledGroups += 1;
+    });
+  }
   root.updateMatrixWorld(true);
   const szAfter = new THREE.Vector3();
   new THREE.Box3().setFromObject(root).getSize(szAfter);
@@ -866,14 +882,19 @@ export function omafitGlassesIngestMeshWorldMaxDimM(THREE, root) {
  */
 export function omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root) {
   if (!THREE || !root) return 0;
+  const intrinsicM = omafitGlassesIngestIntrinsicMeshMaxSpanM(THREE, root);
   root.updateMatrixWorld(true);
   const sz = new THREE.Vector3();
   new THREE.Box3().setFromObject(root).getSize(sz);
   const maxDim = Math.max(sz.x, sz.y, sz.z, 1e-6);
-  const minDim = Math.max(Math.min(sz.x, sz.y, sz.z), 1e-6);
   if (maxDim < OMAFIT_GLASSES_INGEST_MIN_PHYSICAL_WIDTH_M) {
     return maxDim;
   }
+  /** Grupos canónicos em metros inflacionam a bbox; vértices ~10 mm são a referência. */
+  if (intrinsicM > 0 && intrinsicM < maxDim) {
+    return intrinsicM;
+  }
+  const minDim = Math.max(Math.min(sz.x, sz.y, sz.z), 1e-6);
   return minDim;
 }
 
@@ -919,9 +940,9 @@ export function omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
     return { applied: false, factor: 1, scaledGroups: 0, spanXRaw: raw };
   }
   const factor = raw / targetW;
-  let scaledGroups = 0;
+  let scaledNodes = 0;
   root.traverse((child) => {
-    if (child === root || child.isMesh) return;
+    if (child === root) return;
     child.position.multiplyScalar(factor);
     const sx = child.scale?.x ?? 1;
     const sy = child.scale?.y ?? 1;
@@ -934,10 +955,10 @@ export function omafitDownscaleGlassesIngestGroupPositionsToVertexUnits(
       child.scale.multiplyScalar(factor);
     }
     child.updateMatrix();
-    scaledGroups += 1;
+    scaledNodes += 1;
   });
   root.updateMatrixWorld(true);
-  return { applied: true, factor, scaledGroups, spanXRaw: raw, targetWidthM: targetW };
+  return { applied: true, factor, scaledGroups: scaledNodes, scaledNodes, spanXRaw: raw, targetWidthM: targetW };
 }
 
 /**
@@ -970,10 +991,15 @@ export function omafitDownscaleGlassesIngestGroupPositionsForced(
     };
   }
   const factor = raw / targetW;
-  let scaledGroups = 0;
+  let scaledNodes = 0;
   root.traverse((child) => {
-    if (child === root || child.isMesh) return;
+    if (child === root) return;
     child.position.multiplyScalar(factor);
+    /** Meshes: só `position` — escalar `mesh.scale` encolhe a geometria (ingest ~10 mm). */
+    if (child.isMesh) {
+      child.updateMatrix();
+      return;
+    }
     const sx = child.scale?.x ?? 1;
     const sy = child.scale?.y ?? 1;
     const sz = child.scale?.z ?? 1;
@@ -985,15 +1011,174 @@ export function omafitDownscaleGlassesIngestGroupPositionsForced(
       child.scale.multiplyScalar(factor);
     }
     child.updateMatrix();
-    scaledGroups += 1;
+    scaledNodes += 1;
   });
   root.updateMatrixWorld(true);
   return {
     applied: true,
     factor,
-    scaledGroups,
+    scaledGroups: scaledNodes,
+    scaledNodes,
     spanXIntrinsic: raw,
     targetWidthM: targetW,
+  };
+}
+
+/**
+ * Pipeline ingest previsível (admin parity flat) — paridade preview `/calibrate`:
+ * 1) `PreserveHierarchy` — absorve só `omafit_ar_canonical`; mantém dobragem das hastes
+ * 2) downscale de `position` dos grupos (vértices ~10 mm vs offsets em metros)
+ * 3) normalização física uniforme nos vértices + grupos (~145 mm de largura)
+ * 4) recentro no **root** (ponte/lentes), sem bake de centróide nos vértices
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ */
+export function omafitPrepareGlassesIngestAdminParityFlat(THREE, root) {
+  if (!THREE || !root) {
+    return {
+      ok: false,
+      prepMode: "hierarchy-preserve",
+      intrinsicSpanM: 0,
+      nodeBakeMeshes: 0,
+      physicalNormApplied: false,
+      physicalNormMul: 1,
+      localBboxDriftBeforeM: 0,
+      localBboxDriftAfterM: 0,
+      localBboxBakedMeshes: 0,
+      maxNodePosLenM: 0,
+      bboxPostM: { x: 0, y: 0, z: 0 },
+    };
+  }
+  const intrinsicSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root);
+  const hierarchyBake = omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, root);
+  const physicalNorm = omafitNormalizeGlassesIngestSubPhysicalGeometry(
+    THREE,
+    root,
+    OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+    intrinsicSpanM,
+    { scaleNodeTransforms: false },
+  );
+  const groupDownscale = omafitDownscaleGlassesIngestGroupPositionsForced(
+    THREE,
+    root,
+    intrinsicSpanM,
+    OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+  );
+  const lbBefore = omafitGlassesLocalBboxCenterM(THREE, root);
+  const localBboxDriftBeforeM = lbBefore ? lbBefore.length() : 0;
+  let localBboxBakedMeshes = 0;
+  let localBboxDriftAfterM = localBboxDriftBeforeM;
+  let recenterMode = "none";
+  if (localBboxDriftBeforeM > 1e-6) {
+    const bboxBake = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, root);
+    localBboxBakedMeshes = bboxBake?.bakedMeshes ?? 0;
+    localBboxDriftAfterM = bboxBake?.driftAfterM ?? localBboxDriftBeforeM;
+    recenterMode = "vertex-bbox-bake";
+  }
+  if (localBboxDriftAfterM > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M) {
+    const lensRecenter = omafitRecenterObject3OnGlassesLensFront(THREE, root);
+    recenterMode = lensRecenter?.mode || "lens-front-root-fallback";
+    localBboxDriftAfterM =
+      omafitGlassesLocalBboxCenterM(THREE, root)?.length() ?? localBboxDriftAfterM;
+  } else if (localBboxDriftAfterM > 1e-6 && recenterMode === "none") {
+    omafitCenterObject3OnBboxOrigin(THREE, root);
+    recenterMode = "bbox-root";
+    localBboxDriftAfterM =
+      omafitGlassesLocalBboxCenterM(THREE, root)?.length() ?? localBboxDriftAfterM;
+  }
+  root.updateMatrixWorld(true);
+  let maxNodePosLenM = 0;
+  root.traverse((child) => {
+    if (child === root) return;
+    maxNodePosLenM = Math.max(maxNodePosLenM, child.position.length());
+  });
+  const sz = new THREE.Vector3();
+  new THREE.Box3().setFromObject(root).getSize(sz);
+  return {
+    ok: Boolean(hierarchyBake?.ok),
+    prepMode: "hierarchy-preserve",
+    hierarchyBakeMode: hierarchyBake?.mode ?? "unknown",
+    hierarchyCanonicalFound: Boolean(hierarchyBake?.canonicalFound),
+    groupDownscaleApplied: Boolean(groupDownscale?.applied),
+    groupDownscaleFactor: groupDownscale?.factor ?? 1,
+    intrinsicSpanM,
+    nodeBakeMeshes: 0,
+    physicalNormApplied: Boolean(physicalNorm?.applied),
+    physicalNormMul: physicalNorm?.mul ?? 1,
+    spanXBeforeM: physicalNorm?.spanXBefore ?? 0,
+    spanXAfterM: physicalNorm?.spanXAfter ?? 0,
+    localBboxDriftBeforeM,
+    localBboxDriftAfterM,
+    localBboxBakedMeshes,
+    recenterMode,
+    maxNodePosLenM,
+    bboxPostM: { x: sz.x, y: sz.y, z: sz.z },
+  };
+}
+
+/**
+ * Ingest + paridade preview admin: **zero mutação** do GLB (vértices, grupos, bake).
+ * Escala física só em runtime via `computeGlassesPreviewBaseScale` × merchant.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ */
+export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
+  if (!THREE || !root) {
+    return {
+      ok: false,
+      prepMode: "admin-preview-intact",
+      intrinsicSpanM: 0,
+      intrinsicMeshSpanM: 0,
+      nodeBakeMeshes: 0,
+      physicalNormApplied: false,
+      physicalNormMul: 1,
+      localBboxDriftBeforeM: 0,
+      localBboxDriftAfterM: 0,
+      localBboxBakedMeshes: 0,
+      maxNodePosLenM: 0,
+      bboxPostM: { x: 0, y: 0, z: 0 },
+    };
+  }
+  root.updateMatrixWorld(true);
+  let canonicalFound = false;
+  root.traverse((child) => {
+    if (child !== root && String(child.name || "") === "omafit_ar_canonical") {
+      canonicalFound = true;
+    }
+  });
+  const intrinsicMeshSpanM = omafitGlassesIngestIntrinsicMeshMaxSpanM(THREE, root);
+  const intrinsicSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root);
+  const lb = omafitGlassesLocalBboxCenterM(THREE, root);
+  const localBboxDriftM = lb ? lb.length() : 0;
+  let maxNodePosLenM = 0;
+  root.traverse((child) => {
+    if (child === root) return;
+    maxNodePosLenM = Math.max(maxNodePosLenM, child.position.length());
+  });
+  const sz = new THREE.Vector3();
+  new THREE.Box3().setFromObject(root).getSize(sz);
+  return {
+    ok: true,
+    prepMode: "admin-preview-intact",
+    hierarchyBakeMode: "skipped",
+    hierarchyCanonicalFound: canonicalFound,
+    groupDownscaleApplied: false,
+    groupDownscaleFactor: 1,
+    intrinsicSpanM,
+    intrinsicMeshSpanM,
+    nodeBakeMeshes: 0,
+    physicalNormApplied: false,
+    physicalNormMul: 1,
+    spanXBeforeM: intrinsicSpanM,
+    spanXAfterM: intrinsicSpanM,
+    localBboxDriftBeforeM: localBboxDriftM,
+    localBboxDriftAfterM: localBboxDriftM,
+    localBboxBakedMeshes: 0,
+    recenterMode: "none",
+    maxNodePosLenM,
+    bboxPostM: { x: sz.x, y: sz.y, z: sz.z },
   };
 }
 

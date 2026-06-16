@@ -51,6 +51,7 @@ import {
   resolveGlassesFrameWidthForFit,
   resolveGlassesMerchantMeshScale,
   resolveGlassesIngestDisplayScale,
+  resolveGlassesIngestMeshScaleSpanM,
   omafitGlassesIngestIsCanonicalPreScaled,
   estimateMindarTrackedFaceDistM,
   resolveGlassesMerchantFlatAnchorDepthM,
@@ -622,7 +623,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v299";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v300";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12357,9 +12358,9 @@ async function runArSession({
           worldBboxWidthM: glassesFrameWidthRawLocal,
         });
         if (glassesIngestCanonicalPreScaled) {
-          glassesMeshScaleBboxWidth = Math.max(
+          glassesMeshScaleBboxWidth = resolveGlassesIngestMeshScaleSpanM(
             glassesFrameWidthRawLocal,
-            OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
+            glassesIngestIntrinsicMeshSpanM,
           );
         } else if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
           glassesMeshScaleBboxWidth = Math.max(glassesIngestIntrinsicMeshSpanM, 1e-4);
@@ -13537,6 +13538,12 @@ async function runArSession({
             build: OMAFIT_AR_WIDGET_BUILD,
             adminMeshScale: adminMeshScaleInit,
             displayScale: displayScaleInit,
+            scaleSpanM: glassesIngestCanonicalPreScaled
+              ? resolveGlassesIngestMeshScaleSpanM(
+                  glassesFrameWidthRawLocal,
+                  glassesIngestIntrinsicMeshSpanM,
+                )
+              : null,
             preScaled: glassesIngestCanonicalPreScaled,
             merchantCal: mcFlat,
             ingestSplit: glassesIngestWidgetFrameTag,

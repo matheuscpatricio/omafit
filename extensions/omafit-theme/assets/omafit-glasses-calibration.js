@@ -401,8 +401,30 @@ export function resolveGlassesMerchantMeshScaleBboxWidth(rawLocal, opts = {}) {
 }
 
 /**
- * Ingest pós-`postprocessGlassesCanonicalGlbBuffer`: escala física já aplicada
- * (nó `omafit_ar_canonical` e/ou vértices ~140 mm) — sem auto-fit ×14 no AR.
+ * Span (m) para auto-fit no root `glasses` — vértices sub-físicos (~10 mm) usam
+ * intrinsic; bbox mundo inflada por offsets de grupo não deve forçar escala 1.
+ *
+ * @param {number} worldBboxWidthM
+ * @param {number} intrinsicMeshSpanM
+ * @returns {number}
+ */
+export function resolveGlassesIngestMeshScaleSpanM(
+  worldBboxWidthM,
+  intrinsicMeshSpanM,
+) {
+  const worldW = Math.max(Number(worldBboxWidthM) || 0, 0);
+  const intrinsicM = Math.max(Number(intrinsicMeshSpanM) || 0, 0);
+  if (intrinsicM > 0 && intrinsicM < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return intrinsicM;
+  }
+  if (worldW >= OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return worldW;
+  }
+  return Math.max(intrinsicM, worldW, 1e-4);
+}
+
+/**
+ * Ingest pós-postprocess com nó `omafit_ar_canonical` — escala só no root runtime.
  *
  * @param {{
  *   intrinsicMeshSpanM?: number,
@@ -443,16 +465,24 @@ export function resolveGlassesIngestDisplayScale(p) {
     Number(p.merchantScaleMul) > 0 ? Number(p.merchantScaleMul) : 1;
   const preScaled = omafitGlassesIngestIsCanonicalPreScaled(p);
   if (preScaled) {
+    const worldW = Math.max(Number(p.rawBboxWidthM) || 0, 0);
+    const intrinsicM = Math.max(Number(p.intrinsicMeshSpanM) || 0, 0);
+    const scaleSpanM = resolveGlassesIngestMeshScaleSpanM(worldW, intrinsicM);
+    const autoFitBase = computeGlassesPreviewBaseScale(scaleSpanM);
+    const adminMeshScale = resolveGlassesMerchantMeshScale({
+      bboxWidthLocal: scaleSpanM,
+      merchantScaleMul: merchant,
+      canonicalBlenderExport: true,
+      simpleFaceOnly: true,
+    });
     return {
       preScaled: true,
-      meshScaleBboxWidth: Math.max(
-        Number(p.rawBboxWidthM) || 0,
-        OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
-      ),
-      autoFitBase: 1,
+      scaleSpanM,
+      meshScaleBboxWidth: scaleSpanM,
+      autoFitBase,
       displayScale: clampGlassesDisplayMeshScale(
-        merchant / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
-        1,
+        adminMeshScale / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
+        autoFitBase,
       ),
     };
   }

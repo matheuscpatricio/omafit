@@ -1027,7 +1027,8 @@ export function omafitDownscaleGlassesIngestGroupPositionsForced(
 /**
  * Compensa offsets de grupo/hastes **antes** de `root.scale = S`: após escalar o root,
  * `position` efectiva = S·P; com P' = P/S fica P (paridade preview GLB intacto).
- * Preferir isto ao downscale por bbox em `omafitPrepareGlassesIngestAdminPreviewIntact`.
+ * **Só** `position` em nós Object3D que não são Mesh — nunca `.scale` (Rodin usa
+ * escalas intermédias ~0,07; dividir `.scale` anula o meshScale ~14 no root → minúsculo).
  *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
@@ -1048,27 +1049,19 @@ export function omafitGlassesCompensateIngestHierarchyForRootMeshScale(
   const factor = 1 / S;
   let scaledNodes = 0;
   root.traverse((child) => {
-    if (child === root) return;
+    if (child === root || child.isMesh) return;
     child.position.multiplyScalar(factor);
-    if (child.isMesh) {
-      child.updateMatrix();
-      return;
-    }
-    const sx = child.scale?.x ?? 1;
-    const sy = child.scale?.y ?? 1;
-    const sz = child.scale?.z ?? 1;
-    if (
-      Math.abs(sx - sy) < 1e-5 &&
-      Math.abs(sy - sz) < 1e-5 &&
-      Math.abs(sx - 1) > 1e-6
-    ) {
-      child.scale.multiplyScalar(factor);
-    }
     child.updateMatrix();
     scaledNodes += 1;
   });
   root.updateMatrixWorld(true);
-  return { applied: true, factor, scaledNodes, displayScale: S };
+  return {
+    applied: true,
+    factor,
+    scaledNodes,
+    displayScale: S,
+    mode: "group-position-only",
+  };
 }
 
 /**

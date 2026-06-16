@@ -627,7 +627,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v306";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v307";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13513,7 +13513,7 @@ async function runArSession({
     let glassesPivot = null;
     /** Cópia da posição inicial do pivot (Z inclui `arGlassesZFitExtra` se aplicável) — repor antes do alinhamento debug 168. */
     let glassesPivotBaseLocalPos = null;
-    /** v306: compensação hastes ingest (log + state). */
+    /** v307: compensação hastes ingest — só position em grupos (log + state). */
     let hierarchyScaleComp = null;
     if (accessoryType === "glasses") {
       if (glassesAdminParityFlat) {
@@ -13596,8 +13596,8 @@ async function runArSession({
          * qualquer distância. Referência: slider 50% (default) = armação 145mm.
          * Sem factor angular por distância (v253 recalculava por frame → "respirar").
          *
-         * v306: antes de S no root, P' = P/S nos grupos — hastes Rodin (offsets m)
-         * deixam de esticar com S≈14 (preview GLB intacto; escala v303 inalterada).
+         * v307: antes de S no root, P' = P/S só em grupos (nunca `.scale`) — hastes Rodin
+         * (offsets m) deixam de esticar; escala v303 inalterada (S≈14 no root).
          */
         const meshScaleInit = glassesForceAnchorUnitScale
           ? displayScaleInit
@@ -13608,15 +13608,21 @@ async function runArSession({
         if (
           glassesIngestWidgetFrameTag &&
           glassesIngestPrep?.prepMode === "admin-preview-intact" &&
-          meshScaleInit > 1.05 &&
-          (glassesIngestPrep?.canonicalNodeMaxScale ??
-            omafitGlassesReadCanonicalNodeUniformScale(THREE, glasses)) < 1.05
+          meshScaleInit > 1.05
         ) {
           hierarchyScaleComp = omafitGlassesCompensateIngestHierarchyForRootMeshScale(
             THREE,
             glasses,
             meshScaleInit,
           );
+          try {
+            console.log("[omafit-ar] glasses ingest hierarchy scale comp (load)", {
+              build: OMAFIT_AR_WIDGET_BUILD,
+              ...hierarchyScaleComp,
+            });
+          } catch {
+            /* ignore */
+          }
         }
         glasses.scale.setScalar(meshScaleInit);
         const bridgePivotPostScale = omafitGlassesApplyBridgePivotAfterScale(
@@ -15710,8 +15716,7 @@ async function runArSession({
                 st.glassesIngestWidgetFrameTag &&
                 st.glassesIngestPrepMode === "admin-preview-intact" &&
                 !st.glassesIngestHierarchyScaleCompensated &&
-                displayScale > 1.05 &&
-                (st.glassesIngestCanonicalNodeMaxScale ?? 1) < 1.05
+                displayScale > 1.05
               ) {
                 const compRt = omafitGlassesCompensateIngestHierarchyForRootMeshScale(
                   THREE,

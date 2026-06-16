@@ -105,6 +105,8 @@
   "dashboard": {
     "title": "Panel Omafit",
     "subtitle": "Bienvenido al probador virtual Omafit",
+    "helpImplementationBefore": "Si tienes dudas sobre cómo implementar Omafit en tu tienda, ",
+    "helpImplementationLink": "haz clic aquí",
     "loadingData": "Cargando datos...",
     "errorLoadData": "Error al cargar datos",
     "accountInfo": "Datos de la cuenta",
@@ -227,8 +229,6 @@
     "collectionElasticityLightFlex": "Ligera flexibilidad (hasta 3% elastano)",
     "collectionElasticityFlexible": "Flexible (tejidos de punto, telas con stretch)",
     "collectionElasticityHighElasticity": "Alta elasticidad (canalé, knit, prendas muy ajustables)",
-    "videoTitle": "Video explicativo",
-    "videoSubtitle": "Mira este video para entender de forma simple y comercial cómo aplicar las guías de tallas en tu catálogo.",
     "viewProductMapping": "Ver tabla por producto"
   },
   "sizeChartMapping": {

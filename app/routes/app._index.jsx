@@ -335,6 +335,21 @@ export default function DashboardPage() {
       subtitle={t('dashboard.subtitle')}
     >
       <Layout>
+        <Layout.Section>
+          <Banner tone="info">
+            <Text as="p" variant="bodyMd">
+              {t('dashboard.helpImplementationBefore')}
+              <a
+                href="https://www.youtube.com/watch?v=PjvUxpgHik4&t=4s"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t('dashboard.helpImplementationLink')}
+              </a>
+            </Text>
+          </Banner>
+        </Layout.Section>
+
         {error && (
           <Layout.Section>
             <Banner tone="critical">

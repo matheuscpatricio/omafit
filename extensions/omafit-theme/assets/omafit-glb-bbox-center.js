@@ -1195,3 +1195,33 @@ export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {
   }
   return new THREE.Vector3(0, 0, 0);
 }
+
+/**
+ * Repõe ponte/lentes na origem do parent **depois** de `root.scale` = S (sem bake).
+ * `position.sub(bridge)` com S=1 e depois `scale=S` desloca a ponte por (S−1)·B
+ * (invisível com auto-fit ~14×).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {number} displayScale
+ * @returns {{ ok: boolean, bridgeLocalM?: number, displayScale?: number, reason?: string }}
+ */
+export function omafitGlassesApplyBridgePivotAfterScale(THREE, root, displayScale) {
+  if (!THREE || !root) return { ok: false, reason: "missing-three-or-root" };
+  const S = Math.max(Number(displayScale) || 1, 1e-6);
+  root.updateMatrixWorld(true);
+  const bridgeLocal = omafitComputeGlassesLensAnchorPoint(THREE, root);
+  if (!bridgeLocal || bridgeLocal.lengthSq() < 1e-10) {
+    return { ok: false, reason: "no-bridge" };
+  }
+  const offset = bridgeLocal.clone().multiplyScalar(S);
+  offset.applyQuaternion(root.quaternion);
+  root.position.copy(offset).negate();
+  if (typeof root.updateMatrix === "function") root.updateMatrix();
+  if (typeof root.updateMatrixWorld === "function") root.updateMatrixWorld(true);
+  return {
+    ok: true,
+    bridgeLocalM: bridgeLocal.length(),
+    displayScale: S,
+  };
+}

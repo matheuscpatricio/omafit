@@ -18,6 +18,7 @@ import {
   OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M,
   omafitRecenterObject3OnGlassesLensFront,
   omafitGlassesIngestMeshWorldMaxDimM,
+  omafitGlassesApplyBridgePivotAfterScale,
 } from "./omafit-glb-bbox-center.js";
 import {
   createOmafitBraceletWristPlacementState,
@@ -624,7 +625,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v301";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v302";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13449,20 +13450,11 @@ async function runArSession({
           flatBridgeAnchorM = flatBridgePt.length();
         }
         /**
-         * v228: Ry180 só após bake local bbox ≈ 0 (vértices). Com drift ~0,58 m residual,
-         * Ry180 × meshScale empurrava centerM.y ≈ 4 m (v227).
+         * v302: pivot na ponte **após** meshScale (T = −R·S·B). Com S≈14, subtrair
+         * a ponte só com S=1 empurra o modelo ~(S−1)·B fora do ecrã.
          */
         const lbPreBind = omafitGlassesLocalBboxCenterM(THREE, glasses);
         let ry180Applied = false;
-        /**
-         * v255: pivot na ponte/lentes (LM168), não no centróide da bbox.
-         * v298 ingest pre-scaled: center bbox + ponte (paridade admin).
-         */
-        const bridgePivotPt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
-        if (bridgePivotPt && bridgePivotPt.length() > 0.001) {
-          glasses.position.sub(bridgePivotPt);
-          glasses.updateMatrixWorld(true);
-        }
         if (glassesIngestWidgetFrameTag) {
           glasses.rotateOnWorldAxis(
             new THREE.Vector3(0, 1, 0),
@@ -13528,6 +13520,11 @@ async function runArSession({
                 autoFitFlat / Math.max(omafitAnchorUnitsPerMeter(anchor.group.matrixWorld), 1e-6),
               ),
         );
+        const bridgePivotPostScale = omafitGlassesApplyBridgePivotAfterScale(
+          THREE,
+          glasses,
+          glasses.scale.x,
+        );
         applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
         calibRot.add(glasses);
         try {
@@ -13564,6 +13561,7 @@ async function runArSession({
             ingestSplit: glassesIngestWidgetFrameTag,
             glassesForceAnchorUnitScale,
             flatBridgeAnchorM: flatBridgeAnchorM != null ? Number(flatBridgeAnchorM.toFixed(5)) : null,
+            bridgePivotPostScale,
             parityFlatZInsetM: OMAFIT_GLASSES_ADMIN_PARITY_FLAT_Z_INSET_M,
             bboxCentered: true,
             ry180Applied,
@@ -15597,6 +15595,7 @@ async function runArSession({
               st.glassesLastAdminMeshScale = adminMeshScale;
               st.glassesLastAnchorUnitsPerMeter = anchorU;
               glasses.scale.setScalar(displayScale);
+              omafitGlassesApplyBridgePivotAfterScale(THREE, glasses, displayScale);
               omafitGlassesFlatModeForceDrawableOnFace(THREE, glasses, {
                 preserveRodinGlb: Boolean(
                   st.glassesPreserveRodinGlbLenses || st.glassesLensLoadState?.preserveRodinGlb,

@@ -401,26 +401,38 @@ export function resolveGlassesMerchantMeshScaleBboxWidth(rawLocal, opts = {}) {
 }
 
 /**
- * Span (m) para auto-fit no root `glasses` — vértices sub-físicos (~10 mm) usam
- * intrinsic; bbox mundo inflada por offsets de grupo não deve forçar escala 1.
+ * Span (m) para auto-fit no root `glasses` — usa maior dimensão **por mesh em mundo**
+ * (ignora offsets de grupo). Bbox root pré-center pode inflar para ~0,14 m com vértices ~10 mm.
  *
- * @param {number} worldBboxWidthM
- * @param {number} intrinsicMeshSpanM
+ * @param {number} worldBboxWidthM largura X da bbox root (pós-center)
+ * @param {number} intrinsicMeshSpanM maior aresta local da geometria (m)
+ * @param {number} [worldMeshMaxDimM] maior aresta por mesh em mundo (m)
  * @returns {number}
  */
 export function resolveGlassesIngestMeshScaleSpanM(
   worldBboxWidthM,
   intrinsicMeshSpanM,
+  worldMeshMaxDimM,
 ) {
   const worldW = Math.max(Number(worldBboxWidthM) || 0, 0);
   const intrinsicM = Math.max(Number(intrinsicMeshSpanM) || 0, 0);
+  const meshWorldM = Math.max(Number(worldMeshMaxDimM) || 0, 0);
+  if (meshWorldM > 0 && meshWorldM < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return meshWorldM;
+  }
   if (intrinsicM > 0 && intrinsicM < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return intrinsicM;
+  }
+  if (meshWorldM >= OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return meshWorldM;
+  }
+  if (intrinsicM >= OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
     return intrinsicM;
   }
   if (worldW >= OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
     return worldW;
   }
-  return Math.max(intrinsicM, worldW, 1e-4);
+  return Math.max(meshWorldM, intrinsicM, worldW, 1e-4);
 }
 
 /**
@@ -454,6 +466,7 @@ export function omafitGlassesIngestIsCanonicalPreScaled(p) {
  * @param {{
  *   intrinsicMeshSpanM?: number,
  *   rawBboxWidthM?: number,
+ *   worldMeshMaxDimM?: number,
  *   hasOmafitCanonicalNode?: boolean,
  *   ingestWidgetFrame?: boolean,
  *   merchantScaleMul?: number,
@@ -467,7 +480,11 @@ export function resolveGlassesIngestDisplayScale(p) {
   if (preScaled) {
     const worldW = Math.max(Number(p.rawBboxWidthM) || 0, 0);
     const intrinsicM = Math.max(Number(p.intrinsicMeshSpanM) || 0, 0);
-    const scaleSpanM = resolveGlassesIngestMeshScaleSpanM(worldW, intrinsicM);
+    const scaleSpanM = resolveGlassesIngestMeshScaleSpanM(
+      worldW,
+      intrinsicM,
+      Number(p.worldMeshMaxDimM) || 0,
+    );
     const autoFitBase = computeGlassesPreviewBaseScale(scaleSpanM);
     const adminMeshScale = resolveGlassesMerchantMeshScale({
       bboxWidthLocal: scaleSpanM,

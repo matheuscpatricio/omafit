@@ -619,7 +619,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v296";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v297";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12260,13 +12260,16 @@ async function runArSession({
         if (glassesIngestAdminPreviewIntact) {
           glassesIngestPrep = omafitPrepareGlassesIngestAdminPreviewIntact(THREE, glasses);
           console.log(
-            "[omafit-ar] glasses ingest → admin preview intact (GLB sem mutação)",
+            "[omafit-ar] glasses ingest → admin preview intact (vértices + downscale pos²)",
             {
               build: OMAFIT_AR_WIDGET_BUILD,
               ...glassesIngestPrep,
               intrinsicSpanM: Number((glassesIngestPrep.intrinsicSpanM ?? 0).toFixed(5)),
               intrinsicMeshSpanM: Number(
                 (glassesIngestPrep.intrinsicMeshSpanM ?? 0).toFixed(5),
+              ),
+              groupDownscaleFactor: Number(
+                (glassesIngestPrep.groupDownscaleFactor ?? 1).toFixed(6),
               ),
               maxNodePosLenM: Number((glassesIngestPrep.maxNodePosLenM ?? 0).toFixed(5)),
               bboxPostM: glassesIngestPrep.bboxPostM
@@ -13393,16 +13396,10 @@ async function runArSession({
         let ry180Applied = false;
         /**
          * v255: pivot na ponte/lentes (LM168), não no centróide da bbox.
-         * v296 ingest intact: sem subtrair ponte (paridade preview admin — GLB intacto).
+         * v297 ingest intact: ponte após downscale pos² (vértices intactos).
          */
-        const ingestPreviewIntact =
-          glassesIngestPrep?.prepMode === "admin-preview-intact";
         const bridgePivotPt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
-        if (
-          !ingestPreviewIntact &&
-          bridgePivotPt &&
-          bridgePivotPt.length() > 0.001
-        ) {
+        if (bridgePivotPt && bridgePivotPt.length() > 0.001) {
           glasses.position.sub(bridgePivotPt);
           glasses.updateMatrixWorld(true);
         }

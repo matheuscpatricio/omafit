@@ -401,18 +401,28 @@ export function resolveGlassesMerchantMeshScaleBboxWidth(rawLocal, opts = {}) {
 }
 
 /**
- * Ingest pós-`postprocessGlassesCanonicalGlbBuffer`: vértices ~10 mm, escala física
- * já no nó `omafit_ar_canonical` (paridade preview admin — sem auto-fit ×14 no AR).
+ * Ingest pós-`postprocessGlassesCanonicalGlbBuffer`: escala física já aplicada
+ * (nó `omafit_ar_canonical` e/ou vértices ~140 mm) — sem auto-fit ×14 no AR.
  *
- * @param {{ intrinsicMeshSpanM?: number, hasOmafitCanonicalNode?: boolean }} p
+ * @param {{
+ *   intrinsicMeshSpanM?: number,
+ *   worldBboxWidthM?: number,
+ *   hasOmafitCanonicalNode?: boolean,
+ *   ingestWidgetFrame?: boolean,
+ * }} p
  * @returns {boolean}
  */
 export function omafitGlassesIngestIsCanonicalPreScaled(p) {
+  if (!Boolean(p.hasOmafitCanonicalNode)) return false;
+  if (Boolean(p.ingestWidgetFrame)) return true;
   const intrinsicM = Math.max(Number(p.intrinsicMeshSpanM) || 0, 0);
+  const worldW = Math.max(Number(p.worldBboxWidthM) || 0, 0);
+  if (intrinsicM > 0 && intrinsicM < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M) {
+    return true;
+  }
   return (
-    Boolean(p.hasOmafitCanonicalNode) &&
-    intrinsicM > 0 &&
-    intrinsicM < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M
+    worldW >= OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M &&
+    worldW <= OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M * 1.35
   );
 }
 
@@ -423,6 +433,7 @@ export function omafitGlassesIngestIsCanonicalPreScaled(p) {
  *   intrinsicMeshSpanM?: number,
  *   rawBboxWidthM?: number,
  *   hasOmafitCanonicalNode?: boolean,
+ *   ingestWidgetFrame?: boolean,
  *   merchantScaleMul?: number,
  *   ingestSplit?: boolean,
  * }} p

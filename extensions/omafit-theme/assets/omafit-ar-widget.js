@@ -622,7 +622,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v298";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v299";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12347,14 +12347,14 @@ async function runArSession({
       glassesFrameWidthRawLocal = Math.max(sz.x, 0.001);
       if (glassesIngestWidgetFrameTag && glassesIngestPrep) {
         glassesIngestIntrinsicMeshSpanM = Math.max(
-          Number(glassesIngestPrep.intrinsicMeshSpanM) ||
-            Number(glassesIngestPrep.intrinsicSpanM) ||
-            0,
+          Number(glassesIngestPrep.intrinsicMeshSpanM) || 0,
           0,
         );
         glassesIngestCanonicalPreScaled = omafitGlassesIngestIsCanonicalPreScaled({
           hasOmafitCanonicalNode,
+          ingestWidgetFrame: true,
           intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
+          worldBboxWidthM: glassesFrameWidthRawLocal,
         });
         if (glassesIngestCanonicalPreScaled) {
           glassesMeshScaleBboxWidth = Math.max(
@@ -12380,20 +12380,18 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       if (glassesIngestWidgetFrameTag) {
-        if (glassesIngestCanonicalPreScaled) {
-          try {
-            const centered = omafitCenterObject3OnBboxOrigin(THREE, glasses);
-            if (centered?.ok) {
-              console.log("[omafit-ar] glasses ingest center bbox (admin parity)", {
-                build: OMAFIT_AR_WIDGET_BUILD,
-                preScaled: true,
-                centerM: centered.center?.toArray?.().map((v) => Number(v.toFixed(5))),
-                sizeM: centered.size?.toArray?.().map((v) => Number(v.toFixed(5))),
-              });
-            }
-          } catch {
-            /* ignore */
+        try {
+          const centered = omafitCenterObject3OnBboxOrigin(THREE, glasses);
+          if (centered?.ok) {
+            console.log("[omafit-ar] glasses ingest center bbox (admin parity)", {
+              build: OMAFIT_AR_WIDGET_BUILD,
+              preScaled: glassesIngestCanonicalPreScaled,
+              centerM: centered.center?.toArray?.().map((v) => Number(v.toFixed(5))),
+              sizeM: centered.size?.toArray?.().map((v) => Number(v.toFixed(5))),
+            });
           }
+        } catch {
+          /* ignore */
         }
         glasses.updateMatrixWorld(true);
       } else if (glassesCanonicalBlenderExport) {
@@ -13188,13 +13186,14 @@ async function runArSession({
         if (glassesSimpleFaceOnly) {
           const mc = readGlassesMerchantCal();
           if (glassesIngestCanonicalPreScaled) {
-            const ingestPlan = resolveGlassesIngestDisplayScale({
-              intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
-              rawBboxWidthM: glassesMeshScaleBboxWidth,
-              hasOmafitCanonicalNode,
-              merchantScaleMul: mc?.scale,
-              ingestSplit: true,
-            });
+          const ingestPlan = resolveGlassesIngestDisplayScale({
+            intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
+            rawBboxWidthM: glassesMeshScaleBboxWidth,
+            hasOmafitCanonicalNode,
+            ingestWidgetFrame: true,
+            merchantScaleMul: mc?.scale,
+            ingestSplit: true,
+          });
             glasses.scale.setScalar(ingestPlan.displayScale);
           } else {
             const autoFitBase = resolveGlassesCalibScaleBase({
@@ -13475,6 +13474,7 @@ async function runArSession({
             intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
             rawBboxWidthM: glassesMeshScaleBboxWidth,
             hasOmafitCanonicalNode,
+            ingestWidgetFrame: true,
             merchantScaleMul: mcFlat?.scale,
             ingestSplit: true,
           });
@@ -15513,6 +15513,7 @@ async function runArSession({
                   rawBboxWidthM:
                     st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
                   hasOmafitCanonicalNode: st.glassesHasOmafitCanonicalNode,
+                  ingestWidgetFrame: st.glassesIngestWidgetFrameTag,
                   merchantScaleMul: merchantCal?.scale,
                   ingestSplit: true,
                 });
@@ -15929,6 +15930,7 @@ async function runArSession({
                         rawBboxWidthM:
                           st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
                         hasOmafitCanonicalNode: st.glassesHasOmafitCanonicalNode,
+                        ingestWidgetFrame: st.glassesIngestWidgetFrameTag,
                         merchantScaleMul: merchantCal?.scale,
                         ingestSplit: true,
                       });

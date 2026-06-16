@@ -36,6 +36,7 @@ import {
   OMAFIT_GLASSES_CANONICAL_BIND_RY_RAD,
   OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
   OMAFIT_GLASSES_DEPTH_FORWARD_DEFAULT_M,
+  OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
   OMAFIT_GLASSES_REFERENCE_IPD_M,
   OMAFIT_GLASSES_SCALE_IPD_MUL_SIMPLE_FACE,
   addGlassesMerchantWearToPositionM,
@@ -49,6 +50,8 @@ import {
   resolveGlassesCalibScaleBase,
   resolveGlassesFrameWidthForFit,
   resolveGlassesMerchantMeshScale,
+  resolveGlassesIngestDisplayScale,
+  omafitGlassesIngestIsCanonicalPreScaled,
   estimateMindarTrackedFaceDistM,
   resolveGlassesMerchantFlatAnchorDepthM,
   resolveGlassesMindarLocalMeshScale,
@@ -619,7 +622,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v297";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v298";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12260,7 +12263,7 @@ async function runArSession({
         if (glassesIngestAdminPreviewIntact) {
           glassesIngestPrep = omafitPrepareGlassesIngestAdminPreviewIntact(THREE, glasses);
           console.log(
-            "[omafit-ar] glasses ingest → admin preview intact (vértices + downscale pos²)",
+            "[omafit-ar] glasses ingest → admin preview intact (GLB intacto, zero mutação)",
             {
               build: OMAFIT_AR_WIDGET_BUILD,
               ...glassesIngestPrep,
@@ -12337,16 +12340,34 @@ async function runArSession({
     let glassesMeshWidthNormMul = 1;
     /** Offset de ponte (local) reaplicado a cada frame — evita bake AABB nos vértices. */
     let glassesIngestBridgePositionLocal = null;
+    /** Ingest pós-postprocess: escala física já no nó `omafit_ar_canonical` (sem auto-fit ×14). */
+    let glassesIngestCanonicalPreScaled = false;
+    let glassesIngestIntrinsicMeshSpanM = 0;
     if (accessoryType === "glasses") {
       glassesFrameWidthRawLocal = Math.max(sz.x, 0.001);
-      if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
-        const spanM = Math.max(
-          Number(glassesIngestPrep.intrinsicSpanM) ||
-            Number(glassesIngestPrep.intrinsicMeshSpanM) ||
+      if (glassesIngestWidgetFrameTag && glassesIngestPrep) {
+        glassesIngestIntrinsicMeshSpanM = Math.max(
+          Number(glassesIngestPrep.intrinsicMeshSpanM) ||
+            Number(glassesIngestPrep.intrinsicSpanM) ||
             0,
-          1e-4,
+          0,
         );
-        glassesMeshScaleBboxWidth = spanM;
+        glassesIngestCanonicalPreScaled = omafitGlassesIngestIsCanonicalPreScaled({
+          hasOmafitCanonicalNode,
+          intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
+        });
+        if (glassesIngestCanonicalPreScaled) {
+          glassesMeshScaleBboxWidth = Math.max(
+            glassesFrameWidthRawLocal,
+            OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
+          );
+        } else if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
+          glassesMeshScaleBboxWidth = Math.max(glassesIngestIntrinsicMeshSpanM, 1e-4);
+        } else if (glassesIngestPrep?.ok && glassesIngestPrep.bboxPostM?.x > 0) {
+          glassesMeshScaleBboxWidth = Math.max(glassesIngestPrep.bboxPostM.x, 1e-3);
+        } else {
+          glassesMeshScaleBboxWidth = glassesFrameWidthRawLocal;
+        }
       } else if (glassesIngestPrep?.ok && glassesIngestPrep.bboxPostM?.x > 0) {
         glassesMeshScaleBboxWidth = Math.max(glassesIngestPrep.bboxPostM.x, 1e-3);
       } else {
@@ -12359,7 +12380,22 @@ async function runArSession({
     let necklaceArcSpanPrepM = null;
     if (accessoryType === "glasses") {
       if (glassesIngestWidgetFrameTag) {
-        /* prep hierarchy+downscale + meshScaleBboxWidth já aplicados acima */
+        if (glassesIngestCanonicalPreScaled) {
+          try {
+            const centered = omafitCenterObject3OnBboxOrigin(THREE, glasses);
+            if (centered?.ok) {
+              console.log("[omafit-ar] glasses ingest center bbox (admin parity)", {
+                build: OMAFIT_AR_WIDGET_BUILD,
+                preScaled: true,
+                centerM: centered.center?.toArray?.().map((v) => Number(v.toFixed(5))),
+                sizeM: centered.size?.toArray?.().map((v) => Number(v.toFixed(5))),
+              });
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        glasses.updateMatrixWorld(true);
       } else if (glassesCanonicalBlenderExport) {
         try {
           const baked = omafitGlassesBakeLocalBboxCenterToOrigin(THREE, glasses);
@@ -13151,25 +13187,36 @@ async function runArSession({
       if (!glassesManualMindarRig) {
         if (glassesSimpleFaceOnly) {
           const mc = readGlassesMerchantCal();
-          const autoFitBase = resolveGlassesCalibScaleBase({
-            bboxWidthLocal: glassesMeshScaleBboxWidth,
-          });
-          const adminBootScale = clampGlassesDisplayMeshScale(
-            resolveGlassesMerchantMeshScale({
-              bboxWidthLocal: glassesMeshScaleBboxWidth,
+          if (glassesIngestCanonicalPreScaled) {
+            const ingestPlan = resolveGlassesIngestDisplayScale({
+              intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
+              rawBboxWidthM: glassesMeshScaleBboxWidth,
+              hasOmafitCanonicalNode,
               merchantScaleMul: mc?.scale,
-              canonicalBlenderExport: glassesCanonicalBlenderExport,
-              simpleFaceOnly: true,
-            }),
-            autoFitBase,
-          );
-          const bootScale = glassesForceAnchorUnitScale
-            ? clampGlassesDisplayMeshScale(
-                adminBootScale / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
-                autoFitBase,
-              )
-            : adminBootScale;
-          glasses.scale.set(bootScale, bootScale, bootScale);
+              ingestSplit: true,
+            });
+            glasses.scale.setScalar(ingestPlan.displayScale);
+          } else {
+            const autoFitBase = resolveGlassesCalibScaleBase({
+              bboxWidthLocal: glassesMeshScaleBboxWidth,
+            });
+            const adminBootScale = clampGlassesDisplayMeshScale(
+              resolveGlassesMerchantMeshScale({
+                bboxWidthLocal: glassesMeshScaleBboxWidth,
+                merchantScaleMul: mc?.scale,
+                canonicalBlenderExport: glassesCanonicalBlenderExport,
+                simpleFaceOnly: true,
+              }),
+              autoFitBase,
+            );
+            const bootScale = glassesForceAnchorUnitScale
+              ? clampGlassesDisplayMeshScale(
+                  adminBootScale / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
+                  autoFitBase,
+                )
+              : adminBootScale;
+            glasses.scale.set(bootScale, bootScale, bootScale);
+          }
         } else {
           glasses.scale.set(1, 1, 1);
         }
@@ -13396,7 +13443,7 @@ async function runArSession({
         let ry180Applied = false;
         /**
          * v255: pivot na ponte/lentes (LM168), não no centróide da bbox.
-         * v297 ingest intact: ponte após downscale pos² (vértices intactos).
+         * v298 ingest pre-scaled: center bbox + ponte (paridade admin).
          */
         const bridgePivotPt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
         if (bridgePivotPt && bridgePivotPt.length() > 0.001) {
@@ -13420,18 +13467,38 @@ async function runArSession({
         glasses.updateMatrixWorld(true);
         calibRot.rotation.order = "YXZ";
         const mcFlat = readGlassesMerchantCal();
-        const autoFitFlat = resolveGlassesCalibScaleBase({
-          bboxWidthLocal: glassesMeshScaleBboxWidth,
-        });
-        const adminMeshScaleInit = clampGlassesDisplayMeshScale(
-          resolveGlassesMerchantMeshScale({
-            bboxWidthLocal: glassesMeshScaleBboxWidth,
+        let adminMeshScaleInit;
+        let displayScaleInit;
+        let autoFitFlat = 1;
+        if (glassesIngestCanonicalPreScaled) {
+          const ingestPlan = resolveGlassesIngestDisplayScale({
+            intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM,
+            rawBboxWidthM: glassesMeshScaleBboxWidth,
+            hasOmafitCanonicalNode,
             merchantScaleMul: mcFlat?.scale,
-            canonicalBlenderExport: true,
-            simpleFaceOnly: true,
-          }),
-          autoFitFlat,
-        );
+            ingestSplit: true,
+          });
+          autoFitFlat = ingestPlan.autoFitBase;
+          adminMeshScaleInit = Number(mcFlat?.scale) > 0 ? Number(mcFlat.scale) : 1;
+          displayScaleInit = ingestPlan.displayScale;
+        } else {
+          autoFitFlat = resolveGlassesCalibScaleBase({
+            bboxWidthLocal: glassesMeshScaleBboxWidth,
+          });
+          adminMeshScaleInit = clampGlassesDisplayMeshScale(
+            resolveGlassesMerchantMeshScale({
+              bboxWidthLocal: glassesMeshScaleBboxWidth,
+              merchantScaleMul: mcFlat?.scale,
+              canonicalBlenderExport: true,
+              simpleFaceOnly: true,
+            }),
+            autoFitFlat,
+          );
+          displayScaleInit = clampGlassesDisplayMeshScale(
+            adminMeshScaleInit / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
+            autoFitFlat,
+          );
+        }
         /**
          * v254: escala FÍSICA fixa — PnP MindAR já põe a face canónica (IPD 63mm)
          * à distância real; mesh em metros projecta proporcional ao rosto em
@@ -13439,10 +13506,12 @@ async function runArSession({
          * Sem factor angular por distância (v253 recalculava por frame → "respirar").
          */
         glasses.scale.setScalar(
-          clampGlassesDisplayMeshScale(
-            adminMeshScaleInit / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
-            autoFitFlat,
-          ),
+          glassesForceAnchorUnitScale
+            ? displayScaleInit
+            : clampGlassesDisplayMeshScale(
+                resolveGlassesMindarLocalMeshScale(adminMeshScaleInit, anchor.group.matrixWorld),
+                autoFitFlat / Math.max(omafitAnchorUnitsPerMeter(anchor.group.matrixWorld), 1e-6),
+              ),
         );
         applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
         calibRot.add(glasses);
@@ -13467,6 +13536,8 @@ async function runArSession({
           console.log("[omafit-ar] glasses admin parity flat (MindAR→wear→calibRot→GLB)", {
             build: OMAFIT_AR_WIDGET_BUILD,
             adminMeshScale: adminMeshScaleInit,
+            displayScale: displayScaleInit,
+            preScaled: glassesIngestCanonicalPreScaled,
             merchantCal: mcFlat,
             ingestSplit: glassesIngestWidgetFrameTag,
             glassesForceAnchorUnitScale,
@@ -14163,16 +14234,23 @@ async function runArSession({
       glassesWorkerFrameRemapped: !!glassesWorkerFrameRemapped,
       glassesIngestWidgetFrameTag: !!glassesIngestWidgetFrameTag,
       glassesIngestPhysicalPrep: !!glassesIngestPrep?.physicalNormApplied,
+      glassesIngestCanonicalPreScaled: !!glassesIngestCanonicalPreScaled,
+      glassesIngestIntrinsicMeshSpanM,
+      glassesHasOmafitCanonicalNode: !!hasOmafitCanonicalNode,
       glassesIngestBridgePositionLocal: glassesIngestBridgePositionLocal
         ? glassesIngestBridgePositionLocal.clone()
         : null,
       glassesMeshScaleBboxWidth,
-      glassesCalibAutoScaleBase: resolveGlassesCalibScaleBase({
-        bboxWidthLocal: glassesMeshScaleBboxWidth,
-        canonicalBlenderExport: glassesCanonicalBlenderExport,
-        simpleFaceOnly: glassesSimpleFaceOnly,
-      }),
-      glassesAutoFitScaleRef: resolveGlassesCalibScaleBase({
+      glassesCalibAutoScaleBase: glassesIngestCanonicalPreScaled
+        ? 1
+        : resolveGlassesCalibScaleBase({
+            bboxWidthLocal: glassesMeshScaleBboxWidth,
+            canonicalBlenderExport: glassesCanonicalBlenderExport,
+            simpleFaceOnly: glassesSimpleFaceOnly,
+          }),
+      glassesAutoFitScaleRef: glassesIngestCanonicalPreScaled
+        ? 1
+        : resolveGlassesCalibScaleBase({
         bboxWidthLocal: glassesMeshScaleBboxWidth,
         canonicalBlenderExport: glassesCanonicalBlenderExport,
         simpleFaceOnly: glassesSimpleFaceOnly,
@@ -15425,45 +15503,74 @@ async function runArSession({
                 });
               }
               applyGlassesMerchantCalibRotation(THREE, calibRot, merchantCal);
-              const autoFitBase =
-                Number(st.glassesCalibAutoScaleBase) > 0
-                  ? st.glassesCalibAutoScaleBase
-                  : resolveGlassesCalibScaleBase({
-                      bboxWidthLocal: st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
-                    });
-              const adminMeshScale = clampGlassesDisplayMeshScale(
-                resolveGlassesMerchantMeshScale({
-                  bboxWidthLocal: st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
-                  merchantScaleMul: merchantCal?.scale,
-                  canonicalBlenderExport: true,
-                  simpleFaceOnly: true,
-                }),
-                autoFitBase,
-              );
-              /**
-               * v254: escala FÍSICA constante (metros na face canónica PnP) — NÃO
-               * depende da distância. v253 multiplicava por angularMul(d) com d a
-               * variar por frame → tamanho a "respirar"/flutuar. Slider 50% = 145mm.
-               */
               const anchorU = omafitAnchorUnitsPerMeter(anchor.group.matrixWorld);
-              const displayScale = st.glassesForceAnchorUnitScale
-                ? clampGlassesDisplayMeshScale(
-                    adminMeshScale / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
-                    autoFitBase,
-                  )
-                : clampGlassesDisplayMeshScale(
-                    resolveGlassesMindarLocalMeshScale(
-                      adminMeshScale,
-                      anchor.group.matrixWorld,
-                    ),
-                    autoFitBase / Math.max(anchorU, 1e-6),
-                  );
+              let displayScale;
+              let adminMeshScale;
+              let autoFitBase;
+              if (st.glassesIngestCanonicalPreScaled) {
+                const ingestPlan = resolveGlassesIngestDisplayScale({
+                  intrinsicMeshSpanM: st.glassesIngestIntrinsicMeshSpanM,
+                  rawBboxWidthM:
+                    st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
+                  hasOmafitCanonicalNode: st.glassesHasOmafitCanonicalNode,
+                  merchantScaleMul: merchantCal?.scale,
+                  ingestSplit: true,
+                });
+                autoFitBase = ingestPlan.autoFitBase;
+                adminMeshScale =
+                  Number(merchantCal?.scale) > 0 ? Number(merchantCal.scale) : 1;
+                displayScale = st.glassesForceAnchorUnitScale
+                  ? ingestPlan.displayScale
+                  : clampGlassesDisplayMeshScale(
+                      resolveGlassesMindarLocalMeshScale(
+                        adminMeshScale,
+                        anchor.group.matrixWorld,
+                      ),
+                      autoFitBase / Math.max(anchorU, 1e-6),
+                    );
+                st.glassesLastScaleSource = "ingest-pre-scaled(canonical-node)";
+              } else {
+                autoFitBase =
+                  Number(st.glassesCalibAutoScaleBase) > 0
+                    ? st.glassesCalibAutoScaleBase
+                    : resolveGlassesCalibScaleBase({
+                        bboxWidthLocal:
+                          st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
+                      });
+                adminMeshScale = clampGlassesDisplayMeshScale(
+                  resolveGlassesMerchantMeshScale({
+                    bboxWidthLocal:
+                      st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
+                    merchantScaleMul: merchantCal?.scale,
+                    canonicalBlenderExport: true,
+                    simpleFaceOnly: true,
+                  }),
+                  autoFitBase,
+                );
+                /**
+                 * v254: escala FÍSICA constante (metros na face canónica PnP) — NÃO
+                 * depende da distância. v253 multiplicava por angularMul(d) com d a
+                 * variar por frame → tamanho a "respirar"/flutuar. Slider 50% = 145mm.
+                 */
+                displayScale = st.glassesForceAnchorUnitScale
+                  ? clampGlassesDisplayMeshScale(
+                      adminMeshScale / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
+                      autoFitBase,
+                    )
+                  : clampGlassesDisplayMeshScale(
+                      resolveGlassesMindarLocalMeshScale(
+                        adminMeshScale,
+                        anchor.group.matrixWorld,
+                      ),
+                      autoFitBase / Math.max(anchorU, 1e-6),
+                    );
+                st.glassesLastScaleSource = st.glassesForceAnchorUnitScale
+                  ? "physical-145mm-ref(50%)"
+                  : "admin-parity-flat÷u";
+              }
               st.glassesLastMeshScale = displayScale;
               st.glassesLastAdminMeshScale = adminMeshScale;
               st.glassesLastAnchorUnitsPerMeter = anchorU;
-              st.glassesLastScaleSource = st.glassesForceAnchorUnitScale
-                ? "physical-145mm-ref(50%)"
-                : "admin-parity-flat÷u";
               glasses.scale.setScalar(displayScale);
               omafitGlassesFlatModeForceDrawableOnFace(THREE, glasses, {
                 preserveRodinGlb: Boolean(
@@ -15476,6 +15583,7 @@ async function runArSession({
                   build: OMAFIT_AR_WIDGET_BUILD,
                   merchantCal,
                   adminMeshScale,
+                  preScaled: !!st.glassesIngestCanonicalPreScaled,
                   anchorUnitsPerMeter: anchorU,
                   meshScale: displayScale,
                   wearPositionM: {
@@ -15815,6 +15923,38 @@ async function runArSession({
                     };
                     let displayScale;
                     let scaleSource = "bbox-merchant";
+                    if (st.glassesIngestCanonicalPreScaled && st.glassesSimpleFaceOnly) {
+                      const ingestPlan = resolveGlassesIngestDisplayScale({
+                        intrinsicMeshSpanM: st.glassesIngestIntrinsicMeshSpanM,
+                        rawBboxWidthM:
+                          st.glassesMeshScaleBboxWidth ?? st.glassesFrameWidthRawLocal,
+                        hasOmafitCanonicalNode: st.glassesHasOmafitCanonicalNode,
+                        merchantScaleMul: merchantCal?.scale,
+                        ingestSplit: true,
+                      });
+                      const adminMeshScale =
+                        Number(merchantCal?.scale) > 0 ? Number(merchantCal.scale) : 1;
+                      if (st.glassesForceAnchorUnitScale) {
+                        displayScale = ingestPlan.displayScale;
+                      } else {
+                        displayScale = clampGlassesDisplayMeshScale(
+                          resolveGlassesMindarLocalMeshScale(
+                            adminMeshScale,
+                            anchor.group.matrixWorld,
+                          ),
+                          ingestPlan.autoFitBase /
+                            Math.max(
+                              omafitAnchorUnitsPerMeter(anchor.group.matrixWorld),
+                              1e-6,
+                            ),
+                        );
+                      }
+                      scaleSource = "ingest-pre-scaled(canonical-node)";
+                      st.glassesLastAdminMeshScale = adminMeshScale;
+                      st.glassesLastAnchorUnitsPerMeter = omafitAnchorUnitsPerMeter(
+                        anchor.group.matrixWorld,
+                      );
+                    } else {
                     const useV160MerchantScale =
                       st.glassesSimpleFaceOnly &&
                       (st.glassesCanonicalBlenderExport ||
@@ -15881,6 +16021,7 @@ async function runArSession({
                         st.glassesLastIpdLandmark = ipdLandmark;
                         st.glassesLastFaceScale = faceScale;
                       }
+                    }
                     }
                     if (!Number.isFinite(displayScale)) {
                       displayScale = clampGlassesDisplayMeshScale(

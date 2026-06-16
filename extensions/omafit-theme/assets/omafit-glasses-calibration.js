@@ -400,6 +400,73 @@ export function resolveGlassesMerchantMeshScaleBboxWidth(rawLocal, opts = {}) {
   return raw;
 }
 
+/**
+ * Ingest pós-`postprocessGlassesCanonicalGlbBuffer`: vértices ~10 mm, escala física
+ * já no nó `omafit_ar_canonical` (paridade preview admin — sem auto-fit ×14 no AR).
+ *
+ * @param {{ intrinsicMeshSpanM?: number, hasOmafitCanonicalNode?: boolean }} p
+ * @returns {boolean}
+ */
+export function omafitGlassesIngestIsCanonicalPreScaled(p) {
+  const intrinsicM = Math.max(Number(p.intrinsicMeshSpanM) || 0, 0);
+  return (
+    Boolean(p.hasOmafitCanonicalNode) &&
+    intrinsicM > 0 &&
+    intrinsicM < OMAFIT_GLASSES_UNDERSIZED_BBOX_WIDTH_M
+  );
+}
+
+/**
+ * Plano de escala do mesh ingest — evita `fitW/rawW` quando o GLB já está em metros.
+ *
+ * @param {{
+ *   intrinsicMeshSpanM?: number,
+ *   rawBboxWidthM?: number,
+ *   hasOmafitCanonicalNode?: boolean,
+ *   merchantScaleMul?: number,
+ *   ingestSplit?: boolean,
+ * }} p
+ */
+export function resolveGlassesIngestDisplayScale(p) {
+  const merchant =
+    Number(p.merchantScaleMul) > 0 ? Number(p.merchantScaleMul) : 1;
+  const preScaled = omafitGlassesIngestIsCanonicalPreScaled(p);
+  if (preScaled) {
+    return {
+      preScaled: true,
+      meshScaleBboxWidth: Math.max(
+        Number(p.rawBboxWidthM) || 0,
+        OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
+      ),
+      autoFitBase: 1,
+      displayScale: clampGlassesDisplayMeshScale(
+        merchant / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
+        1,
+      ),
+    };
+  }
+  const meshScaleBboxWidth = resolveGlassesMerchantMeshScaleBboxWidth(
+    Number(p.rawBboxWidthM) || OMAFIT_GLASSES_REFERENCE_FRAME_WIDTH_M,
+    { ingestSplit: Boolean(p.ingestSplit) },
+  );
+  const autoFitBase = computeGlassesPreviewBaseScale(meshScaleBboxWidth);
+  const adminMeshScale = resolveGlassesMerchantMeshScale({
+    bboxWidthLocal: meshScaleBboxWidth,
+    merchantScaleMul: merchant,
+    canonicalBlenderExport: true,
+    simpleFaceOnly: true,
+  });
+  return {
+    preScaled: false,
+    meshScaleBboxWidth,
+    autoFitBase,
+    displayScale: clampGlassesDisplayMeshScale(
+      adminMeshScale / OMAFIT_GLASSES_DEFAULT_MERCHANT_SCALE,
+      autoFitBase,
+    ),
+  };
+}
+
 /** Tecto base para clamp (modo legado widget — preferir `clampGlassesDisplayMeshScale`). */
 export const OMAFIT_GLASSES_MESH_SCALE_ABS_MIN = 0.04;
 export const OMAFIT_GLASSES_MESH_SCALE_ABS_MAX = 2.5;

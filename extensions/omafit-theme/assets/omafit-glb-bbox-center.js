@@ -1118,75 +1118,8 @@ export function omafitPrepareGlassesIngestAdminParityFlat(THREE, root) {
 }
 
 /**
- * Downscale só `position` dos grupos com factor (intrinsic/target)² — paridade com
- * `meshScale` runtime ≈ target/intrinsic **sem** mutar vértices.
- * Offsets em metros × meshScale ~14 empurravam o modelo ~6 m (v296 off-screen).
- *
- * @param {typeof import("three")} THREE
- * @param {import("three").Object3D} root
- * @param {number} spanXIntrinsic
- * @param {number} [targetWidthM]
- */
-export function omafitDownscaleGlassesIngestGroupPositionsQuadratic(
-  THREE,
-  root,
-  spanXIntrinsic,
-  targetWidthM = OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
-) {
-  if (!THREE || !root) {
-    return { applied: false, factor: 1, linearFactor: 1, scaledGroups: 0 };
-  }
-  const raw = Math.max(Number(spanXIntrinsic) || 0, 1e-6);
-  const targetW = Math.max(Number(targetWidthM) || 0, 1e-4);
-  if (raw >= targetW) {
-    return {
-      applied: false,
-      factor: 1,
-      linearFactor: 1,
-      scaledGroups: 0,
-      spanXIntrinsic: raw,
-      targetWidthM: targetW,
-      reason: "already-physical",
-    };
-  }
-  const linearFactor = raw / targetW;
-  const factor = linearFactor * linearFactor;
-  let scaledNodes = 0;
-  root.traverse((child) => {
-    if (child === root) return;
-    child.position.multiplyScalar(factor);
-    if (child.isMesh) {
-      child.updateMatrix();
-      return;
-    }
-    const sx = child.scale?.x ?? 1;
-    const sy = child.scale?.y ?? 1;
-    const sz = child.scale?.z ?? 1;
-    if (
-      Math.abs(sx - sy) < 1e-5 &&
-      Math.abs(sy - sz) < 1e-5 &&
-      Math.abs(sx - 1) > 1e-6
-    ) {
-      child.scale.multiplyScalar(linearFactor);
-    }
-    child.updateMatrix();
-    scaledNodes += 1;
-  });
-  root.updateMatrixWorld(true);
-  return {
-    applied: true,
-    factor,
-    linearFactor,
-    scaledGroups: scaledNodes,
-    scaledNodes,
-    spanXIntrinsic: raw,
-    targetWidthM: targetW,
-  };
-}
-
-/**
- * Ingest + paridade preview admin: vértices intactos; só absorve `omafit_ar_canonical`
- * na hierarquia + downscale quadrático de `position` (compatível com meshScale runtime).
+ * Ingest + paridade preview admin: **zero mutação** (GLB pós-postprocess já escalado).
+ * Só telemetria — escala/posição em runtime como o preview admin.
  *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
@@ -1208,16 +1141,15 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
       bboxPostM: { x: 0, y: 0, z: 0 },
     };
   }
+  root.updateMatrixWorld(true);
+  let canonicalFound = false;
+  root.traverse((child) => {
+    if (child !== root && String(child.name || "") === "omafit_ar_canonical") {
+      canonicalFound = true;
+    }
+  });
   const intrinsicMeshSpanM = omafitGlassesIngestIntrinsicMeshMaxSpanM(THREE, root);
   const intrinsicSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root);
-  const hierarchyBake = omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, root);
-  const groupDownscale = omafitDownscaleGlassesIngestGroupPositionsQuadratic(
-    THREE,
-    root,
-    intrinsicSpanM,
-    OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
-  );
-  root.updateMatrixWorld(true);
   const lb = omafitGlassesLocalBboxCenterM(THREE, root);
   const localBboxDriftM = lb ? lb.length() : 0;
   let maxNodePosLenM = 0;
@@ -1228,20 +1160,19 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
   const sz = new THREE.Vector3();
   new THREE.Box3().setFromObject(root).getSize(sz);
   return {
-    ok: Boolean(hierarchyBake?.ok || groupDownscale?.applied),
+    ok: true,
     prepMode: "admin-preview-intact",
-    hierarchyBakeMode: hierarchyBake?.mode ?? "unknown",
-    hierarchyCanonicalFound: Boolean(hierarchyBake?.canonicalFound),
-    groupDownscaleApplied: Boolean(groupDownscale?.applied),
-    groupDownscaleFactor: groupDownscale?.factor ?? 1,
-    groupDownscaleLinearFactor: groupDownscale?.linearFactor ?? 1,
+    hierarchyBakeMode: "skipped",
+    hierarchyCanonicalFound: canonicalFound,
+    groupDownscaleApplied: false,
+    groupDownscaleFactor: 1,
     intrinsicSpanM,
     intrinsicMeshSpanM,
     nodeBakeMeshes: 0,
     physicalNormApplied: false,
     physicalNormMul: 1,
     spanXBeforeM: intrinsicSpanM,
-    spanXAfterM: intrinsicSpanM,
+    spanXAfterM: sz.x,
     localBboxDriftBeforeM: localBboxDriftM,
     localBboxDriftAfterM: localBboxDriftM,
     localBboxBakedMeshes: 0,

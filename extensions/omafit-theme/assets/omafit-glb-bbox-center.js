@@ -364,34 +364,125 @@ export function omafitShiftGlassesHierarchyRootLocal(THREE, root, delta) {
 }
 
 /** Máximo recuo (m) pós-pivot para ingest intact (ponte vs massa frontal). */
-export const OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M = 0.045;
+export const OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M = 0.055;
+
+/** Recuo técnico Rodin quando AABB/ponte não expõem offset Z suficiente (≈16 mm). */
+export const OMAFIT_GLASSES_INGEST_INTACT_BASELINE_FACE_Z_INSET_M = 0.016;
 
 /**
- * Após pivot na ponte/lentes: recua o GLB ao longo do **−Z local** quando o
- * centróide AABB está à frente do pivot (óculos “flutuam” no nariz).
+ * Extensões AABB no espaço local do root (m).
  *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
- * @param {{ maxInsetM?: number }} [opts]
+ * @returns {{ min: import("three").Vector3, max: import("three").Vector3, center: import("three").Vector3, size: import("three").Vector3 } | null}
  */
+export function omafitGlassesLocalBboxExtentsM(THREE, root) {
+  if (!THREE || !root) return null;
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const box = new THREE.Box3();
+  root.traverse((child) => {
+    if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
+    const geo = child.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const b = geo.boundingBox.clone();
+    b.applyMatrix4(child.matrixWorld);
+    box.union(b);
+  });
+  if (typeof box.isEmpty === "function" && box.isEmpty()) return null;
+  const min = box.min.clone().applyMatrix4(inv);
+  const max = box.max.clone().applyMatrix4(inv);
+  const center = box.getCenter(new THREE.Vector3()).applyMatrix4(inv);
+  const size = new THREE.Vector3().subVectors(max, min);
+  return { min, max, center, size };
+}
+
 /**
  * Offset Z local (m) para aproximar a massa frontal da ponte — **não** acumular
  * com `position.add` por frame (v312 bug: pivot skip + add → drift infinito).
  *
+ * Após Ry180 ingest: câmara ≈ +Z local; recuo = −Z (em direcção ao rosto).
+ *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
- * @param {{ maxInsetM?: number }} [opts]
- * @returns {{ insetZ: number, localBboxZ: number }}
+ * @param {{
+ *   maxInsetM?: number,
+ *   excludeTempleMeshes?: boolean,
+ *   applyBaselineInset?: boolean,
+ *   forwardExtentFactor?: number,
+ * }} [opts]
+ * @returns {{
+ *   insetZ: number,
+ *   localBboxZ: number,
+ *   forwardExtentM: number,
+ *   bridgeZ: number,
+ *   source: string,
+ * }}
  */
 export function omafitGlassesComputeIngestIntactFaceProximityInsetZ(THREE, root, opts = {}) {
-  if (!THREE || !root) return { insetZ: 0, localBboxZ: 0 };
-  const lb = omafitGlassesLocalBboxCenterM(THREE, root);
-  if (!lb) return { insetZ: 0, localBboxZ: 0 };
+  const empty = {
+    insetZ: 0,
+    localBboxZ: 0,
+    forwardExtentM: 0,
+    bridgeZ: 0,
+    source: "none",
+  };
+  if (!THREE || !root) return empty;
   const maxInsetM = Number(opts.maxInsetM) || OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M;
-  let insetZ = -lb.z;
-  if (Math.abs(insetZ) < 0.002) return { insetZ: 0, localBboxZ: lb.z };
+  const forwardFactor =
+    Number.isFinite(opts.forwardExtentFactor) && opts.forwardExtentFactor > 0
+      ? opts.forwardExtentFactor
+      : 0.62;
+  const applyBaseline = opts.applyBaselineInset !== false;
+
+  const lb = omafitGlassesLocalBboxCenterM(THREE, root);
+  const extents = omafitGlassesLocalBboxExtentsM(THREE, root);
+  const bridge = omafitComputeGlassesLensAnchorPoint(THREE, root, opts);
+  const bridgeZ = bridge?.z ?? 0;
+  const localBboxZ = lb?.z ?? 0;
+  let forwardExtentM = 0;
+  if (extents && bridge) {
+    forwardExtentM = Math.max(0, extents.max.z - bridgeZ);
+  }
+
+  const fromCentroid = lb ? -localBboxZ : 0;
+  const fromForward =
+    forwardExtentM > 0.001 ? -forwardExtentM * forwardFactor : 0;
+
+  let insetZ = 0;
+  if (fromCentroid !== 0 && fromForward !== 0) {
+    insetZ = Math.min(fromCentroid, fromForward);
+  } else if (fromForward !== 0) {
+    insetZ = fromForward;
+  } else if (fromCentroid !== 0) {
+    insetZ = fromCentroid;
+  }
+
+  let source = "none";
+  if (fromCentroid !== 0 && fromForward !== 0) {
+    source =
+      Math.abs(insetZ - fromForward) < 1e-6 && Math.abs(fromForward) > Math.abs(fromCentroid) + 1e-6
+        ? "forward-extent"
+        : Math.abs(insetZ - fromCentroid) < 1e-6 &&
+            Math.abs(fromCentroid) > Math.abs(fromForward) + 1e-6
+          ? "centroid"
+          : "centroid+forward";
+  } else if (fromForward !== 0) {
+    source = "forward-extent";
+  } else if (fromCentroid !== 0) {
+    source = "centroid";
+  }
+
+  if (applyBaseline && insetZ > -OMAFIT_GLASSES_INGEST_INTACT_BASELINE_FACE_Z_INSET_M * 0.45) {
+    insetZ = Math.min(insetZ, -OMAFIT_GLASSES_INGEST_INTACT_BASELINE_FACE_Z_INSET_M);
+    source = source === "none" ? "baseline" : `${source}+baseline`;
+  }
+
+  if (Math.abs(insetZ) < 0.001) {
+    return { ...empty, localBboxZ, forwardExtentM, bridgeZ, source: "below-threshold" };
+  }
   insetZ = Math.max(-maxInsetM, Math.min(maxInsetM, insetZ));
-  return { insetZ, localBboxZ: lb.z };
+  return { insetZ, localBboxZ, forwardExtentM, bridgeZ, source };
 }
 
 /** @deprecated Prefer {@link omafitGlassesApplyBridgePivotAfterScale} com `faceProximityInsetZ`. */
@@ -1390,6 +1481,17 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
     }
     localBboxDriftAfterM =
       omafitGlassesLocalBboxCenterM(THREE, root)?.length() ?? driftMidM;
+    const lbZOnly = omafitGlassesLocalBboxCenterM(THREE, root);
+    if (lbZOnly && Math.abs(lbZOnly.z) > 0.003) {
+      omafitShiftGlassesHierarchyRootLocal(
+        THREE,
+        root,
+        new THREE.Vector3(0, 0, lbZOnly.z),
+      );
+      recenterMode = `${recenterMode}+z-trim`;
+      localBboxDriftAfterM =
+        omafitGlassesLocalBboxCenterM(THREE, root)?.length() ?? localBboxDriftAfterM;
+    }
   } else {
     localBboxDriftAfterM = driftMidM;
   }

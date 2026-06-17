@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v313";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v314";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13638,9 +13638,14 @@ async function runArSession({
           }
         }
         glasses.scale.setScalar(meshScaleInit);
+        let glassesIngestFaceProximityMeta = null;
         if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
-          glassesIngestFaceProximityInsetZ =
-            omafitGlassesComputeIngestIntactFaceProximityInsetZ(THREE, glasses).insetZ || 0;
+          glassesIngestFaceProximityMeta = omafitGlassesComputeIngestIntactFaceProximityInsetZ(
+            THREE,
+            glasses,
+            bridgePivotOpts,
+          );
+          glassesIngestFaceProximityInsetZ = glassesIngestFaceProximityMeta.insetZ || 0;
         }
         const bridgePivotPostScale = omafitGlassesApplyBridgePivotAfterScale(
           THREE,
@@ -13692,6 +13697,16 @@ async function runArSession({
               glassesIngestFaceProximityInsetZ !== 0
                 ? Number(glassesIngestFaceProximityInsetZ.toFixed(5))
                 : 0,
+            intactFaceProximityMeta: glassesIngestFaceProximityMeta
+              ? {
+                  source: glassesIngestFaceProximityMeta.source,
+                  localBboxZ: Number(glassesIngestFaceProximityMeta.localBboxZ.toFixed(5)),
+                  forwardExtentM: Number(
+                    (glassesIngestFaceProximityMeta.forwardExtentM ?? 0).toFixed(5),
+                  ),
+                  bridgeZ: Number((glassesIngestFaceProximityMeta.bridgeZ ?? 0).toFixed(5)),
+                }
+              : null,
             parityFlatZInsetM: OMAFIT_GLASSES_ADMIN_PARITY_FLAT_Z_INSET_M,
             bboxCentered: true,
             ry180Applied,

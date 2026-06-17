@@ -1257,9 +1257,11 @@ export function omafitGlassesReadCanonicalNodeUniformScale(THREE, root) {
 }
 
 /**
- * Ingest + paridade preview admin: **zero mutação de vértices** — telemetria só.
- * Compensação de hastes (offsets de grupo) acontece no widget imediatamente antes
- * de `glasses.scale = displayScale` (ver `omafitGlassesCompensateIngestHierarchyForRootMeshScale`).
+ * Ingest + paridade preview admin: **sem mutação de vértices**.
+ * 1) Absorve `omafit_ar_canonical` nos filhos (hierarquia de hastes intacta).
+ * 2) Downscale de `position` de **todos** os grupos (offsets Rodin em m → unidades dos vértices ~10 mm).
+ *    Com `root.scale ≈ 14` depois, P_eff ≈ P'×S ≈ P_original — evita hastes esticadas (v309 só compensava 1 nó).
+ * 3) Recentro opcional do root na ponte/lentes (só `position`, sem bake).
  *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
@@ -1282,18 +1284,37 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
     };
   }
   root.updateMatrixWorld(true);
-  let canonicalFound = false;
-  root.traverse((child) => {
-    if (child !== root && String(child.name || "") === "omafit_ar_canonical") {
-      canonicalFound = true;
-    }
-  });
+  const lbBefore = omafitGlassesLocalBboxCenterM(THREE, root);
+  const localBboxDriftBeforeM = lbBefore ? lbBefore.length() : 0;
+
+  const hierarchyBake = omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, root);
   const intrinsicMeshSpanM = omafitGlassesIngestIntrinsicMeshMaxSpanM(THREE, root);
   const intrinsicSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root);
+  const groupDownscale = omafitDownscaleGlassesIngestGroupPositionsForced(
+    THREE,
+    root,
+    intrinsicMeshSpanM,
+    OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
+  );
+
+  let recenterMode = "none";
+  let localBboxDriftAfterM = localBboxDriftBeforeM;
+  const lbMid = omafitGlassesLocalBboxCenterM(THREE, root);
+  const driftMidM = lbMid ? lbMid.length() : 0;
+  if (driftMidM > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M) {
+    const lensRecenter = omafitRecenterObject3OnGlassesLensFront(THREE, root, {
+      excludeTempleMeshes: true,
+    });
+    recenterMode = lensRecenter?.mode || "lens-front-root";
+    localBboxDriftAfterM =
+      omafitGlassesLocalBboxCenterM(THREE, root)?.length() ?? driftMidM;
+  } else {
+    localBboxDriftAfterM = driftMidM;
+  }
+
+  root.updateMatrixWorld(true);
   const canonicalNodeMaxScale = omafitGlassesReadCanonicalNodeUniformScale(THREE, root);
   const worldMeshMaxDimM = omafitGlassesIngestMeshWorldMaxDimM(THREE, root);
-  const lb = omafitGlassesLocalBboxCenterM(THREE, root);
-  const localBboxDriftM = lb ? lb.length() : 0;
   let maxNodePosLenM = 0;
   root.traverse((child) => {
     if (child === root) return;
@@ -1302,15 +1323,19 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
   const sz = new THREE.Vector3();
   new THREE.Box3().setFromObject(root).getSize(sz);
   return {
-    ok: true,
+    ok: Boolean(hierarchyBake?.ok ?? groupDownscale?.applied),
     prepMode: "admin-preview-intact",
-    hierarchyBakeMode: "skipped",
-    hierarchyCanonicalFound: canonicalFound,
+    hierarchyBakeMode: hierarchyBake?.mode ?? "unknown",
+    hierarchyCanonicalFound: Boolean(hierarchyBake?.canonicalFound),
+    hierarchyBakeChildCount: hierarchyBake?.childCount ?? 0,
     canonicalNodeMaxScale,
     worldMeshMaxDimM,
-    groupDownscaleApplied: false,
-    groupDownscaleFactor: 1,
-    groupDownscaleReason: "deferred-to-root-meshScale",
+    groupDownscaleApplied: Boolean(groupDownscale?.applied),
+    groupDownscaleFactor: groupDownscale?.factor ?? 1,
+    groupDownscaleNodes: groupDownscale?.scaledNodes ?? 0,
+    groupDownscaleReason: groupDownscale?.applied
+      ? "intrinsic-mesh-span-at-load"
+      : groupDownscale?.reason ?? "not-needed",
     intrinsicSpanM,
     intrinsicMeshSpanM,
     nodeBakeMeshes: 0,
@@ -1318,10 +1343,10 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
     physicalNormMul: 1,
     spanXBeforeM: intrinsicSpanM,
     spanXAfterM: sz.x,
-    localBboxDriftBeforeM: localBboxDriftM,
-    localBboxDriftAfterM: localBboxDriftM,
+    localBboxDriftBeforeM,
+    localBboxDriftAfterM,
     localBboxBakedMeshes: 0,
-    recenterMode: "none",
+    recenterMode,
     maxNodePosLenM,
     bboxPostM: { x: sz.x, y: sz.y, z: sz.z },
   };

@@ -627,7 +627,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v309";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v310";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12469,6 +12469,9 @@ async function runArSession({
               build: OMAFIT_AR_WIDGET_BUILD,
               groupDownscaleApplied: glassesIngestPrep?.groupDownscaleApplied,
               groupDownscaleFactor: glassesIngestPrep?.groupDownscaleFactor,
+              groupDownscaleNodes: glassesIngestPrep?.groupDownscaleNodes,
+              hierarchyBakeMode: glassesIngestPrep?.hierarchyBakeMode,
+              maxNodePosLenM: glassesIngestPrep?.maxNodePosLenM,
             });
           } catch {
             /* ignore */
@@ -13511,7 +13514,7 @@ async function runArSession({
     let glassesPivot = null;
     /** Cópia da posição inicial do pivot (Z inclui `arGlassesZFitExtra` se aplicável) — repor antes do alinhamento debug 168. */
     let glassesPivotBaseLocalPos = null;
-    /** v309: compensação hastes ingest — só cadeia articulada (log + state). */
+    /** v310: downscale de grupos no load (intact prep) — runtime temple-path comp é fallback. */
     let hierarchyScaleComp = null;
     if (accessoryType === "glasses") {
       if (glassesAdminParityFlat) {
@@ -13598,8 +13601,7 @@ async function runArSession({
          * qualquer distância. Referência: slider 50% (default) = armação 145mm.
          * Sem factor angular por distância (v253 recalculava por frame → "respirar").
          *
-         * v309: antes de S no root, P' = P/S só na cadeia das hastes (+ meshes com offset).
-         * Ponte recalculada a cada frame (sem lock); hastes excluídas do anchor da ponte.
+         * v310: downscale de grupos no load (intact prep); fallback runtime só se prep não aplicou.
          */
         const meshScaleInit = glassesForceAnchorUnitScale
           ? displayScaleInit
@@ -13610,6 +13612,7 @@ async function runArSession({
         if (
           glassesIngestWidgetFrameTag &&
           glassesIngestPrep?.prepMode === "admin-preview-intact" &&
+          !glassesIngestPrep?.groupDownscaleApplied &&
           meshScaleInit > 1.05
         ) {
           hierarchyScaleComp = omafitGlassesCompensateIngestHierarchyForRootMeshScale(
@@ -14362,7 +14365,11 @@ async function runArSession({
       glassesIngestWidgetFrameTag: !!glassesIngestWidgetFrameTag,
       glassesIngestPhysicalPrep: !!glassesIngestPrep?.physicalNormApplied,
       glassesIngestPrepMode: glassesIngestPrep?.prepMode ?? null,
-      glassesIngestHierarchyScaleCompensated: !!hierarchyScaleComp?.applied,
+      glassesIngestGroupDownscaleApplied: !!glassesIngestPrep?.groupDownscaleApplied,
+      glassesIngestHierarchyScaleCompensated: !!(
+        hierarchyScaleComp?.applied || glassesIngestPrep?.groupDownscaleApplied
+      ),
+      glassesIngestGroupDownscaleApplied: !!glassesIngestPrep?.groupDownscaleApplied,
       glassesIngestCanonicalNodeMaxScale:
         glassesIngestPrep?.canonicalNodeMaxScale ??
         (glassesIngestWidgetFrameTag
@@ -15709,6 +15716,7 @@ async function runArSession({
               if (
                 st.glassesIngestWidgetFrameTag &&
                 st.glassesIngestPrepMode === "admin-preview-intact" &&
+                !st.glassesIngestGroupDownscaleApplied &&
                 !st.glassesIngestHierarchyScaleCompensated &&
                 displayScale > 1.05
               ) {

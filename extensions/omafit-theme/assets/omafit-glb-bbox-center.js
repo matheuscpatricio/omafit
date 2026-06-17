@@ -1016,9 +1016,9 @@ export function omafitDownscaleGlassesIngestGroupPositionsForced(
   root.traverse((child) => {
     if (child === root) return;
     child.position.multiplyScalar(factor);
-    /** Meshes: só `position` — escalar `mesh.scale` encolhe a geometria (ingest ~10 mm). */
     if (child.isMesh) {
       child.updateMatrix();
+      scaledNodes += 1;
       return;
     }
     const sx = child.scale?.x ?? 1;
@@ -1287,13 +1287,13 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
   const lbBefore = omafitGlassesLocalBboxCenterM(THREE, root);
   const localBboxDriftBeforeM = lbBefore ? lbBefore.length() : 0;
 
+  /** Span por mesh em mundo (~10 mm Rodin) — antes do bake; offsets de grupo não entram. */
+  const vertexSpanM = omafitGlassesIngestMeshWorldMaxDimM(THREE, root);
   const hierarchyBake = omafitBakeGlassesIngestCanonicalPreserveHierarchy(THREE, root);
-  const intrinsicMeshSpanM = omafitGlassesIngestIntrinsicMeshMaxSpanM(THREE, root);
-  const intrinsicSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root);
   const groupDownscale = omafitDownscaleGlassesIngestGroupPositionsForced(
     THREE,
     root,
-    intrinsicMeshSpanM,
+    vertexSpanM,
     OMAFIT_GLASSES_INGEST_TARGET_WIDTH_M,
   );
 
@@ -1315,6 +1315,7 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
   root.updateMatrixWorld(true);
   const canonicalNodeMaxScale = omafitGlassesReadCanonicalNodeUniformScale(THREE, root);
   const worldMeshMaxDimM = omafitGlassesIngestMeshWorldMaxDimM(THREE, root);
+  const intrinsicSpanM = omafitGlassesIngestPreHierarchyScaleSpanM(THREE, root);
   let maxNodePosLenM = 0;
   root.traverse((child) => {
     if (child === root) return;
@@ -1330,14 +1331,15 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
     hierarchyBakeChildCount: hierarchyBake?.childCount ?? 0,
     canonicalNodeMaxScale,
     worldMeshMaxDimM,
+    vertexSpanM,
     groupDownscaleApplied: Boolean(groupDownscale?.applied),
     groupDownscaleFactor: groupDownscale?.factor ?? 1,
     groupDownscaleNodes: groupDownscale?.scaledNodes ?? 0,
     groupDownscaleReason: groupDownscale?.applied
-      ? "intrinsic-mesh-span-at-load"
+      ? "vertex-span-world-pre-bake"
       : groupDownscale?.reason ?? "not-needed",
     intrinsicSpanM,
-    intrinsicMeshSpanM,
+    intrinsicMeshSpanM: vertexSpanM,
     nodeBakeMeshes: 0,
     physicalNormApplied: false,
     physicalNormMul: 1,

@@ -627,7 +627,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v310";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v311";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12429,7 +12429,10 @@ async function runArSession({
         });
         if (!glassesIngestCanonicalPreScaled) {
           if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
-            glassesMeshScaleBboxWidth = Math.max(glassesIngestIntrinsicMeshSpanM, 1e-4);
+            glassesMeshScaleBboxWidth = Math.max(
+              glassesIngestWorldMeshMaxDimM || glassesIngestIntrinsicMeshSpanM,
+              1e-4,
+            );
           } else if (glassesIngestPrep?.ok && glassesIngestPrep.bboxPostM?.x > 0) {
             glassesMeshScaleBboxWidth = Math.max(glassesIngestPrep.bboxPostM.x, 1e-3);
           } else {
@@ -12470,8 +12473,10 @@ async function runArSession({
               groupDownscaleApplied: glassesIngestPrep?.groupDownscaleApplied,
               groupDownscaleFactor: glassesIngestPrep?.groupDownscaleFactor,
               groupDownscaleNodes: glassesIngestPrep?.groupDownscaleNodes,
+              vertexSpanM: glassesIngestPrep?.vertexSpanM,
               hierarchyBakeMode: glassesIngestPrep?.hierarchyBakeMode,
               maxNodePosLenM: glassesIngestPrep?.maxNodePosLenM,
+              localBboxDriftAfterM: glassesIngestPrep?.localBboxDriftAfterM,
             });
           } catch {
             /* ignore */

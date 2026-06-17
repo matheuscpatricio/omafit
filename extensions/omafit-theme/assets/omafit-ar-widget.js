@@ -627,7 +627,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v307";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v308";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13513,7 +13513,7 @@ async function runArSession({
     let glassesPivot = null;
     /** Cópia da posição inicial do pivot (Z inclui `arGlassesZFitExtra` se aplicável) — repor antes do alinhamento debug 168. */
     let glassesPivotBaseLocalPos = null;
-    /** v307: compensação hastes ingest — só position em grupos (log + state). */
+    /** v308: compensação hastes ingest — só cadeia articulada (log + state). */
     let hierarchyScaleComp = null;
     if (accessoryType === "glasses") {
       if (glassesAdminParityFlat) {
@@ -13596,8 +13596,8 @@ async function runArSession({
          * qualquer distância. Referência: slider 50% (default) = armação 145mm.
          * Sem factor angular por distância (v253 recalculava por frame → "respirar").
          *
-         * v307: antes de S no root, P' = P/S só em grupos (nunca `.scale`) — hastes Rodin
-         * (offsets m) deixam de esticar; escala v303 inalterada (S≈14 no root).
+         * v308: antes de S no root, P' = P/S só na cadeia das hastes (+ meshes com offset).
+         * Nunca `.scale` intermédio — escala v303 inalterada (S≈14 no root).
          */
         const meshScaleInit = glassesForceAnchorUnitScale
           ? displayScaleInit
@@ -13614,6 +13614,7 @@ async function runArSession({
             THREE,
             glasses,
             meshScaleInit,
+            { intrinsicMeshSpanM: glassesIngestIntrinsicMeshSpanM },
           );
           try {
             console.log("[omafit-ar] glasses ingest hierarchy scale comp (load)", {
@@ -15722,6 +15723,7 @@ async function runArSession({
                   THREE,
                   glasses,
                   displayScale,
+                  { intrinsicMeshSpanM: st.glassesIngestIntrinsicMeshSpanM },
                 );
                 st.glassesIngestHierarchyScaleCompensated = !!compRt?.applied;
               }

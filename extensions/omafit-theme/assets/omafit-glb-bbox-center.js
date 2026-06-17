@@ -1024,20 +1024,82 @@ export function omafitDownscaleGlassesIngestGroupPositionsForced(
   };
 }
 
+const OMAFIT_GLASSES_TEMPLE_MESH_NAME_RE =
+  /\b(temple|haste|shaft|stem|temporal|orelha|bra[cç]o|arm|earpiece|varilla|perna)\b/i;
+
 /**
- * Compensa offsets de grupo/hastes **antes** de `root.scale = S`: após escalar o root,
- * `position` efectiva = S·P; com P' = P/S fica P (paridade preview GLB intacto).
- * **Só** `position` em nós Object3D que não são Mesh — nunca `.scale` (Rodin usa
- * escalas intermédias ~0,07; dividir `.scale` anula o meshScale ~14 no root → minúsculo).
+ * @param {import("three").Object3D} node
+ * @returns {boolean}
+ */
+function omafitGlassesIngestNodeLooksLikeTempleMesh(node) {
+  if (!node?.isMesh) return false;
+  const n = String(node.name || "");
+  if (!n) return false;
+  if (/\b(lens|lentes|glass|vidro|cristal|frame_front|lente)\b/i.test(n)) return false;
+  return (
+    OMAFIT_GLASSES_TEMPLE_MESH_NAME_RE.test(n) ||
+    /temple|haste|shaft|stem|perna|side[_-]?arm/i.test(n)
+  );
+}
+
+/**
+ * Nós na cadeia root→haste cujo `position` está em metros (Rodin) e estica com `root.scale`.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {number} [intrinsicMeshSpanM]
+ * @returns {Set<import("three").Object3D>}
+ */
+export function omafitGlassesCollectIngestTempleArticulationNodes(
+  THREE,
+  root,
+  intrinsicMeshSpanM = 0,
+) {
+  const nodes = new Set();
+  if (!THREE || !root) return nodes;
+  const spanM = Math.max(Number(intrinsicMeshSpanM) || 0, 1e-4);
+  /** Offsets de dobradiça Rodin (m) — acima disto não escala com a frente ~10 mm. */
+  const posThresholdM = Math.max(spanM * 2.5, 0.028);
+  const templeMeshes = [];
+  root.traverse((child) => {
+    if (child === root) return;
+    if (omafitGlassesIngestNodeLooksLikeTempleMesh(child)) {
+      templeMeshes.push(child);
+    }
+  });
+  const markPathToRoot = (from) => {
+    let p = from;
+    while (p && p !== root) {
+      nodes.add(p);
+      p = p.parent;
+    }
+  };
+  for (const mesh of templeMeshes) {
+    markPathToRoot(mesh);
+  }
+  root.traverse((child) => {
+    if (child === root || child.isMesh) return;
+    if (child.position.length() >= posThresholdM) {
+      markPathToRoot(child);
+    }
+  });
+  return nodes;
+}
+
+/**
+ * Compensa offsets de **hastes** antes de `root.scale = S` (escala v303 inalterada).
+ * Só `position` nos nós da cadeia articulada — nunca `.scale` (Rodin ~0,07 anula S).
  *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
  * @param {number} displayScale meshScale uniforme iminente (≈14 ingest Rodin)
+ * @param {{ intrinsicMeshSpanM?: number }} [opts]
  */
 export function omafitGlassesCompensateIngestHierarchyForRootMeshScale(
   THREE,
   root,
   displayScale,
+  opts = {},
 ) {
   if (!THREE || !root) {
     return { applied: false, factor: 1, scaledNodes: 0, reason: "missing-three-or-root" };
@@ -1046,21 +1108,35 @@ export function omafitGlassesCompensateIngestHierarchyForRootMeshScale(
   if (S <= 1.05) {
     return { applied: false, factor: 1, scaledNodes: 0, reason: "scale-unity", displayScale: S };
   }
+  const articulation = omafitGlassesCollectIngestTempleArticulationNodes(
+    THREE,
+    root,
+    Number(opts.intrinsicMeshSpanM) || 0,
+  );
+  if (!articulation.size) {
+    return {
+      applied: false,
+      factor: 1,
+      scaledNodes: 0,
+      reason: "no-temple-articulation-nodes",
+      displayScale: S,
+    };
+  }
   const factor = 1 / S;
   let scaledNodes = 0;
-  root.traverse((child) => {
-    if (child === root || child.isMesh) return;
+  for (const child of articulation) {
     child.position.multiplyScalar(factor);
     child.updateMatrix();
     scaledNodes += 1;
-  });
+  }
   root.updateMatrixWorld(true);
   return {
     applied: true,
     factor,
     scaledNodes,
     displayScale: S,
-    mode: "group-position-only",
+    mode: "temple-path-position-only",
+    articulationNodes: articulation.size,
   };
 }
 

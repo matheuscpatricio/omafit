@@ -19,6 +19,7 @@ import {
   omafitRecenterObject3OnGlassesLensFront,
   omafitGlassesIngestMeshWorldMaxDimM,
   omafitGlassesApplyBridgePivotAfterScale,
+  omafitGlassesApplyIngestIntactFaceProximityInset,
   omafitGlassesCompensateIngestHierarchyForRootMeshScale,
   omafitGlassesReadCanonicalNodeUniformScale,
 } from "./omafit-glb-bbox-center.js";
@@ -627,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v311";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v312";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13642,6 +13643,10 @@ async function runArSession({
           glasses.scale.x,
           bridgePivotOpts,
         );
+        const intactFaceInset =
+          glassesIngestPrep?.prepMode === "admin-preview-intact"
+            ? omafitGlassesApplyIngestIntactFaceProximityInset(THREE, glasses)
+            : null;
         applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
         calibRot.add(glasses);
         try {
@@ -13679,6 +13684,7 @@ async function runArSession({
             glassesForceAnchorUnitScale,
             flatBridgeAnchorM: flatBridgeAnchorM != null ? Number(flatBridgeAnchorM.toFixed(5)) : null,
             bridgePivotPostScale,
+            intactFaceInset,
             parityFlatZInsetM: OMAFIT_GLASSES_ADMIN_PARITY_FLAT_Z_INSET_M,
             bboxCentered: true,
             ry180Applied,
@@ -15744,6 +15750,9 @@ async function runArSession({
                 displayScale,
                 bridgePivotOpts,
               );
+              if (st.glassesIngestPrepMode === "admin-preview-intact") {
+                omafitGlassesApplyIngestIntactFaceProximityInset(THREE, glasses);
+              }
               omafitGlassesFlatModeForceDrawableOnFace(THREE, glasses, {
                 preserveRodinGlb: Boolean(
                   st.glassesPreserveRodinGlbLenses || st.glassesLensLoadState?.preserveRodinGlb,
@@ -16394,6 +16403,7 @@ async function runArSession({
                         st.glassesLastMeshScale,
                         { excludeTempleMeshes: true },
                       );
+                      omafitGlassesApplyIngestIntactFaceProximityInset(THREE, glasses);
                     }
                     if (!st.positionLogged) {
                       st.positionLogged = true;

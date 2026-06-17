@@ -335,6 +335,63 @@ export function omafitComputeGlassesLensAnchorPoint(THREE, root, opts = {}) {
  * @param {import("three").Object3D} root
  * @param {{ skipUpdateWorld?: boolean, sliceFrac?: number, minSliceVerts?: number, horizontalTrimFrac?: number, minClusterVerts?: number }} [opts]
  */
+/**
+ * Translada `position` dos filhos directos por `-delta` (espaço local do root).
+ * Equivalente a `root.position.sub(delta)` mas sobrevive a `root.position.set(0,0,0)`
+ * no bind AR — o pivot pós-escala usa só a geometria, não o offset do root no prep.
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {import("three").Vector3} delta
+ */
+export function omafitShiftGlassesHierarchyRootLocal(THREE, root, delta) {
+  if (!THREE || !root || !delta) {
+    return { ok: false, reason: "missing-args", shiftedNodes: 0, deltaM: 0 };
+  }
+  const d = delta.isVector3 ? delta : new THREE.Vector3(delta.x, delta.y, delta.z);
+  if (d.lengthSq() < 1e-12) {
+    return { ok: true, shiftedNodes: 0, deltaM: 0 };
+  }
+  let shiftedNodes = 0;
+  for (let i = 0; i < root.children.length; i++) {
+    const child = root.children[i];
+    child.position.sub(d);
+    if (typeof child.updateMatrix === "function") child.updateMatrix();
+    shiftedNodes++;
+  }
+  if (typeof root.updateMatrixWorld === "function") root.updateMatrixWorld(true);
+  return { ok: true, shiftedNodes, deltaM: d.length() };
+}
+
+/** Máximo recuo (m) pós-pivot para ingest intact (ponte vs massa frontal). */
+export const OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M = 0.045;
+
+/**
+ * Após pivot na ponte/lentes: recua o GLB ao longo do **−Z local** quando o
+ * centróide AABB está à frente do pivot (óculos “flutuam” no nariz).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {{ maxInsetM?: number }} [opts]
+ */
+export function omafitGlassesApplyIngestIntactFaceProximityInset(THREE, root, opts = {}) {
+  if (!THREE || !root) return { ok: false, reason: "missing-three-or-root", applied: false };
+  const lb = omafitGlassesLocalBboxCenterM(THREE, root);
+  if (!lb) return { ok: false, reason: "no-bbox-center", applied: false };
+  const maxInsetM = Number(opts.maxInsetM) || OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M;
+  let insetZ = -lb.z;
+  if (Math.abs(insetZ) < 0.002) {
+    return { ok: true, applied: false, insetZ: 0, localBboxZ: lb.z };
+  }
+  insetZ = Math.max(-maxInsetM, Math.min(maxInsetM, insetZ));
+  const off = new THREE.Vector3(0, 0, insetZ);
+  off.applyQuaternion(root.quaternion);
+  root.position.add(off);
+  if (typeof root.updateMatrix === "function") root.updateMatrix();
+  if (typeof root.updateMatrixWorld === "function") root.updateMatrixWorld(true);
+  return { ok: true, applied: true, insetZ, localBboxZ: lb.z };
+}
+
 export function omafitRecenterObject3OnGlassesLensFront(THREE, root, opts = {}) {
   if (!THREE || !root) {
     return { ok: false, reason: "missing-three-or-root", mode: "none" };
@@ -1302,10 +1359,15 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
   const lbMid = omafitGlassesLocalBboxCenterM(THREE, root);
   const driftMidM = lbMid ? lbMid.length() : 0;
   if (driftMidM > OMAFIT_GLASSES_LOCAL_BBOX_CENTER_MAX_M) {
-    const lensRecenter = omafitRecenterObject3OnGlassesLensFront(THREE, root, {
-      excludeTempleMeshes: true,
-    });
-    recenterMode = lensRecenter?.mode || "lens-front-root";
+    const anchorOpts = { excludeTempleMeshes: true };
+    const anchor = omafitComputeGlassesLensAnchorPoint(THREE, root, anchorOpts);
+    if (anchor && anchor.lengthSq() > 1e-10) {
+      const shift = omafitShiftGlassesHierarchyRootLocal(THREE, root, anchor);
+      recenterMode = shift?.ok ? "lens-hierarchy-shift" : "lens-hierarchy-shift-failed";
+    } else {
+      const lensRecenter = omafitRecenterObject3OnGlassesLensFront(THREE, root, anchorOpts);
+      recenterMode = lensRecenter?.mode || "lens-front-root";
+    }
     localBboxDriftAfterM =
       omafitGlassesLocalBboxCenterM(THREE, root)?.length() ?? driftMidM;
   } else {
@@ -1346,6 +1408,7 @@ export function omafitPrepareGlassesIngestAdminPreviewIntact(THREE, root) {
     spanXBeforeM: intrinsicSpanM,
     spanXAfterM: sz.x,
     localBboxDriftBeforeM,
+    hierarchyShiftMode: recenterMode,
     localBboxDriftAfterM,
     localBboxBakedMeshes: 0,
     recenterMode,

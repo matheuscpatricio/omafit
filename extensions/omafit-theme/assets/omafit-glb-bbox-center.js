@@ -374,22 +374,42 @@ export const OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M = 0.045;
  * @param {import("three").Object3D} root
  * @param {{ maxInsetM?: number }} [opts]
  */
-export function omafitGlassesApplyIngestIntactFaceProximityInset(THREE, root, opts = {}) {
-  if (!THREE || !root) return { ok: false, reason: "missing-three-or-root", applied: false };
+/**
+ * Offset Z local (m) para aproximar a massa frontal da ponte — **não** acumular
+ * com `position.add` por frame (v312 bug: pivot skip + add → drift infinito).
+ *
+ * @param {typeof import("three")} THREE
+ * @param {import("three").Object3D} root
+ * @param {{ maxInsetM?: number }} [opts]
+ * @returns {{ insetZ: number, localBboxZ: number }}
+ */
+export function omafitGlassesComputeIngestIntactFaceProximityInsetZ(THREE, root, opts = {}) {
+  if (!THREE || !root) return { insetZ: 0, localBboxZ: 0 };
   const lb = omafitGlassesLocalBboxCenterM(THREE, root);
-  if (!lb) return { ok: false, reason: "no-bbox-center", applied: false };
+  if (!lb) return { insetZ: 0, localBboxZ: 0 };
   const maxInsetM = Number(opts.maxInsetM) || OMAFIT_GLASSES_INGEST_INTACT_FACE_PROXIMITY_MAX_M;
   let insetZ = -lb.z;
-  if (Math.abs(insetZ) < 0.002) {
-    return { ok: true, applied: false, insetZ: 0, localBboxZ: lb.z };
-  }
+  if (Math.abs(insetZ) < 0.002) return { insetZ: 0, localBboxZ: lb.z };
   insetZ = Math.max(-maxInsetM, Math.min(maxInsetM, insetZ));
+  return { insetZ, localBboxZ: lb.z };
+}
+
+/** @deprecated Prefer {@link omafitGlassesApplyBridgePivotAfterScale} com `faceProximityInsetZ`. */
+export function omafitGlassesApplyIngestIntactFaceProximityInset(THREE, root, opts = {}) {
+  const { insetZ, localBboxZ } = omafitGlassesComputeIngestIntactFaceProximityInsetZ(
+    THREE,
+    root,
+    opts,
+  );
+  if (!THREE || !root || Math.abs(insetZ) < 0.002) {
+    return { ok: true, applied: false, insetZ: 0, localBboxZ };
+  }
   const off = new THREE.Vector3(0, 0, insetZ);
   off.applyQuaternion(root.quaternion);
   root.position.add(off);
   if (typeof root.updateMatrix === "function") root.updateMatrix();
   if (typeof root.updateMatrixWorld === "function") root.updateMatrixWorld(true);
-  return { ok: true, applied: true, insetZ, localBboxZ: lb.z };
+  return { ok: true, applied: true, insetZ, localBboxZ };
 }
 
 export function omafitRecenterObject3OnGlassesLensFront(THREE, root, opts = {}) {
@@ -1439,25 +1459,50 @@ export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
  * @param {number} displayScale
- * @param {{ excludeTempleMeshes?: boolean }} [opts]
- * @returns {{ ok: boolean, bridgeLocalM?: number, displayScale?: number, reason?: string }}
+ * @param {{
+ *   excludeTempleMeshes?: boolean,
+ *   faceProximityInsetZ?: number,
+ * }} [opts]
+ * @returns {{ ok: boolean, bridgeLocalM?: number, displayScale?: number, faceProximityInsetZ?: number, reason?: string }}
  */
 export function omafitGlassesApplyBridgePivotAfterScale(THREE, root, displayScale, opts = {}) {
   if (!THREE || !root) return { ok: false, reason: "missing-three-or-root" };
   const S = Math.max(Number(displayScale) || 1, 1e-6);
   root.updateMatrixWorld(true);
   const bridgeLocal = omafitComputeGlassesLensAnchorPoint(THREE, root, opts);
+  const faceInsetZ = Number(opts?.faceProximityInsetZ) || 0;
   if (!bridgeLocal || bridgeLocal.lengthSq() < 1e-10) {
-    return { ok: false, reason: "no-bridge" };
+    if (Math.abs(faceInsetZ) > 1e-6) {
+      const off = new THREE.Vector3(0, 0, faceInsetZ);
+      off.applyQuaternion(root.quaternion);
+      root.position.copy(off);
+    } else {
+      root.position.set(0, 0, 0);
+    }
+    if (typeof root.updateMatrix === "function") root.updateMatrix();
+    if (typeof root.updateMatrixWorld === "function") root.updateMatrixWorld(true);
+    return {
+      ok: true,
+      bridgeLocalM: 0,
+      displayScale: S,
+      faceProximityInsetZ: faceInsetZ,
+      reason: "no-bridge-zero-pivot",
+    };
   }
   const offset = bridgeLocal.clone().multiplyScalar(S);
   offset.applyQuaternion(root.quaternion);
   root.position.copy(offset).negate();
+  if (Math.abs(faceInsetZ) > 1e-6) {
+    const insetOff = new THREE.Vector3(0, 0, faceInsetZ);
+    insetOff.applyQuaternion(root.quaternion);
+    root.position.add(insetOff);
+  }
   if (typeof root.updateMatrix === "function") root.updateMatrix();
   if (typeof root.updateMatrixWorld === "function") root.updateMatrixWorld(true);
   return {
     ok: true,
     bridgeLocalM: bridgeLocal.length(),
     displayScale: S,
+    faceProximityInsetZ: faceInsetZ,
   };
 }

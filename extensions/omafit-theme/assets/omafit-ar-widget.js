@@ -19,7 +19,7 @@ import {
   omafitRecenterObject3OnGlassesLensFront,
   omafitGlassesIngestMeshWorldMaxDimM,
   omafitGlassesApplyBridgePivotAfterScale,
-  omafitGlassesApplyIngestIntactFaceProximityInset,
+  omafitGlassesComputeIngestIntactFaceProximityInsetZ,
   omafitGlassesCompensateIngestHierarchyForRootMeshScale,
   omafitGlassesReadCanonicalNodeUniformScale,
 } from "./omafit-glb-bbox-center.js";
@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v312";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v313";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12322,6 +12322,7 @@ async function runArSession({
 
     /** Ingest admin flat: intact (preview) ou pipeline legado (bake + físico). */
     let glassesIngestPrep = null;
+    let glassesIngestFaceProximityInsetZ = 0;
     if (accessoryType === "glasses" && glassesIngestWidgetFrameTag) {
       const glassesIngestAdminPreviewIntact =
         !glassesGlbStandardize &&
@@ -13637,16 +13638,19 @@ async function runArSession({
           }
         }
         glasses.scale.setScalar(meshScaleInit);
+        if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
+          glassesIngestFaceProximityInsetZ =
+            omafitGlassesComputeIngestIntactFaceProximityInsetZ(THREE, glasses).insetZ || 0;
+        }
         const bridgePivotPostScale = omafitGlassesApplyBridgePivotAfterScale(
           THREE,
           glasses,
           glasses.scale.x,
-          bridgePivotOpts,
+          {
+            ...bridgePivotOpts,
+            faceProximityInsetZ: glassesIngestFaceProximityInsetZ,
+          },
         );
-        const intactFaceInset =
-          glassesIngestPrep?.prepMode === "admin-preview-intact"
-            ? omafitGlassesApplyIngestIntactFaceProximityInset(THREE, glasses)
-            : null;
         applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
         calibRot.add(glasses);
         try {
@@ -13684,7 +13688,10 @@ async function runArSession({
             glassesForceAnchorUnitScale,
             flatBridgeAnchorM: flatBridgeAnchorM != null ? Number(flatBridgeAnchorM.toFixed(5)) : null,
             bridgePivotPostScale,
-            intactFaceInset,
+            intactFaceProximityInsetZ:
+              glassesIngestFaceProximityInsetZ !== 0
+                ? Number(glassesIngestFaceProximityInsetZ.toFixed(5))
+                : 0,
             parityFlatZInsetM: OMAFIT_GLASSES_ADMIN_PARITY_FLAT_Z_INSET_M,
             bboxCentered: true,
             ry180Applied,
@@ -14376,6 +14383,7 @@ async function runArSession({
       glassesIngestWidgetFrameTag: !!glassesIngestWidgetFrameTag,
       glassesIngestPhysicalPrep: !!glassesIngestPrep?.physicalNormApplied,
       glassesIngestPrepMode: glassesIngestPrep?.prepMode ?? null,
+      glassesIngestFaceProximityInsetZ,
       glassesIngestGroupDownscaleApplied: !!glassesIngestPrep?.groupDownscaleApplied,
       glassesIngestHierarchyScaleCompensated: !!(
         hierarchyScaleComp?.applied || glassesIngestPrep?.groupDownscaleApplied
@@ -14406,6 +14414,7 @@ async function runArSession({
         simpleFaceOnly: glassesSimpleFaceOnly,
       }),
       glassesLastMeshScale: null,
+      glassesLastBoundMeshScale: null,
       glassesFrameWidthLocal,
       eyeMidWearSmoothed: glassesEyeMidpointAlign ? new THREE.Vector3(0, 0, 0) : null,
       eyeMidWearTarget: glassesEyeMidpointAlign ? new THREE.Vector3() : null,
@@ -15742,16 +15751,22 @@ async function runArSession({
               glasses.scale.setScalar(displayScale);
               const bridgePivotOpts =
                 st.glassesIngestPrepMode === "admin-preview-intact"
-                  ? { excludeTempleMeshes: true }
+                  ? {
+                      excludeTempleMeshes: true,
+                      faceProximityInsetZ: Number(st.glassesIngestFaceProximityInsetZ) || 0,
+                    }
                   : {};
-              omafitGlassesApplyBridgePivotAfterScale(
-                THREE,
-                glasses,
-                displayScale,
-                bridgePivotOpts,
-              );
-              if (st.glassesIngestPrepMode === "admin-preview-intact") {
-                omafitGlassesApplyIngestIntactFaceProximityInset(THREE, glasses);
+              const scaleChanged =
+                !Number.isFinite(st.glassesLastBoundMeshScale) ||
+                Math.abs(st.glassesLastBoundMeshScale - displayScale) > 1e-4;
+              if (scaleChanged) {
+                omafitGlassesApplyBridgePivotAfterScale(
+                  THREE,
+                  glasses,
+                  displayScale,
+                  bridgePivotOpts,
+                );
+                st.glassesLastBoundMeshScale = displayScale;
               }
               omafitGlassesFlatModeForceDrawableOnFace(THREE, glasses, {
                 preserveRodinGlb: Boolean(
@@ -16401,9 +16416,11 @@ async function runArSession({
                         THREE,
                         glasses,
                         st.glassesLastMeshScale,
-                        { excludeTempleMeshes: true },
+                        {
+                          excludeTempleMeshes: true,
+                          faceProximityInsetZ: Number(st.glassesIngestFaceProximityInsetZ) || 0,
+                        },
                       );
-                      omafitGlassesApplyIngestIntactFaceProximityInset(THREE, glasses);
                     }
                     if (!st.positionLogged) {
                       st.positionLogged = true;

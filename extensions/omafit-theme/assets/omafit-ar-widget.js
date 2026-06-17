@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v314";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v315";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13643,7 +13643,10 @@ async function runArSession({
           glassesIngestFaceProximityMeta = omafitGlassesComputeIngestIntactFaceProximityInsetZ(
             THREE,
             glasses,
-            bridgePivotOpts,
+            {
+              ...bridgePivotOpts,
+              ingestRy180Applied: ry180Applied,
+            },
           );
           glassesIngestFaceProximityInsetZ = glassesIngestFaceProximityMeta.insetZ || 0;
         }
@@ -13700,11 +13703,18 @@ async function runArSession({
             intactFaceProximityMeta: glassesIngestFaceProximityMeta
               ? {
                   source: glassesIngestFaceProximityMeta.source,
+                  towardFaceM: Number(
+                    (glassesIngestFaceProximityMeta.towardFaceM ?? 0).toFixed(5),
+                  ),
                   localBboxZ: Number(glassesIngestFaceProximityMeta.localBboxZ.toFixed(5)),
                   forwardExtentM: Number(
                     (glassesIngestFaceProximityMeta.forwardExtentM ?? 0).toFixed(5),
                   ),
+                  backExtentM: Number(
+                    (glassesIngestFaceProximityMeta.backExtentM ?? 0).toFixed(5),
+                  ),
                   bridgeZ: Number((glassesIngestFaceProximityMeta.bridgeZ ?? 0).toFixed(5)),
+                  ry180Applied,
                 }
               : null,
             parityFlatZInsetM: OMAFIT_GLASSES_ADMIN_PARITY_FLAT_Z_INSET_M,

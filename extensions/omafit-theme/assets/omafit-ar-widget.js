@@ -627,7 +627,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v308";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v309";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -12407,8 +12407,6 @@ async function runArSession({
     let glassesFrameWidthRawLocal = 1;
     let glassesMeshScaleBboxWidth = 1;
     let glassesMeshWidthNormMul = 1;
-    /** Offset de ponte (local) reaplicado a cada frame — evita bake AABB nos vértices. */
-    let glassesIngestBridgePositionLocal = null;
     /** Ingest pós-postprocess: escala física já no nó `omafit_ar_canonical` (sem auto-fit ×14). */
     let glassesIngestCanonicalPreScaled = false;
     let glassesIngestIntrinsicMeshSpanM = 0;
@@ -13513,7 +13511,7 @@ async function runArSession({
     let glassesPivot = null;
     /** Cópia da posição inicial do pivot (Z inclui `arGlassesZFitExtra` se aplicável) — repor antes do alinhamento debug 168. */
     let glassesPivotBaseLocalPos = null;
-    /** v308: compensação hastes ingest — só cadeia articulada (log + state). */
+    /** v309: compensação hastes ingest — só cadeia articulada (log + state). */
     let hierarchyScaleComp = null;
     if (accessoryType === "glasses") {
       if (glassesAdminParityFlat) {
@@ -13528,8 +13526,12 @@ async function runArSession({
          * v250: paridade admin = bbox ao centro (sem subtrair ponte). A ponte na
          * âncora MindAR empurrava ~flatBridgeAnchorM à frente do preview /calibrate.
          */
+        const bridgePivotOpts =
+          glassesIngestPrep?.prepMode === "admin-preview-intact"
+            ? { excludeTempleMeshes: true }
+            : {};
         let flatBridgeAnchorM = null;
-        const flatBridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses);
+        const flatBridgePt = omafitComputeGlassesLensAnchorPoint(THREE, glasses, bridgePivotOpts);
         if (flatBridgePt && flatBridgePt.length() > 0.001) {
           flatBridgeAnchorM = flatBridgePt.length();
         }
@@ -13596,8 +13598,8 @@ async function runArSession({
          * qualquer distância. Referência: slider 50% (default) = armação 145mm.
          * Sem factor angular por distância (v253 recalculava por frame → "respirar").
          *
-         * v308: antes de S no root, P' = P/S só na cadeia das hastes (+ meshes com offset).
-         * Nunca `.scale` intermédio — escala v303 inalterada (S≈14 no root).
+         * v309: antes de S no root, P' = P/S só na cadeia das hastes (+ meshes com offset).
+         * Ponte recalculada a cada frame (sem lock); hastes excluídas do anchor da ponte.
          */
         const meshScaleInit = glassesForceAnchorUnitScale
           ? displayScaleInit
@@ -13630,10 +13632,8 @@ async function runArSession({
           THREE,
           glasses,
           glasses.scale.x,
+          bridgePivotOpts,
         );
-        if (glassesIngestPrep?.prepMode === "admin-preview-intact") {
-          glassesIngestBridgePositionLocal = glasses.position.clone();
-        }
         applyGlassesMerchantCalibRotation(THREE, calibRot, mcFlat);
         calibRot.add(glasses);
         try {
@@ -13889,15 +13889,11 @@ async function runArSession({
           glasses.position.y += cy;
           glasses.position.z += cz;
         } else if (glassesTrackingWrap) {
-          if (glassesIngestBridgePositionLocal) {
-            glasses.position.copy(glassesIngestBridgePositionLocal);
-          } else {
-            glasses.position.set(
-              cx + glassesEmpiricalAlignM.x,
-              cy + glassesEmpiricalAlignM.y,
-              cz + glassesEmpiricalAlignM.z,
-            );
-          }
+          glasses.position.set(
+            cx + glassesEmpiricalAlignM.x,
+            cy + glassesEmpiricalAlignM.y,
+            cz + glassesEmpiricalAlignM.z,
+          );
         } else {
           glasses.position.set(cx, cy, cz);
         }
@@ -14376,9 +14372,6 @@ async function runArSession({
       glassesIngestIntrinsicMeshSpanM,
       glassesIngestWorldMeshMaxDimM,
       glassesHasOmafitCanonicalNode: !!hasOmafitCanonicalNode,
-      glassesIngestBridgePositionLocal: glassesIngestBridgePositionLocal
-        ? glassesIngestBridgePositionLocal.clone()
-        : null,
       glassesMeshScaleBboxWidth,
       glassesCalibAutoScaleBase: glassesIngestCanonicalPreScaled
         ? 1
@@ -15728,14 +15721,16 @@ async function runArSession({
                 st.glassesIngestHierarchyScaleCompensated = !!compRt?.applied;
               }
               glasses.scale.setScalar(displayScale);
-              if (
-                st.glassesIngestPrepMode === "admin-preview-intact" &&
-                st.glassesIngestBridgePositionLocal
-              ) {
-                glasses.position.copy(st.glassesIngestBridgePositionLocal);
-              } else {
-                omafitGlassesApplyBridgePivotAfterScale(THREE, glasses, displayScale);
-              }
+              const bridgePivotOpts =
+                st.glassesIngestPrepMode === "admin-preview-intact"
+                  ? { excludeTempleMeshes: true }
+                  : {};
+              omafitGlassesApplyBridgePivotAfterScale(
+                THREE,
+                glasses,
+                displayScale,
+                bridgePivotOpts,
+              );
               omafitGlassesFlatModeForceDrawableOnFace(THREE, glasses, {
                 preserveRodinGlb: Boolean(
                   st.glassesPreserveRodinGlbLenses || st.glassesLensLoadState?.preserveRodinGlb,
@@ -16375,10 +16370,17 @@ async function runArSession({
                     /* noop */
                   }
                   {
-                    if (st.glassesIngestBridgePositionLocal) {
-                      glasses.position.copy(st.glassesIngestBridgePositionLocal);
-                    } else {
-                      glasses.position.set(0, 0, 0);
+                    glasses.position.set(0, 0, 0);
+                    if (
+                      st.glassesIngestPrepMode === "admin-preview-intact" &&
+                      Number(st.glassesLastMeshScale) > 1.05
+                    ) {
+                      omafitGlassesApplyBridgePivotAfterScale(
+                        THREE,
+                        glasses,
+                        st.glassesLastMeshScale,
+                        { excludeTempleMeshes: true },
+                      );
                     }
                     if (!st.positionLogged) {
                       st.positionLogged = true;

@@ -82,18 +82,38 @@ const OMAFIT_GLASSES_LENS_MIDPOINT_HORIZONTAL_TRIM_FRAC = 0.14;
 /** Mínimo de vértices por cluster olho para aceitar midpoint interpupilar. */
 const OMAFIT_GLASSES_LENS_MIDPOINT_MIN_CLUSTER_VERTS = 20;
 
+const OMAFIT_GLASSES_TEMPLE_MESH_NAME_RE =
+  /\b(temple|haste|shaft|stem|temporal|orelha|bra[cç]o|arm|earpiece|varilla|perna)\b/i;
+
+/**
+ * @param {import("three").Object3D} node
+ * @returns {boolean}
+ */
+function omafitGlassesIngestNodeLooksLikeTempleMesh(node) {
+  if (!node?.isMesh) return false;
+  const n = String(node.name || "");
+  if (!n) return false;
+  if (/\b(lens|lentes|glass|vidro|cristal|frame_front|lente)\b/i.test(n)) return false;
+  return (
+    OMAFIT_GLASSES_TEMPLE_MESH_NAME_RE.test(n) ||
+    /temple|haste|shaft|stem|perna|side[_-]?arm/i.test(n)
+  );
+}
+
 /**
  * Percorre meshes estáticas e devolve vértices no espaço **local do root**.
  *
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
+ * @param {{ excludeTempleMeshes?: boolean }} [opts]
  * @returns {{ xs: number[], ys: number[], zs: number[] }}
  */
-export function omafitCollectGlassesVerticesRootLocal(THREE, root) {
+export function omafitCollectGlassesVerticesRootLocal(THREE, root, opts = {}) {
   const xs = [];
   const ys = [];
   const zs = [];
   if (!THREE || !root) return { xs, ys, zs };
+  const excludeTemple = Boolean(opts.excludeTempleMeshes);
 
   root.updateMatrixWorld(true);
   const invRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
@@ -102,6 +122,7 @@ export function omafitCollectGlassesVerticesRootLocal(THREE, root) {
 
   root.traverse((child) => {
     if (!child.isMesh || child.isInstancedMesh || !child.geometry) return;
+    if (excludeTemple && omafitGlassesIngestNodeLooksLikeTempleMesh(child)) return;
     const geo = child.geometry;
     const pos = geo.attributes.position;
     if (!pos || pos.count < 1) return;
@@ -150,7 +171,7 @@ export function omafitComputeGlassesLensFrontCentroid(THREE, root, opts = {}) {
       ? opts.minSliceVerts
       : OMAFIT_GLASSES_LENS_FRONT_MIN_VERTS;
 
-  const { xs, ys, zs } = omafitCollectGlassesVerticesRootLocal(THREE, root);
+  const { xs, ys, zs } = omafitCollectGlassesVerticesRootLocal(THREE, root, opts);
   const n = zs.length;
   if (n < minSliceVerts) return null;
 
@@ -206,7 +227,7 @@ export function omafitComputeGlassesLensMidpointPivot(THREE, root, opts = {}) {
       ? opts.minClusterVerts
       : OMAFIT_GLASSES_LENS_MIDPOINT_MIN_CLUSTER_VERTS;
 
-  const { xs, ys, zs } = omafitCollectGlassesVerticesRootLocal(THREE, root);
+  const { xs, ys, zs } = omafitCollectGlassesVerticesRootLocal(THREE, root, opts);
   const n = zs.length;
   if (n < minSliceVerts) return null;
 
@@ -374,7 +395,7 @@ export function omafitGlassesLocalBboxCenterM(THREE, root) {
 export function omafitGlassesBakeGeometricCenterToOrigin(THREE, root) {
   if (!THREE || !root) return { ok: false, reason: "missing-three-or-root", driftM: 0, bakedMeshes: 0 };
   root.updateMatrixWorld(true);
-  const { xs, ys, zs } = omafitCollectGlassesVerticesRootLocal(THREE, root);
+  const { xs, ys, zs } = omafitCollectGlassesVerticesRootLocal(THREE, root, opts);
   const n = zs.length;
   if (n < 1) return { ok: false, reason: "no-vertices", driftM: 0, bakedMeshes: 0 };
   let sx = 0;
@@ -1024,24 +1045,6 @@ export function omafitDownscaleGlassesIngestGroupPositionsForced(
   };
 }
 
-const OMAFIT_GLASSES_TEMPLE_MESH_NAME_RE =
-  /\b(temple|haste|shaft|stem|temporal|orelha|bra[cç]o|arm|earpiece|varilla|perna)\b/i;
-
-/**
- * @param {import("three").Object3D} node
- * @returns {boolean}
- */
-function omafitGlassesIngestNodeLooksLikeTempleMesh(node) {
-  if (!node?.isMesh) return false;
-  const n = String(node.name || "");
-  if (!n) return false;
-  if (/\b(lens|lentes|glass|vidro|cristal|frame_front|lente)\b/i.test(n)) return false;
-  return (
-    OMAFIT_GLASSES_TEMPLE_MESH_NAME_RE.test(n) ||
-    /temple|haste|shaft|stem|perna|side[_-]?arm/i.test(n)
-  );
-}
-
 /**
  * Nós na cadeia root→haste cujo `position` está em metros (Rodin) e estica com `root.scale`.
  *
@@ -1346,13 +1349,14 @@ export function omafitResolveGlassesIngestWearOffsetM(THREE, root) {
  * @param {typeof import("three")} THREE
  * @param {import("three").Object3D} root
  * @param {number} displayScale
+ * @param {{ excludeTempleMeshes?: boolean }} [opts]
  * @returns {{ ok: boolean, bridgeLocalM?: number, displayScale?: number, reason?: string }}
  */
-export function omafitGlassesApplyBridgePivotAfterScale(THREE, root, displayScale) {
+export function omafitGlassesApplyBridgePivotAfterScale(THREE, root, displayScale, opts = {}) {
   if (!THREE || !root) return { ok: false, reason: "missing-three-or-root" };
   const S = Math.max(Number(displayScale) || 1, 1e-6);
   root.updateMatrixWorld(true);
-  const bridgeLocal = omafitComputeGlassesLensAnchorPoint(THREE, root);
+  const bridgeLocal = omafitComputeGlassesLensAnchorPoint(THREE, root, opts);
   if (!bridgeLocal || bridgeLocal.lengthSq() < 1e-10) {
     return { ok: false, reason: "no-bridge" };
   }

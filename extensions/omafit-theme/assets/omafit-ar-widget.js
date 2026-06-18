@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v321";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v322";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13477,10 +13477,10 @@ async function runArSession({
       false,
     );
     /**
-     * v321: viés lateral/vertical CONSTANTE em NDC, aplicado nos eixos da câmara
-     * (right/up) — corrige o desvio lateral residual de forma determinística e
-     * imune à rotação da cabeça. `?omafit_ar_glasses_ndc_bias_x=<ndc>` (ex.: 0.28
-     * empurra para a direita do ecrã). Sem integração → sem oscilação.
+     * v322: correção lateral/vertical CONSTANTE em METROS nos eixos da câmara.
+     * O diag v321 provou desvio ~constante em metros-mundo (independente da
+     * profundidade), por isso a correção é em metros (não NDC). Imune à rotação
+     * da cabeça. `?omafit_ar_glasses_cam_x_m=0.12` empurra para a direita do ecrã.
      */
     const resolveGlassesNumber = (queryKey, cfgKey, fallback) => {
       try {
@@ -13502,14 +13502,14 @@ async function runArSession({
       }
       return fallback;
     };
-    const glassesNdcBiasX = resolveGlassesNumber(
-      "omafit_ar_glasses_ndc_bias_x",
-      "arGlassesNdcBiasX",
+    const glassesCamXM = resolveGlassesNumber(
+      "omafit_ar_glasses_cam_x_m",
+      "arGlassesCamXM",
       0,
     );
-    const glassesNdcBiasY = resolveGlassesNumber(
-      "omafit_ar_glasses_ndc_bias_y",
-      "arGlassesNdcBiasY",
+    const glassesCamYM = resolveGlassesNumber(
+      "omafit_ar_glasses_cam_y_m",
+      "arGlassesCamYM",
       0,
     );
 
@@ -14510,8 +14510,8 @@ async function runArSession({
       glassesFlatAnchorYawNeg,
       glassesLateralDiagEnabled,
       glassesNdcLockFlat,
-      glassesNdcBiasX,
-      glassesNdcBiasY,
+      glassesCamXM,
+      glassesCamYM,
       glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -15863,46 +15863,91 @@ async function runArSession({
                 }
               }
               /**
-               * Deslocamento lateral constante em NDC (eixos da câmara). Corrige o
-               * viés lateral residual da projecção/âncora de forma previsível, sem
-               * depender de landmarks normalizados nem rodar com a cabeça.
+               * v322: correção lateral/vertical CONSTANTE em METROS nos eixos da
+               * câmara (right/up). O diag v321 provou que o desvio é ~constante em
+               * METROS no mundo (independente da profundidade: glassesNdcX cresce
+               * só por estar mais perto) — logo uma correção em NDC seria errada.
+               * Esta é em metros-mundo, imune à profundidade E à rotação da cabeça.
+               * `?omafit_ar_glasses_cam_x_m=0.12` empurra para a direita do ecrã.
                */
-              const ndcBiasX = Number(st.glassesNdcBiasX) || 0;
-              const ndcBiasY = Number(st.glassesNdcBiasY) || 0;
-              if ((ndcBiasX !== 0 || ndcBiasY !== 0) && mindarThree?.camera) {
+              const camXM = Number(st.glassesCamXM) || 0;
+              const camYM = Number(st.glassesCamYM) || 0;
+              if ((camXM !== 0 || camYM !== 0) && mindarThree?.camera) {
                 try {
-                  if (!st.glassesNdcBiasS) {
-                    st.glassesNdcBiasS = {
+                  if (!st.glassesCamOffS) {
+                    st.glassesCamOffS = {
                       worldD: new THREE.Vector3(),
                       localD: new THREE.Vector3(),
                       invAnchor: new THREE.Matrix4(),
                       right: new THREE.Vector3(),
                       up: new THREE.Vector3(),
-                      anchorW: new THREE.Vector3(),
                     };
                   }
-                  const bs = st.glassesNdcBiasS;
+                  const cs = st.glassesCamOffS;
                   const cam = mindarThree.camera;
+                  cam.updateMatrixWorld(true);
                   anchor.group.updateMatrixWorld(true);
-                  anchor.group.getWorldPosition(bs.anchorW);
-                  const depthDist = cam.position.distanceTo(bs.anchorW);
-                  omafitWorldDeltaFromNdcScreenError(
-                    THREE,
-                    cam,
-                    ndcBiasX,
-                    ndcBiasY,
-                    depthDist,
-                    0,
-                    false,
-                    bs.worldD,
-                    bs.right,
-                    bs.up,
-                  );
-                  bs.invAnchor.copy(anchor.group.matrixWorld).invert();
-                  bs.localD.copy(bs.worldD).transformDirection(bs.invAnchor);
-                  wearPosition.position.add(bs.localD);
+                  cs.right.setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+                  cs.up.setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+                  cs.worldD
+                    .set(0, 0, 0)
+                    .addScaledVector(cs.right, camXM)
+                    .addScaledVector(cs.up, camYM);
+                  cs.invAnchor.copy(anchor.group.matrixWorld).invert();
+                  cs.localD.copy(cs.worldD).transformDirection(cs.invAnchor);
+                  /** transformDirection normaliza → reescalar para o módulo pedido. */
+                  const reqLen = Math.hypot(camXM, camYM);
+                  if (reqLen > 1e-9) cs.localD.multiplyScalar(reqLen);
+                  wearPosition.position.add(cs.localD);
                 } catch {
                   /* ignore */
+                }
+              }
+              /**
+               * v322: descoberta única — despeja as chaves de `payload`/`est` e
+               * procura arrays de landmarks normalizados (x,y∈[0,1]). Se existirem,
+               * a próxima iteração liga a trava NDC exacta (auto-centragem real).
+               */
+              if (!st.glassesLmDiscoveryLogged) {
+                st.glassesLmDiscoveryLogged = true;
+                try {
+                  const scanArr = (obj) => {
+                    const out = [];
+                    if (!obj || typeof obj !== "object") return out;
+                    for (const k of Object.keys(obj)) {
+                      const v = obj[k];
+                      if (Array.isArray(v) && v.length > 50) {
+                        const p0 = v[0];
+                        const shape = Array.isArray(p0)
+                          ? `arr[${p0.length}]`
+                          : p0 && typeof p0 === "object"
+                            ? `{${Object.keys(p0).slice(0, 4).join(",")}}`
+                            : typeof p0;
+                        const x0 = Array.isArray(p0) ? p0[0] : p0?.x;
+                        out.push({
+                          key: k,
+                          len: v.length,
+                          shape,
+                          x0: typeof x0 === "number" ? Number(x0.toFixed(3)) : null,
+                          normalizedLike:
+                            typeof x0 === "number" && x0 >= 0 && x0 <= 1,
+                        });
+                      }
+                    }
+                    return out;
+                  };
+                  console.log("[omafit-ar] LM discovery (v322)", {
+                    build: OMAFIT_AR_WIDGET_BUILD,
+                    payloadKeys: payload ? Object.keys(payload) : null,
+                    estKeys: est ? Object.keys(est) : null,
+                    payloadArrays: scanArr(payload),
+                    estArrays: scanArr(est),
+                    controllerKeys: mindarThree?.controller
+                      ? Object.keys(mindarThree.controller).slice(0, 40)
+                      : null,
+                  });
+                } catch (e) {
+                  console.warn("[omafit-ar] LM discovery falhou:", e?.message || e);
                 }
               }
               const wearZNow = Number(merchantCal?.wearZ) || 0;
@@ -15989,13 +16034,9 @@ async function runArSession({
                     eyeMidLmX:
                       eyeMidLmX != null ? Number(eyeMidLmX.toFixed(4)) : null,
                     mpAvailable: !!mp168,
-                    ndcBiasX: Number(st.glassesNdcBiasX) || 0,
-                    ndcLock: st.glassesNdcLockFlat === true && !!mp168,
-                    ndcLockOffX: st.glassesNdcLockOffset
-                      ? Number(st.glassesNdcLockOffset.x.toFixed(4))
-                      : null,
+                    camXM: Number(st.glassesCamXM) || 0,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    note: "Sem mp normalizado: usar ?omafit_ar_glasses_ndc_bias_x até glassesNdcX≈0 com rosto centrado.",
+                    note: "Erro ~constante em METROS. Dial ?omafit_ar_glasses_cam_x_m até os óculos centrarem nos olhos.",
                   });
                 } catch {
                   /* ignore */

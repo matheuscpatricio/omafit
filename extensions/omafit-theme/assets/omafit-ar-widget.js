@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v322";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v323";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13446,18 +13446,28 @@ async function runArSession({
       return fallback;
     };
     /**
-     * v319: diag lateral (v318) provou sinais opostos entre `glassesNdcX` e o meio
-     * dos olhos → translação X da âncora estava sem espelho selfie. Default agora ON.
+     * v323: REVERTIDO para FALSE. A documentação deste ficheiro (ver topo, secção
+     * "Nota sobre MindAR / MediaPipe") avisa explicitamente: com `flipFace=true`
+     * (selfie default) a MindAR já inverte o frame ANTES da detecção e entrega a
+     * `faceMatrix` no mesmo sistema do vídeo mostrado — aplicar um `mirrorX` extra
+     * (negar a translação X da âncora) "gera o óculos virado pra esquerda". Era
+     * exactamente o sintoma reportado em v319–v322. O default `true` (v319) foi o
+     * erro. Sem espelho extra: confiamos no espelho nativo do MindAR.
      */
     const glassesFlatAnchorTxMirror = resolveGlassesSignToggle(
       "omafit_ar_glasses_anchor_tx_mirror",
       "arGlassesAnchorTxMirror",
-      true,
+      false,
     );
+    /**
+     * v323: idem — sem negação extra de yaw. O `rvec` já é convertido por MindAR
+     * (linhas Y/Z negadas) para a convenção Three no frame espelhado; negar o yaw
+     * outra vez dessincroniza rotação vs. translação. Trust MindAR.
+     */
     const glassesFlatAnchorYawNeg = resolveGlassesSignToggle(
       "omafit_ar_glasses_anchor_yaw_neg",
       "arGlassesAnchorYawNeg",
-      true,
+      false,
     );
     const glassesLateralDiagEnabled = resolveGlassesSignToggle(
       "omafit_ar_glasses_lateral_diag",

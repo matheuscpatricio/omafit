@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v317";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v318";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -5503,10 +5503,11 @@ function omafitGlassesFixMeterAnchorPitchInvert(THREE, quat) {
  * negar X na tradução da âncora deslocava o GLB para a esquerda (v239/v240).
  * v254 negava roll também — inclinações naturais ficavam invertidas; revertido v255.
  */
-function omafitGlassesFixMeterAnchorSelfieFlatAxes(THREE, dec, mirrorSelfie) {
+function omafitGlassesFixMeterAnchorSelfieFlatAxes(THREE, dec, mirrorSelfie, yawNeg = true) {
   if (!THREE || !dec?.q) return;
   omafitGlassesFixMeterAnchorPitchInvert(THREE, dec.q);
   if (mirrorSelfie === false) return;
+  if (yawNeg === false) return;
   if (!omafitGlassesFixMeterAnchorSelfieFlatAxes._euler) {
     omafitGlassesFixMeterAnchorSelfieFlatAxes._euler = new THREE.Euler(0, 0, 0, "YXZ");
   }
@@ -5588,7 +5589,19 @@ function omafitGlassesNormalizeMindarAnchorMatrix(matrix, dec, lm, opts, THREE) 
     (Math.abs(dec.s.x) + Math.abs(dec.s.y) + Math.abs(dec.s.z)) / 3,
   );
   if (stripUnit) {
-    omafitGlassesFixMeterAnchorSelfieFlatAxes(THREE, dec, opts?.mirrorSelfie !== false);
+    omafitGlassesFixMeterAnchorSelfieFlatAxes(
+      THREE,
+      dec,
+      opts?.mirrorSelfie !== false,
+      opts?.anchorYawNeg !== false,
+    );
+    /**
+     * v318 (opt-in): completa o espelho selfie negando a translação X da âncora.
+     * Por defeito desligado — paridade com o centro interpupilar actual (v235+).
+     */
+    if (opts?.mirrorSelfie !== false && opts?.anchorTxMirror === true) {
+      dec.p.x = -dec.p.x;
+    }
     dec.s.set(1, 1, 1);
     matrix.compose(dec.p, dec.q, dec.s);
     matrix.decompose(dec.p, dec.q, dec.s);
@@ -13410,6 +13423,44 @@ async function runArSession({
       glassesForceAnchorUnitScale &&
       (glassesPipelineCanonicalBlender || glassesIngestWidgetFrameTag);
 
+    /**
+     * v318: o deslize lateral depende do espelho selfie (MindAR espelha vídeo+pose,
+     * mas a normalização da âncora trata translação X e yaw em separado). Como não é
+     * verificável sem render, expomos ambos os sinais como toggles (URL/cfg) e mantemos
+     * o comportamento actual por defeito. O diag lateral (abaixo) imprime os números.
+     */
+    const resolveGlassesSignToggle = (queryKey, cfgKey, fallback) => {
+      try {
+        const q = new URLSearchParams(
+          typeof window !== "undefined" ? window.location.search || "" : "",
+        );
+        const v = (q.get(queryKey) || "").trim().toLowerCase();
+        if (v === "1" || v === "true" || v === "on" || v === "yes") return true;
+        if (v === "0" || v === "false" || v === "off" || v === "no") return false;
+      } catch {
+        /* ignore */
+      }
+      const a = String(cfgAttr(cfgKey, "")).trim().toLowerCase();
+      if (/^(1|true|yes|on)$/.test(a)) return true;
+      if (/^(0|false|no|off)$/.test(a)) return false;
+      return fallback;
+    };
+    const glassesFlatAnchorTxMirror = resolveGlassesSignToggle(
+      "omafit_ar_glasses_anchor_tx_mirror",
+      "arGlassesAnchorTxMirror",
+      false,
+    );
+    const glassesFlatAnchorYawNeg = resolveGlassesSignToggle(
+      "omafit_ar_glasses_anchor_yaw_neg",
+      "arGlassesAnchorYawNeg",
+      true,
+    );
+    const glassesLateralDiagEnabled = resolveGlassesSignToggle(
+      "omafit_ar_glasses_lateral_diag",
+      "arGlassesLateralDiag",
+      true,
+    );
+
     if (glassesForceAnchorUnitScale) {
       faceProjectionOpts.faceAnchorDistM = glassesAdminParityFlat
         ? OMAFIT_GLASSES_ADMIN_PREVIEW_CAM_DIST_M
@@ -14403,6 +14454,10 @@ async function runArSession({
         !!glassesIngestWidgetFrameTag &&
         glassesIngestPrep?.prepMode === "admin-preview-intact",
       glassesForceAnchorUnitScale: !!glassesForceAnchorUnitScale,
+      glassesFlatAnchorTxMirror,
+      glassesFlatAnchorYawNeg,
+      glassesLateralDiagEnabled,
+      glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
       readNecklaceMerchantScaleMul,
@@ -15438,6 +15493,8 @@ async function runArSession({
                   {
                     stripUnitScale: !!st.glassesForceAnchorUnitScale,
                     mirrorSelfie: st.disableFaceMirror !== true,
+                    anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
+                    anchorYawNeg: st.glassesFlatAnchorYawNeg !== false,
                     nativeAnchorDepth:
                       !!st.glassesAdminParityFlat || !!st.glassesIngestWidgetFrameTag,
                     wearZ: Number(merchantCalFrame?.wearZ) || 0,
@@ -15528,14 +15585,15 @@ async function runArSession({
              */
             if (st.glassesAdminParityFlat && st.glassesIngestFlatFaceTrack) {
               /**
-               * v317 ingest intact: posição+rotação da âncora em conjunto (sem One Euro
-               * só na rotação). v316 face-align 468 duplicava T/R → óculos sumiam.
+               * v318 ingest intact: posição+rotação da âncora em conjunto. Piso de
+               * lambda mais alto (0.85) reduz o lag lateral durante o movimento sem
+               * One Euro só na rotação (que desacoplava T vs R).
                */
               omafitDampMatrix4PosRotOnly(
                 THREE,
                 st.smoothAnchorMat,
                 anchorRawMat,
-                Math.max(0.72, faceMatrixExtraLambda),
+                Math.max(0.85, faceMatrixExtraLambda),
               );
             } else if (st.glassesAdminParityFlat) {
               omafitOneEuroFilterQuaternion(
@@ -15704,6 +15762,47 @@ async function runArSession({
                     z: wearPosition.position.z.toFixed(4),
                   },
                 });
+              }
+              /**
+               * v318 diag lateral (throttle 600ms): correlaciona o lado em ecrã dos
+               * óculos (NDC x) com o lado do meio dos olhos (landmark). Se os sinais
+               * forem opostos, o espelho da translação X está invertido → testar
+               * `?omafit_ar_glasses_anchor_tx_mirror=1`. Se acompanha mas com atraso
+               * em yaw, testar `?omafit_ar_glasses_anchor_yaw_neg=0`.
+               */
+              if (
+                st.glassesLateralDiagEnabled !== false &&
+                nowMs - (st.glassesLastLateralDiagMs || 0) > 600
+              ) {
+                st.glassesLastLateralDiagMs = nowMs;
+                try {
+                  glasses.updateWorldMatrix(true, false);
+                  anchor.group.updateMatrixWorld(true);
+                  const gw = glasses.getWorldPosition(new THREE.Vector3());
+                  const aw = anchor.group.getWorldPosition(new THREE.Vector3());
+                  const cam = mindarThree?.camera;
+                  const gNdc = gw.clone();
+                  if (cam) gNdc.project(cam);
+                  const eL = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
+                  const eR = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
+                  const eyeMidLmX =
+                    eL && eR && Number.isFinite(eL.x) && Number.isFinite(eR.x)
+                      ? (eL.x + eR.x) / 2
+                      : null;
+                  console.log("[omafit-ar] glasses lateral diag", {
+                    build: OMAFIT_AR_WIDGET_BUILD,
+                    glassesWorldX: Number(gw.x.toFixed(4)),
+                    anchorWorldX: Number(aw.x.toFixed(4)),
+                    glassesNdcX: cam ? Number(gNdc.x.toFixed(3)) : null,
+                    eyeMidLmX:
+                      eyeMidLmX != null ? Number(eyeMidLmX.toFixed(4)) : null,
+                    anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
+                    anchorYawNeg: st.glassesFlatAnchorYawNeg !== false,
+                    note: "glassesNdcX e eyeMidLmX devem ter o MESMO sinal/lado.",
+                  });
+                } catch {
+                  /* ignore */
+                }
               }
               applyGlassesMerchantCalibRotation(THREE, calibRot, merchantCal);
               const anchorU = omafitAnchorUnitsPerMeter(anchor.group.matrixWorld);

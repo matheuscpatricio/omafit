@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v319";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v320";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13464,6 +13464,18 @@ async function runArSession({
       "arGlassesLateralDiag",
       true,
     );
+    /**
+     * v320: trava NDC em malha fechada. Alinha o centro dos óculos ao landmark
+     * normalizado do nariz (168) do MediaPipe — verdade-terreno do vídeo, imune
+     * ao espelho/escala da âncora 3D. Controlador integral (offset acumulado em
+     * `wearPosition`, espaço local da âncora) elimina o desvio lateral residual.
+     * Kill switch: `?omafit_ar_glasses_ndc_lock=0`.
+     */
+    const glassesNdcLockFlat = resolveGlassesSignToggle(
+      "omafit_ar_glasses_ndc_lock",
+      "arGlassesNdcLockFlat",
+      true,
+    );
 
     if (glassesForceAnchorUnitScale) {
       faceProjectionOpts.faceAnchorDistM = glassesAdminParityFlat
@@ -14461,6 +14473,7 @@ async function runArSession({
       glassesFlatAnchorTxMirror,
       glassesFlatAnchorYawNeg,
       glassesLateralDiagEnabled,
+      glassesNdcLockFlat,
       glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -15741,6 +15754,64 @@ async function runArSession({
                 merchantCal,
                 { depthOnAnchor: true },
               );
+              /**
+               * v320: trava NDC em malha fechada (controlador integral). O `wear`
+               * acima repõe `wearPosition` a cada frame; somamos o offset acumulado
+               * `glassesNdcLockOffset` (espaço local da âncora) e integramos o erro
+               * residual entre o centro dos óculos e o nariz (landmark normalizado
+               * MediaPipe → NDC). Converge o desvio lateral para ~0 sem depender do
+               * sinal do espelho da âncora. Clamp total protege contra divergência.
+               */
+              if (st.glassesNdcLockFlat !== false && mindarThree?.camera) {
+                try {
+                  if (!st.glassesNdcLockOffset)
+                    st.glassesNdcLockOffset = new THREE.Vector3();
+                  if (!st.glassesNdcLockS) {
+                    st.glassesNdcLockS = {
+                      w168: new THREE.Vector3(),
+                      ndc168: new THREE.Vector3(),
+                      ndcGl: new THREE.Vector3(),
+                      worldD: new THREE.Vector3(),
+                      localD: new THREE.Vector3(),
+                      invAnchor: new THREE.Matrix4(),
+                      box: new THREE.Box3(),
+                      center: new THREE.Vector3(),
+                      right: new THREE.Vector3(),
+                      up: new THREE.Vector3(),
+                      lensK: Number(st.glassesLensDistortK) || 0,
+                      mirrorSelfie: st.disableFaceMirror !== true,
+                    };
+                  }
+                  wearPosition.position.add(st.glassesNdcLockOffset);
+                  const lockLocalD = omafitComputeGlassesWearNdcLockLocalDelta(
+                    THREE,
+                    mindarThree.camera,
+                    anchor.group,
+                    glasses,
+                    est,
+                    st.glassesNdcLockS,
+                    1,
+                  );
+                  if (lockLocalD) {
+                    const lockGain = 0.5;
+                    st.glassesNdcLockOffset.x += lockLocalD.x * lockGain;
+                    st.glassesNdcLockOffset.y += lockLocalD.y * lockGain;
+                    st.glassesNdcLockOffset.z = 0;
+                    const lockMax = 0.15;
+                    const lockMag = Math.hypot(
+                      st.glassesNdcLockOffset.x,
+                      st.glassesNdcLockOffset.y,
+                    );
+                    if (lockMag > lockMax) {
+                      const k = lockMax / lockMag;
+                      st.glassesNdcLockOffset.x *= k;
+                      st.glassesNdcLockOffset.y *= k;
+                    }
+                  }
+                } catch {
+                  /* ignore */
+                }
+              }
               const wearZNow = Number(merchantCal?.wearZ) || 0;
               /** v254: log só em mudança de wearZ ou Δdistância > 2cm — por frame matava o loop. */
               if (
@@ -15793,16 +15864,44 @@ async function runArSession({
                     eL && eR && Number.isFinite(eL.x) && Number.isFinite(eR.x)
                       ? (eL.x + eR.x) / 2
                       : null;
+                  /**
+                   * v320: verdade-terreno — landmark normalizado do nariz (168) do
+                   * MediaPipe projectado em NDC. É a posição REAL do rosto no vídeo.
+                   * `faceNdcX` (com espelho selfie) deve coincidir com `glassesNdcX`
+                   * quando a trava NDC está a funcionar. `mpAvailable: false` indica
+                   * que este build MindAR não expõe landmarks normalizados.
+                   */
+                  const mp168 = omafitPickNormalizedLandmark168(est);
+                  let faceNdcXRaw = null;
+                  let faceNdcX = null;
+                  if (mp168) {
+                    const nd = omafitMediaPipeNormalizedToNdcXY(mp168);
+                    faceNdcXRaw = Number(nd.x.toFixed(3));
+                    faceNdcX =
+                      st.disableFaceMirror !== true
+                        ? Number((-nd.x).toFixed(3))
+                        : faceNdcXRaw;
+                  }
                   console.log("[omafit-ar] glasses lateral diag", {
                     build: OMAFIT_AR_WIDGET_BUILD,
                     glassesWorldX: Number(gw.x.toFixed(4)),
                     anchorWorldX: Number(aw.x.toFixed(4)),
                     glassesNdcX: cam ? Number(gNdc.x.toFixed(3)) : null,
+                    faceNdcX,
+                    faceNdcXRaw,
+                    ndcErrX:
+                      cam && faceNdcX != null
+                        ? Number((faceNdcX - gNdc.x).toFixed(3))
+                        : null,
                     eyeMidLmX:
                       eyeMidLmX != null ? Number(eyeMidLmX.toFixed(4)) : null,
+                    mpAvailable: !!mp168,
+                    ndcLock: st.glassesNdcLockFlat !== false,
+                    ndcLockOffX: st.glassesNdcLockOffset
+                      ? Number(st.glassesNdcLockOffset.x.toFixed(4))
+                      : null,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    anchorYawNeg: st.glassesFlatAnchorYawNeg !== false,
-                    note: "glassesNdcX e eyeMidLmX devem ter o MESMO sinal/lado.",
+                    note: "glassesNdcX deve coincidir com faceNdcX (trava NDC). ndcErrX→0.",
                   });
                 } catch {
                   /* ignore */

@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v324";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v330";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -5785,6 +5785,51 @@ function omafitGlassesEyeMidpointDeltaFrom168(THREE, lm, smoother, out) {
     (eR.y + eL.y) * 0.5 - nb.y,
     (eR.z + eL.z) * 0.5 - nb.z,
   );
+  return Number.isFinite(out.x) && Number.isFinite(out.y) && Number.isFinite(out.z);
+}
+
+/**
+ * Meio dos olhos em anchor-local: metric→world via PnP bruto (`rawPoseMat`), depois
+ * inv(âncora renderizada). Compensa lag One-Euro na rotação vs posição PnP (v328).
+ */
+function omafitGlassesEyeMidAnchorLocalFromRawPose(
+  THREE,
+  lm,
+  smoother,
+  rawPoseMat,
+  renderedAnchorMatWorld,
+  scratch,
+  out,
+) {
+  if (!THREE || !lm || !rawPoseMat || !renderedAnchorMatWorld || !out) return false;
+  const sc = scratch || {};
+  if (!sc.eyeL) sc.eyeL = new THREE.Vector3();
+  if (!sc.eyeR) sc.eyeR = new THREE.Vector3();
+  if (!sc.eyeMidM) sc.eyeMidM = new THREE.Vector3();
+  if (!sc.eyeMidW) sc.eyeMidW = new THREE.Vector3();
+  if (!sc.invA) sc.invA = new THREE.Matrix4();
+  const pick = (idx, o) => {
+    const p = smoother?.get?.(idx);
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+      o.set(p.x, p.y, p.z);
+      return true;
+    }
+    const a = lm[idx];
+    if (!a || a.length < 3) return false;
+    o.set(a[0], a[1], a[2]);
+    return true;
+  };
+  if (!pick(OMAFIT_FACE_LM_EYE_L_OUT, sc.eyeL)) return false;
+  if (!pick(OMAFIT_FACE_LM_EYE_R_OUT, sc.eyeR)) return false;
+  const mul = omafitMindarMetricToMetersScale(lm);
+  sc.eyeMidM.set(
+    (sc.eyeL.x + sc.eyeR.x) * 0.5 * mul,
+    (sc.eyeL.y + sc.eyeR.y) * 0.5 * mul,
+    (sc.eyeL.z + sc.eyeR.z) * 0.5 * mul,
+  );
+  omafitMetricLmToFaceWorldPoint(sc.eyeMidM, rawPoseMat, sc.eyeMidW);
+  sc.invA.copy(renderedAnchorMatWorld).invert();
+  out.copy(sc.eyeMidW).applyMatrix4(sc.invA);
   return Number.isFinite(out.x) && Number.isFinite(out.y) && Number.isFinite(out.z);
 }
 
@@ -13525,6 +13570,35 @@ async function runArSession({
       "arGlassesCamYM",
       0,
     );
+    const glassesTrackLambda = Math.max(
+      0,
+      Math.min(
+        1,
+        resolveGlassesNumber(
+          "omafit_ar_glasses_track_lambda",
+          "arGlassesTrackLambda",
+          0.92,
+        ),
+      ),
+    );
+    /**
+     * v327: fine-tune vertical (m) APÓS alinhamento mid-olhos via metricLandmarks.
+     * Default 0 — o offset 168→olhos já inclui Y. Knob: `?omafit_ar_glasses_lift_y`.
+     */
+    const glassesLiftYM = resolveGlassesNumber(
+      "omafit_ar_glasses_lift_y",
+      "arGlassesLiftY",
+      0,
+    );
+    /**
+     * v327: fine-tune profundidade (m) APÓS alinhamento mid-olhos. Default 0.
+     * Knob: `?omafit_ar_glasses_eye_z` (positivo = mais perto do rosto).
+     */
+    const glassesEyeZM = resolveGlassesNumber(
+      "omafit_ar_glasses_eye_z",
+      "arGlassesEyeZ",
+      0,
+    );
 
     if (glassesForceAnchorUnitScale) {
       faceProjectionOpts.faceAnchorDistM = glassesAdminParityFlat
@@ -14525,6 +14599,9 @@ async function runArSession({
       glassesNdcLockFlat,
       glassesCamXM,
       glassesCamYM,
+      glassesTrackLambda,
+      glassesLiftYM,
+      glassesEyeZM,
       glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -15647,40 +15724,12 @@ async function runArSession({
             anchorRawMat.decompose(st.anchorDec.p, st.anchorDec.q, st.anchorDec.s);
             const tSec = nowMs * 0.001;
             /**
-             * v255 flat: One Euro só na rotação — posição bruta MindAR (PnP).
-             * Filtrar tradução + rotação em separado desacopla os óculos dos olhos
-             * em viragens laterais (posição atrasa rotação).
+             * v330 flat: âncora PnP BRUTA (zero suavização). v324 usava One Euro só
+             * em R → slip em yaw; v327–v329 offsets mid-olhos → torto. Combinação:
+             * wear v324 na 168 + T/R brutos + face mesh bruta.
              */
-            if (st.glassesAdminParityFlat && st.glassesIngestFlatFaceTrack) {
-              /**
-               * v318 ingest intact: posição+rotação da âncora em conjunto. Piso de
-               * lambda mais alto (0.85) reduz o lag lateral durante o movimento sem
-               * One Euro só na rotação (que desacoplava T vs R).
-               */
-              omafitDampMatrix4PosRotOnly(
-                THREE,
-                st.smoothAnchorMat,
-                anchorRawMat,
-                Math.max(0.85, faceMatrixExtraLambda),
-              );
-            } else if (st.glassesAdminParityFlat) {
-              omafitOneEuroFilterQuaternion(
-                THREE,
-                st.anchorDec.q,
-                tSec,
-                st.anchorEuroQuatState,
-                OMAFIT_GLASSES_ANCHOR_ONE_EURO_MIN_CUTOFF,
-                OMAFIT_GLASSES_ANCHOR_ONE_EURO_BETA,
-                OMAFIT_GLASSES_ANCHOR_ONE_EURO_D_CUTOFF,
-              );
-              if (st.glassesForceAnchorUnitScale) {
-                st.anchorDec.s.set(1, 1, 1);
-              }
-              st.smoothAnchorMat.compose(
-                st.anchorDec.p,
-                st.anchorEuroQuatState.qPrev,
-                st.anchorDec.s,
-              );
+            if (st.glassesAdminParityFlat) {
+              st.smoothAnchorMat.copy(anchorRawMat);
             } else {
               const pF = omafitOneEuroFilterVec3(
                 [st.anchorDec.p.x, st.anchorDec.p.y, st.anchorDec.p.z],
@@ -15729,8 +15778,16 @@ async function runArSession({
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
             const fm = mindarThree.faceMeshes[fi];
             if (!st.smoothFaceMats[fi]) st.smoothFaceMats[fi] = new THREE.Matrix4();
-            omafitDampMatrix4(THREE, st.smoothFaceMats[fi], fm.matrix, faceMatrixExtraLambda);
-            fm.matrix.copy(st.smoothFaceMats[fi]);
+            /**
+             * v330 flat: malha 468 bruta (paridade com âncora PnP bruta). Damp no
+             * occluder desacoplava o referencial face vs óculos em yaw.
+             */
+            if (st.glassesAdminParityFlat) {
+              st.smoothFaceMats[fi].copy(fm.matrix);
+            } else {
+              omafitDampMatrix4(THREE, st.smoothFaceMats[fi], fm.matrix, faceMatrixExtraLambda);
+              fm.matrix.copy(st.smoothFaceMats[fi]);
+            }
             if (
               accessoryType === "glasses" &&
               st.faceOccAheadLocalZ > 0 &&
@@ -15799,12 +15856,19 @@ async function runArSession({
               const merchantCal = st.readGlassesMerchantCal
                 ? st.readGlassesMerchantCal()
                 : { scale: 1, wearX: 0, wearY: 0, wearZ: 0 };
+              /**
+               * v330: baseline v324 — wear só na âncora 168 + calib loja; âncora PnP
+               * bruta (v329). Offsets mid(olhos) em calibRot/wear (v327–v329) usavam
+               * lmSmoother ou espelho → desync yaw/torto. Proximidade: bridge pivot +
+               * faceProximityInsetZ no load (GLB intacto).
+               */
               applyGlassesMerchantWearAdminParityFlat(
                 wearPosition.position,
                 anchor.group.matrixWorld,
                 merchantCal,
                 { depthOnAnchor: true },
               );
+              calibRot.position.set(0, 0, 0);
               /**
                * v321: correção lateral DETERMINÍSTICA em espaço de câmara.
                *
@@ -16048,8 +16112,15 @@ async function runArSession({
                       eyeMidLmX != null ? Number(eyeMidLmX.toFixed(4)) : null,
                     mpAvailable: !!mp168,
                     camXM: Number(st.glassesCamXM) || 0,
+                    eyeZM: Number(st.glassesEyeZM) || 0,
+                    gapX: Number((gw.x - aw.x).toFixed(4)),
+                    eyeMidWearM: {
+                      x: Number(calibRot.position.x.toFixed(4)),
+                      y: Number(calibRot.position.y.toFixed(4)),
+                      z: Number(calibRot.position.z.toFixed(4)),
+                    },
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    note: "Erro ~constante em METROS. Dial ?omafit_ar_glasses_cam_x_m até os óculos centrarem nos olhos.",
+                    note: "v330: raw PnP anchor + wear v324 (168). gapX em yaw → bridge pivot/proximity.",
                   });
                 } catch {
                   /* ignore */

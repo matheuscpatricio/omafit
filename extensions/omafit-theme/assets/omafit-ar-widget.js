@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v320";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v321";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13465,16 +13465,52 @@ async function runArSession({
       true,
     );
     /**
-     * v320: trava NDC em malha fechada. Alinha o centro dos óculos ao landmark
-     * normalizado do nariz (168) do MediaPipe — verdade-terreno do vídeo, imune
-     * ao espelho/escala da âncora 3D. Controlador integral (offset acumulado em
-     * `wearPosition`, espaço local da âncora) elimina o desvio lateral residual.
-     * Kill switch: `?omafit_ar_glasses_ndc_lock=0`.
+     * v320/v321: trava NDC em malha fechada (controlador integral) — SÓ útil se
+     * o build MindAR expuser landmarks normalizados (ground-truth do vídeo). Este
+     * build (CDN) NÃO expõe (`mpAvailable:false`), por isso default OFF: ligada
+     * sem alvo real enrolava até ao batente e oscilava. Opt-in:
+     * `?omafit_ar_glasses_ndc_lock=1`.
      */
     const glassesNdcLockFlat = resolveGlassesSignToggle(
       "omafit_ar_glasses_ndc_lock",
       "arGlassesNdcLockFlat",
-      true,
+      false,
+    );
+    /**
+     * v321: viés lateral/vertical CONSTANTE em NDC, aplicado nos eixos da câmara
+     * (right/up) — corrige o desvio lateral residual de forma determinística e
+     * imune à rotação da cabeça. `?omafit_ar_glasses_ndc_bias_x=<ndc>` (ex.: 0.28
+     * empurra para a direita do ecrã). Sem integração → sem oscilação.
+     */
+    const resolveGlassesNumber = (queryKey, cfgKey, fallback) => {
+      try {
+        const q = new URLSearchParams(
+          typeof window !== "undefined" ? window.location.search || "" : "",
+        );
+        const raw = q.get(queryKey);
+        if (raw != null && raw.trim() !== "") {
+          const v = Number(raw.trim());
+          if (Number.isFinite(v)) return v;
+        }
+      } catch {
+        /* ignore */
+      }
+      const a = String(cfgAttr(cfgKey, "")).trim();
+      if (a !== "") {
+        const v = Number(a);
+        if (Number.isFinite(v)) return v;
+      }
+      return fallback;
+    };
+    const glassesNdcBiasX = resolveGlassesNumber(
+      "omafit_ar_glasses_ndc_bias_x",
+      "arGlassesNdcBiasX",
+      0,
+    );
+    const glassesNdcBiasY = resolveGlassesNumber(
+      "omafit_ar_glasses_ndc_bias_y",
+      "arGlassesNdcBiasY",
+      0,
     );
 
     if (glassesForceAnchorUnitScale) {
@@ -14474,6 +14510,8 @@ async function runArSession({
       glassesFlatAnchorYawNeg,
       glassesLateralDiagEnabled,
       glassesNdcLockFlat,
+      glassesNdcBiasX,
+      glassesNdcBiasY,
       glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -15755,14 +15793,26 @@ async function runArSession({
                 { depthOnAnchor: true },
               );
               /**
-               * v320: trava NDC em malha fechada (controlador integral). O `wear`
-               * acima repõe `wearPosition` a cada frame; somamos o offset acumulado
-               * `glassesNdcLockOffset` (espaço local da âncora) e integramos o erro
-               * residual entre o centro dos óculos e o nariz (landmark normalizado
-               * MediaPipe → NDC). Converge o desvio lateral para ~0 sem depender do
-               * sinal do espelho da âncora. Clamp total protege contra divergência.
+               * v321: correção lateral DETERMINÍSTICA em espaço de câmara.
+               *
+               * Diagnóstico v320 provou `mpAvailable:false` — este build MindAR
+               * (CDN) não expõe landmarks normalizados, logo NEM a trava NDC NEM o
+               * alinhamento do ponto principal têm ground-truth. A trava integral
+               * caía no fallback (projecção da âncora) e enrolava até ao batente
+               * (`ndcLockOffX≈0.148`), causando oscilação/jitter e o "sai de posição".
+               *
+               * Em vez disso: (a) a trava integral só corre se houver landmark
+               * normalizado REAL (mp168); (b) aplicamos um deslocamento lateral
+               * CONSTANTE em NDC nos eixos da CÂMARA (right/up) — portanto imune à
+               * rotação da cabeça (não roda com o yaw como faria um offset local),
+               * sem integração nem oscilação. Knob: `?omafit_ar_glasses_ndc_bias_x`.
                */
-              if (st.glassesNdcLockFlat !== false && mindarThree?.camera) {
+              const mp168Lock = omafitPickNormalizedLandmark168(est);
+              if (
+                st.glassesNdcLockFlat === true &&
+                mp168Lock &&
+                mindarThree?.camera
+              ) {
                 try {
                   if (!st.glassesNdcLockOffset)
                     st.glassesNdcLockOffset = new THREE.Vector3();
@@ -15808,6 +15858,49 @@ async function runArSession({
                       st.glassesNdcLockOffset.y *= k;
                     }
                   }
+                } catch {
+                  /* ignore */
+                }
+              }
+              /**
+               * Deslocamento lateral constante em NDC (eixos da câmara). Corrige o
+               * viés lateral residual da projecção/âncora de forma previsível, sem
+               * depender de landmarks normalizados nem rodar com a cabeça.
+               */
+              const ndcBiasX = Number(st.glassesNdcBiasX) || 0;
+              const ndcBiasY = Number(st.glassesNdcBiasY) || 0;
+              if ((ndcBiasX !== 0 || ndcBiasY !== 0) && mindarThree?.camera) {
+                try {
+                  if (!st.glassesNdcBiasS) {
+                    st.glassesNdcBiasS = {
+                      worldD: new THREE.Vector3(),
+                      localD: new THREE.Vector3(),
+                      invAnchor: new THREE.Matrix4(),
+                      right: new THREE.Vector3(),
+                      up: new THREE.Vector3(),
+                      anchorW: new THREE.Vector3(),
+                    };
+                  }
+                  const bs = st.glassesNdcBiasS;
+                  const cam = mindarThree.camera;
+                  anchor.group.updateMatrixWorld(true);
+                  anchor.group.getWorldPosition(bs.anchorW);
+                  const depthDist = cam.position.distanceTo(bs.anchorW);
+                  omafitWorldDeltaFromNdcScreenError(
+                    THREE,
+                    cam,
+                    ndcBiasX,
+                    ndcBiasY,
+                    depthDist,
+                    0,
+                    false,
+                    bs.worldD,
+                    bs.right,
+                    bs.up,
+                  );
+                  bs.invAnchor.copy(anchor.group.matrixWorld).invert();
+                  bs.localD.copy(bs.worldD).transformDirection(bs.invAnchor);
+                  wearPosition.position.add(bs.localD);
                 } catch {
                   /* ignore */
                 }
@@ -15896,12 +15989,13 @@ async function runArSession({
                     eyeMidLmX:
                       eyeMidLmX != null ? Number(eyeMidLmX.toFixed(4)) : null,
                     mpAvailable: !!mp168,
-                    ndcLock: st.glassesNdcLockFlat !== false,
+                    ndcBiasX: Number(st.glassesNdcBiasX) || 0,
+                    ndcLock: st.glassesNdcLockFlat === true && !!mp168,
                     ndcLockOffX: st.glassesNdcLockOffset
                       ? Number(st.glassesNdcLockOffset.x.toFixed(4))
                       : null,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    note: "glassesNdcX deve coincidir com faceNdcX (trava NDC). ndcErrX→0.",
+                    note: "Sem mp normalizado: usar ?omafit_ar_glasses_ndc_bias_x até glassesNdcX≈0 com rosto centrado.",
                   });
                 } catch {
                   /* ignore */

@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v318";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v319";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13445,10 +13445,14 @@ async function runArSession({
       if (/^(0|false|no|off)$/.test(a)) return false;
       return fallback;
     };
+    /**
+     * v319: diag lateral (v318) provou sinais opostos entre `glassesNdcX` e o meio
+     * dos olhos → translação X da âncora estava sem espelho selfie. Default agora ON.
+     */
     const glassesFlatAnchorTxMirror = resolveGlassesSignToggle(
       "omafit_ar_glasses_anchor_tx_mirror",
       "arGlassesAnchorTxMirror",
-      false,
+      true,
     );
     const glassesFlatAnchorYawNeg = resolveGlassesSignToggle(
       "omafit_ar_glasses_anchor_yaw_neg",

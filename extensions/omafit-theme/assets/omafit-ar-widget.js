@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v323";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v324";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13460,14 +13460,17 @@ async function runArSession({
       false,
     );
     /**
-     * v323: idem — sem negação extra de yaw. O `rvec` já é convertido por MindAR
-     * (linhas Y/Z negadas) para a convenção Three no frame espelhado; negar o yaw
-     * outra vez dessincroniza rotação vs. translação. Trust MindAR.
+     * v324: RESTAURADO para TRUE. A v323 pôs `false` e a rotação ficou INVERTIDA
+     * ("a cabeça gira para um lado e o óculos para o outro") — embora a POSIÇÃO
+     * tenha ficado correcta com `txMirror=false`. São eixos independentes: o flip
+     * do frame (MindAR) já resolve a TRANSLAÇÃO (por isso `txMirror=false`), mas a
+     * ROTAÇÃO vinda do PnP precisa da negação extra do yaw para a vista espelhada
+     * selfie. Empiricamente `yawNeg=true` deu sempre rotação correcta (v319–v322).
      */
     const glassesFlatAnchorYawNeg = resolveGlassesSignToggle(
       "omafit_ar_glasses_anchor_yaw_neg",
       "arGlassesAnchorYawNeg",
-      false,
+      true,
     );
     const glassesLateralDiagEnabled = resolveGlassesSignToggle(
       "omafit_ar_glasses_lateral_diag",

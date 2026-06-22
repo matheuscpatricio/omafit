@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v330";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v331";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -5503,17 +5503,32 @@ function omafitGlassesFixMeterAnchorPitchInvert(THREE, quat) {
  * negar X na tradução da âncora deslocava o GLB para a esquerda (v239/v240).
  * v254 negava roll também — inclinações naturais ficavam invertidas; revertido v255.
  */
-function omafitGlassesFixMeterAnchorSelfieFlatAxes(THREE, dec, mirrorSelfie, yawNeg = true) {
+function omafitGlassesFixMeterAnchorSelfieFlatAxes(
+  THREE,
+  dec,
+  mirrorSelfie,
+  yawNeg = true,
+  pitchInvert = true,
+  rollNeg = false,
+) {
   if (!THREE || !dec?.q) return;
-  omafitGlassesFixMeterAnchorPitchInvert(THREE, dec.q);
+  /**
+   * v331: pitch/roll agora são knobs. A reflexão selfie pura (espelho X) NEGA
+   * yaw+roll e PRESERVA pitch. O default histórico inverte pitch (v231) e nega
+   * só yaw — heurística que casa com a convenção deste controller MindAR +
+   * `scaleX=-1` no GLB. Expomos os eixos para isolar o "sai do rosto ao virar":
+   * `?omafit_ar_glasses_anchor_pitch_invert=0` e `?...anchor_roll_neg=1`.
+   */
+  if (pitchInvert !== false) omafitGlassesFixMeterAnchorPitchInvert(THREE, dec.q);
   if (mirrorSelfie === false) return;
-  if (yawNeg === false) return;
+  if (yawNeg === false && rollNeg !== true) return;
   if (!omafitGlassesFixMeterAnchorSelfieFlatAxes._euler) {
     omafitGlassesFixMeterAnchorSelfieFlatAxes._euler = new THREE.Euler(0, 0, 0, "YXZ");
   }
   const e = omafitGlassesFixMeterAnchorSelfieFlatAxes._euler;
   e.setFromQuaternion(dec.q, "YXZ");
-  e.y = -e.y;
+  if (yawNeg !== false) e.y = -e.y;
+  if (rollNeg === true) e.z = -e.z;
   dec.q.setFromEuler(e);
 }
 
@@ -5594,6 +5609,8 @@ function omafitGlassesNormalizeMindarAnchorMatrix(matrix, dec, lm, opts, THREE) 
       dec,
       opts?.mirrorSelfie !== false,
       opts?.anchorYawNeg !== false,
+      opts?.anchorPitchInvert !== false,
+      opts?.anchorRollNeg === true,
     );
     /**
      * v318 (opt-in): completa o espelho selfie negando a translação X da âncora.
@@ -13517,6 +13534,22 @@ async function runArSession({
       "arGlassesAnchorYawNeg",
       true,
     );
+    /**
+     * v331: eixos pitch/roll do espelho selfie agora ajustáveis (antes hardcoded).
+     * Para isolar o "óculos sai do rosto ao virar a cabeça": a reflexão X pura
+     * preserva pitch e nega yaw+roll; o default histórico inverte pitch e nega só
+     * yaw. Testar `?omafit_ar_glasses_anchor_pitch_invert=0` e `?...roll_neg=1`.
+     */
+    const glassesFlatAnchorPitchInvert = resolveGlassesSignToggle(
+      "omafit_ar_glasses_anchor_pitch_invert",
+      "arGlassesAnchorPitchInvert",
+      true,
+    );
+    const glassesFlatAnchorRollNeg = resolveGlassesSignToggle(
+      "omafit_ar_glasses_anchor_roll_neg",
+      "arGlassesAnchorRollNeg",
+      false,
+    );
     const glassesLateralDiagEnabled = resolveGlassesSignToggle(
       "omafit_ar_glasses_lateral_diag",
       "arGlassesLateralDiag",
@@ -14595,6 +14628,8 @@ async function runArSession({
       glassesForceAnchorUnitScale: !!glassesForceAnchorUnitScale,
       glassesFlatAnchorTxMirror,
       glassesFlatAnchorYawNeg,
+      glassesFlatAnchorPitchInvert,
+      glassesFlatAnchorRollNeg,
       glassesLateralDiagEnabled,
       glassesNdcLockFlat,
       glassesCamXM,
@@ -15640,6 +15675,8 @@ async function runArSession({
                     mirrorSelfie: st.disableFaceMirror !== true,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
                     anchorYawNeg: st.glassesFlatAnchorYawNeg !== false,
+                    anchorPitchInvert: st.glassesFlatAnchorPitchInvert !== false,
+                    anchorRollNeg: st.glassesFlatAnchorRollNeg === true,
                     nativeAnchorDepth:
                       !!st.glassesAdminParityFlat || !!st.glassesIngestWidgetFrameTag,
                     wearZ: Number(merchantCalFrame?.wearZ) || 0,
@@ -16060,9 +16097,67 @@ async function runArSession({
                * `?omafit_ar_glasses_anchor_tx_mirror=1`. Se acompanha mas com atraso
                * em yaw, testar `?omafit_ar_glasses_anchor_yaw_neg=0`.
                */
+              /**
+               * v331: âncora-vs-olhos. Projectamos o meio dos olhos (metricLandmarks
+               * → mundo via anchor.group.matrixWorld) e comparamos com a posição NDC
+               * dos óculos. `gapEyeNdcX` GRANDE durante uma viragem = a rotação/alavanca
+               * da âncora desencaixa os óculos dos olhos (o nosso problema). `gapX`
+               * pequeno mas óculos visualmente fora = a própria âncora saiu do rosto
+               * (MindAR/projecção). Disparamos no momento de falha (gap grande), não só
+               * a cada 600 ms, para capturar a viragem. `anchorYawDeg` correlaciona.
+               */
+              let eyeMidNdcX = null;
+              let gapEyeNdcX = null;
+              let anchorYawDeg = null;
+              try {
+                const lmEye = est?.metricLandmarks;
+                if (lmEye && mindarThree?.camera) {
+                  if (!st.glassesDiagEyeMid) st.glassesDiagEyeMid = new THREE.Vector3();
+                  if (
+                    omafitGlassesEyeMidpointDeltaFrom168(
+                      THREE,
+                      lmEye,
+                      null,
+                      st.glassesDiagEyeMid,
+                    )
+                  ) {
+                    /* delta mid−168 já está em frame métrico; soma 168? Não: queremos */
+                    /* o ponto dos olhos no mundo. Reconstroi mid absoluto abaixo.    */
+                  }
+                  const nb = lmEye[OMAFIT_FACE_LM_NOSE_BRIDGE];
+                  const e33 = lmEye[OMAFIT_FACE_LM_EYE_R_OUT];
+                  const e263 = lmEye[OMAFIT_FACE_LM_EYE_L_OUT];
+                  if (nb && e33 && e263) {
+                    const mul = omafitMindarMetricToMetersScale(lmEye);
+                    if (!st.glassesDiagEyeW) st.glassesDiagEyeW = new THREE.Vector3();
+                    st.glassesDiagEyeW.set(
+                      (e33[0] + e263[0]) * 0.5 * mul,
+                      (e33[1] + e263[1]) * 0.5 * mul,
+                      (e33[2] + e263[2]) * 0.5 * mul,
+                    );
+                    anchor.group.updateMatrixWorld(true);
+                    st.glassesDiagEyeW.applyMatrix4(anchor.group.matrixWorld);
+                    const eNdc = st.glassesDiagEyeW.clone().project(mindarThree.camera);
+                    eyeMidNdcX = Number(eNdc.x.toFixed(3));
+                  }
+                  if (!st.glassesDiagQ) st.glassesDiagQ = new THREE.Quaternion();
+                  if (!st.glassesDiagE) st.glassesDiagE = new THREE.Euler(0, 0, 0, "YXZ");
+                  anchor.group.matrixWorld.decompose(
+                    new THREE.Vector3(),
+                    st.glassesDiagQ,
+                    new THREE.Vector3(),
+                  );
+                  st.glassesDiagE.setFromQuaternion(st.glassesDiagQ, "YXZ");
+                  anchorYawDeg = Number(((st.glassesDiagE.y * 180) / Math.PI).toFixed(1));
+                }
+              } catch {
+                /* ignore */
+              }
               if (
                 st.glassesLateralDiagEnabled !== false &&
-                nowMs - (st.glassesLastLateralDiagMs || 0) > 600
+                (nowMs - (st.glassesLastLateralDiagMs || 0) > 600 ||
+                  (Number.isFinite(st.glassesLastGapEyeNdcX) &&
+                    Math.abs(st.glassesLastGapEyeNdcX) > 0.05))
               ) {
                 st.glassesLastLateralDiagMs = nowMs;
                 try {
@@ -16073,6 +16168,10 @@ async function runArSession({
                   const cam = mindarThree?.camera;
                   const gNdc = gw.clone();
                   if (cam) gNdc.project(cam);
+                  if (eyeMidNdcX != null && cam) {
+                    gapEyeNdcX = Number((gNdc.x - eyeMidNdcX).toFixed(3));
+                    st.glassesLastGapEyeNdcX = gapEyeNdcX;
+                  }
                   const eL = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_L_OUT);
                   const eR = st.lmSmoother?.get(OMAFIT_FACE_LM_EYE_R_OUT);
                   const eyeMidLmX =
@@ -16114,13 +16213,15 @@ async function runArSession({
                     camXM: Number(st.glassesCamXM) || 0,
                     eyeZM: Number(st.glassesEyeZM) || 0,
                     gapX: Number((gw.x - aw.x).toFixed(4)),
-                    eyeMidWearM: {
-                      x: Number(calibRot.position.x.toFixed(4)),
-                      y: Number(calibRot.position.y.toFixed(4)),
-                      z: Number(calibRot.position.z.toFixed(4)),
-                    },
+                    eyeMidNdcX,
+                    glassesNdcX2: cam ? Number(gNdc.x.toFixed(3)) : null,
+                    gapEyeNdcX,
+                    anchorYawDeg,
+                    yawNeg: st.glassesFlatAnchorYawNeg !== false,
+                    pitchInvert: st.glassesFlatAnchorPitchInvert !== false,
+                    rollNeg: st.glassesFlatAnchorRollNeg === true,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    note: "v330: raw PnP anchor + wear v324 (168). gapX em yaw → bridge pivot/proximity.",
+                    note: "v331: gapEyeNdcX = óculos vs olhos (metric→mundo). Grande ao virar = rotação/alavanca.",
                   });
                 } catch {
                   /* ignore */

@@ -628,7 +628,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v331";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v332";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -13632,6 +13632,20 @@ async function runArSession({
       "arGlassesEyeZ",
       0,
     );
+    /**
+     * v332: suaviza/trava a PROFUNDIDADE (Z mundo) da âncora — combate o "óculos
+     * sai para a frente / descola dos olhos" quando o rosto sai do centro (PnP
+     * MindAR instável em Z). 0 = só One Euro normal; 1 = trava quase total.
+     * Default 0.6 (bom equilíbrio: estável sem perder o leaning natural).
+     */
+    const glassesDepthLock = (() => {
+      const v = resolveGlassesNumber(
+        "omafit_ar_glasses_depth_lock",
+        "arGlassesDepthLock",
+        0.6,
+      );
+      return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.6;
+    })();
 
     if (glassesForceAnchorUnitScale) {
       faceProjectionOpts.faceAnchorDistM = glassesAdminParityFlat
@@ -14637,6 +14651,8 @@ async function runArSession({
       glassesTrackLambda,
       glassesLiftYM,
       glassesEyeZM,
+      glassesDepthLock,
+      glassesAnchorZEma: NaN,
       glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -15729,6 +15745,7 @@ async function runArSession({
             st.anchorEuroQuatState.tPrev = null;
             st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
           }
+          st.glassesAnchorZEma = NaN;
           st.smoothAnchorMat.copy(anchorRawMat);
           anchor.group.matrix.copy(st.smoothAnchorMat);
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
@@ -15761,12 +15778,44 @@ async function runArSession({
             anchorRawMat.decompose(st.anchorDec.p, st.anchorDec.q, st.anchorDec.s);
             const tSec = nowMs * 0.001;
             /**
-             * v330 flat: âncora PnP BRUTA (zero suavização). v324 usava One Euro só
-             * em R → slip em yaw; v327–v329 offsets mid-olhos → torto. Combinação:
-             * wear v324 na 168 + T/R brutos + face mesh bruta.
+             * v332 flat: One Euro só na POSIÇÃO + rotação BRUTA. O utilizador relata
+             * que os óculos "saem para a frente / descolam dos olhos" ao mover para os
+             * lados — isto é instabilidade de PROFUNDIDADE do PnP MindAR (o Z salta
+             * quando o rosto sai do centro). O v330 (T/R brutos) deixava o Z a saltar.
+             * One Euro na posição filtra o salto lento de Z mas deixa passar o
+             * movimento lateral rápido (sem lag); a rotação fica bruta (sem slip de yaw
+             * que o One Euro em R causava no v324/v328). Profundidade extra-suave via
+             * `?omafit_ar_glasses_depth_lock` (EMA do Z mundo; 0=off, 1=trava total).
              */
             if (st.glassesAdminParityFlat) {
-              st.smoothAnchorMat.copy(anchorRawMat);
+              anchorRawMat.decompose(st.anchorDec.p, st.anchorDec.q, st.anchorDec.s);
+              const tSecFlat = nowMs * 0.001;
+              const pFlat = omafitOneEuroFilterVec3(
+                [st.anchorDec.p.x, st.anchorDec.p.y, st.anchorDec.p.z],
+                tSecFlat,
+                st.anchorEuroPosState,
+                OMAFIT_GLASSES_ANCHOR_ONE_EURO_MIN_CUTOFF,
+                OMAFIT_GLASSES_ANCHOR_ONE_EURO_BETA,
+                OMAFIT_GLASSES_ANCHOR_ONE_EURO_D_CUTOFF,
+              );
+              let zFlat = pFlat[2];
+              const depthLock = Number(st.glassesDepthLock);
+              if (Number.isFinite(depthLock) && depthLock > 0) {
+                const k = THREE.MathUtils.clamp(depthLock, 0, 1);
+                const alpha = 0.18 * (1 - k) + 0.02 * k;
+                if (Number.isFinite(st.glassesAnchorZEma)) {
+                  st.glassesAnchorZEma += alpha * (zFlat - st.glassesAnchorZEma);
+                } else {
+                  st.glassesAnchorZEma = zFlat;
+                }
+                zFlat = st.glassesAnchorZEma;
+              }
+              if (st.glassesForceAnchorUnitScale) st.anchorDec.s.set(1, 1, 1);
+              st.smoothAnchorMat.compose(
+                st.anchorDec.p.set(pFlat[0], pFlat[1], zFlat),
+                st.anchorDec.q,
+                st.anchorDec.s,
+              );
             } else {
               const pF = omafitOneEuroFilterVec3(
                 [st.anchorDec.p.x, st.anchorDec.p.y, st.anchorDec.p.z],
@@ -16217,11 +16266,13 @@ async function runArSession({
                     glassesNdcX2: cam ? Number(gNdc.x.toFixed(3)) : null,
                     gapEyeNdcX,
                     anchorYawDeg,
+                    anchorZ: Number(aw.z.toFixed(4)),
+                    depthLock: Number(st.glassesDepthLock) || 0,
                     yawNeg: st.glassesFlatAnchorYawNeg !== false,
                     pitchInvert: st.glassesFlatAnchorPitchInvert !== false,
                     rollNeg: st.glassesFlatAnchorRollNeg === true,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    note: "v331: gapEyeNdcX = óculos vs olhos (metric→mundo). Grande ao virar = rotação/alavanca.",
+                    note: "v332: anchorZ instável ao mover = óculos saem para a frente; depthLock suaviza Z.",
                   });
                 } catch {
                   /* ignore */

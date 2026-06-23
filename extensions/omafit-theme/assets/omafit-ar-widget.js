@@ -293,6 +293,79 @@ function omafitGetSharedDracoLoader() {
 }
 
 /**
+ * Cache de buffers GLB (por loadUrl) — partilhado entre o warmup (load da
+ * página / abertura do modal) e a sessão AR. Permite iniciar o download em
+ * paralelo com o bundle Three/MindAR e a câmara; o parse reutiliza o buffer.
+ * @type {Map<string, Promise<ArrayBuffer|null>>}
+ */
+const __omafitGlbBufferPromises = new Map();
+
+/**
+ * Inicia (uma única vez por URL) o download do GLB como ArrayBuffer e cacheia a
+ * promise. Chamado o mais cedo possível (warmup) e reutilizado na sessão.
+ * @param {string} loadUrl URL final (já com versão) do GLB
+ * @returns {Promise<ArrayBuffer|null>}
+ */
+function omafitWarmGlbBuffer(loadUrl) {
+  const url = String(loadUrl || "").trim();
+  if (!url) return Promise.resolve(null);
+  const cached = __omafitGlbBufferPromises.get(url);
+  if (cached) return cached;
+  const p =
+    typeof fetch === "function"
+      ? fetch(url, { mode: "cors" })
+          .then((resp) => (resp && resp.ok ? resp.arrayBuffer() : null))
+          .catch(() => null)
+      : Promise.resolve(null);
+  __omafitGlbBufferPromises.set(url, p);
+  return p;
+}
+
+/**
+ * Resolve a URL final do GLB (sessão + versão) a partir do DOM/query, sem
+ * efeitos colaterais — para iniciar o warmup antes de abrir a sessão AR.
+ * @returns {string}
+ */
+function omafitResolveGlbLoadUrlFromDom() {
+  try {
+    const r =
+      typeof document !== "undefined" ? document.getElementById("omafit-ar-root") : null;
+    const ver = r
+      ? String(r.dataset.arGlbVersion || r.getAttribute("data-ar-glb-version") || "").trim()
+      : "";
+    const sessionUrl = omafitReadGlbUrlFromRootOrQuery();
+    if (!sessionUrl) return "";
+    return buildGlbLoaderUrl(sessionUrl, ver) || sessionUrl;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Aquece DNS/TLS para o host do GLB (CDN Shopify) — preconnect leve, idempotente.
+ * @param {string} loadUrl
+ */
+function omafitWarmGlbConnection(loadUrl) {
+  try {
+    if (typeof document === "undefined" || !document.head) return;
+    const origin = new URL(
+      String(loadUrl || ""),
+      typeof location !== "undefined" ? location.href : undefined,
+    ).origin;
+    if (!origin || /^null$/i.test(origin)) return;
+    if (document.querySelector('link[data-omafit-glb-preconnect="' + origin + '"]')) return;
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = origin;
+    link.crossOrigin = "anonymous";
+    link.setAttribute("data-omafit-glb-preconnect", origin);
+    document.head.appendChild(link);
+  } catch {
+    /* non-blocking */
+  }
+}
+
+/**
  * @param {import("three").Object3D} root
  * @returns {number}
  */
@@ -628,7 +701,7 @@ const OMAFIT_HAND_FLIP_GUARD_RAD = 2.618;
  * a servir a versão ANTERIOR do asset (precisas correr `npm run deploy`
  * OU `shopify app deploy`). Sobe o sufixo sempre que editares este ficheiro.
  */
-const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v332";
+const OMAFIT_AR_WIDGET_BUILD = "2026-06-10-glasses-ingest-admin-flat-v337";
 
 try {
   console.info("[omafit-ar] asset carregado:", OMAFIT_AR_WIDGET_BUILD);
@@ -8392,6 +8465,13 @@ function injectGlobalStyles(root, primaryOverride, tryonLayout = "default") {
     }
     .omafit-ar-link:hover { opacity: 0.7; text-decoration-thickness: 2px; }
     .omafit-ar-try-on-link:focus { outline: 2px solid ${primary}; outline-offset: 2px; }
+    #omafit-ar-root[data-ar-cta-deferred="1"] {
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      height: 0 !important;
+      overflow: hidden !important;
+    }
     /* Temas que metem x via ::before/::after em <button> — sem isto parecem dois X sobrepostos. */
     /* div[role=button] evita regras globais do tema em button::before (X duplicado). */
     .omafit-ar-shell .omafit-ar-close-btn {
@@ -8654,6 +8734,117 @@ function omafitAnimateTextEntrance(root) {
     node.style.animationDelay = `${Math.min(idx, 10) * 48}ms`;
     idx += 1;
   }
+}
+
+/**
+ * O bloco Liquid injeta `#omafit-widget-root` + `omafit-widget.js` (CTA junto ao carrinho).
+ * `#omafit-ar-root` fica no fim do `<body>` só como portador de `data-*` — não duplicar link aí.
+ */
+function omafitArThemeWidgetOwnsPdpCta() {
+  return Boolean(
+    typeof document !== "undefined" && document.getElementById("omafit-widget-root"),
+  );
+}
+
+function omafitArHideDataOnlyRoot(root) {
+  if (!root) return;
+  root.style.display = "none";
+  root.setAttribute("aria-hidden", "true");
+  root.setAttribute("data-ar-cta-deferred", "1");
+}
+
+function omafitArResolveEmbedPosition() {
+  const wr =
+    typeof document !== "undefined" ? document.getElementById("omafit-widget-root") : null;
+  const ep = String(wr?.getAttribute("data-omafit-embed-position") || "")
+    .trim()
+    .toLowerCase();
+  return ep === "above_buy_buttons" ? "above_buy_buttons" : "below_buy_buttons";
+}
+
+/** Fallback quando o embed existe mas o widget de roupa/iframe não montou CTA (ex.: desligado no admin). */
+function omafitArInsertTriggerNearBuyButtons(wrap) {
+  if (!wrap || typeof document === "undefined") return false;
+  if (document.querySelector(".omafit-widget, .omafit-ar-widget-wrap")) return false;
+
+  const embedPos = omafitArResolveEmbedPosition();
+  const addToCartSelectors = [
+    'button[name="add"]',
+    'button[type="submit"][name="add"]',
+    ".product-form__submit",
+    'form[action*="/cart/add"] button[type="submit"]',
+    'form[action*="/cart/add"] input[type="submit"]',
+    '[name="add"]',
+    "button[data-add-to-cart]",
+    ".btn--add-to-cart",
+    ".product-form__cart-submit",
+    "button.product-form__cart-submit",
+  ];
+  const buyNowSelectors = [
+    ".shopify-payment-button",
+    ".shopify-payment-button__button",
+    "shopify-buy-it-now-button",
+    '[data-shopify="payment-button"]',
+  ];
+
+  function findFirstVisible(selectors, scope) {
+    const root = scope || document;
+    for (const sel of selectors) {
+      const el = root.querySelector(sel);
+      if (el && el.offsetParent !== null) return el;
+    }
+    return null;
+  }
+
+  let addToCartButton = null;
+  for (const sel of addToCartSelectors) {
+    const btn = document.querySelector(sel);
+    if (btn && btn.offsetParent !== null) {
+      addToCartButton = btn;
+      break;
+    }
+  }
+
+  if (addToCartButton) {
+    if (embedPos === "above_buy_buttons") {
+      addToCartButton.parentNode?.insertBefore(wrap, addToCartButton);
+    } else {
+      let anchorElement = addToCartButton;
+      const closestForm = addToCartButton.closest("form");
+      const closestProductBlock =
+        addToCartButton.closest(".product-form") ||
+        addToCartButton.closest(".product") ||
+        addToCartButton.closest('[class*="product"]');
+      const searchRoots = [
+        closestForm?.parentElement || null,
+        closestForm || null,
+        closestProductBlock || null,
+        document,
+      ].filter(Boolean);
+      for (const scope of searchRoots) {
+        const foundBuyNow = findFirstVisible(buyNowSelectors, scope);
+        if (foundBuyNow) {
+          anchorElement = foundBuyNow;
+          break;
+        }
+      }
+      anchorElement.parentNode?.insertBefore(wrap, anchorElement.nextSibling);
+    }
+    return Boolean(wrap.parentNode);
+  }
+
+  const productForm = document.querySelector(
+    'form[action*="/cart/add"], .product-form, form.product-form',
+  );
+  if (productForm) {
+    if (embedPos === "above_buy_buttons" && productForm.firstChild) {
+      productForm.insertBefore(wrap, productForm.firstChild);
+    } else {
+      productForm.appendChild(wrap);
+    }
+    return true;
+  }
+  return false;
 }
 
 function createTriggerLink(text, primaryColor) {
@@ -10092,6 +10283,22 @@ async function runArSession({
   productId,
 }) {
   colContent.innerHTML = "";
+  // ⚡ Garante que o download do GLB já está a correr (idempotente) — cobre o
+  // caminho de mão e casos em que o URL não estava pronto no load da página.
+  try {
+    const warmSessionGlbUrl =
+      omafitResolveGlbLoadUrlFromDom() ||
+      buildGlbLoaderUrl(
+        omafitAbsolutizeGlbUrlMaybe(String(glbUrl || "").trim()),
+        document.getElementById("omafit-ar-root")?.dataset?.arGlbVersion || "",
+      );
+    if (warmSessionGlbUrl) {
+      omafitWarmGlbConnection(warmSessionGlbUrl);
+      omafitWarmGlbBuffer(warmSessionGlbUrl);
+    }
+  } catch {
+    /* non-blocking */
+  }
   const arSessionLayoutProfile = omafitResolveArDeviceRuntimeProfile({});
   const arSessionIsDesktop = arSessionLayoutProfile.formFactor === "desktop";
   let headerDisplayBeforeAr = "";
@@ -11677,10 +11884,9 @@ async function runArSession({
         );
         return {
           loadUrl,
+          // Reutiliza o buffer já iniciado no warmup (load/abertura do modal).
           bufferPromise: loadUrl
-            ? fetch(loadUrl, { mode: "cors" })
-                .then((resp) => (resp.ok ? resp.arrayBuffer() : null))
-                .catch(() => null)
+            ? omafitWarmGlbBuffer(loadUrl)
             : Promise.resolve(null),
           dracoPromise: wantDraco
             ? omafitGetSharedDracoLoader().catch(() => null)
@@ -12868,6 +13074,53 @@ async function runArSession({
           });
         }
       }
+      /**
+       * v334: overrides de ROTAÇÃO ao vivo por URL (graus), somados à calibração
+       * do lojista. Para afinar a inclinação estática do GLB Rodin sem redeploy:
+       *   ?omafit_ar_glasses_pitch_deg=...  (rx: + = inclina para baixo/cima)
+       *   ?omafit_ar_glasses_yaw_deg=...    (ry: gira no eixo vertical)
+       *   ?omafit_ar_glasses_roll_deg=...   (rz: inclina lateral)
+       * Leitor inline (não usar resolveGlassesNumber: TDZ — esta função corre antes).
+       */
+      try {
+        const q =
+          typeof window !== "undefined"
+            ? new URLSearchParams(window.location.search || "")
+            : null;
+        const readDeg = (queryKey, cfgKey) => {
+          if (q) {
+            const raw = q.get(queryKey);
+            if (raw != null && raw.trim() !== "") {
+              const v = Number(raw.trim());
+              if (Number.isFinite(v)) return v;
+            }
+          }
+          const a = String(cfgAttr(cfgKey, "")).trim();
+          if (a !== "") {
+            const v = Number(a);
+            if (Number.isFinite(v)) return v;
+          }
+          return 0;
+        };
+        const dRx = readDeg("omafit_ar_glasses_pitch_deg", "arGlassesPitchDeg");
+        const dRy = readDeg("omafit_ar_glasses_yaw_deg", "arGlassesYawDeg");
+        const dRz = readDeg("omafit_ar_glasses_roll_deg", "arGlassesRollDeg");
+        if (dRx || dRy || dRz) {
+          /**
+           * Aplicar DEPOIS de normalizar e SEM re-snap (o snap é de 5° — grosseiro
+           * de mais para afinar). applyGlassesMerchantCalibRotation lê rx/ry/rz
+           * direto em graus → permite passos de 1°.
+           */
+          base = {
+            ...base,
+            rx: (Number(base.rx) || 0) + dRx,
+            ry: (Number(base.ry) || 0) + dRy,
+            rz: (Number(base.rz) || 0) + dRz,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
       return base;
     };
     const readNecklaceMerchantCal = () =>
@@ -13633,18 +13886,19 @@ async function runArSession({
       0,
     );
     /**
-     * v332: suaviza/trava a PROFUNDIDADE (Z mundo) da âncora — combate o "óculos
-     * sai para a frente / descola dos olhos" quando o rosto sai do centro (PnP
-     * MindAR instável em Z). 0 = só One Euro normal; 1 = trava quase total.
-     * Default 0.6 (bom equilíbrio: estável sem perder o leaning natural).
+     * v333: estabiliza a DISTÂNCIA ao longo do raio de visão (EMA) — combate o
+     * "óculos sai para a frente / descola dos olhos" quando o rosto sai do centro
+     * (PnP MindAR oscila em profundidade). A posição no ecrã fica trancada ao rosto
+     * (reescala radial mantém o raio); só a distância é suavizada. 0 = só One Euro;
+     * 1 = distância quase congelada. Default 0.85.
      */
     const glassesDepthLock = (() => {
       const v = resolveGlassesNumber(
         "omafit_ar_glasses_depth_lock",
         "arGlassesDepthLock",
-        0.6,
+        0.85,
       );
-      return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.6;
+      return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.85;
     })();
 
     if (glassesForceAnchorUnitScale) {
@@ -14652,7 +14906,7 @@ async function runArSession({
       glassesLiftYM,
       glassesEyeZM,
       glassesDepthLock,
-      glassesAnchorZEma: NaN,
+      glassesAnchorDistEma: NaN,
       glassesLastLateralDiagMs: 0,
       anchorFaceLm: anchorIndex,
       readGlassesMerchantCal,
@@ -15745,7 +15999,7 @@ async function runArSession({
             st.anchorEuroQuatState.tPrev = null;
             st.anchorEuroQuatState.logState = { xPrev: null, tPrev: null, dxPrev: [0, 0, 0] };
           }
-          st.glassesAnchorZEma = NaN;
+          st.glassesAnchorDistEma = NaN;
           st.smoothAnchorMat.copy(anchorRawMat);
           anchor.group.matrix.copy(st.smoothAnchorMat);
           for (let fi = 0; fi < mindarThree.faceMeshes.length; fi++) {
@@ -15778,14 +16032,23 @@ async function runArSession({
             anchorRawMat.decompose(st.anchorDec.p, st.anchorDec.q, st.anchorDec.s);
             const tSec = nowMs * 0.001;
             /**
-             * v332 flat: One Euro só na POSIÇÃO + rotação BRUTA. O utilizador relata
-             * que os óculos "saem para a frente / descolam dos olhos" ao mover para os
-             * lados — isto é instabilidade de PROFUNDIDADE do PnP MindAR (o Z salta
-             * quando o rosto sai do centro). O v330 (T/R brutos) deixava o Z a saltar.
-             * One Euro na posição filtra o salto lento de Z mas deixa passar o
-             * movimento lateral rápido (sem lag); a rotação fica bruta (sem slip de yaw
-             * que o One Euro em R causava no v324/v328). Profundidade extra-suave via
-             * `?omafit_ar_glasses_depth_lock` (EMA do Z mundo; 0=off, 1=trava total).
+             * v333 flat: TRAVA NO RAIO DE VISÃO + estabilização de distância.
+             *
+             * Diagnóstico v332 (logs do utilizador): `trackedFaceDistM` salta
+             * 0.97→0.70 m em poucos frames — a ambiguidade escala/profundidade do
+             * PnP MindAR faz a profundidade da âncora oscilar e os óculos "saem para
+             * a frente / descolam dos olhos". O v332 suavizava o Z-mundo, o que é
+             * geometricamente ERRADO: mexer só em Z mantendo X/Y desloca a posição no
+             * ECRÃ quando a profundidade muda → reintroduz desvio lateral.
+             *
+             * Correcção: um ponto move-se ao longo do seu RAIO de visão sem mudar de
+             * posição no ecrã (projecção perspetiva). Então:
+             *   1) One Euro na posição (tira jitter), obtém direcção (raio ao rosto).
+             *   2) EMA da DISTÂNCIA |p| → profundidade estável (depthLock).
+             *   3) p = direcção × distânciaEstável → ecrã trancado ao rosto (exacto),
+             *      profundidade estável (sem salto para a frente), tamanho estável.
+             * Rotação fica BRUTA (sem slip de yaw). Knob: `?omafit_ar_glasses_depth_lock`
+             * (0 = só One Euro; 1 = distância quase congelada). Default 0.85.
              */
             if (st.glassesAdminParityFlat) {
               anchorRawMat.decompose(st.anchorDec.p, st.anchorDec.q, st.anchorDec.s);
@@ -15798,21 +16061,39 @@ async function runArSession({
                 OMAFIT_GLASSES_ANCHOR_ONE_EURO_BETA,
                 OMAFIT_GLASSES_ANCHOR_ONE_EURO_D_CUTOFF,
               );
-              let zFlat = pFlat[2];
+              let px = pFlat[0];
+              let py = pFlat[1];
+              let pz = pFlat[2];
+              const distRaw = Math.hypot(
+                st.anchorDec.p.x,
+                st.anchorDec.p.y,
+                st.anchorDec.p.z,
+              );
+              const distF = Math.hypot(px, py, pz);
               const depthLock = Number(st.glassesDepthLock);
-              if (Number.isFinite(depthLock) && depthLock > 0) {
+              if (
+                Number.isFinite(depthLock) &&
+                depthLock > 0 &&
+                distRaw > 1e-4 &&
+                distF > 1e-4
+              ) {
                 const k = THREE.MathUtils.clamp(depthLock, 0, 1);
-                const alpha = 0.18 * (1 - k) + 0.02 * k;
-                if (Number.isFinite(st.glassesAnchorZEma)) {
-                  st.glassesAnchorZEma += alpha * (zFlat - st.glassesAnchorZEma);
+                /** EMA da distância: depthLock alto = alpha baixo = profundidade firme. */
+                const alpha = 0.3 * (1 - k) + 0.015 * k;
+                if (Number.isFinite(st.glassesAnchorDistEma)) {
+                  st.glassesAnchorDistEma += alpha * (distRaw - st.glassesAnchorDistEma);
                 } else {
-                  st.glassesAnchorZEma = zFlat;
+                  st.glassesAnchorDistEma = distRaw;
                 }
-                zFlat = st.glassesAnchorZEma;
+                /** Reescala radial: mesma direcção (raio→rosto), distância estável. */
+                const s = st.glassesAnchorDistEma / distF;
+                px *= s;
+                py *= s;
+                pz *= s;
               }
               if (st.glassesForceAnchorUnitScale) st.anchorDec.s.set(1, 1, 1);
               st.smoothAnchorMat.compose(
-                st.anchorDec.p.set(pFlat[0], pFlat[1], zFlat),
+                st.anchorDec.p.set(px, py, pz),
                 st.anchorDec.q,
                 st.anchorDec.s,
               );
@@ -15955,6 +16236,18 @@ async function runArSession({
                 { depthOnAnchor: true },
               );
               calibRot.position.set(0, 0, 0);
+              /**
+               * v334: PROXIMIDADE ao vivo. O wear-Z na âncora está desativado
+               * (depthOnAnchor=true zera wearZ p/ manter o screen-lock do v333),
+               * por isso não havia forma de encostar os óculos ao rosto. Aqui
+               * aplicamos `?omafit_ar_glasses_eye_z` como translação local no
+               * eixo frontal da cabeça (calibRot segue a pose). + = aproxima do
+               * rosto (recua para os olhos); usar negativo se for ao contrário.
+               */
+              {
+                const eyeZ = Number(st.glassesEyeZM) || 0;
+                if (eyeZ) calibRot.position.z = eyeZ;
+              }
               /**
                * v321: correção lateral DETERMINÍSTICA em espaço de câmara.
                *
@@ -16267,12 +16560,17 @@ async function runArSession({
                     gapEyeNdcX,
                     anchorYawDeg,
                     anchorZ: Number(aw.z.toFixed(4)),
+                    anchorDist: Number(Math.hypot(aw.x, aw.y, aw.z).toFixed(4)),
+                    distEma: Number.isFinite(st.glassesAnchorDistEma)
+                      ? Number(st.glassesAnchorDistEma.toFixed(4))
+                      : null,
                     depthLock: Number(st.glassesDepthLock) || 0,
                     yawNeg: st.glassesFlatAnchorYawNeg !== false,
                     pitchInvert: st.glassesFlatAnchorPitchInvert !== false,
                     rollNeg: st.glassesFlatAnchorRollNeg === true,
                     anchorTxMirror: st.glassesFlatAnchorTxMirror === true,
-                    note: "v332: anchorZ instável ao mover = óculos saem para a frente; depthLock suaviza Z.",
+                    eyeZ: Number(st.glassesEyeZM) || 0,
+                    note: "v334: knobs vivos — proximidade ?omafit_ar_glasses_eye_z (+ encosta ao rosto), pitch/yaw/roll ?omafit_ar_glasses_pitch_deg|yaw_deg|roll_deg (graus). Tracking estável (anchorDist≈distEma).",
                   });
                 } catch {
                   /* ignore */
@@ -20624,9 +20922,7 @@ async function runHandArSession({
     draco: Boolean(dracoLoaderHand),
   });
   await new Promise((resolve, reject) => {
-    glbLoader.load(
-      finalGlbUrl,
-      (gltf) => {
+    const __omafitOnHandGltf = (gltf) => {
         const glbScene = gltf.scene || gltf.scenes?.[0];
         if (!glbScene) {
           dbgBraceletAr("H1", "glb:onLoad", "gltf_no_scene", {});
@@ -20977,9 +21273,8 @@ async function runHandArSession({
             : null,
         });
         resolve();
-      },
-      undefined,
-      (err) => {
+    };
+    const __omafitOnHandGltfErr = (err) => {
         dbgBraceletAr("H1", "glb:onError", "load_failed", {
           message: String(err?.message || err).slice(0, 200),
         });
@@ -20988,8 +21283,28 @@ async function runHandArSession({
           url: String(finalGlbUrl || "").slice(0, 260),
         });
         reject(err);
-      },
-    );
+    };
+    const __omafitLoadHandFromNetwork = () =>
+      glbLoader.load(finalGlbUrl, __omafitOnHandGltf, undefined, __omafitOnHandGltfErr);
+    // Reutiliza o buffer já descarregado no warmup (parse directo, sem 2.º download).
+    const __omafitHandBufP = __omafitGlbBufferPromises.get(finalGlbUrl);
+    if (__omafitHandBufP) {
+      __omafitHandBufP
+        .then((buf) => {
+          if (!buf) {
+            __omafitLoadHandFromNetwork();
+            return;
+          }
+          try {
+            glbLoader.parse(buf, "", __omafitOnHandGltf, () => __omafitLoadHandFromNetwork());
+          } catch {
+            __omafitLoadHandFromNetwork();
+          }
+        })
+        .catch(() => __omafitLoadHandFromNetwork());
+    } else {
+      __omafitLoadHandFromNetwork();
+    }
   });
 
   if (debug) {
@@ -23199,6 +23514,17 @@ async function main() {
     if (!deferPreload) {
       getOmafitArModuleBundle().catch(() => {});
     }
+    // ⚡ Começa já o download do GLB (em paralelo com módulos/câmara) e aquece
+    // a conexão à CDN — sem esperar o clique em "iniciar AR".
+    try {
+      const warmGlbUrl = omafitResolveGlbLoadUrlFromDom();
+      if (warmGlbUrl) {
+        omafitWarmGlbConnection(warmGlbUrl);
+        omafitWarmGlbBuffer(warmGlbUrl);
+      }
+    } catch {
+      /* non-blocking */
+    }
   }
 
   let modal = null;
@@ -23265,6 +23591,31 @@ async function main() {
 
   if (autoOpen) {
     openModal();
+  } else if (omafitArThemeWidgetOwnsPdpCta()) {
+    omafitArHideDataOnlyRoot(root);
+    const scheduleArCtaFallback = () => {
+      if (document.querySelector(".omafit-widget")) return;
+      if (document.querySelector(".omafit-ar-widget-wrap")) return;
+      const wrap = el("div", {
+        className: "omafit-ar-widget-wrap",
+        style: { textAlign: "center", marginTop: "16px", marginBottom: "24px" },
+      });
+      const link = createTriggerLink(linkText, primaryColor);
+      wrap.appendChild(link);
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        openModal();
+      });
+      if (!omafitArInsertTriggerNearBuyButtons(wrap)) {
+        wrap.remove();
+      }
+    };
+    if (document.querySelector(".omafit-widget")) {
+      /* CTA já junto ao carrinho via omafit-widget.js */
+    } else {
+      window.setTimeout(scheduleArCtaFallback, 1500);
+      window.setTimeout(scheduleArCtaFallback, 3500);
+    }
   } else {
     const wrap = el("div", {
       className: "omafit-ar-widget-wrap",
@@ -23272,7 +23623,11 @@ async function main() {
     });
     const link = createTriggerLink(linkText, primaryColor);
     wrap.appendChild(link);
-    root.appendChild(wrap);
+    if (!omafitArInsertTriggerNearBuyButtons(wrap)) {
+      root.appendChild(wrap);
+    } else {
+      omafitArHideDataOnlyRoot(root);
+    }
     link.addEventListener("click", (e) => {
       e.preventDefault();
       openModal();

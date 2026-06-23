@@ -1422,7 +1422,9 @@
             : null,
         tryonLayout: normTryonLayout,
         tryonLayoutBackgroundImage: config?.tryon_layout_background_image || '',
-        tryon_layout_background_image: config?.tryon_layout_background_image || ''
+        tryon_layout_background_image: config?.tryon_layout_background_image || '',
+        billingPlan: shopBillingPlan,
+        stylistModeEnabled: stylistModeEnabled,
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
       
@@ -2170,98 +2172,27 @@
       (productInfo && productInfo.productHandle ? String(productInfo.productHandle).trim() : '') ||
       (window.location.pathname.split('/products/')[1] || '').split('/')[0];
 
-    var dataPack = await Promise.all([
-      getOnlyProductImages(resolvedHandleForImages),
-      getCurrentProductData(productInfo),
-      withFastTimeout(collectionTitlePromise, collectionTitle || ''),
-      withFastTimeout(fetchCollectionType(shopDomain, collectionHandle), ''),
-      withFastTimeout(fetchCollectionElasticity(shopDomain, collectionHandle), ''),
-      withFastTimeout(getComplementaryProduct(collectionHandle), null)
-    ]);
-    allProductImages = dataPack[0];
-    currentProductData = dataPack[1];
-    if (currentProductData) {
-      allProductImages = mergeUniqueProductImages(
-        allProductImages,
-        extractImagesFromProductRecord(currentProductData)
-      );
-    }
-    collectionTitle = String(dataPack[2] || collectionTitle || '').trim();
-    const collectionType = dataPack[3];
-    let collectionElasticity = dataPack[4];
-    const complementaryProduct = dataPack[5];
-    if (collectionType === 'footwear') {
-      collectionElasticity = '';
-    }
+    // ⚡ BOOT RÁPIDO DO IFRAME
+    // Dispara todas as buscas em paralelo e só aguarda o tipo de coleção (que
+    // decide a rota /widget vs /widget-shoes). Imagens, catálogo, descrição e
+    // contexto seguem por postMessage assim que ficarem prontos — sem atrasar
+    // o download/boot do app React dentro do iframe.
+    var __omafitImagesP = getOnlyProductImages(resolvedHandleForImages);
+    var __omafitProductDataP = getCurrentProductData(productInfo);
+    var __omafitCollTitleP = withFastTimeout(collectionTitlePromise, collectionTitle || '');
+    var __omafitCollTypeP = withFastTimeout(fetchCollectionType(shopDomain, collectionHandle), '');
+    var __omafitElasticityP = withFastTimeout(fetchCollectionElasticity(shopDomain, collectionHandle), '');
+    var __omafitComplementaryP = withFastTimeout(getComplementaryProduct(collectionHandle), null);
 
-    console.log('📸 Total de imagens encontradas:', allProductImages.length);
-
-    if (currentProductData) {
-      if (!productInfo.productId) {
-        productInfo.productId = String(currentProductData.id || '');
-      }
-      if (!productInfo.productName) {
-        productInfo.productName = String(currentProductData.title || '');
-      }
-      var descHtmlEarly = String(currentProductData.description || '').trim();
-      if (descHtmlEarly) {
-        if (!String(productInfo.productDescriptionHtml || '').trim()) {
-          productInfo.productDescriptionHtml = descHtmlEarly;
-        }
-        if (!String(productInfo.productDescription || '').trim()) {
-          productInfo.productDescription = normalizeProductDescriptionText(descHtmlEarly);
-        }
-      }
-    }
-    productInfo = await enrichProductInfo(productInfo);
-    const productVariantCatalog = buildProductVariantCatalog(currentProductData);
-    const currentVariantSelection = getSelectedVariantContext(currentProductData);
-    if (!productInfo.productDescription && currentProductData && currentProductData.description) {
-      productInfo.productDescription = normalizeProductDescriptionText(currentProductData.description);
-      productInfo.productDescriptionHtml = String(currentProductData.description || '').trim();
-    }
-
-    // Limitar imagens na URL - passar apenas as primeiras 3 para evitar URL muito longa
-    const limitedImages = allProductImages.slice(0, 3);
-    
-    console.log('📦 Configuração sendo enviada ao widget:', {
-      shopDomain: shopDomain,
-      config: {
-        ...config,
-        storeLogo: OMAFIT_CONFIG.storeLogo ? '✅ Presente (será enviado via postMessage)' : '❌ Ausente'
-      },
-      productImage: productImage ? '✅' : '❌',
-      productImages: allProductImages.length,
-      limitedImages: limitedImages.length,
-      primaryColor: config.primaryColor,
-      storeName: config.storeName
-    });
-    console.log('🧩 Catálogo de variantes extraído:', {
-      sizes: productVariantCatalog.sizes.length,
-      colors: productVariantCatalog.colors.length,
-      variants: productVariantCatalog.variants.length
-    });
+    var collectionType = await __omafitCollTypeP;
 
     // Construir URL apenas com dados essenciais (evitar 414 URI Too Long)
     const publicIdToUse = OMAFIT_CONFIG.publicId || 'wgt_pub_default';
     console.log('🔑 PublicId sendo usado:', publicIdToUse);
-    
-    const productDescriptionFull = normalizeProductDescriptionText(
-      productInfo.productDescription ||
-      (currentProductData && currentProductData.description ? currentProductData.description : '')
-    );
-    const productDescriptionHtml = String(
-      productInfo.productDescriptionHtml ||
-      (currentProductData && currentProductData.description ? currentProductData.description : '') ||
-      ''
-    ).trim();
-    const productDescriptionForUrl = productDescriptionFull.slice(0, 500);
-    const variantCatalogList = Array.isArray(productVariantCatalog.variants) ? productVariantCatalog.variants : [];
-    const availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
-    const availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
+
     const resolvedProductHandle =
       (productInfo && productInfo.productHandle ? String(productInfo.productHandle).trim() : '') ||
-      (currentProductData && currentProductData.handle ? String(currentProductData.handle).trim() : '');
+      String(resolvedHandleForImages || '').trim();
     var omafitIframeTryonLayout =
       OMAFIT_CONFIG && OMAFIT_CONFIG.tryonLayout === 'hero'
         ? 'hero'
@@ -2382,7 +2313,7 @@
       try {
         var phAr =
           (productInfo && productInfo.productHandle && String(productInfo.productHandle).trim()) ||
-          (currentProductData && currentProductData.handle && String(currentProductData.handle).trim()) ||
+          String(resolvedProductHandle || '').trim() ||
           '';
         if (phAr) {
           widgetUrl += '&productHandle=' + encodeURIComponent(phAr);
@@ -2474,11 +2405,92 @@
       }
     }
 
+    // ⚡ Dispara o download/boot do iframe JÁ — em paralelo às buscas restantes.
+    var __omafitIframeLoaded = false;
+    var __omafitDispatch = null;
     iframe.addEventListener('load', function () {
       if (loadingContainer.parentNode) {
         loadingContainer.parentNode.removeChild(loadingContainer);
       }
-      
+      __omafitIframeLoaded = true;
+      if (__omafitDispatch) __omafitDispatch();
+    });
+    iframe.addEventListener('error', function () {
+      if (loadingContainer.parentNode) {
+        loadingContainer.innerHTML =
+          '<div style="padding: 20px; text-align: center; background: white; border-radius: 12px; font-family: ' +
+          OMAFIT_CONFIG.fontFamily +
+          ';">' +
+          '<div style="font-size: 18px; margin-bottom: 10px;">⚠️ Erro ao carregar o widget</div>' +
+          '<div style="font-size: 14px; opacity: 0.8; margin-top: 10px;">Tente novamente mais tarde</div>' +
+          '</div>';
+      }
+    });
+    iframe.src = widgetUrl;
+
+    // Buscas restantes (imagens, catálogo, descrição, contexto) — agora correm
+    // em paralelo ao boot do iframe e seguem por postMessage quando prontas.
+    var __omafitDataPack = await Promise.all([
+      __omafitImagesP,
+      __omafitProductDataP,
+      __omafitCollTitleP,
+      __omafitElasticityP,
+      __omafitComplementaryP
+    ]);
+    allProductImages = __omafitDataPack[0] || [];
+    currentProductData = __omafitDataPack[1];
+    if (currentProductData) {
+      allProductImages = mergeUniqueProductImages(
+        allProductImages,
+        extractImagesFromProductRecord(currentProductData)
+      );
+    }
+    collectionTitle = String(__omafitDataPack[2] || collectionTitle || '').trim();
+    var collectionElasticity = __omafitDataPack[3];
+    var complementaryProduct = __omafitDataPack[4];
+    if (collectionType === 'footwear') {
+      collectionElasticity = '';
+    }
+    console.log('📸 Total de imagens encontradas:', allProductImages.length);
+    if (currentProductData) {
+      if (!productInfo.productId) {
+        productInfo.productId = String(currentProductData.id || '');
+      }
+      if (!productInfo.productName) {
+        productInfo.productName = String(currentProductData.title || '');
+      }
+      var descHtmlEarly = String(currentProductData.description || '').trim();
+      if (descHtmlEarly) {
+        if (!String(productInfo.productDescriptionHtml || '').trim()) {
+          productInfo.productDescriptionHtml = descHtmlEarly;
+        }
+        if (!String(productInfo.productDescription || '').trim()) {
+          productInfo.productDescription = normalizeProductDescriptionText(descHtmlEarly);
+        }
+      }
+    }
+    productInfo = await enrichProductInfo(productInfo);
+    var productVariantCatalog = buildProductVariantCatalog(currentProductData);
+    var currentVariantSelection = getSelectedVariantContext(currentProductData);
+    if (!productInfo.productDescription && currentProductData && currentProductData.description) {
+      productInfo.productDescription = normalizeProductDescriptionText(currentProductData.description);
+      productInfo.productDescriptionHtml = String(currentProductData.description || '').trim();
+    }
+    var productDescriptionFull = normalizeProductDescriptionText(
+      productInfo.productDescription ||
+      (currentProductData && currentProductData.description ? currentProductData.description : '')
+    );
+    var productDescriptionHtml = String(
+      productInfo.productDescriptionHtml ||
+      (currentProductData && currentProductData.description ? currentProductData.description : '') ||
+      ''
+    ).trim();
+    var variantCatalogList = Array.isArray(productVariantCatalog.variants) ? productVariantCatalog.variants : [];
+    var availableSizesList = Array.isArray(productVariantCatalog.sizes) ? productVariantCatalog.sizes : [];
+    var availableColorsList = Array.isArray(productVariantCatalog.colors) ? productVariantCatalog.colors : [];
+
+    // Monta e despacha os payloads ricos por postMessage assim que o iframe carregar.
+    {
       // Enviar dados grandes via postMessage para evitar URL muito longa
       try {
         // Enviar collectionHandle e defaultGender para o app Netlify usar ao buscar tabela de medidas no Supabase
@@ -2542,10 +2554,10 @@
           tryonLayout: omafitIframeTryonLayout,
           tryon_layout_background_image: omafitIframeTryonLayoutBackground,
           tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground,
-          billing_plan: shopBillingPlan,
-          billingPlan: shopBillingPlan,
-          stylist_mode_enabled: stylistModeEnabled,
-          stylistModeEnabled: stylistModeEnabled,
+          billing_plan: OMAFIT_CONFIG.billingPlan || null,
+          billingPlan: OMAFIT_CONFIG.billingPlan || null,
+          stylist_mode_enabled: !!OMAFIT_CONFIG.stylistModeEnabled,
+          stylistModeEnabled: !!OMAFIT_CONFIG.stylistModeEnabled,
           primaryColor: config.primaryColor || '#810707',
           fontFamily: config.fontFamily || detectedFontFamily || ''
           }, OMAFIT_WIDGET_ORIGIN);
@@ -2721,13 +2733,17 @@
           }).catch(function () { /* non-blocking */ });
         };
 
-        // Primeira entrega + retries para cobrir timing de mount no iframe.
-        sendWidgetPayloads();
-        setTimeout(sendWidgetPayloads, 350);
-        setTimeout(sendWidgetPayloads, 1200);
-        setTimeout(sendWidgetPayloads, 2500);
-        setTimeout(resendProductImagesIfRicher, 1800);
-        setTimeout(resendProductImagesIfRicher, 4000);
+        // Boot do iframe foi disparado cedo; entrega os payloads quando carregar
+        // (ou já, se o load tiver ocorrido antes dos dados ficarem prontos).
+        __omafitDispatch = function () {
+          sendWidgetPayloads();
+          setTimeout(sendWidgetPayloads, 350);
+          setTimeout(sendWidgetPayloads, 1200);
+          setTimeout(sendWidgetPayloads, 2500);
+          setTimeout(resendProductImagesIfRicher, 1800);
+          setTimeout(resendProductImagesIfRicher, 4000);
+        };
+        if (__omafitIframeLoaded) __omafitDispatch();
 
         console.log('📤 Payload completo enviado ao widget:', {
           variant_catalog: variantCatalogList.length,
@@ -2749,21 +2765,7 @@
       } catch (e) {
         console.warn('⚠️ Erro ao enviar dados via postMessage:', e);
       }
-    });
-
-    iframe.addEventListener('error', function () {
-      if (loadingContainer.parentNode) {
-        loadingContainer.innerHTML =
-          '<div style="padding: 20px; text-align: center; background: white; border-radius: 12px; font-family: ' +
-          OMAFIT_CONFIG.fontFamily +
-          ';">' +
-          '<div style="font-size: 18px; margin-bottom: 10px;">⚠️ Erro ao carregar o widget</div>' +
-          '<div style="font-size: 14px; opacity: 0.8; margin-top: 10px;">Tente novamente mais tarde</div>' +
-          '</div>';
-      }
-    });
-
-    iframe.src = widgetUrl;
+    }
     } catch (modalErr) {
       console.error('❌ Omafit: erro ao montar modal do provador:', modalErr);
       closeModal();
@@ -3786,6 +3788,19 @@
     }
 
     container.appendChild(createOmafitCta());
+
+    // Aquece a conexão ao domínio do iframe sem pesar a PDP (cobre mobile, que
+    // não tem hover). Só abre a conexão TLS — não baixa nada.
+    try {
+      var __omafitWarmConn = function () { try { omafitTryOnPreconnect(); } catch (_e) {} };
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(__omafitWarmConn, { timeout: 2000 });
+      } else {
+        setTimeout(__omafitWarmConn, 1200);
+      }
+    } catch (_eWarm) {
+      /* non-blocking */
+    }
 
     function insertContainerFallback() {
       const root = document.getElementById('omafit-widget-root');

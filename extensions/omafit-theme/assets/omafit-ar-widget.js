@@ -8762,6 +8762,22 @@ function omafitArResolveEmbedPosition() {
   return ep === "above_buy_buttons" ? "above_buy_buttons" : "below_buy_buttons";
 }
 
+/** Visível para inserção — inclui botões sticky/fixed (offsetParent === null). */
+function omafitArThemeCtaTargetVisible(el) {
+  if (!el || typeof el.getBoundingClientRect !== "function") return false;
+  if (el.disabled === true || el.getAttribute("aria-hidden") === "true") return false;
+  try {
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    if (Number(style.opacity) === 0) return false;
+    return true;
+  } catch {
+    return el.offsetParent !== null;
+  }
+}
+
 /** Fallback quando o embed existe mas o widget de roupa/iframe não montou CTA (ex.: desligado no admin). */
 function omafitArInsertTriggerNearBuyButtons(wrap) {
   if (!wrap || typeof document === "undefined") return false;
@@ -8772,26 +8788,40 @@ function omafitArInsertTriggerNearBuyButtons(wrap) {
     'button[name="add"]',
     'button[type="submit"][name="add"]',
     ".product-form__submit",
+    "product-form button[type=\"submit\"]",
+    "product-form-component button[type=\"submit\"]",
+    "product-form-component [name=\"add\"]",
+    ".buy-buttons button[type=\"submit\"]",
+    ".product-form__buttons button[type=\"submit\"]",
     'form[action*="/cart/add"] button[type="submit"]',
+    'form[action="/cart/add"] button[type="submit"]',
     'form[action*="/cart/add"] input[type="submit"]',
     '[name="add"]',
     "button[data-add-to-cart]",
+    "button[data-add-to-cart-button]",
+    "[data-add-to-cart-button]",
     ".btn--add-to-cart",
     ".product-form__cart-submit",
     "button.product-form__cart-submit",
+    ".product__submit",
+    ".product-single__add-to-cart",
+    "#AddToCart",
+    ".add-to-cart",
   ];
   const buyNowSelectors = [
     ".shopify-payment-button",
     ".shopify-payment-button__button",
     "shopify-buy-it-now-button",
+    "shopify-accelerated-checkout",
     '[data-shopify="payment-button"]',
+    ".dynamic-checkout__content",
   ];
 
   function findFirstVisible(selectors, scope) {
     const root = scope || document;
     for (const sel of selectors) {
       const el = root.querySelector(sel);
-      if (el && el.offsetParent !== null) return el;
+      if (el && omafitArThemeCtaTargetVisible(el)) return el;
     }
     return null;
   }
@@ -8799,7 +8829,7 @@ function omafitArInsertTriggerNearBuyButtons(wrap) {
   let addToCartButton = null;
   for (const sel of addToCartSelectors) {
     const btn = document.querySelector(sel);
-    if (btn && btn.offsetParent !== null) {
+    if (btn && omafitArThemeCtaTargetVisible(btn)) {
       addToCartButton = btn;
       break;
     }
@@ -8834,7 +8864,7 @@ function omafitArInsertTriggerNearBuyButtons(wrap) {
   }
 
   const productForm = document.querySelector(
-    'form[action*="/cart/add"], .product-form, form.product-form',
+    'form[action*="/cart/add"], form[action="/cart/add"], product-form, product-form-component, .product-form, form.product-form',
   );
   if (productForm) {
     if (embedPos === "above_buy_buttons" && productForm.firstChild) {

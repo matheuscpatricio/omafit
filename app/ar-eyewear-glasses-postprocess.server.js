@@ -1,5 +1,5 @@
 /**
- * Pós-processo óculos no Node — `glasses_canonical` nativo (@gltf-transform) por defeito.
+ * Pós-processo Rodin no Node por defeito (óculos, pulseira, relógio).
  * Python `run_recipe.py` só com AR_MESH_NODE_RUN_RECIPE_PYTHON=1 e Python validado.
  */
 import { spawn } from "node:child_process";
@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { postprocessGlassesCanonicalNodeBuffer } from "./ar-eyewear-glasses-canonical-node.server.js";
+import { postprocessBraceletScaleNodeBuffer } from "./ar-eyewear-bracelet-scale-node.server.js";
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
 import {
   logPythonProbeOnce,
@@ -26,6 +27,26 @@ const RUN_RECIPE_SCRIPT = path.join(
   "postprocess",
   "run_recipe.py",
 );
+
+const BRACELET_RECIPES = new Set(["bracelet_bangle", "bracelet_chain", "bracelet_cuff"]);
+
+/**
+ * @param {string} recipe
+ * @param {Record<string, unknown>} params
+ */
+function paramsForRecipe(recipe, params) {
+  if (recipe === "watch_round") {
+    const caseMm = Number(params.case_width_mm) || 42;
+    return { ...params, inner_diameter_mm: caseMm * 1.15 };
+  }
+  return params;
+}
+
+function usePythonRunRecipe() {
+  return /^(1|true|yes|on)$/i.test(
+    String(process.env.AR_MESH_NODE_RUN_RECIPE_PYTHON || "").trim(),
+  );
+}
 
 /**
  * @param {{ bin: string, prefixArgs: string[] }} launch
@@ -94,12 +115,6 @@ function runRecipeSubprocess(launch, recipe, inp, out, params) {
   });
 }
 
-function usePythonRunRecipe() {
-  return /^(1|true|yes|on)$/i.test(
-    String(process.env.AR_MESH_NODE_RUN_RECIPE_PYTHON || "").trim(),
-  );
-}
-
 async function postprocessGlassesCanonicalNode(glbBuf, params) {
   try {
     const outBuf = await postprocessGlassesCanonicalNodeBuffer(glbBuf, params);
@@ -121,13 +136,24 @@ async function postprocessGlassesCanonicalNode(glbBuf, params) {
   }
 }
 
+async function postprocessBraceletNode(glbBuf, recipe, params) {
+  const scaledParams = paramsForRecipe(recipe, params);
+  const outBuf = await postprocessBraceletScaleNodeBuffer(glbBuf, scaledParams);
+  console.log("[ar-eyewear] bracelet/watch via Node (scale + center)", {
+    recipe,
+    inner_diameter_mm: scaledParams.inner_diameter_mm,
+    inner_radius_mm: scaledParams.inner_radius_mm,
+  });
+  return outBuf;
+}
+
 async function postprocessViaPythonRunRecipe(glbBuf, recipe, params) {
   const pyProbe = probePythonForRunRecipe();
   if (!pyProbe.ok || !pyProbe.launch) {
     throw new Error(`run_recipe indisponível (${recipe}): ${pyProbe.message}`);
   }
 
-  const tmp = await mkdtemp(path.join(tmpdir(), "omafit-glasses-pp-"));
+  const tmp = await mkdtemp(path.join(tmpdir(), "omafit-ar-pp-"));
   const inp = path.join(tmp, "rodin_raw.glb");
   const out = path.join(tmp, "canonical.glb");
   try {
@@ -135,15 +161,50 @@ async function postprocessViaPythonRunRecipe(glbBuf, recipe, params) {
     await runRecipeSubprocess(pyProbe.launch, recipe, inp, out, params);
     const outBuf = await readFile(out);
     if (outBuf.length < 1000) throw new Error("GLB pós-processado inválido (muito pequeno)");
-    console.log("[ar-eyewear] glasses_canonical via run_recipe.py", {
-      recipe,
-      target_width_m: params.target_width_m,
-      lens_type: params.lens_type,
-    });
+    console.log("[ar-eyewear] pós-processo via run_recipe.py", { recipe });
     return Buffer.from(outBuf);
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+async function postprocessWithNodeFirst(glbBuf, recipe, params) {
+  if (recipe === "glasses_canonical") {
+    try {
+      return await postprocessGlassesCanonicalNode(glbBuf, params);
+    } catch (nodeErr) {
+      if (!usePythonRunRecipe()) throw nodeErr;
+      return postprocessViaPythonRunRecipe(glbBuf, recipe, params);
+    }
+  }
+
+  if (BRACELET_RECIPES.has(recipe) || recipe === "watch_round") {
+    try {
+      return await postprocessBraceletNode(glbBuf, recipe, params);
+    } catch (nodeErr) {
+      console.warn(
+        "[ar-eyewear] pulseira/relógio Node falhou:",
+        nodeErr?.message || nodeErr,
+      );
+      if (usePythonRunRecipe()) {
+        try {
+          return await postprocessViaPythonRunRecipe(
+            glbBuf,
+            recipe,
+            paramsForRecipe(recipe, params),
+          );
+        } catch (pyErr) {
+          console.warn(
+            "[ar-eyewear] run_recipe.py falhou — canonicalize legado:",
+            pyErr?.message || pyErr,
+          );
+        }
+      }
+      return canonicalizeArEyewearGlbBuffer(glbBuf);
+    }
+  }
+
+  return postprocessViaPythonRunRecipe(glbBuf, recipe, params);
 }
 
 /**
@@ -154,23 +215,5 @@ async function postprocessViaPythonRunRecipe(glbBuf, recipe, params) {
 export async function postprocessRodinGlassesGlbBuffer(glbBuf, opts = {}) {
   const recipe = String(opts.recipe || "glasses_canonical").trim() || "glasses_canonical";
   const params = opts.params && typeof opts.params === "object" ? opts.params : {};
-
-  if (recipe === "glasses_canonical") {
-    try {
-      return await postprocessGlassesCanonicalNode(glbBuf, params);
-    } catch (nodeErr) {
-      if (!usePythonRunRecipe()) throw nodeErr;
-      try {
-        return await postprocessViaPythonRunRecipe(glbBuf, recipe, params);
-      } catch (pyErr) {
-        console.warn(
-          "[ar-eyewear] run_recipe.py falhou após Node — rejeitando:",
-          pyErr?.message || pyErr,
-        );
-        throw nodeErr;
-      }
-    }
-  }
-
-  return postprocessViaPythonRunRecipe(glbBuf, recipe, params);
+  return postprocessWithNodeFirst(glbBuf, recipe, params);
 }

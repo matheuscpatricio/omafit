@@ -21,13 +21,10 @@ import { postprocessGlassesCanonicalNodeBuffer } from "./ar-eyewear-glasses-cano
 import { canonicalizeArEyewearGlbBuffer } from "./ar-eyewear-glb-canonicalize.server.js";
 
 import {
-
   logPythonProbeOnce,
-
+  launchIsRunnable,
   probePythonForRunRecipe,
-
   resolvePythonLaunch,
-
 } from "./ar-mesh-python-bin.server.js";
 
 
@@ -85,6 +82,14 @@ function runRecipeSubprocess(launch, recipe, inp, out, params) {
   );
 
   const { bin, prefixArgs } = launch;
+
+  if (!launchIsRunnable(launch)) {
+    return Promise.reject(
+      new Error(
+        `Python indisponível (${bin}). Verifique AR_MESH_PYTHON ou instale trimesh no servidor.`,
+      ),
+    );
+  }
 
   return new Promise((resolve, reject) => {
 

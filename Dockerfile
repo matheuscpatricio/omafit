@@ -19,15 +19,18 @@ RUN npm run build
 FROM public.ecr.aws/docker/library/node:20-alpine
 RUN apk add --no-cache openssl python3 py3-pip py3-numpy \
   && python3 -m venv /opt/ar-mesh-venv \
-  && /opt/ar-mesh-venv/bin/pip install --no-cache-dir "trimesh>=4.0.0" "numpy>=1.24.0"
+  && /opt/ar-mesh-venv/bin/pip install --no-cache-dir "trimesh>=4.0.0" "numpy>=1.24.0" \
+  && test -x /opt/ar-mesh-venv/bin/python3 \
+  && /opt/ar-mesh-venv/bin/python3 -c "import trimesh, numpy"
 
 EXPOSE 3000
 
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV AR_MESH_PYTHON=/opt/ar-mesh-venv/bin/python3
 ENV PATH="/opt/ar-mesh-venv/bin:${PATH}"
+# Não fixar AR_MESH_PYTHON no ENV: Railway pode herdar um caminho inválido se o build não for Docker.
+# O runtime resolve python3 via PATH (/opt/ar-mesh-venv primeiro) ou AR_MESH_PYTHON explícito na UI.
 
 COPY package.json package-lock.json* ./
 

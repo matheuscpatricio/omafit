@@ -3,6 +3,18 @@
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
 
+  /** Mobile viewport — matchMedia + fallback para consistência entre produtos/páginas. */
+  function omafitIsMobileViewport() {
+    try {
+      if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return true;
+    } catch (e) { /* ignore */ }
+    try {
+      var sw = window.screen && window.screen.width ? Math.min(window.screen.width, window.screen.height) : 0;
+      if (sw > 0 && sw <= 768) return true;
+    } catch (e2) { /* ignore */ }
+    return window.innerWidth <= 768;
+  }
+
   var OMAFIT_GROWTH_PLUS_PLANS = { growth: 1, pro: 1, professional: 1, enterprise: 1 };
   function omafitHasGrowthPlusPlan(plan) {
     return !!OMAFIT_GROWTH_PLUS_PLANS[String(plan || '').trim().toLowerCase()];
@@ -101,27 +113,6 @@
     } catch (_e) {
       // non-blocking
     }
-  }
-
-  /** Visível para inserção — inclui botões sticky/fixed (offsetParent === null). */
-  function omafitThemeCtaTargetVisible(el) {
-    if (!el || typeof el.getBoundingClientRect !== 'function') return false;
-    if (el.disabled === true || el.getAttribute('aria-hidden') === 'true') return false;
-    try {
-      var rect = el.getBoundingClientRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return false;
-      var style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden') return false;
-      if (Number(style.opacity) === 0) return false;
-      return true;
-    } catch (_e) {
-      return el.offsetParent !== null;
-    }
-  }
-
-  function omafitShouldRetryWidgetInsert() {
-    if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) return false;
-    return !document.querySelector('.omafit-widget');
   }
 
   function applyOmafitArEyewearSuppression() {
@@ -1829,7 +1820,9 @@
       return;
     }
 
-    const isMobile = window.innerWidth <= 768;
+    const isMobile = omafitIsMobileViewport();
+    const mobileModalBg =
+      (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.background ? OMAFIT_CONFIG.colors.background : '#ffffff');
 
     // Modal visível de imediato (spinner no overlay). Dados e iframe.src vêm em seguida — sem splash extra.
     const overlay = document.createElement('div');
@@ -1843,8 +1836,8 @@
       'background: rgba(0, 0, 0, 0);' +
       'z-index: 999999;' +
       'display: flex;' +
-      'align-items: center;' +
-      'justify-content: center;' +
+      'align-items: ' + (isMobile ? 'stretch' : 'center') + ';' +
+      'justify-content: ' + (isMobile ? 'stretch' : 'center') + ';' +
       (isMobile ? 'padding: 0;' : 'padding: 20px;') +
       'box-sizing: border-box;' +
       'backdrop-filter: blur(0px);' +
@@ -1857,20 +1850,30 @@
       iframe.setAttribute('allow', allowVal);
       iframe.allow = allowVal;
     })();
-    iframe.style.cssText =
-      'width: 95vw;' +
-      'max-width: 1000px;' +
-      'height: 85vh;' +
-      'max-height: 800px;' +
-      'border: none;' +
-      'border-radius: 16px;' +
-      'background: ' +
-      (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.background ? OMAFIT_CONFIG.colors.background : '#ffffff') +
-      ';' +
-      'box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);' +
-      'transform: scale(0.9);' +
-      'opacity: 0;' +
-      'transition: all 0.4s ease-in-out;';
+    iframe.style.cssText = isMobile
+      ? 'width: 100vw;' +
+        'height: 100dvh;' +
+        'height: 100vh;' +
+        'max-width: none;' +
+        'max-height: none;' +
+        'border: none;' +
+        'border-radius: 0;' +
+        'background: ' + mobileModalBg + ';' +
+        'box-shadow: none;' +
+        'transform: scale(1);' +
+        'opacity: 0;' +
+        'transition: all 0.4s ease-in-out;'
+      : 'width: 95vw;' +
+        'max-width: 1000px;' +
+        'height: 85vh;' +
+        'max-height: 800px;' +
+        'border: none;' +
+        'border-radius: 16px;' +
+        'background: ' + mobileModalBg + ';' +
+        'box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);' +
+        'transform: scale(0.9);' +
+        'opacity: 0;' +
+        'transition: all 0.4s ease-in-out;';
 
     const loadingContainer = document.createElement('div');
     loadingContainer.style.cssText =
@@ -1913,12 +1916,18 @@
     }
 
     const iframeContainer = document.createElement('div');
-    iframeContainer.style.cssText =
-      'position: relative;' +
-      'width: 95vw;' +
-      'max-width: 1000px;' +
-      'height: 85vh;' +
-      'max-height: 800px;';
+    iframeContainer.style.cssText = isMobile
+      ? 'position: relative;' +
+        'width: 100vw;' +
+        'height: 100dvh;' +
+        'height: 100vh;' +
+        'max-width: none;' +
+        'max-height: none;'
+      : 'position: relative;' +
+        'width: 95vw;' +
+        'max-width: 1000px;' +
+        'height: 85vh;' +
+        'max-height: 800px;';
 
     const closeButton = document.createElement('button');
     closeButton.innerHTML = '×';
@@ -3761,25 +3770,13 @@
       'button[name="add"]',
       'button[type="submit"][name="add"]',
       '.product-form__submit',
-      'product-form button[type="submit"]',
-      'product-form-component button[type="submit"]',
-      'product-form-component [name="add"]',
-      '.buy-buttons button[type="submit"]',
-      '.product-form__buttons button[type="submit"]',
       'form[action*="/cart/add"] button[type="submit"]',
-      'form[action="/cart/add"] button[type="submit"]',
       'form[action*="/cart/add"] input[type="submit"]',
       '[name="add"]',
       'button[data-add-to-cart]',
-      'button[data-add-to-cart-button]',
-      '[data-add-to-cart-button]',
       '.btn--add-to-cart',
       '.product-form__cart-submit',
-      'button.product-form__cart-submit',
-      '.product__submit',
-      '.product-single__add-to-cart',
-      '#AddToCart',
-      '.add-to-cart'
+      'button.product-form__cart-submit'
     ];
 
     // Seletores comuns do botão/contêiner "Compre já" (dynamic checkout)
@@ -3787,16 +3784,14 @@
       '.shopify-payment-button',
       '.shopify-payment-button__button',
       'shopify-buy-it-now-button',
-      'shopify-accelerated-checkout',
-      '[data-shopify="payment-button"]',
-      '.dynamic-checkout__content'
+      '[data-shopify="payment-button"]'
     ];
 
     function findFirstVisible(selectors, root) {
       const scope = root || document;
       for (const sel of selectors) {
         const el = scope.querySelector(sel);
-        if (el && omafitThemeCtaTargetVisible(el)) return { element: el, selector: sel };
+        if (el && el.offsetParent !== null) return { element: el, selector: sel };
       }
       return null;
     }
@@ -3804,7 +3799,7 @@
     let addToCartButton = null;
     for (const sel of addToCartSelectors) {
       const btn = document.querySelector(sel);
-      if (btn && omafitThemeCtaTargetVisible(btn)) {
+      if (btn && btn.offsetParent !== null) { // Verificar se está visível
         addToCartButton = btn;
         console.log('✅ Botão encontrado com seletor:', sel);
         break;
@@ -3895,9 +3890,7 @@
     } else {
       console.warn('⚠️ Omafit: botão "Adicionar ao carrinho" não encontrado. Tentando inserir no formulário de produto...');
 
-      const productForm = document.querySelector(
-        'form[action*="/cart/add"], form[action="/cart/add"], product-form, product-form-component, .product-form, form.product-form'
-      );
+      const productForm = document.querySelector('form[action*="/cart/add"], .product-form, form.product-form');
       if (productForm) {
         if (embedPos === 'above_buy_buttons' && productForm.firstChild) {
           productForm.insertBefore(container, productForm.firstChild);
@@ -3933,12 +3926,14 @@
       '  }' +
       '  .omafit-modal-overlay > div:not([style*="transform: translate"]) {' +
       '    width: 100vw !important;' +
+      '    height: 100dvh !important;' +
       '    height: 100vh !important;' +
       '    max-width: none !important;' +
       '    max-height: none !important;' +
       '  }' +
       '  .omafit-modal-overlay iframe {' +
       '    width: 100vw !important;' +
+      '    height: 100dvh !important;' +
       '    height: 100vh !important;' +
       '    max-width: none !important;' +
       '    max-height: none !important;' +
@@ -4076,35 +4071,29 @@
   
   // Também tentar após um delay (para temas que carregam conteúdo dinamicamente)
   setTimeout(function() {
-    if (!omafitShouldRetryWidgetInsert()) return;
-    console.log('🔄 Tentando inicializar novamente (retry)...');
-    initOmafit();
+    if (isOmafitArEyewearPage()) return;
+    if (!document.querySelector('.omafit-widget')) {
+      console.log('🔄 Tentando inicializar novamente (retry)...');
+      initOmafit();
+    }
   }, 1000);
 
-  // Observar mudanças no DOM (para SPAs e secções Shopify)
+  // Observar mudanças no DOM (para SPAs)
   if (typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(function(mutations) {
-      if (!omafitShouldRetryWidgetInsert()) return;
-      const hasProductForm = document.querySelector(
-        'form[action*="/cart/add"], product-form, product-form-component, button[name="add"]'
-      );
-      if (hasProductForm) {
-        console.log('🔄 Novo conteúdo detectado, tentando inserir widget...');
-        initOmafit();
+      if (isOmafitArEyewearPage()) return;
+      if (!document.querySelector('.omafit-widget')) {
+        const hasProductForm = document.querySelector('form[action*="/cart/add"], button[name="add"]');
+        if (hasProductForm) {
+          console.log('🔄 Novo conteúdo detectado, tentando inserir widget...');
+          initOmafit();
+        }
       }
     });
-
+    
     observer.observe(document.body, {
       childList: true,
       subtree: true
     });
   }
-
-  document.addEventListener('shopify:section:load', function() {
-    if (!omafitShouldRetryWidgetInsert()) return;
-    setTimeout(function() {
-      removeInjectedOmafitCtaOnly();
-      initOmafit();
-    }, 120);
-  });
 })();

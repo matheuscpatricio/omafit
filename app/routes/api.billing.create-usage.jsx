@@ -24,24 +24,58 @@
 
 import { unauthenticated } from "../shopify.server";
 import { createUsageChargeIfNeeded } from "../billing-usage.server";
+import {
+  registerTryOnImageUsage,
+  verifyBillingInternalRequest,
+} from "../billing-register-usage.server";
 
 export async function action({ request }) {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
+  if (!verifyBillingInternalRequest(request)) {
+    return Response.json({ success: false, error: "unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await request.json().catch(() => ({}));
-    const { shopDomain, imagesUsed, planLimit, pricePerExtra, currency = "USD", imagesCount = 1 } = body;
+    const shopDomain = String(body.shopDomain || body.shop_domain || "").trim();
+    const imagesCount = Math.max(1, Math.floor(Number(body.imagesCount ?? body.images_count ?? 1)));
+    const { imagesUsed, planLimit, pricePerExtra, currency = "USD" } = body;
 
-    if (!shopDomain || typeof imagesUsed !== "number" || typeof planLimit !== "number") {
-      return Response.json(
-        { error: "Missing required fields: shopDomain, imagesUsed, planLimit" },
-        { status: 400 }
-      );
+    if (!shopDomain) {
+      return Response.json({ error: "Missing required field: shopDomain" }, { status: 400 });
     }
 
-    console.log("[API Create Usage] Request:", {
+    const { admin } = await unauthenticated.admin(shopDomain);
+
+    /**
+     * Modo simplificado (recomendado): só shopDomain + imagesCount.
+     * O app calcula free_images_used / planLimit on-demand no servidor.
+     */
+    if (typeof imagesUsed !== "number" || typeof planLimit !== "number") {
+      console.log("[API Create Usage] Delegating to registerTryOnImageUsage:", {
+        shopDomain,
+        imagesCount,
+      });
+      const registered = await registerTryOnImageUsage(admin, shopDomain, imagesCount);
+      if (!registered.success) {
+        return Response.json(registered, { status: registered.error === "shop_not_found" ? 404 : 400 });
+      }
+      return Response.json({
+        success: true,
+        created: Boolean(registered.billed),
+        usageRecordId: registered.usageRecordIds?.[0] || null,
+        price: registered.amount,
+        currency: registered.currency || "USD",
+        extraImages: registered.billedCount || 0,
+        mode: "register",
+        ...registered,
+      });
+    }
+
+    console.log("[API Create Usage] Legacy explicit counters:", {
       shopDomain,
       imagesUsed,
       planLimit,
@@ -49,10 +83,6 @@ export async function action({ request }) {
       imagesCount,
     });
 
-    // Endpoint chamado server-to-server pela edge function; obtém admin client pelo shopDomain.
-    const { admin } = await unauthenticated.admin(shopDomain);
-    
-    // Verifica se precisa criar usage charge e cria se necessário
     const result = await createUsageChargeIfNeeded(
       admin,
       imagesUsed,

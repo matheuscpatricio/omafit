@@ -52,6 +52,7 @@ export async function getShopBilling(shopDomain) {
       images_included,
       price_per_extra_image,
       images_used_month: Number(row.images_used_month) || 0,
+      free_images_used: Math.min(50, Number(row.free_images_used) || 0),
     };
   } catch (_err) {
     return null;

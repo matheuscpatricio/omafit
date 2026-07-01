@@ -1,0 +1,330 @@
+.omafit-partners-shell {
+  min-height: 100vh;
+  background: #0f1117;
+  color: #e8eaed;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.omafit-partners-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.omafit-partners-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.omafit-partners-header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.omafit-partners-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.omafit-partners-muted {
+  color: #9aa0a6;
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.omafit-partners-section {
+  margin-bottom: 2.5rem;
+}
+
+.omafit-partners-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.125rem;
+  margin: 0 0 1rem;
+}
+
+.omafit-partners-badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.omafit-partners-badge--shopify {
+  background: #95bf47;
+  color: #1a2e05;
+}
+
+.omafit-partners-badge--nuvem {
+  background: #2d3277;
+  color: #c5c9f5;
+}
+
+.omafit-partners-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.omafit-partners-metric {
+  background: #1a1d27;
+  border: 1px solid #2a2f3d;
+  border-radius: 10px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.omafit-partners-metric-label {
+  font-size: 0.75rem;
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.omafit-partners-metric-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.omafit-partners-metric-hint {
+  font-size: 0.7rem;
+  color: #6b7280;
+}
+
+.omafit-partners-cards-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .omafit-partners-cards-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.omafit-partners-card {
+  background: #1a1d27;
+  border: 1px solid #2a2f3d;
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.omafit-partners-card--wide {
+  overflow: hidden;
+}
+
+.omafit-partners-card h3 {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.omafit-partners-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.omafit-partners-plan-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #2a2f3d;
+}
+
+.omafit-partners-plan-list li:last-child {
+  border-bottom: none;
+}
+
+.omafit-partners-plan-name {
+  text-transform: capitalize;
+}
+
+.omafit-partners-plan-count {
+  font-weight: 600;
+}
+
+.omafit-partners-table-wrap {
+  overflow-x: auto;
+}
+
+.omafit-partners-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.omafit-partners-table th,
+.omafit-partners-table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #2a2f3d;
+}
+
+.omafit-partners-table th {
+  color: #9aa0a6;
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.omafit-partners-banner {
+  padding: 0.875rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.omafit-partners-banner--warn {
+  background: #3d2e14;
+  border: 1px solid #8b6914;
+  color: #f5d76e;
+}
+
+.omafit-partners-banner--info {
+  background: #14233d;
+  border: 1px solid #1e4a8a;
+  color: #93c5fd;
+}
+
+.omafit-partners-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+  background: linear-gradient(135deg, #1a1d27 0%, #252a38 100%);
+  border: 1px solid #3d4455;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.omafit-partners-summary-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #9aa0a6;
+  margin-bottom: 0.25rem;
+}
+
+.omafit-partners-summary-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.omafit-partners-btn {
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.omafit-partners-btn:hover {
+  background: #4f46e5;
+}
+
+.omafit-partners-btn--secondary {
+  background: #2a2f3d;
+  border: 1px solid #3d4455;
+}
+
+.omafit-partners-btn--secondary:hover {
+  background: #353b4d;
+}
+
+.omafit-partners-btn--ghost {
+  background: transparent;
+  border: 1px solid #3d4455;
+  color: #9aa0a6;
+}
+
+.omafit-partners-btn--ghost:hover {
+  color: #fff;
+  border-color: #6b7280;
+}
+
+.omafit-partners-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: #9aa0a6;
+  cursor: pointer;
+}
+
+/* Login */
+.omafit-partners-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.omafit-partners-login-card {
+  width: 100%;
+  max-width: 400px;
+  background: #1a1d27;
+  border: 1px solid #2a2f3d;
+  border-radius: 12px;
+  padding: 2rem;
+}
+
+.omafit-partners-login-card h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.omafit-partners-login-card label {
+  display: block;
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.875rem;
+  color: #9aa0a6;
+}
+
+.omafit-partners-login-card input[type="password"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0f1117;
+  border: 1px solid #3d4455;
+  border-radius: 8px;
+  padding: 0.625rem 0.75rem;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.omafit-partners-login-card .omafit-partners-btn {
+  width: 100%;
+  margin-top: 1.25rem;
+  padding: 0.75rem;
+}
+
+.omafit-partners-error {
+  color: #f87171;
+  font-size: 0.875rem;
+  margin: 0.75rem 0 0;
+}
+
+.omafit-partners-login-card code {
+  background: #0f1117;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}

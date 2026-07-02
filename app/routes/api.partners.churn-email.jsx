@@ -21,10 +21,14 @@ export async function action({ request }) {
       const status =
         result.error === "zoho_not_configured"
           ? 503
+          : result.error === "railway_smtp_blocked"
+            ? 503
           : result.error === "shop_not_found"
             ? 404
             : result.error === "owner_email_missing"
               ? 422
+              : result.error === "zoho_from_missing"
+                ? 503
               : 400;
       return Response.json(result, { status });
     }

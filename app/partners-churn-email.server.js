@@ -1,6 +1,16 @@
 import { parseSupabaseList, supabaseFetch } from "./supabase-rest.server.js";
 import { isZohoMailConfigured, sendZohoMail } from "./zoho-mail.server.js";
 
+function mapSendError(err) {
+  const code = String(err?.message || err || "");
+  if (code === "railway_smtp_blocked" || code === "smtp_timeout") {
+    return "railway_smtp_blocked";
+  }
+  if (code === "zoho_from_missing") return "zoho_from_missing";
+  if (code.startsWith("zeptomail_")) return code;
+  return code || "send_failed";
+}
+
 function buildChurnOutreachEmail({ shopDomain, plan }) {
   const storeLabel = shopDomain || "sua loja";
   const planSuffix = plan ? ` (plano ${plan})` : "";
@@ -82,11 +92,15 @@ export async function sendChurnOutreachEmail(shopDomain) {
   }
 
   const { subject, text, html } = buildChurnOutreachEmail({ shopDomain, plan });
-  const result = await sendZohoMail({ to: email, subject, text, html });
-
-  return {
-    success: true,
-    to: email,
-    messageId: result.messageId,
-  };
+  try {
+    const result = await sendZohoMail({ to: email, subject, text, html });
+    return {
+      success: true,
+      to: email,
+      messageId: result.messageId,
+      transport: result.transport,
+    };
+  } catch (err) {
+    return { success: false, error: mapSendError(err) };
+  }
 }

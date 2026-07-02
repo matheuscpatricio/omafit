@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { requirePartnersAuth } from "../partners-auth.server";
 import { fetchPartnersDashboardStats } from "../partners-dashboard.server";
 import { isShopifyPartnersApiConfigured } from "../shopify-partners-api.server";
-import { isZohoMailConfigured } from "../zoho-mail.server";
+import { getZohoMailDeliveryMode, isZohoMailConfigured } from "../zoho-mail.server";
 
 export const loader = async ({ request }) => {
   await requirePartnersAuth(request);
@@ -12,6 +12,7 @@ export const loader = async ({ request }) => {
     stats,
     partnersApiConfigured: isShopifyPartnersApiConfigured(),
     zohoMailConfigured: isZohoMailConfigured(),
+    zohoMailMode: getZohoMailDeliveryMode(),
   };
 };
 
@@ -241,11 +242,17 @@ function ChurnEmailButton({ domain, ownerEmail, zohoMailConfigured }) {
     if (!domain || status === "loading") return;
     setStatus("loading");
     setFeedback("");
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25_000);
+
     try {
       const response = await fetch("/api/partners/churn-email", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shopDomain: domain }),
+        signal: controller.signal,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -253,14 +260,31 @@ function ChurnEmailButton({ domain, ownerEmail, zohoMailConfigured }) {
           zoho_not_configured: "Zoho não configurado",
           owner_email_missing: "E-mail da loja não encontrado",
           shop_not_found: "Loja não encontrada",
+          railway_smtp_blocked:
+            "SMTP bloqueado no Railway — configure ZOHO_ZEPTOMAIL_TOKEN",
+          zoho_from_missing: "Defina ZOHO_MAIL_FROM no servidor",
+          zeptomail_timeout: "ZeptoMail demorou para responder",
+          smtp_timeout: "SMTP expirou — use ZOHO_ZEPTOMAIL_TOKEN no Railway",
         };
-        throw new Error(errorMessages[data.error] || data.error || "Falha ao enviar");
+        const raw = String(data.error || "");
+        const mapped =
+          errorMessages[raw] ||
+          (raw.startsWith("zeptomail_send_failed")
+            ? `ZeptoMail: ${raw.replace("zeptomail_send_failed: ", "")}`
+            : null);
+        throw new Error(mapped || raw || "Falha ao enviar");
       }
       setStatus("sent");
       setFeedback(`Enviado para ${data.to}`);
     } catch (err) {
       setStatus("error");
-      setFeedback(err?.message || "Erro ao enviar");
+      if (err?.name === "AbortError") {
+        setFeedback("Tempo esgotado — verifique ZOHO_ZEPTOMAIL_TOKEN no Railway");
+      } else {
+        setFeedback(err?.message || "Erro ao enviar");
+      }
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -290,7 +314,7 @@ function ChurnEmailButton({ domain, ownerEmail, zohoMailConfigured }) {
   );
 }
 
-function ChurnTab({ data, partnersApi, zohoMailConfigured }) {
+function ChurnTab({ data, partnersApi, zohoMailConfigured, zohoMailMode }) {
   return (
     <div className="omafit-partners-tab-panel">
       <p className="omafit-partners-tab-desc">
@@ -342,8 +366,17 @@ function ChurnTab({ data, partnersApi, zohoMailConfigured }) {
       />
       {!zohoMailConfigured ? (
         <div className="omafit-partners-banner omafit-partners-banner--info">
-          Envio de e-mail exige <code>ZOHO_SMTP_USER</code> e <code>ZOHO_SMTP_PASSWORD</code> no
-          servidor.
+          Envio de e-mail exige <code>ZOHO_ZEPTOMAIL_TOKEN</code> (recomendado no Railway) ou{" "}
+          <code>ZOHO_SMTP_USER</code> + <code>ZOHO_SMTP_PASSWORD</code>.
+        </div>
+      ) : zohoMailMode === "smtp" ? (
+        <div className="omafit-partners-banner omafit-partners-banner--warn">
+          No Railway (plano Hobby), SMTP é bloqueado. Adicione{" "}
+          <code>ZOHO_ZEPTOMAIL_TOKEN</code> do{" "}
+          <a href="https://www.zoho.com/zeptomail/" target="_blank" rel="noreferrer">
+            Zoho ZeptoMail
+          </a>{" "}
+          e mantenha <code>ZOHO_MAIL_FROM</code> com o domínio verificado.
         </div>
       ) : null}
       {partnersApi?.error && partnersApi.error !== "not_configured" ? (
@@ -356,7 +389,7 @@ function ChurnTab({ data, partnersApi, zohoMailConfigured }) {
 }
 
 export default function PartnersDashboardPage() {
-  const { stats, partnersApiConfigured, zohoMailConfigured } = useLoaderData();
+  const { stats, partnersApiConfigured, zohoMailConfigured, zohoMailMode } = useLoaderData();
   const revalidator = useRevalidator();
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [activeTab, setActiveTab] = useState("marketing");
@@ -439,7 +472,12 @@ export default function PartnersDashboardPage() {
         <ProductTab data={tabs.product} />
       ) : null}
       {activeTab === "churn" && tabs?.churn ? (
-        <ChurnTab data={tabs.churn} partnersApi={partnersApi} zohoMailConfigured={zohoMailConfigured} />
+        <ChurnTab
+          data={tabs.churn}
+          partnersApi={partnersApi}
+          zohoMailConfigured={zohoMailConfigured}
+          zohoMailMode={zohoMailMode}
+        />
       ) : null}
     </div>
   );

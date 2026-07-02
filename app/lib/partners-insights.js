@@ -1,8 +1,8 @@
 /**
  * Gera recomendações didáticas por aba do Partners Dashboard.
- * @param {"marketing"|"product"|"churn"} tab
+ * @param {"marketing"|"product"|"churn"|"finance"|"social"} tab
  * @param {object} data
- * @param {{ partnersApiConfigured?: boolean, zohoMailConfigured?: boolean, zohoMailMode?: string }} ctx
+ * @param {{ partnersApiConfigured?: boolean, zohoMailConfigured?: boolean, zohoMailMode?: string, canvaConfigured?: boolean, openaiConfigured?: boolean, youtubeApiConfigured?: boolean, instagramApiConfigured?: boolean }} ctx
  */
 export function buildPartnersInsights(tab, data, ctx = {}) {
   const insights = [];
@@ -151,6 +151,124 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
         title: "Churn sob controle",
         description: "Nenhuma loja com billing inativo no momento.",
         action: "Monitore semanalmente e mantenha NPS com as lojas de maior volume de try-on.",
+      });
+    }
+  }
+
+  if (tab === "finance") {
+    if (data?.expensesTableExists === false) {
+      insights.push({
+        id: "expenses-table",
+        severity: "warning",
+        title: "Tabela de despesas não criada",
+        description: "As despesas manuais precisam da tabela partners_expenses no Supabase.",
+        action: "Execute o arquivo supabase_partners_expenses.sql no SQL Editor do Supabase.",
+      });
+    }
+
+    const mrr = Number(data?.estimatedMrrUsd) || 0;
+    const expensesMonth = Number(data?.expensesMonth) || 0;
+    const net = Number(data?.netMarginMonth);
+
+    if (mrr > 0 && expensesMonth > mrr) {
+      insights.push({
+        id: "negative-margin",
+        severity: "critical",
+        title: "Despesas acima do MRR",
+        description: `Gastos do mês (${expensesMonth} USD) superam a receita recorrente estimada (${mrr} USD).`,
+        action: "Revise custos fixos, adie investimentos não essenciais e priorize reativação de billing inativo.",
+      });
+    } else if (mrr > 0 && net != null && net < mrr * 0.3) {
+      insights.push({
+        id: "low-margin",
+        severity: "warning",
+        title: "Margem mensal apertada",
+        description: `Margem estimada de ${data?.marginPercent ?? "—"}% após despesas do mês.`,
+        action: "Negocie planos superiores com lojas de alto uso ou reduza custos de infraestrutura.",
+      });
+    } else if (mrr > 0 && expensesMonth === 0) {
+      insights.push({
+        id: "no-expenses",
+        severity: "info",
+        title: "Nenhuma despesa lançada no mês",
+        description: "Adicione custos reais (Railway, APIs, ads, ferramentas) para ver margem líquida.",
+        action: "Use o formulário abaixo para registrar despesas fixas e variáveis.",
+      });
+    } else if (mrr > 0 && net != null && net >= mrr * 0.5) {
+      insights.push({
+        id: "healthy-margin",
+        severity: "success",
+        title: "Margem saudável",
+        description: `MRR estimado ${mrr} USD com margem líquida de ~${data?.marginPercent}%.`,
+        action: "Mantenha disciplina de custos e reinvesta em aquisição com ROI mensurável.",
+      });
+    }
+
+    if (mrr === 0 && (data?.activeBilling ?? 0) === 0) {
+      insights.push({
+        id: "no-mrr",
+        severity: "warning",
+        title: "Sem receita recorrente ativa",
+        description: "Nenhuma loja com billing ativo — MRR estimado zerado.",
+        action: "Foque na aba Churn e Marketing para reativar lojas e converter instalações em pagantes.",
+      });
+    }
+  }
+
+  if (tab === "social") {
+    if (!ctx.canvaConfigured) {
+      insights.push({
+        id: "canva-setup",
+        severity: "info",
+        title: "Canva não conectado",
+        description:
+          "Os carrosséis são gerados com a identidade Omafit, mas ainda não são enviados automaticamente ao Canva.",
+        action:
+          "Configure CANVA_ACCESS_TOKEN no Railway (scopes asset:write e design:content:write) para abrir o design pronto no editor.",
+      });
+    }
+
+    if (!ctx.youtubeApiConfigured) {
+      insights.push({
+        id: "youtube-api",
+        severity: "info",
+        title: "Métricas do YouTube indisponíveis",
+        description: "O canal @omafit-g3d está vinculado, mas inscritos e views não são buscados em tempo real.",
+        action: "Adicione YOUTUBE_API_KEY no Railway (YouTube Data API v3).",
+      });
+    }
+
+    if (!ctx.instagramApiConfigured) {
+      insights.push({
+        id: "instagram-api",
+        severity: "info",
+        title: "Métricas do Instagram indisponíveis",
+        description: "O perfil @omafit.co está vinculado — seguidores exigem token Meta Business.",
+        action:
+          "Configure INSTAGRAM_ACCESS_TOKEN e INSTAGRAM_BUSINESS_ACCOUNT_ID para insights do Instagram.",
+      });
+    }
+
+    if (!ctx.openaiConfigured) {
+      insights.push({
+        id: "carousel-template",
+        severity: "info",
+        title: "Copy do carrossel por template",
+        description:
+          "Sem OPENAI_API_KEY, o texto dos slides é montado automaticamente a partir do tema e da descrição.",
+        action:
+          "Opcional: configure OPENAI_API_KEY para copy mais criativa nos carrosséis de Instagram.",
+      });
+    }
+
+    if (ctx.canvaConfigured && (ctx.openaiConfigured || ctx.youtubeApiConfigured)) {
+      insights.push({
+        id: "social-ready",
+        severity: "success",
+        title: "Pipeline de conteúdo ativo",
+        description: "Gere carrosséis com identidade Omafit e publique no Instagram e YouTube.",
+        action:
+          "Use 'Gerar conteúdo' com um tema claro e descrição com 3–5 pontos; revise no Canva antes de publicar.",
       });
     }
   }

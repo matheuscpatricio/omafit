@@ -77,10 +77,66 @@
 }
 
 .omafit-partners-shell {
-  @apply min-h-screen bg-background text-foreground font-sans antialiased;
+  @apply min-h-screen overflow-x-hidden bg-background text-foreground font-sans antialiased;
   background-image:
     radial-gradient(ellipse 80% 50% at 100% 0%, color-mix(in srgb, #d96845 14%, transparent), transparent 55%),
     radial-gradient(ellipse 60% 40% at 0% 100%, color-mix(in srgb, #5baf8a 10%, transparent), transparent 50%);
+}
+
+.omafit-partners-page {
+  @apply mx-auto flex w-full min-w-0 max-w-7xl flex-col gap-6 px-4 py-6 sm:gap-8 sm:px-6 sm:py-8 lg:px-10;
+}
+
+.omafit-partners-tabs-scroll {
+  @apply -mx-4 w-[calc(100%+2rem)] overflow-x-auto px-4 pb-1 sm:mx-0 sm:w-full sm:px-0;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.omafit-partners-tabs-list {
+  @apply inline-flex h-auto min-w-full flex-nowrap justify-start gap-1 p-1 sm:min-w-0 sm:w-fit;
+}
+
+.omafit-partners-tab-trigger {
+  @apply shrink-0 px-2.5 py-2 text-xs sm:px-3 sm:text-sm;
+}
+
+.omafit-partners-table-scroll {
+  @apply -mx-1 max-w-[calc(100vw-2rem)] sm:mx-0 sm:max-w-none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.omafit-partners-header-actions {
+  @apply grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center;
+}
+
+.omafit-partners-header-actions form {
+  @apply col-span-2 sm:col-span-1;
+}
+
+.omafit-partners-header-actions .omafit-partners-btn-full {
+  @apply w-full sm:w-auto;
+}
+
+.omafit-partners-metric-value {
+  font-family: var(--font-mono);
+  @apply text-xl sm:text-2xl;
+}
+
+.omafit-partners-chart {
+  @apply h-[200px] w-full min-w-0 sm:h-[240px];
+}
+
+.omafit-partners-card-list {
+  @apply flex flex-col gap-3 md:hidden;
+}
+
+.omafit-partners-card-list-item {
+  @apply rounded-xl border border-border/70 bg-card/80 p-3.5;
+}
+
+.omafit-partners-desktop-table {
+  @apply hidden md:block;
 }
 
 .omafit-partners-shell h1,
@@ -94,8 +150,4 @@
   font-family: var(--font-brand);
   font-weight: 800;
   letter-spacing: -0.02em;
-}
-
-.omafit-partners-metric-value {
-  font-family: var(--font-mono);
 }

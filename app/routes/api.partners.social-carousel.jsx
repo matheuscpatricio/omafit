@@ -1,0 +1,33 @@
+import { requirePartnersAuth } from "../partners-auth.server";
+import { generatePartnersCarousel } from "../partners-carousel.server";
+
+export async function action({ request }) {
+  await requirePartnersAuth(request);
+
+  if (request.method !== "POST") {
+    return Response.json({ success: false, error: "method_not_allowed" }, { status: 405 });
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const theme = String(body.theme || "").trim();
+    const description = String(body.description || "").trim();
+    const pushToCanva = body.pushToCanva !== false;
+
+    if (!theme) {
+      return Response.json({ success: false, error: "theme_required" }, { status: 400 });
+    }
+    if (!description) {
+      return Response.json({ success: false, error: "description_required" }, { status: 400 });
+    }
+
+    const result = await generatePartnersCarousel({ theme, description, pushToCanva });
+    return Response.json(result);
+  } catch (err) {
+    console.error("[api.partners.social-carousel]", err);
+    return Response.json(
+      { success: false, error: err?.message || "generation_failed" },
+      { status: 500 },
+    );
+  }
+}

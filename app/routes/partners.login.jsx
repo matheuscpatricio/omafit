@@ -64,7 +64,7 @@ export default function PartnersLoginPage() {
   const actionData = useActionData();
 
   return (
-    <div className="flex min-h-[70vh] items-center justify-center px-5 py-12">
+    <div className="flex min-h-[70vh] items-center justify-center px-4 py-8 sm:px-5 sm:py-12">
       <Card className="w-full max-w-md ring-1 ring-primary/20">
         <CardHeader className="flex flex-col gap-2">
           <div className="flex items-center gap-2">

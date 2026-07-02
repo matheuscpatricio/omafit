@@ -5,31 +5,14 @@ import { existsSync } from "node:fs";
 let cachedPythonLaunch = null;
 
 /**
- * Railway/Docker às vezes define AR_MESH_PYTHON=/opt/ar-mesh-venv/bin/python3 sem o venv existir.
- * Ignoramos o override inválido para não propagar ENOENT no spawn.
- */
-function sanitizeArMeshPythonEnv() {
-  const override = String(process.env.AR_MESH_PYTHON || "").trim();
-  if (!override || override === "python3" || override === "python") return;
-  if (!override.includes("/") && !override.includes("\\")) return;
-  if (existsSync(override)) return;
-  console.warn(
-    `[ar-mesh] AR_MESH_PYTHON ignorado (ficheiro inexistente): ${override}`,
-  );
-  delete process.env.AR_MESH_PYTHON;
-}
-
-sanitizeArMeshPythonEnv();
-
-/**
  * @param {string} bin
  * @param {string[]} [prefixArgs]
  * @returns {boolean}
  */
 function pythonLaunchWorks(bin, prefixArgs = []) {
   if (!bin) return false;
-  if ((bin.includes("/") || bin.includes("\\")) && !existsSync(bin)) {
-    return false;
+  if (!bin.includes("/") && !bin.includes("\\") && process.platform !== "win32") {
+    /* spawn ENOENT se o binário não estiver no PATH */
   }
   try {
     execFileSync(bin, [...prefixArgs, "-c", "import sys; sys.exit(0)"], {
@@ -62,33 +45,6 @@ function trimeshImportWorks(bin, prefixArgs = []) {
 }
 
 /**
- * @param {{ bin: string, prefixArgs: string[] }} launch
- * @returns {boolean}
- */
-export function launchIsRunnable(launch) {
-  return pythonLaunchWorks(launch?.bin, launch?.prefixArgs || []);
-}
-
-/**
- * @param {string} override
- * @returns {{ bin: string, prefixArgs: string[] } | null}
- */
-function parsePythonOverride(override) {
-  const raw = String(override || "").trim();
-  if (!raw) return null;
-  if (/^py(\s|$|-)/i.test(raw) || raw === "py") {
-    const parts = raw.split(/\s+/).filter(Boolean);
-    const bin = parts[0] || "py";
-    const prefixArgs = parts.slice(1);
-    if (!prefixArgs.includes("-3") && !prefixArgs.some((p) => /^-3/.test(p))) {
-      prefixArgs.unshift("-3");
-    }
-    return { bin, prefixArgs };
-  }
-  return { bin: raw, prefixArgs: [] };
-}
-
-/**
  * @returns {{ bin: string, prefixArgs: string[] } | null}
  */
 function findPythonViaShell() {
@@ -99,9 +55,8 @@ function findPythonViaShell() {
       ["-c", "command -v python3 2>/dev/null || command -v python 2>/dev/null || true"],
       { encoding: "utf8", timeout: 5000, env: process.env },
     ).trim();
-    if (out) {
-      const launch = { bin: out, prefixArgs: [] };
-      if (launchIsRunnable(launch)) return launch;
+    if (out && pythonLaunchWorks(out, [])) {
+      return { bin: out, prefixArgs: [] };
     }
   } catch {
     /* ignore */
@@ -110,18 +65,26 @@ function findPythonViaShell() {
 }
 
 /**
- * @returns {{ bin: string, prefixArgs: string[] } | null}
+ * Binário + args prefixo para `spawn` (ex.: `py -3` no Windows).
+ * @returns {{ bin: string, prefixArgs: string[] }}
  */
-function pickPythonLaunch() {
+export function resolvePythonLaunch() {
+  if (cachedPythonLaunch) return cachedPythonLaunch;
+
   const override = String(process.env.AR_MESH_PYTHON || "").trim();
   if (override) {
-    const parsed = parsePythonOverride(override);
-    if (parsed && launchIsRunnable(parsed)) return parsed;
-    if (parsed) {
-      console.warn(
-        `[ar-mesh] AR_MESH_PYTHON=${override} indisponível — a tentar python do sistema`,
-      );
+    if (/^py(\s|$|-)/i.test(override) || override === "py") {
+      const parts = override.split(/\s+/).filter(Boolean);
+      const bin = parts[0] || "py";
+      const prefixArgs = parts.slice(1);
+      if (!prefixArgs.includes("-3") && !prefixArgs.some((p) => /^-3/.test(p))) {
+        prefixArgs.unshift("-3");
+      }
+      cachedPythonLaunch = { bin, prefixArgs };
+      return cachedPythonLaunch;
     }
+    cachedPythonLaunch = { bin: override, prefixArgs: [] };
+    return cachedPythonLaunch;
   }
 
   /** @type {{ bin: string, prefixArgs: string[] }[]} */
@@ -134,8 +97,6 @@ function pickPythonLaunch() {
       { bin: "python3", prefixArgs: [] },
     );
   } else {
-    const fromShell = findPythonViaShell();
-    if (fromShell) candidates.push(fromShell);
     candidates.push(
       { bin: "/opt/ar-mesh-venv/bin/python3", prefixArgs: [] },
       { bin: "/opt/ar-mesh-venv/bin/python", prefixArgs: [] },
@@ -145,35 +106,24 @@ function pickPythonLaunch() {
       { bin: "/usr/bin/python", prefixArgs: [] },
       { bin: "python", prefixArgs: [] },
     );
+    const fromShell = findPythonViaShell();
+    if (fromShell) candidates.unshift(fromShell);
   }
 
   for (const c of candidates) {
-    if (launchIsRunnable(c)) return c;
-  }
-  return null;
-}
-
-/**
- * Binário validado para `spawn`. Devolve `null` se não houver Python executável.
- * @returns {{ bin: string, prefixArgs: string[] } | null}
- */
-export function resolveRunnablePythonLaunch() {
-  if (cachedPythonLaunch && launchIsRunnable(cachedPythonLaunch)) {
+    if (c.bin.includes("/") || c.bin.includes("\\")) {
+      if (!existsSync(c.bin)) continue;
+    }
+    if (!pythonLaunchWorks(c.bin, c.prefixArgs)) continue;
+    cachedPythonLaunch = c;
     return cachedPythonLaunch;
   }
-  cachedPythonLaunch = pickPythonLaunch();
-  return cachedPythonLaunch;
-}
 
-/**
- * @returns {{ bin: string, prefixArgs: string[] }}
- */
-export function resolvePythonLaunch() {
-  const launch = resolveRunnablePythonLaunch();
-  if (launch) return launch;
-  return process.platform === "win32"
-    ? { bin: "python", prefixArgs: [] }
-    : { bin: "python3", prefixArgs: [] };
+  cachedPythonLaunch =
+    process.platform === "win32"
+      ? { bin: "python", prefixArgs: [] }
+      : { bin: "/usr/bin/python3", prefixArgs: [] };
+  return cachedPythonLaunch;
 }
 
 /** @returns {string} */
@@ -182,21 +132,21 @@ export function resolvePythonBin() {
 }
 
 /**
- * Verifica Python + trimesh antes de `run_recipe.py`.
- * @returns {{ ok: boolean, launch: { bin: string, prefixArgs: string[] } | null, trimesh: boolean, message: string }}
+ * Verifica Python + trimesh antes de `run_recipe.py` (log único no arranque / 1.º job).
+ * @returns {{ ok: boolean, launch: { bin: string, prefixArgs: string[] }, trimesh: boolean, message: string }}
  */
 export function probePythonForRunRecipe() {
-  const launch = resolveRunnablePythonLaunch();
-  if (!launch) {
+  const launch = resolvePythonLaunch();
+  const pyOk = pythonLaunchWorks(launch.bin, launch.prefixArgs);
+  const triOk = pyOk && trimeshImportWorks(launch.bin, launch.prefixArgs);
+  if (!pyOk) {
     return {
       ok: false,
-      launch: null,
+      launch,
       trimesh: false,
-      message:
-        "Python não encontrado. Remova AR_MESH_PYTHON=/opt/ar-mesh-venv/bin/python3 no Railway ou faça redeploy com Dockerfile.",
+      message: `Python indisponível (${launch.bin}). Defina AR_MESH_PYTHON ou redeploy Docker com venv.`,
     };
   }
-  const triOk = trimeshImportWorks(launch.bin, launch.prefixArgs);
   if (!triOk) {
     return {
       ok: false,

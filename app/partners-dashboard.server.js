@@ -1,10 +1,15 @@
 import { SHOPIFY_PLAN_CONFIG, normalizeShopifyPlanKey } from "./billing-plans.server.js";
 import {
+  aggregateExpenses,
+  fetchPartnersExpenses,
+} from "./partners-expenses.server.js";
+import {
   isSupabaseConfigured,
   parseSupabaseList,
   supabaseFetch,
 } from "./supabase-rest.server.js";
 import { fetchShopifyPartnersMetrics } from "./shopify-partners-api.server.js";
+import { fetchPartnersSocialStats } from "./partners-social.server.js";
 
 function startOfMonthIso() {
   const now = new Date();
@@ -61,6 +66,18 @@ function estimateMrrFromPlans(shops) {
   }
 
   return { mrr, byPlan };
+}
+
+function mrrBreakdownByPlan(shops) {
+  const breakdown = {};
+  for (const shop of shops) {
+    if (!isActiveBilling(shop.billing_status)) continue;
+    const plan = normalizeShopifyPlanKey(shop.plan);
+    const amount = SHOPIFY_PLAN_CONFIG[plan]?.amount || 0;
+    if (amount <= 0) continue;
+    breakdown[plan] = (breakdown[plan] || 0) + amount;
+  }
+  return breakdown;
 }
 
 async function countTable(table, filter = "") {
@@ -227,6 +244,7 @@ function buildTabMetrics({
   inactiveWidgets,
   mrr,
   byPlan,
+  expensesRes,
 }) {
   const shopRows = shops.map(normalizeShopRow);
   const activeBilling = shopRows.filter((s) => s.isBillingActive).length;
@@ -250,6 +268,12 @@ function buildTabMetrics({
     typeof installs === "number" && installs > 0 && typeof uninstalls === "number"
       ? safePercent(uninstalls, installs)
       : safePercent(inactiveBillingStores.length, shopRows.length);
+
+  const expenses = expensesRes?.expenses || [];
+  const expenseAgg = aggregateExpenses(expenses);
+  const netMarginMonth = mrr - expenseAgg.expensesMonth;
+  const marginPercent =
+    mrr > 0 ? Math.round(((netMarginMonth / mrr) * 1000)) / 10 : null;
 
   return {
     marketing: {
@@ -304,6 +328,21 @@ function buildTabMetrics({
       inactiveBillingStores: inactiveBillingStores.slice(0, 12),
       widgetGap: Math.max(0, (activeWidgets ?? 0) - activeBilling),
     },
+    finance: {
+      estimatedMrrUsd: mrr,
+      mrrByPlan: mrrBreakdownByPlan(shops),
+      activeBilling,
+      payingStores: activeBilling,
+      expensesMonth: expenseAgg.expensesMonth,
+      expensesTotal: expenseAgg.expensesTotal,
+      expensesByCategory: expenseAgg.byCategory,
+      currentMonth: expenseAgg.currentMonth,
+      netMarginMonth,
+      marginPercent,
+      expenses: expenses.slice(0, 50),
+      expensesTableExists: expensesRes?.tableExists !== false,
+      expensesError: expensesRes?.error || null,
+    },
   };
 }
 
@@ -335,6 +374,8 @@ export async function fetchPartnersDashboardStats() {
     activeWidgetsRes,
     inactiveWidgetsRes,
     partnersApi,
+    expensesRes,
+    socialRes,
   ] = await Promise.all([
     fetchAllShops(),
     fetchNuvemshopStores(),
@@ -346,6 +387,8 @@ export async function fetchPartnersDashboardStats() {
     countTable("widget_keys", "is_active=eq.true"),
     countTable("widget_keys", "is_active=eq.false"),
     fetchShopifyPartnersMetrics(),
+    fetchPartnersExpenses(),
+    fetchPartnersSocialStats(),
   ]);
 
   const shops = shopsRes.shops || [];
@@ -355,20 +398,24 @@ export async function fetchPartnersDashboardStats() {
   const nuvemshopStores = nuvemshopRes.stores || [];
   const nuvemshopActive = nuvemshopStores.filter((s) => s.is_active !== false).length;
 
-  const tabs = buildTabMetrics({
-    shops,
-    nuvemshopStores,
-    partnersApi,
-    sessionsTotal: sessionsTotalRes.count,
-    sessionsMonth: sessionsMonthRes.count,
-    sessionsInsights: sessionsInsightsRes,
-    ordersRes,
-    orderInsights: orderInsightsRes,
-    activeWidgets: activeWidgetsRes.count,
-    inactiveWidgets: inactiveWidgetsRes,
-    mrr,
-    byPlan,
-  });
+  const tabs = {
+    ...buildTabMetrics({
+      shops,
+      nuvemshopStores,
+      partnersApi,
+      sessionsTotal: sessionsTotalRes.count,
+      sessionsMonth: sessionsMonthRes.count,
+      sessionsInsights: sessionsInsightsRes,
+      ordersRes,
+      orderInsights: orderInsightsRes,
+      activeWidgets: activeWidgetsRes.count,
+      inactiveWidgets: inactiveWidgetsRes,
+      mrr,
+      byPlan,
+      expensesRes,
+    }),
+    social: socialRes,
+  };
 
   return {
     generatedAt,

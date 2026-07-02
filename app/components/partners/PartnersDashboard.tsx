@@ -40,6 +40,9 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { FinanceTab } from "@/app/components/partners/FinanceTab";
+import { SocialTab } from "@/app/components/partners/SocialTab";
+import { ResponsiveTable } from "@/app/components/partners/ResponsiveTable";
 
 const CHART_COLORS = ["#d96845", "#5baf8a", "#f6f0e2", "#b8522e", "#7a6a58"];
 
@@ -91,7 +94,7 @@ function MetricCard({
     <Card className="ring-1 ring-border/60">
       <CardHeader className="pb-2">
         <CardDescription className="text-xs uppercase tracking-wider">{label}</CardDescription>
-        <CardTitle className="omafit-partners-metric-value text-2xl font-medium tabular-nums">
+        <CardTitle className="omafit-partners-metric-value font-medium tabular-nums">
           {value}
         </CardTitle>
       </CardHeader>
@@ -142,8 +145,8 @@ function InsightsPanel({
               </AlertTitle>
               <AlertDescription>
                 <p>{item.description}</p>
-                <p className="mt-2 flex items-start gap-1.5 font-medium text-foreground">
-                  <ArrowRightIcon data-icon="inline-start" className="mt-0.5 shrink-0 text-primary" />
+                <p className="mt-2 flex flex-col gap-1 font-medium text-foreground sm:flex-row sm:items-start sm:gap-1.5">
+                  <ArrowRightIcon data-icon="inline-start" className="mt-0.5 hidden shrink-0 text-primary sm:block" />
                   {item.action}
                 </p>
               </AlertDescription>
@@ -167,10 +170,10 @@ function FunnelChart({
   orders: number | null;
 }) {
   const data = [
-    { stage: "Instalações", value: installs ?? 0, fill: CHART_COLORS[0] },
-    { stage: "Billing ativo", value: activeBilling ?? 0, fill: CHART_COLORS[1] },
-    { stage: "Try-ons (mês)", value: tryOns ?? 0, fill: CHART_COLORS[2] },
-    { stage: "Pedidos (mês)", value: orders ?? 0, fill: CHART_COLORS[3] },
+    { stage: "Instalações", stageShort: "Instal.", value: installs ?? 0, fill: CHART_COLORS[0] },
+    { stage: "Billing ativo", stageShort: "Billing", value: activeBilling ?? 0, fill: CHART_COLORS[1] },
+    { stage: "Try-ons (mês)", stageShort: "Try-ons", value: tryOns ?? 0, fill: CHART_COLORS[2] },
+    { stage: "Pedidos (mês)", stageShort: "Pedidos", value: orders ?? 0, fill: CHART_COLORS[3] },
   ];
 
   const config = {
@@ -186,11 +189,19 @@ function FunnelChart({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={config} className="h-[240px] w-full">
-          <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16 }}>
+        <ChartContainer config={config} className="omafit-partners-chart">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 8, top: 4, bottom: 4 }}>
             <CartesianGrid horizontal={false} />
             <XAxis type="number" hide />
-            <YAxis dataKey="stage" type="category" width={110} tickLine={false} axisLine={false} />
+            <YAxis
+              dataKey="stage"
+              type="category"
+              width={72}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 11 }}
+              tickFormatter={(_value, index) => data[index]?.stageShort ?? _value}
+            />
             <ChartTooltip content={<ChartTooltipContent />} />
             <Bar dataKey="value" radius={6}>
               {data.map((entry) => (
@@ -236,7 +247,7 @@ function PlanMixChart({ byPlan }: { byPlan: Record<string, number> | undefined }
         <CardDescription>Distribuição de lojas por plano contratado.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-4 sm:flex-row">
-        <ChartContainer config={config} className="mx-auto h-[200px] w-full max-w-[200px]">
+          <ChartContainer config={config} className="omafit-partners-chart mx-auto max-w-[200px]">
           <PieChart>
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
             <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} strokeWidth={2}>
@@ -290,7 +301,7 @@ function TopStoresChart({
         {!data.length ? (
           <p className="text-sm text-muted-foreground">Nenhum dado ainda.</p>
         ) : (
-          <ChartContainer config={config} className="h-[220px] w-full">
+          <ChartContainer config={config} className="omafit-partners-chart">
             <BarChart data={data} margin={{ bottom: 4 }}>
               <CartesianGrid vertical={false} />
               <XAxis dataKey="store" tickLine={false} axisLine={false} hide />
@@ -402,12 +413,18 @@ type DashboardProps = {
       marketing?: Record<string, unknown>;
       product?: Record<string, unknown>;
       churn?: Record<string, unknown>;
+      finance?: Record<string, unknown>;
+      social?: Record<string, unknown>;
     } | null;
     partnersApi?: { error?: string };
   };
   partnersApiConfigured: boolean;
   zohoMailConfigured: boolean;
   zohoMailMode: string;
+  canvaConfigured: boolean;
+  openaiConfigured: boolean;
+  youtubeApiConfigured: boolean;
+  instagramApiConfigured: boolean;
   onRefresh: () => void;
 };
 
@@ -416,6 +433,10 @@ export function PartnersDashboard({
   partnersApiConfigured,
   zohoMailConfigured,
   zohoMailMode,
+  canvaConfigured,
+  openaiConfigured,
+  youtubeApiConfigured,
+  instagramApiConfigured,
   onRefresh,
 }: DashboardProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -438,6 +459,8 @@ export function PartnersDashboard({
   const marketing = stats.tabs?.marketing as Record<string, unknown> | undefined;
   const product = stats.tabs?.product as Record<string, unknown> | undefined;
   const churn = stats.tabs?.churn as Record<string, unknown> | undefined;
+  const finance = stats.tabs?.finance as Record<string, unknown> | undefined;
+  const social = stats.tabs?.social as Record<string, unknown> | undefined;
 
   const marketingInsights = useMemo(
     () => (marketing ? buildPartnersInsights("marketing", marketing, ctx) : []),
@@ -455,40 +478,46 @@ export function PartnersDashboard({
   const conversionProgress = Math.min(100, Number(marketing?.conversionRate) || 0);
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:px-10">
-      <header className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="omafit-partners-wordmark text-2xl text-foreground">Omafit</span>
-            <Badge variant="outline" className="uppercase tracking-wider">
+    <div className="omafit-partners-page">
+      <header className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 flex-col gap-2.5 sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <span className="omafit-partners-wordmark text-xl text-foreground sm:text-2xl">Omafit</span>
+            <Badge variant="outline" className="text-[0.65rem] uppercase tracking-wider sm:text-xs">
               Partners
             </Badge>
           </div>
-          <h1 className="text-3xl font-normal italic text-primary sm:text-4xl">
+          <h1 className="text-2xl font-normal italic text-primary sm:text-3xl lg:text-4xl">
             Centro de crescimento
           </h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Métricas de aquisição, produto e churn com recomendações práticas. Atualizado em{" "}
-            {new Date(stats.generatedAt).toLocaleString("pt-BR")}.
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground sm:text-sm">
+            Métricas de aquisição, produto, churn, financeiro e redes sociais com recomendações práticas. Atualizado em{" "}
+            <span className="block sm:inline">{new Date(stats.generatedAt).toLocaleString("pt-BR")}</span>.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="omafit-partners-header-actions">
+          <label className="col-span-2 flex items-center gap-2 text-xs text-muted-foreground sm:col-span-1">
             <input
               type="checkbox"
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded border-border"
+              className="size-4 rounded border-border"
             />
             Auto-refresh
           </label>
-          <Button type="button" variant="outline" size="sm" onClick={refresh}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="omafit-partners-btn-full"
+            onClick={refresh}
+          >
             <RefreshCwIcon data-icon="inline-start" />
             Atualizar
           </Button>
-          <form method="post" action="/partners/login">
+          <form method="post" action="/partners/login" className="w-full sm:w-auto">
             <input type="hidden" name="intent" value="logout" />
-            <Button type="submit" variant="ghost" size="sm">
+            <Button type="submit" variant="ghost" size="sm" className="w-full sm:w-auto">
               Sair
             </Button>
           </form>
@@ -503,14 +532,30 @@ export function PartnersDashboard({
         </Alert>
       ) : null}
 
-      <Tabs defaultValue="marketing" className="flex flex-col gap-6">
-        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 p-1 sm:w-fit">
-          <TabsTrigger value="marketing">Marketing & Aquisição</TabsTrigger>
-          <TabsTrigger value="product">Produto</TabsTrigger>
-          <TabsTrigger value="churn">Churn</TabsTrigger>
-        </TabsList>
+      <Tabs defaultValue="marketing" className="flex min-w-0 flex-col gap-4 sm:gap-6">
+        <div className="omafit-partners-tabs-scroll">
+          <TabsList className="omafit-partners-tabs-list bg-muted">
+            <TabsTrigger value="marketing" className="omafit-partners-tab-trigger">
+              <span className="sm:hidden">Marketing</span>
+              <span className="hidden sm:inline">Marketing & Aquisição</span>
+            </TabsTrigger>
+            <TabsTrigger value="product" className="omafit-partners-tab-trigger">
+              Produto
+            </TabsTrigger>
+            <TabsTrigger value="churn" className="omafit-partners-tab-trigger">
+              Churn
+            </TabsTrigger>
+            <TabsTrigger value="finance" className="omafit-partners-tab-trigger">
+              Financeiro
+            </TabsTrigger>
+            <TabsTrigger value="social" className="omafit-partners-tab-trigger">
+              <span className="sm:hidden">Social</span>
+              <span className="hidden sm:inline">Redes Sociais</span>
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-        <TabsContent value="marketing" className="flex flex-col gap-6">
+        <TabsContent value="marketing" className="flex min-w-0 flex-col gap-4 sm:gap-6">
           {marketing ? (
             <>
               <InsightsPanel insights={marketingInsights} />
@@ -554,42 +599,66 @@ export function PartnersDashboard({
                 <CardHeader>
                   <CardTitle>Instalações recentes</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Loja</TableHead>
-                        <TableHead>Plano</TableHead>
-                        <TableHead>Billing</TableHead>
-                        <TableHead>Instalado</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {((marketing.recentInstalls as Array<Record<string, unknown>>) || []).map(
-                        (row) => (
-                          <TableRow key={String(row.domain)}>
-                            <TableCell className="font-medium">{String(row.domain)}</TableCell>
-                            <TableCell>{String(row.plan || "—")}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{String(row.billingStatus || "—")}</Badge>
-                            </TableCell>
-                            <TableCell>
+                <CardContent className="min-w-0">
+                  <div className="omafit-partners-card-list">
+                    {((marketing.recentInstalls as Array<Record<string, unknown>>) || []).map(
+                      (row) => (
+                        <div key={String(row.domain)} className="omafit-partners-card-list-item">
+                          <p className="truncate text-sm font-medium">{String(row.domain)}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <Badge variant="outline">{String(row.plan || "—")}</Badge>
+                            <Badge variant="outline">{String(row.billingStatus || "—")}</Badge>
+                            <span>
                               {row.createdAt
                                 ? new Date(String(row.createdAt)).toLocaleDateString("pt-BR")
                                 : "—"}
-                            </TableCell>
+                            </span>
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                  <div className="omafit-partners-desktop-table">
+                    <ResponsiveTable minWidth={560}>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Loja</TableHead>
+                            <TableHead>Plano</TableHead>
+                            <TableHead>Billing</TableHead>
+                            <TableHead>Instalado</TableHead>
                           </TableRow>
-                        ),
-                      )}
-                    </TableBody>
-                  </Table>
+                        </TableHeader>
+                        <TableBody>
+                          {((marketing.recentInstalls as Array<Record<string, unknown>>) || []).map(
+                            (row) => (
+                              <TableRow key={String(row.domain)}>
+                                <TableCell className="max-w-[180px] truncate font-medium">
+                                  {String(row.domain)}
+                                </TableCell>
+                                <TableCell>{String(row.plan || "—")}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">{String(row.billingStatus || "—")}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                  {row.createdAt
+                                    ? new Date(String(row.createdAt)).toLocaleDateString("pt-BR")
+                                    : "—"}
+                                </TableCell>
+                              </TableRow>
+                            ),
+                          )}
+                        </TableBody>
+                      </Table>
+                    </ResponsiveTable>
+                  </div>
                 </CardContent>
               </Card>
             </>
           ) : null}
         </TabsContent>
 
-        <TabsContent value="product" className="flex flex-col gap-6">
+        <TabsContent value="product" className="flex min-w-0 flex-col gap-4 sm:gap-6">
           {product ? (
             <>
               <InsightsPanel insights={productInsights} />
@@ -618,7 +687,7 @@ export function PartnersDashboard({
           ) : null}
         </TabsContent>
 
-        <TabsContent value="churn" className="flex flex-col gap-6">
+        <TabsContent value="churn" className="flex min-w-0 flex-col gap-4 sm:gap-6">
           {churn ? (
             <>
               <InsightsPanel insights={churnInsights} />
@@ -661,56 +730,103 @@ export function PartnersDashboard({
                     Contate cada loja para entender o motivo e oferecer suporte na reativação.
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Loja</TableHead>
-                        <TableHead>Plano</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Imagens/mês</TableHead>
-                        <TableHead>Contato</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {((churn.inactiveBillingStores as Array<Record<string, unknown>>) || []).map(
-                        (row) => (
-                          <TableRow key={String(row.domain)}>
-                            <TableCell className="max-w-[200px] truncate font-medium">
-                              {String(row.domain)}
-                            </TableCell>
-                            <TableCell>{String(row.plan || "—")}</TableCell>
-                            <TableCell>
-                              <Badge variant="destructive">{String(row.billingStatus || "—")}</Badge>
-                            </TableCell>
-                            <TableCell className="omafit-partners-metric-value">
-                              {formatNumber(row.imagesUsedMonth)}
-                            </TableCell>
-                            <TableCell>
-                              <ChurnEmailButton
-                                domain={String(row.domain)}
-                                ownerEmail={row.ownerEmail as string}
-                                zohoMailConfigured={zohoMailConfigured}
-                              />
-                            </TableCell>
+                <CardContent className="min-w-0">
+                  <div className="omafit-partners-card-list">
+                    {((churn.inactiveBillingStores as Array<Record<string, unknown>>) || []).map(
+                      (row) => (
+                        <div key={String(row.domain)} className="omafit-partners-card-list-item">
+                          <p className="truncate text-sm font-medium">{String(row.domain)}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{String(row.plan || "—")}</Badge>
+                            <Badge variant="destructive">{String(row.billingStatus || "—")}</Badge>
+                            <span className="text-xs text-muted-foreground">
+                              Imagens/mês: {formatNumber(row.imagesUsedMonth)}
+                            </span>
+                          </div>
+                          <div className="mt-3">
+                            <ChurnEmailButton
+                              domain={String(row.domain)}
+                              ownerEmail={row.ownerEmail as string}
+                              zohoMailConfigured={zohoMailConfigured}
+                            />
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                  <div className="omafit-partners-desktop-table">
+                    <ResponsiveTable minWidth={640}>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Loja</TableHead>
+                            <TableHead>Plano</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Imagens/mês</TableHead>
+                            <TableHead>Contato</TableHead>
                           </TableRow>
-                        ),
-                      )}
-                    </TableBody>
-                  </Table>
+                        </TableHeader>
+                        <TableBody>
+                          {((churn.inactiveBillingStores as Array<Record<string, unknown>>) || []).map(
+                            (row) => (
+                              <TableRow key={String(row.domain)}>
+                                <TableCell className="max-w-[200px] truncate font-medium">
+                                  {String(row.domain)}
+                                </TableCell>
+                                <TableCell>{String(row.plan || "—")}</TableCell>
+                                <TableCell>
+                                  <Badge variant="destructive">
+                                    {String(row.billingStatus || "—")}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="omafit-partners-metric-value">
+                                  {formatNumber(row.imagesUsedMonth)}
+                                </TableCell>
+                                <TableCell>
+                                  <ChurnEmailButton
+                                    domain={String(row.domain)}
+                                    ownerEmail={row.ownerEmail as string}
+                                    zohoMailConfigured={zohoMailConfigured}
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            ),
+                          )}
+                        </TableBody>
+                      </Table>
+                    </ResponsiveTable>
+                  </div>
                 </CardContent>
               </Card>
             </>
           ) : null}
         </TabsContent>
+
+        <TabsContent value="finance" className="flex min-w-0 flex-col gap-4 sm:gap-6">
+          {finance ? (
+            <FinanceTab data={finance} onRefresh={refresh} />
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="social" className="flex min-w-0 flex-col gap-4 sm:gap-6">
+          {social ? (
+            <SocialTab
+              data={social}
+              canvaConfigured={canvaConfigured}
+              openaiConfigured={openaiConfigured}
+              youtubeApiConfigured={youtubeApiConfigured}
+              instagramApiConfigured={instagramApiConfigured}
+            />
+          ) : null}
+        </TabsContent>
       </Tabs>
 
       <Separator />
-      <footer className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>Omafit Partners · dados Supabase + Shopify Partner API</span>
+      <footer className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <span className="break-words">Omafit Partners · dados Supabase + Shopify Partner API</span>
         <span className="flex items-center gap-1">
-          <SparklesIcon className="size-3 text-accent" />
-          Interface com identidade omafit-widget
+          <SparklesIcon className="size-3 shrink-0 text-accent" />
+          <span className="truncate">Identidade omafit-widget</span>
         </span>
       </footer>
     </div>

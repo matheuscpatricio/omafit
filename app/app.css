@@ -1,0 +1,101 @@
+@import url("https://fonts.cdnfonts.com/css/jhc-rasbora");
+@import url("https://fonts.googleapis.com/css2?family=Gloock:ital@0;1&family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500&family=DM+Mono:wght@400;500&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Gloock", Georgia, serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
+  --font-brand: "JHC Rasbora", Georgia, serif;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.25rem;
+  --radius-4xl: 1.5rem;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+}
+
+:root {
+  --background: #16100a;
+  --foreground: #f6f0e2;
+  --card: #241a10;
+  --card-foreground: #f6f0e2;
+  --popover: #241a10;
+  --popover-foreground: #f6f0e2;
+  --primary: #d96845;
+  --primary-foreground: #f6f0e2;
+  --secondary: #2a1c12;
+  --secondary-foreground: #f6f0e2;
+  --muted: #2a1c12;
+  --muted-foreground: #a8947e;
+  --accent: #5baf8a;
+  --accent-foreground: #16100a;
+  --destructive: #c44b4b;
+  --border: color-mix(in srgb, #3a2e22 70%, transparent);
+  --input: color-mix(in srgb, #3a2e22 85%, transparent);
+  --ring: #d96845;
+  --chart-1: #d96845;
+  --chart-2: #5baf8a;
+  --chart-3: #f6f0e2;
+  --chart-4: #b8522e;
+  --chart-5: #7a6a58;
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
+
+.omafit-partners-shell {
+  @apply min-h-screen bg-background text-foreground font-sans antialiased;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 100% 0%, color-mix(in srgb, #d96845 14%, transparent), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 0% 100%, color-mix(in srgb, #5baf8a 10%, transparent), transparent 50%);
+}
+
+.omafit-partners-shell h1,
+.omafit-partners-shell h2,
+.omafit-partners-shell h3 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.02em;
+}
+
+.omafit-partners-wordmark {
+  font-family: var(--font-brand);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.omafit-partners-metric-value {
+  font-family: var(--font-mono);
+}

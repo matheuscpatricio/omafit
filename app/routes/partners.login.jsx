@@ -1,4 +1,4 @@
-import { Form, redirect, useActionData, useLoaderData } from "react-router";
+import { redirect, useActionData, useLoaderData } from "react-router";
 import {
   commitSession,
   createPartnersAuthSession,
@@ -7,6 +7,17 @@ import {
   isPartnersAuthConfigured,
   verifyPartnersPassword,
 } from "../partners-auth.server";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { AlertTriangleIcon } from "lucide-react";
 
 export const loader = async ({ request }) => {
   const session = await getPartnersSession(request);
@@ -53,34 +64,50 @@ export default function PartnersLoginPage() {
   const actionData = useActionData();
 
   return (
-    <div className="omafit-partners-login">
-      <div className="omafit-partners-login-card">
-        <h1>Omafit Partners</h1>
-        <p className="omafit-partners-muted">Dashboard interno — Shopify &amp; Nuvemshop</p>
-
-        {!authConfigured ? (
-          <div className="omafit-partners-banner omafit-partners-banner--warn">
-            Defina <code>PARTNERS_DASHBOARD_SECRET</code> nas variáveis de ambiente do Railway.
+    <div className="flex min-h-[70vh] items-center justify-center px-5 py-12">
+      <Card className="w-full max-w-md ring-1 ring-primary/20">
+        <CardHeader className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="omafit-partners-wordmark text-xl">Omafit</span>
+            <Badge variant="outline">Partners</Badge>
           </div>
-        ) : (
-          <Form method="post">
-            <label htmlFor="password">Senha de acesso</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-            />
-            {actionData?.error ? (
-              <p className="omafit-partners-error">{actionData.error}</p>
-            ) : null}
-            <button type="submit" className="omafit-partners-btn">
-              Entrar
-            </button>
-          </Form>
-        )}
-      </div>
+          <CardTitle className="text-2xl font-normal italic text-primary">
+            Acesso interno
+          </CardTitle>
+          <CardDescription>Dashboard Shopify &amp; Nuvemshop</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!authConfigured ? (
+            <Alert variant="destructive">
+              <AlertTriangleIcon />
+              <AlertTitle>Configuração pendente</AlertTitle>
+              <AlertDescription>
+                Defina <code className="text-xs">PARTNERS_DASHBOARD_SECRET</code> no Railway.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <form method="post" className="flex flex-col gap-4">
+              <label className="flex flex-col gap-2 text-sm" htmlFor="password">
+                <span className="font-medium text-foreground">Senha de acesso</span>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  className="h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+                />
+              </label>
+              {actionData?.error ? (
+                <p className="text-sm text-destructive">{actionData.error}</p>
+              ) : null}
+              <Button type="submit" className="w-full">
+                Entrar
+              </Button>
+            </form>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

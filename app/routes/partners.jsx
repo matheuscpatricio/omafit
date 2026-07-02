@@ -1,9 +1,9 @@
-import { Outlet, redirect } from "react-router";
+import { Outlet } from "react-router";
 import {
   isPartnersAuthConfigured,
   requirePartnersAuth,
 } from "../partners-auth.server";
-import "../styles/partners-dashboard.css";
+import "../app.css";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);

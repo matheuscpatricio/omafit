@@ -203,6 +203,83 @@
   color: #93c5fd;
 }
 
+.omafit-partners-steps {
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+}
+
+.omafit-partners-steps li {
+  margin-bottom: 0.35rem;
+}
+
+.omafit-partners-banner p {
+  margin: 0 0 0.5rem;
+}
+
+.omafit-partners-banner p:last-child {
+  margin-bottom: 0;
+}
+
+
+.omafit-partners-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid #2a2f3d;
+}
+
+.omafit-partners-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px 8px 0 0;
+  color: #9aa0a6;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.65rem 1rem;
+}
+
+.omafit-partners-tab:hover {
+  color: #e8eaed;
+  background: #1a1d27;
+}
+
+.omafit-partners-tab.is-active {
+  background: #1a1d27;
+  border-color: #2a2f3d;
+  border-bottom-color: #1a1d27;
+  color: #fff;
+  margin-bottom: -1px;
+}
+
+.omafit-partners-tab-panel {
+  animation: omafit-partners-fade 0.2s ease;
+}
+
+.omafit-partners-tab-desc {
+  color: #9aa0a6;
+  font-size: 0.9rem;
+  margin: 0 0 1.25rem;
+}
+
+.omafit-partners-summary--inline {
+  margin-top: 1.25rem;
+}
+
+@keyframes omafit-partners-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .omafit-partners-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

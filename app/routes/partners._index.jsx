@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { requirePartnersAuth } from "../partners-auth.server";
 import { fetchPartnersDashboardStats } from "../partners-dashboard.server";
 import { isShopifyPartnersApiConfigured } from "../shopify-partners-api.server";
+import { isZohoMailConfigured } from "../zoho-mail.server";
 
 export const loader = async ({ request }) => {
   await requirePartnersAuth(request);
@@ -10,6 +11,7 @@ export const loader = async ({ request }) => {
   return {
     stats,
     partnersApiConfigured: isShopifyPartnersApiConfigured(),
+    zohoMailConfigured: isZohoMailConfigured(),
   };
 };
 
@@ -231,7 +233,64 @@ function ProductTab({ data }) {
   );
 }
 
-function ChurnTab({ data, partnersApi }) {
+function ChurnEmailButton({ domain, ownerEmail, zohoMailConfigured }) {
+  const [status, setStatus] = useState("idle");
+  const [feedback, setFeedback] = useState("");
+
+  const sendEmail = async () => {
+    if (!domain || status === "loading") return;
+    setStatus("loading");
+    setFeedback("");
+    try {
+      const response = await fetch("/api/partners/churn-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shopDomain: domain }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const errorMessages = {
+          zoho_not_configured: "Zoho não configurado",
+          owner_email_missing: "E-mail da loja não encontrado",
+          shop_not_found: "Loja não encontrada",
+        };
+        throw new Error(errorMessages[data.error] || data.error || "Falha ao enviar");
+      }
+      setStatus("sent");
+      setFeedback(`Enviado para ${data.to}`);
+    } catch (err) {
+      setStatus("error");
+      setFeedback(err?.message || "Erro ao enviar");
+    }
+  };
+
+  if (!zohoMailConfigured) {
+    return <span className="omafit-partners-muted omafit-partners-cell-hint">Zoho off</span>;
+  }
+
+  return (
+    <div className="omafit-partners-row-action">
+      <button
+        type="button"
+        className="omafit-partners-btn omafit-partners-btn--small omafit-partners-btn--secondary"
+        onClick={sendEmail}
+        disabled={status === "loading" || status === "sent"}
+        title={ownerEmail ? `Enviar para ${ownerEmail}` : "Busca e-mail no cadastro da loja"}
+      >
+        {status === "loading" ? "Enviando…" : status === "sent" ? "Enviado" : "Enviar e-mail"}
+      </button>
+      {feedback ? (
+        <span
+          className={`omafit-partners-cell-hint${status === "error" ? " omafit-partners-cell-hint--error" : ""}`}
+        >
+          {feedback}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function ChurnTab({ data, partnersApi, zohoMailConfigured }) {
   return (
     <div className="omafit-partners-tab-panel">
       <p className="omafit-partners-tab-desc">
@@ -268,8 +327,25 @@ function ChurnTab({ data, partnersApi }) {
             label: "Imagens/mês",
             render: (r) => formatNumber(r.imagesUsedMonth),
           },
+          {
+            key: "action",
+            label: "Contato",
+            render: (r) => (
+              <ChurnEmailButton
+                domain={r.domain}
+                ownerEmail={r.ownerEmail}
+                zohoMailConfigured={zohoMailConfigured}
+              />
+            ),
+          },
         ]}
       />
+      {!zohoMailConfigured ? (
+        <div className="omafit-partners-banner omafit-partners-banner--info">
+          Envio de e-mail exige <code>ZOHO_SMTP_USER</code> e <code>ZOHO_SMTP_PASSWORD</code> no
+          servidor.
+        </div>
+      ) : null}
       {partnersApi?.error && partnersApi.error !== "not_configured" ? (
         <div className="omafit-partners-banner omafit-partners-banner--warn">
           Erro Partner API: {partnersApi.error}
@@ -280,7 +356,7 @@ function ChurnTab({ data, partnersApi }) {
 }
 
 export default function PartnersDashboardPage() {
-  const { stats, partnersApiConfigured } = useLoaderData();
+  const { stats, partnersApiConfigured, zohoMailConfigured } = useLoaderData();
   const revalidator = useRevalidator();
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [activeTab, setActiveTab] = useState("marketing");
@@ -363,7 +439,7 @@ export default function PartnersDashboardPage() {
         <ProductTab data={tabs.product} />
       ) : null}
       {activeTab === "churn" && tabs?.churn ? (
-        <ChurnTab data={tabs.churn} partnersApi={partnersApi} />
+        <ChurnTab data={tabs.churn} partnersApi={partnersApi} zohoMailConfigured={zohoMailConfigured} />
       ) : null}
     </div>
   );

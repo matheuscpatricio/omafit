@@ -22,6 +22,7 @@ function normalizeShopRow(shop) {
     billingStatus: shop.billing_status,
     imagesUsedMonth: shop.images_used_month,
     createdAt: shop.created_at,
+    ownerEmail: shop.shop_owner_email || null,
     isBillingActive: isActiveBilling(shop.billing_status),
   };
 }
@@ -78,7 +79,7 @@ async function countTable(table, filter = "") {
 
 async function fetchAllShops() {
   const response = await supabaseFetch(
-    "/rest/v1/shopify_shops?select=shop_domain,plan,billing_status,images_used_month,created_at&order=created_at.desc",
+    "/rest/v1/shopify_shops?select=shop_domain,plan,billing_status,images_used_month,created_at,shop_owner_email&order=created_at.desc",
   );
   if (!response.ok) {
     const body = await response.text().catch(() => "");

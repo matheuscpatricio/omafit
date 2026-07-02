@@ -326,6 +326,30 @@
   background: #353b4d;
 }
 
+.omafit-partners-btn--small {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.omafit-partners-row-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+.omafit-partners-cell-hint {
+  font-size: 0.7rem;
+  color: #9aa0a6;
+  max-width: 180px;
+  line-height: 1.3;
+}
+
+.omafit-partners-cell-hint--error {
+  color: #fbbf24;
+}
+
 .omafit-partners-btn--ghost {
   background: transparent;
   border: 1px solid #3d4455;

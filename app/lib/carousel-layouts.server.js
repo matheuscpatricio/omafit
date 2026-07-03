@@ -2,6 +2,7 @@ import { OMAFIT_BRAND, INSTAGRAM_CAROUSEL_SIZE } from "./omafit-brand.server.js"
 import {
   parseSlideHierarchy,
   renderHierarchyBlock,
+  renderRichTextBlock,
   brandMark,
   slideFooter,
   readingPanel,
@@ -13,6 +14,10 @@ import {
 const SIZE = INSTAGRAM_CAROUSEL_SIZE;
 
 export { wrapText, escapeXml };
+
+function hOpts(index, opts) {
+  return { slideIndex: index, ...opts };
+}
 
 /** Capa: contexto no topo, destaque principal em painel de leitura. */
 function layoutHeroBottom(slide, theme, index, total, fonts) {
@@ -34,7 +39,7 @@ function layoutHeroBottom(slide, theme, index, total, fonts) {
     },
     theme,
     fonts,
-    { x: 72, contentWidth: SIZE - 144, eyebrowY: 200, highlightSize: 64, supportSize: 26 },
+    hOpts(index, { x: 72, contentWidth: SIZE - 144, eyebrowY: 200, highlightSize: 64, supportSize: 26 }),
   )}
   ${slideFooter(index, total, theme, fonts)}`,
   };
@@ -51,7 +56,7 @@ function layoutEditorialTop(slide, theme, index, total, fonts) {
   <rect x="72" y="96" width="240" height="4" rx="2" fill="${theme.accentSoft || theme.accent}" opacity="0.5"/>`,
     content: `
   ${brandMark(theme, fonts, { x: 100, y: 78, size: 28 })}
-  ${renderHierarchyBlock(h, theme, fonts, { x: 100, contentWidth: SIZE - 160, eyebrowY: 148, highlightSize: 52, supportSize: 26 })}
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, { x: 100, contentWidth: SIZE - 160, eyebrowY: 148, highlightSize: 52, supportSize: 26 }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -74,7 +79,7 @@ function layoutSplitOrange(slide, theme, index, total, fonts) {
     { ...h, eyebrow: null },
     theme,
     fonts,
-    { x: 400, contentWidth: SIZE - 460, eyebrowY: 140, highlightSize: 46, supportSize: 24 },
+    hOpts(index, { x: 400, contentWidth: SIZE - 460, eyebrowY: 140, highlightSize: 46, supportSize: 24 }),
   )}
   ${slideFooter(index, total, theme, fonts)}`,
   };
@@ -89,13 +94,13 @@ function layoutCentered(slide, theme, index, total, fonts) {
     decorations: `
   <rect x="120" y="120" width="${SIZE - 240}" height="${SIZE - 240}" rx="32" fill="${theme.accent}" opacity="0.05" stroke="${theme.accent}" stroke-width="2" stroke-opacity="0.2"/>`,
     content: `
-  ${renderHierarchyBlock(h, theme, fonts, {
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, {
     anchor: "middle",
     contentWidth: SIZE - 200,
     eyebrowY: 200,
     highlightSize: 54,
     supportSize: 26,
-  })}
+  }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -111,7 +116,7 @@ function layoutSideAccent(slide, theme, index, total, fonts) {
   <circle cx="920" cy="880" r="140" fill="${theme.accent}" opacity="0.08"/>`,
     content: `
   ${brandMark(theme, fonts, { x: 100, y: 96, size: 28 })}
-  ${renderHierarchyBlock(h, theme, fonts, { x: 100, contentWidth: SIZE - 180, eyebrowY: 140, highlightSize: 50, supportSize: 25 })}
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, { x: 100, contentWidth: SIZE - 180, eyebrowY: 140, highlightSize: 50, supportSize: 25 }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -132,7 +137,7 @@ function layoutStatHighlight(slide, theme, index, total, fonts) {
     { ...h, stat: stat || null, highlight: stat ? h.headline : h.highlight, headline: stat ? null : h.headline },
     theme,
     fonts,
-    { x: 72, contentWidth: SIZE - 144, eyebrowY: stat ? 200 : 168, highlightSize: stat ? 48 : 56, supportSize: 26, statSize: 156 },
+    hOpts(index, { x: 72, contentWidth: SIZE - 144, eyebrowY: stat ? 200 : 168, highlightSize: stat ? 48 : 56, supportSize: 26, statSize: 156 }),
   )}
   ${slideFooter(index, total, theme, fonts)}`,
   };
@@ -142,9 +147,10 @@ function layoutStatHighlight(slide, theme, index, total, fonts) {
 function layoutQuote(slide, theme, index, total, fonts) {
   const h = parseSlideHierarchy(slide, index, total);
   const quote = h.highlight || h.headline;
-  const quoteLines = wrapText(quote, 28);
+  const quoteLines = wrapText(quote.replace(/\*\*/g, ""), 28);
   const lineH = 52;
   const panelH = quoteLines.length * lineH + 56;
+  const panelTitle = theme.bg === OMAFIT_BRAND.orange ? OMAFIT_BRAND.cream : theme.title;
 
   return {
     id: "quote",
@@ -158,21 +164,26 @@ function layoutQuote(slide, theme, index, total, fonts) {
       ? `<text x="72" y="220" font-family='${fonts.body}' font-size="24" fill="${theme.body}" opacity="0.8">${escapeXml(h.headline)}</text>`
       : ""
   }
-  ${readingPanel({ x: 56, y: 300, width: SIZE - 112, height: panelH, theme })}
+  ${readingPanel({ x: 56, y: 300, width: SIZE - 112, height: panelH, theme, strong: true })}
   <rect x="72" y="318" width="6" height="${panelH - 36}" rx="3" fill="${theme.accent}"/>
-  ${quoteLines
-    .map(
-      (line, i) =>
-        `<text x="96" y="${360 + i * lineH}" font-family='${fonts.title}' font-size="40" font-weight="bold" fill="${theme.title}">${escapeXml(line)}</text>`,
-    )
-    .join("\n  ")}
+  ${renderRichTextBlock(quoteLines, {
+    x: 96,
+    startY: 360,
+    lineHeight: lineH,
+    fontSize: 40,
+    fill: panelTitle,
+    accentFill: theme.accent,
+    fontFamily: fonts.title,
+    fontWeight: "bold",
+    filter: `txt-shadow-atm-${index}`,
+  })}
   ${
     h.support
       ? renderHierarchyBlock(
           { eyebrow: null, headline: null, highlight: "", support: h.support, stat: null },
           theme,
           fonts,
-          { x: 72, eyebrowY: 300 + panelH + 20, highlightSize: 1, supportSize: 26, showHeadline: false },
+          hOpts(index, { x: 72, eyebrowY: 300 + panelH + 20, highlightSize: 1, supportSize: 26, showHeadline: false }),
         )
       : ""
   }
@@ -191,7 +202,7 @@ function layoutDiagonal(slide, theme, index, total, fonts) {
   <polygon points="${SIZE},0 ${SIZE},360 640,0" fill="${theme.accent}" opacity="0.06"/>`,
     content: `
   ${brandMark(theme, fonts, { x: 72, y: 96, size: 30 })}
-  ${renderHierarchyBlock(h, theme, fonts, { x: 72, contentWidth: SIZE - 144, eyebrowY: 148, highlightSize: 54, supportSize: 26 })}
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, { x: 72, contentWidth: SIZE - 144, eyebrowY: 148, highlightSize: 54, supportSize: 26 }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -205,7 +216,7 @@ function layoutBottomHeavy(slide, theme, index, total, fonts) {
     decorations: `
   <rect x="0" y="640" width="${SIZE}" height="440" fill="${theme.accent}" opacity="0.08"/>`,
     content: `
-  ${renderHierarchyBlock(h, theme, fonts, { x: 72, contentWidth: SIZE - 144, eyebrowY: 120, highlightSize: 58, supportSize: 26 })}
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, { x: 72, contentWidth: SIZE - 144, eyebrowY: 120, highlightSize: 58, supportSize: 26 }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -221,7 +232,7 @@ function layoutCornerFloat(slide, theme, index, total, fonts) {
     content: `
   ${brandMark(theme, fonts, { x: 900, y: 96, size: 32 })}
   ${h.eyebrow ? contextChip(h.eyebrow, theme, fonts, { x: 72, y: 160 }) : ""}
-  ${renderHierarchyBlock(h, theme, fonts, { x: 96, contentWidth: SIZE - 192, eyebrowY: 600, highlightSize: 52, supportSize: 25 })}
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, { x: 96, contentWidth: SIZE - 192, eyebrowY: 600, highlightSize: 52, supportSize: 25 }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -235,7 +246,7 @@ function layoutBadge(slide, theme, index, total, fonts) {
     decorations: `
   <rect x="72" y="88" width="180" height="3" fill="${theme.accent}" opacity="0.4"/>`,
     content: `
-  ${renderHierarchyBlock(h, theme, fonts, { x: 72, contentWidth: SIZE - 144, eyebrowY: 156, highlightSize: 50, supportSize: 26 })}
+  ${renderHierarchyBlock(h, theme, fonts, hOpts(index, { x: 72, contentWidth: SIZE - 144, eyebrowY: 156, highlightSize: 50, supportSize: 26 }))}
   ${slideFooter(index, total, theme, fonts)}`,
   };
 }
@@ -255,7 +266,7 @@ function layoutCta(slide, theme, index, total, fonts) {
     { ...h, eyebrow: h.eyebrow || "Agora é com você" },
     theme,
     fonts,
-    { anchor: "middle", contentWidth: SIZE - 160, eyebrowY: 280, highlightSize: 58, supportSize: 24 },
+    hOpts(index, { anchor: "middle", contentWidth: SIZE - 160, eyebrowY: 280, highlightSize: 58, supportSize: 24 }),
   )}
   ${slideFooter(index, total, theme, fonts)}`,
   };

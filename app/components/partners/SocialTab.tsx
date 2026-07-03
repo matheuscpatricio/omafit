@@ -254,29 +254,46 @@ export function SocialTab({
 
   const publishToInstagram = async () => {
     if (!result?.previews?.length) return;
+    if (!theme.trim() || !description.trim()) {
+      setPublishStatus("error");
+      setPublishFeedback("Tema e descrição são necessários para publicar.");
+      return;
+    }
     setPublishStatus("publishing");
     setPublishFeedback("");
     setPublishUrl(null);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 300000);
     try {
       const response = await fetch("/api/partners/instagram-publish", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           caption,
-          images: result.previews.map((p) => p.dataUrl),
+          theme,
+          description,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success) {
-        throw new Error(payload.error || "Falha ao publicar no Instagram");
+        throw new Error(payload.error || `Falha ao publicar (${response.status})`);
       }
       setPublishStatus("idle");
       setPublishFeedback("Publicado no Instagram com sucesso.");
       setPublishUrl(payload.permalink || null);
     } catch (err) {
       setPublishStatus("error");
-      setPublishFeedback(err instanceof Error ? err.message : "Erro ao publicar");
+      if (err instanceof Error && err.name === "AbortError") {
+        setPublishFeedback("A publicação demorou demais — tente novamente.");
+      } else if (err instanceof TypeError) {
+        setPublishFeedback("Conexão interrompida — o servidor pode estar processando. Aguarde e tente de novo.");
+      } else {
+        setPublishFeedback(err instanceof Error ? err.message : "Erro ao publicar");
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   };
 

@@ -8,6 +8,13 @@ import { getSupabaseConfig, isSupabaseConfigured } from "./supabase-rest.server.
 
 const BUCKET = (process.env.SUPABASE_CAROUSEL_BUCKET || "partners-social").trim();
 
+function encodeObjectPath(objectPath) {
+  return String(objectPath || "")
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 function supabaseStorageHeaders(contentType = "image/png") {
   const { key } = getSupabaseConfig();
   return {
@@ -15,7 +22,12 @@ function supabaseStorageHeaders(contentType = "image/png") {
     Authorization: `Bearer ${key}`,
     "Content-Type": contentType,
     "x-upsert": "true",
+    "Cache-Control": "public, max-age=31536000",
   };
+}
+
+function publicObjectUrl(baseUrl, objectPath) {
+  return `${baseUrl.replace(/\/$/, "")}/storage/v1/object/public/${BUCKET}/${encodeObjectPath(objectPath)}`;
 }
 
 async function uploadPngPublic(buffer, objectPath) {
@@ -25,13 +37,13 @@ async function uploadPngPublic(buffer, objectPath) {
   const { url, key } = getSupabaseConfig();
   if (!url || !key) throw new Error("supabase_not_configured");
 
-  const uploadUrl = `${url.replace(/\/$/, "")}/storage/v1/object/${encodeURIComponent(BUCKET)}/${objectPath}`;
+  const uploadUrl = `${url.replace(/\/$/, "")}/storage/v1/object/${BUCKET}/${encodeObjectPath(objectPath)}`;
 
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: supabaseStorageHeaders(),
     body: buffer,
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(90000),
   });
 
   if (!response.ok) {
@@ -44,7 +56,7 @@ async function uploadPngPublic(buffer, objectPath) {
     throw new Error(body || `storage_upload_failed:${response.status}`);
   }
 
-  return `${url.replace(/\/$/, "")}/storage/v1/object/public/${encodeURIComponent(BUCKET)}/${objectPath}`;
+  return publicObjectUrl(url, objectPath);
 }
 
 async function createImageContainer(accountId, token, imageUrl) {
@@ -57,7 +69,7 @@ async function createImageContainer(accountId, token, imageUrl) {
   return data.id;
 }
 
-async function waitForContainerReady(containerId, token, maxAttempts = 20) {
+async function waitForContainerReady(containerId, token, maxAttempts = 30) {
   for (let i = 0; i < maxAttempts; i += 1) {
     const status = await graphGet(`/${containerId}`, {
       fields: "status_code",
@@ -66,7 +78,7 @@ async function waitForContainerReady(containerId, token, maxAttempts = 20) {
     const code = status.status_code;
     if (code === "FINISHED") return;
     if (code === "ERROR") throw new Error("instagram_media_processing_failed");
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, i < 5 ? 1500 : 2500));
   }
   throw new Error("instagram_media_processing_timeout");
 }
@@ -107,18 +119,19 @@ export async function publishCarouselToInstagram({ buffers, caption }) {
 
   const { accessToken, accountId } = getInstagramEnvCredentials();
   const stamp = Date.now();
-  const childIds = [];
 
   try {
-    for (let i = 0; i < buffers.length; i += 1) {
-      const publicUrl = await uploadPngPublic(
-        buffers[i],
-        `carousel/${stamp}-slide-${i + 1}.png`,
-      );
-      const containerId = await createImageContainer(accountId, accessToken, publicUrl);
-      await waitForContainerReady(containerId, accessToken);
-      childIds.push(containerId);
-    }
+    const publicUrls = await Promise.all(
+      buffers.map((buffer, i) =>
+        uploadPngPublic(buffer, `carousel/${stamp}-slide-${i + 1}.png`),
+      ),
+    );
+
+    const childIds = await Promise.all(
+      publicUrls.map((imageUrl) => createImageContainer(accountId, accessToken, imageUrl)),
+    );
+
+    await Promise.all(childIds.map((id) => waitForContainerReady(id, accessToken)));
 
     const carouselId = await createCarouselContainer(
       accountId,
@@ -128,6 +141,7 @@ export async function publishCarouselToInstagram({ buffers, caption }) {
     );
     await waitForContainerReady(carouselId, accessToken);
     const mediaId = await publishMedia(accountId, accessToken, carouselId);
+
     let permalink = null;
     try {
       const published = await graphGet(`/${mediaId}`, {
@@ -147,9 +161,10 @@ export async function publishCarouselToInstagram({ buffers, caption }) {
     };
   } catch (err) {
     console.error("[publishCarouselToInstagram]", err);
+    const message = err?.message || "instagram_publish_failed";
     return {
       success: false,
-      error: err?.message || "instagram_publish_failed",
+      error: message,
     };
   }
 }

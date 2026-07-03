@@ -53,14 +53,14 @@ function heuristicCarouselCopy(theme, description) {
       title: themeHook,
       highlight: themeHook,
       subtitle: "Provador virtual para e-commerce",
-      body: "O cliente decide na PDP — sem try-on, a compra vira aposta.",
+      body: "O cliente decide na PDP — sem **try-on**, a compra vira aposta.",
     },
     {
       kind: "content",
       layout: "stat",
       eyebrow: "O cenário",
       title: "dos compradores hesitam sem experimentar",
-      highlight: "67% hesitam",
+      highlight: "**67%** hesitam",
       stat: "67%",
       subtitle: "O PROBLEMA",
       body: contentPoints[0],
@@ -70,14 +70,14 @@ function heuristicCarouselCopy(theme, description) {
       layout: "quote",
       eyebrow: "O que está em jogo",
       title: "A real do e-commerce",
-      highlight: contentPoints[1]?.split(/[.!?]/)[0] || "Try-on muda a decisão de compra",
+      highlight: `**${(contentPoints[1]?.split(/[.!?]/)[0] || "Try-on muda a decisão").trim().slice(0, 50)}**`,
       body: contentPoints[1] || contentPoints[0],
     },
     {
       kind: "content",
       eyebrow: "O insight",
       title: "Quem vê, confia",
-      highlight: "Ver antes de comprar reduz devolução",
+      highlight: "Ver antes de comprar **reduz devolução**",
       subtitle: "INSIGHT",
       body: contentPoints[2] || contentPoints[1],
     },
@@ -85,7 +85,7 @@ function heuristicCarouselCopy(theme, description) {
       kind: "content",
       eyebrow: "A solução",
       title: "Try-on nativo na Shopify",
-      highlight: "Provador AR na página do produto",
+      highlight: "**Provador AR** na página do produto",
       subtitle: "COMO RESOLVER",
       body: contentPoints[3] || contentPoints[2] || "Widget Omafit integrado em minutos — experiência fluida no mobile.",
     },
@@ -93,7 +93,7 @@ function heuristicCarouselCopy(theme, description) {
       kind: "cta",
       eyebrow: "Próximo passo",
       title: "Sua loja merece esse upgrade",
-      highlight: "Ative o try-on na sua Shopify",
+      highlight: "Ative o **try-on** na sua Shopify",
       subtitle: `@${OMAFIT_BRAND.instagramHandle}`,
       body: "omafit.co · provador virtual para Shopify",
     },
@@ -192,6 +192,7 @@ Retorne APENAS JSON válido:
 
 Regras obrigatórias:
 - highlight SEMPRE diferente de title — é o destaque visual principal
+- Use **palavra** em highlight/body para marcar ênfase (renderizada em CAPS/laranja)
 - eyebrow dá contexto antes do leitor mergulhar no conteúdo
 - body traz cenário concreto, nunca repetir highlight
 - PROIBIDO títulos genéricos ("Ponto 1", "Dica", "O contexto")

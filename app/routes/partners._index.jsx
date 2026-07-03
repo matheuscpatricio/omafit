@@ -8,6 +8,7 @@ import {
   isInstagramApiConfigured,
   isYoutubeApiConfigured,
 } from "../partners-social.server";
+import { isCanvaConfigured } from "../canva-connect.server";
 import { isMetaAppConfigured } from "../meta-instagram.server";
 import { PartnersDashboard } from "../components/partners/PartnersDashboard";
 

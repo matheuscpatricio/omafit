@@ -12,6 +12,7 @@ database.sqlite
 
 .env
 .env.*
+railway-vars.json
 
 
 

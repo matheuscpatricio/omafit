@@ -9,6 +9,11 @@ import {
   getCarouselFontFaceDefs,
 } from "./lib/carousel-fonts.server.js";
 import { buildLayoutContent, pickSlideLayout } from "./lib/carousel-layouts.server.js";
+import {
+  atmosphereDefs,
+  atmosphereLayer,
+  pickAtmosphere,
+} from "./lib/carousel-composition.server.js";
 
 function splitDescription(description) {
   const raw = String(description || "").trim();
@@ -44,42 +49,53 @@ function heuristicCarouselCopy(theme, description) {
   const slides = [
     {
       kind: "cover",
+      eyebrow: "Por que isso importa agora",
       title: themeHook,
-      subtitle: "O que sua loja está perdendo sem try-on",
-      body: null,
+      highlight: themeHook,
+      subtitle: "Provador virtual para e-commerce",
+      body: "O cliente decide na PDP — sem try-on, a compra vira aposta.",
     },
     {
       kind: "content",
       layout: "stat",
-      title: "67% dos compradores",
+      eyebrow: "O cenário",
+      title: "dos compradores hesitam sem experimentar",
+      highlight: "67% hesitam",
+      stat: "67%",
       subtitle: "O PROBLEMA",
       body: contentPoints[0],
-      stat: "67%",
     },
     {
       kind: "content",
       layout: "quote",
+      eyebrow: "O que está em jogo",
       title: "A real do e-commerce",
-      subtitle: null,
+      highlight: contentPoints[1]?.split(/[.!?]/)[0] || "Try-on muda a decisão de compra",
       body: contentPoints[1] || contentPoints[0],
     },
     {
       kind: "content",
-      title: "Experiência que vende",
+      eyebrow: "O insight",
+      title: "Quem vê, confia",
+      highlight: "Ver antes de comprar reduz devolução",
       subtitle: "INSIGHT",
       body: contentPoints[2] || contentPoints[1],
     },
     {
       kind: "content",
+      eyebrow: "A solução",
       title: "Try-on nativo na Shopify",
-      subtitle: "SOLUÇÃO",
-      body: contentPoints[3] || contentPoints[2] || "Provador virtual AR direto na página do produto — sem fricção, sem abandono.",
+      highlight: "Provador AR na página do produto",
+      subtitle: "COMO RESOLVER",
+      body: contentPoints[3] || contentPoints[2] || "Widget Omafit integrado em minutos — experiência fluida no mobile.",
     },
     {
       kind: "cta",
+      eyebrow: "Próximo passo",
       title: "Sua loja merece esse upgrade",
+      highlight: "Ative o try-on na sua Shopify",
       subtitle: `@${OMAFIT_BRAND.instagramHandle}`,
-      body: "Conheça o Omafit · provador virtual para Shopify",
+      body: "omafit.co · provador virtual para Shopify",
     },
   ];
 
@@ -112,47 +128,62 @@ async function aiCarouselCopy(theme, description) {
 TEMA: ${theme}
 BRIEFING DO CLIENTE: ${description}
 
-Escreva um carrossel Instagram de alto impacto. Cada slide deve parecer um spread de revista — nunca genérico.
+Escreva um carrossel Instagram com hierarquia visual clara. O leitor deve entender em 2 segundos o ponto principal de cada slide.
+
+Cada slide tem 4 camadas de texto:
+- eyebrow: contexto situacional (onde estamos na história, 2-5 palavras)
+- title: setup secundário (frase de apoio menor que o highlight)
+- highlight: O PONTO MAIS IMPORTANTE — frase curta e memorável (4-10 palavras), é o que o leitor deve lembrar
+- body: contexto e detalhe de apoio (1-2 frases concretas com exemplo real: PDP, carrinho, mobile, devolução)
 
 Retorne APENAS JSON válido:
 {
-  "caption": "legenda narrativa com gancho na 1ª linha, desenvolvimento em parágrafos curtos, CTA emocional, 8-12 hashtags relevantes (#tryon #provadorvirtual #shopify #omafit etc), @${OMAFIT_BRAND.instagramHandle}",
+  "caption": "legenda narrativa com gancho, desenvolvimento, CTA e hashtags, @${OMAFIT_BRAND.instagramHandle}",
   "slides": [
     {
       "kind": "cover",
-      "title": "headline memorável reformulando o tema (máx 8 palavras)",
-      "subtitle": "subtítulo provocativo que cria curiosidade",
-      "body": null
+      "eyebrow": "contexto do tema",
+      "title": "setup opcional",
+      "highlight": "headline principal memorável",
+      "subtitle": "mesmo que eyebrow",
+      "body": "1 frase de contexto que prepara o carrossel"
     },
     {
       "kind": "content",
       "layout": "stat",
-      "stat": "número ou % impactante (ex: 67%, 3x, -40%)",
-      "title": "contexto do número em poucas palavras",
-      "subtitle": "O PROBLEMA",
-      "body": "2 frases concretas sobre a dor do consumidor ou da loja"
+      "eyebrow": "O cenário",
+      "stat": "67%",
+      "title": "complemento do número",
+      "highlight": "frase que explica por que o número importa",
+      "body": "detalhe concreto com contexto de loja/consumidor"
     },
     {
       "kind": "content",
       "layout": "quote",
+      "eyebrow": "O que está em jogo",
       "title": "rótulo curto",
-      "body": "frase de impacto como citação — insight forte sobre o mercado"
+      "highlight": "frase de impacto como citação editorial",
+      "body": "contexto que aprofunda a citação"
     },
     {
       "kind": "content",
-      "title": "gancho de 4-6 palavras",
-      "subtitle": "INSIGHT ou TENDÊNCIA",
-      "body": "2-3 frases com exemplo prático (PDP, carrinho, devolução, mobile)"
+      "eyebrow": "O insight",
+      "title": "setup",
+      "highlight": "insight principal em poucas palavras",
+      "body": "exemplo prático no e-commerce"
     },
     {
       "kind": "content",
-      "title": "gancho sobre a solução",
-      "subtitle": "COMO RESOLVER",
-      "body": "como try-on AR / Omafit resolve — benefício tangível"
+      "eyebrow": "A solução",
+      "title": "setup",
+      "highlight": "benefício tangível do try-on/Omafit",
+      "body": "como funciona na prática"
     },
     {
       "kind": "cta",
-      "title": "CTA emocional e direto (não 'saiba mais')",
+      "eyebrow": "Próximo passo",
+      "title": "setup emocional",
+      "highlight": "CTA direto e memorável",
       "subtitle": "@${OMAFIT_BRAND.instagramHandle}",
       "body": "omafit.co · provador virtual Shopify"
     }
@@ -160,14 +191,12 @@ Retorne APENAS JSON válido:
 }
 
 Regras obrigatórias:
-- 5 a 7 slides
-- PROIBIDO: "Ponto 1", "Dica", "O contexto", títulos vagos ou repetitivos
-- Cada título = headline de capa de revista
-- body sempre substantivo (nunca uma frase rasa)
-- Use dados plausíveis quando fizer sentido (%, tempo, conversão)
-- Tom: confiante, específico, pt-BR, voz de marca premium
-- Varie estrutura: pergunta retórica, contraste antes/depois, benefício emocional
-- caption com storytelling (problema → insight → solução → CTA)`;
+- highlight SEMPRE diferente de title — é o destaque visual principal
+- eyebrow dá contexto antes do leitor mergulhar no conteúdo
+- body traz cenário concreto, nunca repetir highlight
+- PROIBIDO títulos genéricos ("Ponto 1", "Dica", "O contexto")
+- Tom: confiante, específico, pt-BR
+- caption com arco narrativo completo`;
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -202,8 +231,10 @@ Regras obrigatórias:
       slides: parsed.slides.map((s) => ({
         kind: s.kind || "content",
         layout: s.layout || null,
+        eyebrow: s.eyebrow ? String(s.eyebrow).slice(0, 60) : null,
         stat: s.stat ? String(s.stat).slice(0, 12) : null,
         title: String(s.title || "").slice(0, 80),
+        highlight: s.highlight ? String(s.highlight).slice(0, 90) : null,
         subtitle: s.subtitle ? String(s.subtitle).slice(0, 80) : null,
         body: s.body ? String(s.body).slice(0, 280) : null,
       })),
@@ -238,12 +269,15 @@ export async function generateCarouselCopy(theme, description) {
 
 async function buildSlideSvg(slide, theme, index, total, fonts, fontDefs) {
   const size = INSTAGRAM_CAROUSEL_SIZE;
+  const atmosphere = pickAtmosphere(index);
   const { decorations, content } = buildLayoutContent(slide, theme, index, total, fonts);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
   ${fontDefs}
+  ${atmosphereDefs(index, theme)}
   <rect width="${size}" height="${size}" fill="${theme.bg}"/>
+  ${atmosphereLayer(index, theme, atmosphere)}
   ${decorations}
   ${content}
 </svg>`;

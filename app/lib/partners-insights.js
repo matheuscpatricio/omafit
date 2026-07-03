@@ -2,7 +2,7 @@
  * Gera recomendações didáticas por aba do Partners Dashboard.
  * @param {"marketing"|"product"|"churn"|"finance"|"social"} tab
  * @param {object} data
- * @param {{ partnersApiConfigured?: boolean, zohoMailConfigured?: boolean, zohoMailMode?: string, canvaConfigured?: boolean, openaiConfigured?: boolean, youtubeApiConfigured?: boolean, instagramApiConfigured?: boolean }} ctx
+ * @param {{ partnersApiConfigured?: boolean, zohoMailConfigured?: boolean, zohoMailMode?: string, openaiConfigured?: boolean, youtubeApiConfigured?: boolean, instagramApiConfigured?: boolean }} ctx
  */
 export function buildPartnersInsights(tab, data, ctx = {}) {
   const insights = [];
@@ -216,18 +216,6 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
   }
 
   if (tab === "social") {
-    if (!ctx.canvaConfigured) {
-      insights.push({
-        id: "canva-setup",
-        severity: "info",
-        title: "Canva não conectado",
-        description:
-          "Os carrosséis são gerados com a identidade Omafit, mas ainda não são enviados automaticamente ao Canva.",
-        action:
-          "Configure CANVA_ACCESS_TOKEN no Railway (scopes asset:write e design:content:write) para abrir o design pronto no editor.",
-      });
-    }
-
     if (!ctx.youtubeApiConfigured) {
       insights.push({
         id: "youtube-api",
@@ -256,7 +244,7 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
         title: "Token do Instagram expirado",
         description: "O token no Railway não é mais válido — métricas e publicação falham.",
         action:
-          "Na aba Redes Sociais, use 'Token de longa duração' com META_APP_ID/SECRET e um token novo do Graph API Explorer.",
+          "Atualize INSTAGRAM_ACCESS_TOKEN no Railway com um token de Página do Facebook.",
       });
     }
 
@@ -269,17 +257,6 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
           "Sem OPENAI_API_KEY, o texto dos slides é montado automaticamente a partir do tema e da descrição.",
         action:
           "Opcional: configure OPENAI_API_KEY para copy mais criativa nos carrosséis de Instagram.",
-      });
-    }
-
-    if (ctx.canvaConfigured && (ctx.openaiConfigured || ctx.youtubeApiConfigured)) {
-      insights.push({
-        id: "social-ready",
-        severity: "success",
-        title: "Pipeline de conteúdo ativo",
-        description: "Gere carrosséis com identidade Omafit e publique no Instagram e YouTube.",
-        action:
-          "Use 'Gerar conteúdo' com um tema claro e descrição com 3–5 pontos; revise no Canva antes de publicar.",
       });
     }
   }

@@ -12,7 +12,6 @@ export async function action({ request }) {
     const body = await request.json().catch(() => ({}));
     const theme = String(body.theme || "").trim();
     const description = String(body.description || "").trim();
-    const pushToCanva = body.pushToCanva !== false;
 
     if (!theme) {
       return Response.json({ success: false, error: "theme_required" }, { status: 400 });
@@ -21,7 +20,7 @@ export async function action({ request }) {
       return Response.json({ success: false, error: "description_required" }, { status: 400 });
     }
 
-    const result = await generatePartnersCarousel({ theme, description, pushToCanva });
+    const result = await generatePartnersCarousel({ theme, description });
     return Response.json(result);
   } catch (err) {
     console.error("[api.partners.social-carousel]", err);

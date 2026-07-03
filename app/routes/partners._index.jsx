@@ -8,8 +8,6 @@ import {
   isInstagramApiConfigured,
   isYoutubeApiConfigured,
 } from "../partners-social.server";
-import { isCanvaConfigured } from "../canva-connect.server";
-import { isMetaAppConfigured } from "../meta-instagram.server";
 import { PartnersDashboard } from "../components/partners/PartnersDashboard";
 
 export const loader = async ({ request }) => {
@@ -21,11 +19,9 @@ export const loader = async ({ request }) => {
     partnersApiConfigured: isShopifyPartnersApiConfigured(),
     zohoMailConfigured: isZohoMailConfigured(),
     zohoMailMode: getZohoMailDeliveryMode(),
-    canvaConfigured: isCanvaConfigured(),
     openaiConfigured: carouselStatus.openaiConfigured,
     youtubeApiConfigured: isYoutubeApiConfigured(),
     instagramApiConfigured: isInstagramApiConfigured(),
-    metaAppConfigured: isMetaAppConfigured(),
   };
 };
 

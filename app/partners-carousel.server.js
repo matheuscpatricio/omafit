@@ -4,7 +4,6 @@ import {
   OMAFIT_BRAND,
   OMAFIT_SLIDE_THEMES,
 } from "./lib/omafit-brand.server.js";
-import { isCanvaConfigured, pushCarouselToCanva } from "./canva-connect.server.js";
 
 function escapeXml(value) {
   return String(value || "")
@@ -166,10 +165,10 @@ export async function generateCarouselCopy(theme, description) {
   };
 }
 
-const FONT_BRAND = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
-const FONT_TITLE = '"DejaVu Serif", "Liberation Serif", Georgia, serif';
-const FONT_BODY = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
-const FONT_MONO = '"DejaVu Sans Mono", "Liberation Mono", monospace';
+const FONT_BRAND = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
+const FONT_TITLE = "DejaVu Serif, Liberation Serif, Georgia, serif";
+const FONT_BODY = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
+const FONT_MONO = "DejaVu Sans Mono, Liberation Mono, monospace";
 
 function textLine(
   line,
@@ -177,7 +176,7 @@ function textLine(
 ) {
   const anchorAttr = anchor ? ` text-anchor="${anchor}"` : "";
   const opacityAttr = opacity != null ? ` opacity="${opacity}"` : "";
-  return `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}"${anchorAttr}${opacityAttr}>${escapeXml(line)}</text>`;
+  return `<text x="${x}" y="${y}" font-family='${fontFamily}' font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}"${anchorAttr}${opacityAttr}>${escapeXml(line)}</text>`;
 }
 
 function textBlock(lines, { x, startY, lineHeight, fontSize, fill, fontFamily, fontWeight }) {
@@ -297,25 +296,11 @@ export async function renderCarouselSlides(slides) {
 }
 
 /**
- * Gera carrossel Instagram com identidade Omafit e envia ao Canva se configurado.
+ * Gera carrossel Instagram com identidade Omafit (PNG para download).
  */
-export async function generatePartnersCarousel({ theme, description, pushToCanva = true }) {
+export async function generatePartnersCarousel({ theme, description }) {
   const { slides, source } = await generateCarouselCopy(theme, description);
-  const { buffers, previews } = await renderCarouselSlides(slides);
-
-  let canva = null;
-  if (pushToCanva && isCanvaConfigured()) {
-    try {
-      canva = await pushCarouselToCanva(buffers, `Omafit — ${theme}`);
-    } catch (err) {
-      canva = {
-        success: false,
-        error: err?.message || "canva_push_failed",
-      };
-    }
-  } else if (pushToCanva) {
-    canva = { success: false, error: "canva_not_configured" };
-  }
+  const { previews } = await renderCarouselSlides(slides);
 
   return {
     success: true,
@@ -326,14 +311,11 @@ export async function generatePartnersCarousel({ theme, description, pushToCanva
       theme: OMAFIT_SLIDE_THEMES[i % OMAFIT_SLIDE_THEMES.length].label,
     })),
     previews,
-    canva,
-    canvaConfigured: isCanvaConfigured(),
   };
 }
 
 export function getCarouselGeneratorStatus() {
   return {
-    canvaConfigured: isCanvaConfigured(),
     openaiConfigured: Boolean((process.env.OPENAI_API_KEY || "").trim()),
   };
 }

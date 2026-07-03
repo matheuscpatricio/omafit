@@ -421,11 +421,9 @@ type DashboardProps = {
   partnersApiConfigured: boolean;
   zohoMailConfigured: boolean;
   zohoMailMode: string;
-  canvaConfigured: boolean;
   openaiConfigured: boolean;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
-  metaAppConfigured: boolean;
   onRefresh: () => void;
 };
 
@@ -434,11 +432,9 @@ export function PartnersDashboard({
   partnersApiConfigured,
   zohoMailConfigured,
   zohoMailMode,
-  canvaConfigured,
   openaiConfigured,
   youtubeApiConfigured,
   instagramApiConfigured,
-  metaAppConfigured,
   onRefresh,
 }: DashboardProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -814,11 +810,9 @@ export function PartnersDashboard({
           {social ? (
             <SocialTab
               data={social}
-              canvaConfigured={canvaConfigured}
               openaiConfigured={openaiConfigured}
               youtubeApiConfigured={youtubeApiConfigured}
               instagramApiConfigured={instagramApiConfigured}
-              metaAppConfigured={metaAppConfigured}
             />
           ) : null}
         </TabsContent>

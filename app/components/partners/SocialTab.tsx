@@ -58,13 +58,6 @@ type GenerateResult = {
   source?: string;
   slideCount?: number;
   previews?: CarouselPreview[];
-  canva?: {
-    success: boolean;
-    editUrl?: string | null;
-    viewUrl?: string | null;
-    error?: string | null;
-  };
-  canvaConfigured?: boolean;
   error?: string;
 };
 
@@ -198,18 +191,14 @@ function downloadDataUrl(dataUrl: string, filename: string) {
 
 export function SocialTab({
   data,
-  canvaConfigured,
   openaiConfigured,
   youtubeApiConfigured,
   instagramApiConfigured,
-  metaAppConfigured,
 }: {
   data: SocialData;
-  canvaConfigured: boolean;
   openaiConfigured: boolean;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
-  metaAppConfigured: boolean;
 }) {
   const [theme, setTheme] = useState("");
   const [description, setDescription] = useState("");
@@ -217,48 +206,11 @@ export function SocialTab({
   const [feedback, setFeedback] = useState("");
   const [result, setResult] = useState<GenerateResult | null>(null);
 
-  const [shortToken, setShortToken] = useState("");
-  const [tokenStatus, setTokenStatus] = useState<"idle" | "loading" | "error">("idle");
-  const [tokenFeedback, setTokenFeedback] = useState("");
-  const [tokenResult, setTokenResult] = useState<{
-    instagramAccessToken?: string;
-    instagramBusinessAccountId?: string;
-    instagramUsername?: string;
-    pageName?: string;
-    note?: string;
-  } | null>(null);
-
-  const ctx = { canvaConfigured, openaiConfigured, youtubeApiConfigured, instagramApiConfigured };
+  const ctx = { openaiConfigured, youtubeApiConfigured, instagramApiConfigured };
   const insights = buildPartnersInsights("social", data, ctx);
 
   const youtube = data.youtube;
   const instagram = data.instagram;
-
-  const exchangeInstagramToken = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setTokenStatus("loading");
-    setTokenFeedback("");
-    setTokenResult(null);
-    try {
-      const response = await fetch("/api/partners/instagram-token", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shortLivedToken: shortToken, preferredUsername: "omafit.co" }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.success) {
-        throw new Error(payload.error || payload.hint || "Falha ao gerar token");
-      }
-      setTokenResult(payload);
-      setTokenStatus("idle");
-      setTokenFeedback("Token de Página gerado — cole no Railway e faça redeploy.");
-      setShortToken("");
-    } catch (err) {
-      setTokenStatus("error");
-      setTokenFeedback(err instanceof Error ? err.message : "Erro ao trocar token");
-    }
-  };
 
   const generate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -270,7 +222,7 @@ export function SocialTab({
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme, description, pushToCanva: true }),
+        body: JSON.stringify({ theme, description }),
       });
       const payload = (await response.json().catch(() => ({}))) as GenerateResult;
       if (!response.ok || !payload.success) {
@@ -278,11 +230,7 @@ export function SocialTab({
       }
       setResult(payload);
       setStatus("idle");
-      setFeedback(
-        payload.canva?.success
-          ? "Carrossel criado no Canva — abra o link para editar."
-          : "Slides gerados — baixe as imagens ou configure o Canva para envio automático.",
-      );
+      setFeedback("Carrossel gerado — baixe os slides abaixo.");
     } catch (err) {
       setStatus("error");
       setFeedback(err instanceof Error ? err.message : "Erro ao gerar");
@@ -315,122 +263,16 @@ export function SocialTab({
         />
       </div>
 
-      {instagram?.tokenExpired || instagram?.error ? (
+      {instagram?.tokenExpired ? (
         <Alert variant="destructive">
           <InfoIcon />
-          <AlertTitle>Token do Instagram expirado ou inválido</AlertTitle>
-          <AlertDescription className="flex flex-col gap-2 text-sm">
-            <p>{instagram.error}</p>
-            <p>
-              Tokens do Graph API Explorer expiram em ~1 hora. Use o formulário abaixo para gerar um{" "}
-              <strong>token de Página</strong> que não expira.
-            </p>
+          <AlertTitle>Token do Instagram expirado</AlertTitle>
+          <AlertDescription className="text-sm">
+            Atualize <code className="text-xs">INSTAGRAM_ACCESS_TOKEN</code> no Railway com um
+            token de Página do Facebook (não expira).
           </AlertDescription>
         </Alert>
       ) : null}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Token de longa duração (Instagram)</CardTitle>
-          <CardDescription>
-            Gera um token de Página do Facebook vinculado ao @omafit.co — não expira como o token do
-            Explorer.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {!metaAppConfigured ? (
-            <Alert>
-              <InfoIcon />
-              <AlertTitle>App Meta não configurado no servidor</AlertTitle>
-              <AlertDescription className="flex flex-col gap-1 text-sm">
-                <span>
-                  Adicione no Railway: <code className="text-xs">META_APP_ID</code> e{" "}
-                  <code className="text-xs">META_APP_SECRET</code> (em developers.facebook.com →
-                  seu app → Settings → Basic).
-                </span>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-            <li>
-              Abra o{" "}
-              <a
-                href="https://developers.facebook.com/tools/explorer/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline"
-              >
-                Graph API Explorer
-              </a>
-            </li>
-            <li>
-              Permissões: <code className="text-xs">pages_show_list</code>,{" "}
-              <code className="text-xs">instagram_basic</code>,{" "}
-              <code className="text-xs">instagram_manage_insights</code>
-            </li>
-            <li>Gere um Access Token e cole abaixo (válido por ~1h — só para esta troca)</li>
-            <li>Copie os valores gerados para o Railway e salve</li>
-          </ol>
-
-          <form onSubmit={exchangeInstagramToken} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium">Token curto do Explorer</span>
-              <textarea
-                required
-                rows={3}
-                value={shortToken}
-                onChange={(e) => setShortToken(e.target.value)}
-                placeholder="EAAG..."
-                disabled={!metaAppConfigured}
-                className="rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-              />
-            </label>
-            <Button
-              type="submit"
-              disabled={!metaAppConfigured || tokenStatus === "loading"}
-              className="w-full sm:w-auto"
-            >
-              {tokenStatus === "loading" ? "Gerando token de Página…" : "Gerar token de longa duração"}
-            </Button>
-            {tokenFeedback ? (
-              <span className={cn("text-sm", tokenStatus === "error" && "text-destructive")}>
-                {tokenFeedback}
-              </span>
-            ) : null}
-          </form>
-
-          {tokenResult?.instagramAccessToken ? (
-            <div className="flex flex-col gap-3 rounded-xl border border-accent/30 bg-accent/5 p-4 text-sm">
-              <p className="font-medium text-foreground">
-                @{tokenResult.instagramUsername} · {tokenResult.pageName}
-              </p>
-              <p className="text-muted-foreground">{tokenResult.note}</p>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  INSTAGRAM_ACCESS_TOKEN
-                </span>
-                <textarea
-                  readOnly
-                  rows={3}
-                  value={tokenResult.instagramAccessToken}
-                  className="rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  INSTAGRAM_BUSINESS_ACCOUNT_ID
-                </span>
-                <input
-                  readOnly
-                  value={tokenResult.instagramBusinessAccountId || ""}
-                  className="h-9 rounded-lg border border-input bg-background px-3 font-mono text-xs"
-                />
-              </label>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
 
       {!youtubeApiConfigured || !instagramApiConfigured ? (
         <Alert>
@@ -461,7 +303,7 @@ export function SocialTab({
           </div>
           <CardDescription>
             Carrossel Instagram 1080×1080 com cores e fontes Omafit — fundo marrom/creme alternado,
-            verde apenas nos detalhes. Enviado ao Canva quando configurado.
+            verde apenas nos detalhes. Baixe os PNGs e publique no Instagram.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -489,9 +331,6 @@ export function SocialTab({
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[0.65rem]">
-                {canvaConfigured ? "Canva conectado" : "Canva não configurado"}
-              </Badge>
-              <Badge variant="outline" className="text-[0.65rem]">
                 {openaiConfigured ? "Copy com IA" : "Copy com template"}
               </Badge>
             </div>
@@ -511,38 +350,6 @@ export function SocialTab({
               ) : null}
             </div>
           </form>
-
-          {!canvaConfigured ? (
-            <Alert>
-              <InfoIcon />
-              <AlertTitle>Canva (opcional)</AlertTitle>
-              <AlertDescription>
-                Para criar o design diretamente no Canva, configure{" "}
-                <code className="text-xs">CANVA_ACCESS_TOKEN</code> com scopes{" "}
-                <code className="text-xs">asset:write</code> e{" "}
-                <code className="text-xs">design:content:write</code>. Os slides ainda são gerados
-                para download abaixo.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {result?.canva?.success && result.canva.editUrl ? (
-            <div className="flex flex-wrap gap-3">
-              <Button asChild>
-                <a href={result.canva.editUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLinkIcon data-icon="inline-start" />
-                  Abrir no Canva
-                </a>
-              </Button>
-              {result.canva.viewUrl ? (
-                <Button variant="outline" asChild>
-                  <a href={result.canva.viewUrl} target="_blank" rel="noopener noreferrer">
-                    Visualizar
-                  </a>
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
 
           {result?.previews?.length ? (
             <div className="flex flex-col gap-4">
@@ -606,11 +413,7 @@ export function SocialTab({
           hint="Perfil oficial"
         />
         <MetricCard label="YouTube" value={`@${youtube?.handle || "omafit-g3d"}`} hint="Canal oficial" />
-        <MetricCard
-          label="Formato"
-          value="1080²"
-          hint="Carrossel quadrado Instagram"
-        />
+        <MetricCard label="Formato" value="1080²" hint="Carrossel quadrado Instagram" />
         <MetricCard
           label="Identidade"
           value="Omafit"

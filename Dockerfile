@@ -17,7 +17,7 @@ RUN npm run build
 
 # Estágio 2: produção (só o necessário para rodar)
 FROM public.ecr.aws/docker/library/node:20-alpine
-RUN apk add --no-cache openssl python3 py3-pip py3-numpy \
+RUN apk add --no-cache openssl python3 py3-pip py3-numpy fontconfig ttf-dejavu ttf-liberation \
   && python3 -m venv /opt/ar-mesh-venv \
   && /opt/ar-mesh-venv/bin/pip install --no-cache-dir "trimesh>=4.0.0" "numpy>=1.24.0"
 

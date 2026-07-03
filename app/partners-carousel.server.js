@@ -166,67 +166,112 @@ export async function generateCarouselCopy(theme, description) {
   };
 }
 
+const FONT_BRAND = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
+const FONT_TITLE = '"DejaVu Serif", "Liberation Serif", Georgia, serif';
+const FONT_BODY = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif';
+const FONT_MONO = '"DejaVu Sans Mono", "Liberation Mono", monospace';
+
+function textLine(
+  line,
+  { x, y, fontSize, fill, fontFamily, fontWeight = "normal", anchor, opacity },
+) {
+  const anchorAttr = anchor ? ` text-anchor="${anchor}"` : "";
+  const opacityAttr = opacity != null ? ` opacity="${opacity}"` : "";
+  return `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}"${anchorAttr}${opacityAttr}>${escapeXml(line)}</text>`;
+}
+
+function textBlock(lines, { x, startY, lineHeight, fontSize, fill, fontFamily, fontWeight }) {
+  return lines
+    .map((line, index) =>
+      textLine(line, {
+        x,
+        y: startY + index * lineHeight,
+        fontSize,
+        fill,
+        fontFamily,
+        fontWeight,
+      }),
+    )
+    .join("\n  ");
+}
+
 function buildSlideSvg(slide, theme, index, total) {
   const size = INSTAGRAM_CAROUSEL_SIZE;
   const titleLines = wrapText(slide.title, slide.kind === "cover" ? 22 : 28);
   const bodyLines = slide.body ? wrapText(slide.body, 36) : [];
-  const subtitle = slide.subtitle ? escapeXml(slide.subtitle) : "";
 
   const titleY = slide.kind === "cover" ? 340 : 280;
   const titleFontSize = slide.kind === "cover" ? 64 : 52;
   const titleLineHeight = slide.kind === "cover" ? 72 : 60;
 
-  const titleTspans = titleLines
-    .map(
-      (line, i) =>
-        `<tspan x="90" dy="${i === 0 ? 0 : titleLineHeight}">${escapeXml(line)}</tspan>`,
-    )
-    .join("");
-
   const bodyStartY = titleY + titleLines.length * titleLineHeight + 48;
-  const bodyTspans = bodyLines
-    .map(
-      (line, i) =>
-        `<tspan x="90" dy="${i === 0 ? 0 : 44}">${escapeXml(line)}</tspan>`,
-    )
-    .join("");
+  const subtitleY = titleY + titleLines.length * titleLineHeight + 28;
+
+  const accentBarY =
+    slide.kind === "cta"
+      ? bodyStartY + bodyLines.length * 44 + 40
+      : 120;
 
   const accentBar =
     slide.kind === "cta"
-      ? `<rect x="90" y="${bodyStartY + bodyLines.length * 44 + 40}" width="220" height="6" rx="3" fill="${theme.accent}"/>`
+      ? `<rect x="90" y="${accentBarY}" width="220" height="6" rx="3" fill="${theme.accent}"/>`
       : `<rect x="90" y="120" width="120" height="6" rx="3" fill="${theme.accent}"/>`;
+
+  const subtitleBlock = slide.subtitle
+    ? textLine(slide.subtitle, {
+        x: 90,
+        y: subtitleY,
+        fontSize: 32,
+        fill: theme.accent,
+        fontFamily: FONT_BODY,
+      })
+    : "";
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Gloock&amp;family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500&amp;display=swap');
-      .brand { font-family: 'JHC Rasbora', Georgia, serif; font-weight: 800; }
-      .title { font-family: 'Gloock', Georgia, serif; }
-      .body { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 400; }
-      .mono { font-family: 'DM Mono', ui-monospace, monospace; }
-    </style>
-  </defs>
   <rect width="${size}" height="${size}" fill="${theme.bg}"/>
   <circle cx="920" cy="160" r="180" fill="${theme.accent}" opacity="0.12"/>
   <circle cx="140" cy="940" r="120" fill="${theme.accent}" opacity="0.08"/>
   ${accentBar}
-  <text x="90" y="200" class="brand" font-size="36" fill="${theme.accent}">Omafit</text>
-  <text x="90" y="${titleY}" class="title" font-size="${titleFontSize}" fill="${theme.title}">
-    ${titleTspans}
-  </text>
-  ${
-    subtitle
-      ? `<text x="90" y="${titleY + titleLines.length * titleLineHeight + 28}" class="body" font-size="32" fill="${theme.accent}">${subtitle}</text>`
-      : ""
-  }
+  ${textLine("Omafit", { x: 90, y: 200, fontSize: 36, fill: theme.accent, fontFamily: FONT_BRAND, fontWeight: "bold" })}
+  ${textBlock(titleLines, {
+    x: 90,
+    startY: titleY,
+    lineHeight: titleLineHeight,
+    fontSize: titleFontSize,
+    fill: theme.title,
+    fontFamily: FONT_TITLE,
+  })}
+  ${subtitleBlock}
   ${
     bodyLines.length
-      ? `<text x="90" y="${bodyStartY}" class="body" font-size="34" fill="${theme.body}">${bodyTspans}</text>`
+      ? textBlock(bodyLines, {
+          x: 90,
+          startY: bodyStartY,
+          lineHeight: 44,
+          fontSize: 34,
+          fill: theme.body,
+          fontFamily: FONT_BODY,
+        })
       : ""
   }
-  <text x="90" y="1000" class="mono" font-size="22" fill="${theme.accent}" opacity="0.9">${index + 1} / ${total}</text>
-  <text x="990" y="1000" text-anchor="end" class="mono" font-size="20" fill="${theme.body}" opacity="0.55">@${OMAFIT_BRAND.instagramHandle}</text>
+  ${textLine(`${index + 1} / ${total}`, {
+    x: 90,
+    y: 1000,
+    fontSize: 22,
+    fill: theme.accent,
+    fontFamily: FONT_MONO,
+    opacity: 0.9,
+  })}
+  ${textLine(`@${OMAFIT_BRAND.instagramHandle}`, {
+    x: 990,
+    y: 1000,
+    fontSize: 20,
+    fill: theme.body,
+    fontFamily: FONT_MONO,
+    anchor: "end",
+    opacity: 0.55,
+  })}
 </svg>`;
 }
 
@@ -237,7 +282,7 @@ export async function renderCarouselSlides(slides) {
   for (let i = 0; i < slides.length; i += 1) {
     const theme = OMAFIT_SLIDE_THEMES[i % OMAFIT_SLIDE_THEMES.length];
     const svg = buildSlideSvg(slides[i], theme, i, slides.length);
-    const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+    const buffer = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
     buffers.push(buffer);
     previews.push({
       index: i + 1,

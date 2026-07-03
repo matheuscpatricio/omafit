@@ -4,34 +4,11 @@ import {
   OMAFIT_BRAND,
   OMAFIT_SLIDE_THEMES,
 } from "./lib/omafit-brand.server.js";
-
-function escapeXml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function wrapText(text, maxChars = 38) {
-  const words = String(text || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ");
-  const lines = [];
-  let current = "";
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxChars && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-  }
-  if (current) lines.push(current);
-  return lines.slice(0, 8);
-}
+import {
+  getActiveFontFamily,
+  getCarouselFontFaceDefs,
+} from "./lib/carousel-fonts.server.js";
+import { buildLayoutContent, wrapText } from "./lib/carousel-layouts.server.js";
 
 function splitDescription(description) {
   const raw = String(description || "").trim();
@@ -41,6 +18,17 @@ function splitDescription(description) {
     .map((s) => s.trim())
     .filter(Boolean);
   return parts.length ? parts : [raw];
+}
+
+function titleFromBody(body, maxWords = 4) {
+  const words = String(body || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, maxWords);
+  if (!words.length) return "Insight";
+  const line = words.join(" ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
 function heuristicCarouselCopy(theme, description) {
@@ -54,67 +42,63 @@ function heuristicCarouselCopy(theme, description) {
     body: null,
   });
 
-  if (points[0]) {
+  const contentPoints =
+    points.length > 0
+      ? points
+      : [
+          "Clientes indecisos abandonam o carrinho sem experimentar o produto.",
+          "O try-on AR reduz a incerteza e aproxima a experiência da loja física.",
+          "Lojas fashion e eyewear convertem mais quando o provador é nativo na PDP.",
+        ];
+
+  for (let i = 0; i < Math.min(4, contentPoints.length); i += 1) {
     slides.push({
       kind: "content",
-      title: "O contexto",
+      title: titleFromBody(contentPoints[i], 5),
       subtitle: null,
-      body: points[0],
-    });
-  }
-
-  const middle = points.slice(1, Math.max(1, points.length - 1));
-  if (middle.length === 0 && points.length === 1) {
-    middle.push("Descubra como o try-on AR aumenta confiança e conversão na sua loja.");
-  }
-
-  for (let i = 0; i < Math.min(3, middle.length); i += 1) {
-    slides.push({
-      kind: "content",
-      title: `Ponto ${i + 1}`,
-      subtitle: null,
-      body: middle[i],
-    });
-  }
-
-  const lastPoint = points.length > 1 ? points[points.length - 1] : null;
-  if (lastPoint && !middle.includes(lastPoint) && slides.length < 6) {
-    slides.push({
-      kind: "content",
-      title: "Por que importa",
-      subtitle: null,
-      body: lastPoint,
+      body: contentPoints[i],
     });
   }
 
   slides.push({
     kind: "cta",
-    title: "Experimente o Omafit",
+    title: "Pronto para testar?",
     subtitle: `@${OMAFIT_BRAND.instagramHandle}`,
     body: "omafit.co · provador virtual para Shopify",
   });
 
-  return slides.slice(0, 7);
+  const caption = `${theme}\n\n${contentPoints.slice(0, 3).join("\n\n")}\n\n👉 @${OMAFIT_BRAND.instagramHandle}`;
+
+  return { slides: slides.slice(0, 7), caption };
 }
 
 async function aiCarouselCopy(theme, description) {
   const apiKey = (process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) return null;
 
-  const prompt = `Você cria copy para carrossel Instagram da marca Omafit (provador virtual AR para e-commerce).
-Tema: ${theme}
-Descrição/briefing: ${description}
+  const prompt = `Você é copywriter da Omafit (provador virtual AR para e-commerce Shopify).
 
-Retorne APENAS JSON válido com este formato:
-{"slides":[{"kind":"cover|content|cta","title":"...","subtitle":"... ou null","body":"... ou null"}]}
+Tema: ${theme}
+Briefing: ${description}
+
+Retorne APENAS JSON válido:
+{
+  "caption": "legenda completa do post Instagram com emojis moderados, hashtags #tryon #ecommerce #shopify #omafit, CTA e @${OMAFIT_BRAND.instagramHandle}",
+  "slides": [
+    {"kind":"cover","title":"...","subtitle":"...","body":null},
+    {"kind":"content","title":"...","subtitle":null,"body":"..."},
+    {"kind":"cta","title":"...","subtitle":"@${OMAFIT_BRAND.instagramHandle}","body":"..."}
+  ]
+}
 
 Regras:
 - 5 a 7 slides
-- slide 1: capa com o tema
-- slides intermediários: conteúdo educativo/vendas baseado na descrição
-- último slide: CTA com @omafit.co
-- textos curtos (título até 60 chars, body até 160 chars)
-- tom profissional, direto, em português do Brasil`;
+- Títulos curtos e impactantes (nunca "Ponto 1", "O contexto" ou rótulos genéricos)
+- Cada slide de conteúdo: título = gancho (máx 6 palavras), body = 1-2 frases claras
+- Tom: confiante, educativo, direto, pt-BR
+- Slide 1 = capa com o tema reformulado de forma memorável
+- Último slide = CTA forte para conhecer o Omafit
+- caption pronta para colar no Instagram`;
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -125,13 +109,17 @@ Regras:
       },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-        temperature: 0.7,
+        temperature: 0.85,
         messages: [
-          { role: "system", content: "Você retorna apenas JSON válido, sem markdown." },
+          {
+            role: "system",
+            content:
+              "Você escreve copy de carrossel Instagram. Retorne somente JSON válido, sem markdown.",
+          },
           { role: "user", content: prompt },
         ],
       }),
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(60000),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return null;
@@ -140,12 +128,15 @@ Regras:
     if (!jsonMatch) return null;
     const parsed = JSON.parse(jsonMatch[0]);
     if (!Array.isArray(parsed?.slides) || !parsed.slides.length) return null;
-    return parsed.slides.map((s) => ({
-      kind: s.kind || "content",
-      title: String(s.title || "").slice(0, 80),
-      subtitle: s.subtitle ? String(s.subtitle).slice(0, 80) : null,
-      body: s.body ? String(s.body).slice(0, 200) : null,
-    }));
+    return {
+      caption: String(parsed.caption || theme).slice(0, 2200),
+      slides: parsed.slides.map((s) => ({
+        kind: s.kind || "content",
+        title: String(s.title || "").slice(0, 80),
+        subtitle: s.subtitle ? String(s.subtitle).slice(0, 80) : null,
+        body: s.body ? String(s.body).slice(0, 220) : null,
+      })),
+    };
   } catch {
     return null;
   }
@@ -157,130 +148,45 @@ export async function generateCarouselCopy(theme, description) {
   if (!trimmedTheme) throw new Error("theme_required");
   if (!trimmedDesc) throw new Error("description_required");
 
-  const aiSlides = await aiCarouselCopy(trimmedTheme, trimmedDesc);
-  const slides = aiSlides?.length ? aiSlides : heuristicCarouselCopy(trimmedTheme, trimmedDesc);
+  const aiResult = await aiCarouselCopy(trimmedTheme, trimmedDesc);
+  if (aiResult?.slides?.length) {
+    return {
+      slides: aiResult.slides,
+      caption: aiResult.caption,
+      source: "ai",
+    };
+  }
+
+  const heuristic = heuristicCarouselCopy(trimmedTheme, trimmedDesc);
   return {
-    slides,
-    source: aiSlides?.length ? "ai" : "template",
+    slides: heuristic.slides,
+    caption: heuristic.caption,
+    source: "template",
   };
 }
 
-const FONT_BRAND = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
-const FONT_TITLE = "DejaVu Serif, Liberation Serif, Georgia, serif";
-const FONT_BODY = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
-const FONT_MONO = "DejaVu Sans Mono, Liberation Mono, monospace";
-
-function textLine(
-  line,
-  { x, y, fontSize, fill, fontFamily, fontWeight = "normal", anchor, opacity },
-) {
-  const anchorAttr = anchor ? ` text-anchor="${anchor}"` : "";
-  const opacityAttr = opacity != null ? ` opacity="${opacity}"` : "";
-  return `<text x="${x}" y="${y}" font-family='${fontFamily}' font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}"${anchorAttr}${opacityAttr}>${escapeXml(line)}</text>`;
-}
-
-function textBlock(lines, { x, startY, lineHeight, fontSize, fill, fontFamily, fontWeight }) {
-  return lines
-    .map((line, index) =>
-      textLine(line, {
-        x,
-        y: startY + index * lineHeight,
-        fontSize,
-        fill,
-        fontFamily,
-        fontWeight,
-      }),
-    )
-    .join("\n  ");
-}
-
-function buildSlideSvg(slide, theme, index, total) {
+async function buildSlideSvg(slide, theme, index, total, fonts, fontDefs) {
   const size = INSTAGRAM_CAROUSEL_SIZE;
-  const titleLines = wrapText(slide.title, slide.kind === "cover" ? 22 : 28);
-  const bodyLines = slide.body ? wrapText(slide.body, 36) : [];
-
-  const titleY = slide.kind === "cover" ? 340 : 280;
-  const titleFontSize = slide.kind === "cover" ? 64 : 52;
-  const titleLineHeight = slide.kind === "cover" ? 72 : 60;
-
-  const bodyStartY = titleY + titleLines.length * titleLineHeight + 48;
-  const subtitleY = titleY + titleLines.length * titleLineHeight + 28;
-
-  const accentBarY =
-    slide.kind === "cta"
-      ? bodyStartY + bodyLines.length * 44 + 40
-      : 120;
-
-  const accentBar =
-    slide.kind === "cta"
-      ? `<rect x="90" y="${accentBarY}" width="220" height="6" rx="3" fill="${theme.accent}"/>`
-      : `<rect x="90" y="120" width="120" height="6" rx="3" fill="${theme.accent}"/>`;
-
-  const subtitleBlock = slide.subtitle
-    ? textLine(slide.subtitle, {
-        x: 90,
-        y: subtitleY,
-        fontSize: 32,
-        fill: theme.accent,
-        fontFamily: FONT_BODY,
-      })
-    : "";
+  const { decorations, content } = buildLayoutContent(slide, theme, index, total, fonts);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+  ${fontDefs}
   <rect width="${size}" height="${size}" fill="${theme.bg}"/>
-  <circle cx="920" cy="160" r="180" fill="${theme.accent}" opacity="0.12"/>
-  <circle cx="140" cy="940" r="120" fill="${theme.accent}" opacity="0.08"/>
-  ${accentBar}
-  ${textLine("Omafit", { x: 90, y: 200, fontSize: 36, fill: theme.accent, fontFamily: FONT_BRAND, fontWeight: "bold" })}
-  ${textBlock(titleLines, {
-    x: 90,
-    startY: titleY,
-    lineHeight: titleLineHeight,
-    fontSize: titleFontSize,
-    fill: theme.title,
-    fontFamily: FONT_TITLE,
-  })}
-  ${subtitleBlock}
-  ${
-    bodyLines.length
-      ? textBlock(bodyLines, {
-          x: 90,
-          startY: bodyStartY,
-          lineHeight: 44,
-          fontSize: 34,
-          fill: theme.body,
-          fontFamily: FONT_BODY,
-        })
-      : ""
-  }
-  ${textLine(`${index + 1} / ${total}`, {
-    x: 90,
-    y: 1000,
-    fontSize: 22,
-    fill: theme.accent,
-    fontFamily: FONT_MONO,
-    opacity: 0.9,
-  })}
-  ${textLine(`@${OMAFIT_BRAND.instagramHandle}`, {
-    x: 990,
-    y: 1000,
-    fontSize: 20,
-    fill: theme.body,
-    fontFamily: FONT_MONO,
-    anchor: "end",
-    opacity: 0.55,
-  })}
+  ${decorations}
+  ${content}
 </svg>`;
 }
 
 export async function renderCarouselSlides(slides) {
+  const fontDefs = await getCarouselFontFaceDefs();
+  const fonts = getActiveFontFamily();
   const buffers = [];
   const previews = [];
 
   for (let i = 0; i < slides.length; i += 1) {
     const theme = OMAFIT_SLIDE_THEMES[i % OMAFIT_SLIDE_THEMES.length];
-    const svg = buildSlideSvg(slides[i], theme, i, slides.length);
+    const svg = await buildSlideSvg(slides[i], theme, i, slides.length, fonts, fontDefs);
     const buffer = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
     buffers.push(buffer);
     previews.push({
@@ -288,6 +194,7 @@ export async function renderCarouselSlides(slides) {
       theme: theme.label,
       kind: slides[i].kind,
       title: slides[i].title,
+      layout: slides[i].kind === "cta" ? "cta" : `layout-${i % 6}`,
       dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
     });
   }
@@ -296,15 +203,16 @@ export async function renderCarouselSlides(slides) {
 }
 
 /**
- * Gera carrossel Instagram com identidade Omafit (PNG para download).
+ * Gera carrossel Instagram com identidade Omafit (PNG para download/publicação).
  */
 export async function generatePartnersCarousel({ theme, description }) {
-  const { slides, source } = await generateCarouselCopy(theme, description);
-  const { previews } = await renderCarouselSlides(slides);
+  const { slides, source, caption } = await generateCarouselCopy(theme, description);
+  const { buffers, previews } = await renderCarouselSlides(slides);
 
   return {
     success: true,
     source,
+    caption,
     slideCount: slides.length,
     slides: slides.map((s, i) => ({
       ...s,

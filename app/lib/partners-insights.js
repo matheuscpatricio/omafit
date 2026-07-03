@@ -2,7 +2,7 @@
  * Gera recomendações didáticas por aba do Partners Dashboard.
  * @param {"marketing"|"product"|"churn"|"finance"|"social"} tab
  * @param {object} data
- * @param {{ partnersApiConfigured?: boolean, zohoMailConfigured?: boolean, zohoMailMode?: string, openaiConfigured?: boolean, youtubeApiConfigured?: boolean, instagramApiConfigured?: boolean }} ctx
+ * @param {{ partnersApiConfigured?: boolean, zohoMailConfigured?: boolean, zohoMailMode?: string, openaiConfigured?: boolean, youtubeApiConfigured?: boolean, instagramApiConfigured?: boolean, instagramPublishConfigured?: boolean }} ctx
  */
 export function buildPartnersInsights(tab, data, ctx = {}) {
   const insights = [];
@@ -257,6 +257,18 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
           "Sem OPENAI_API_KEY, o texto dos slides é montado automaticamente a partir do tema e da descrição.",
         action:
           "Opcional: configure OPENAI_API_KEY para copy mais criativa nos carrosséis de Instagram.",
+      });
+    }
+
+    if (ctx.instagramApiConfigured && !ctx.instagramPublishConfigured) {
+      insights.push({
+        id: "instagram-publish",
+        severity: "info",
+        title: "Publicação automática indisponível",
+        description:
+          "O token do Instagram está configurado, mas falta Supabase Storage para hospedar as imagens antes de publicar.",
+        action:
+          "Configure SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY e crie o bucket público partners-social no Supabase.",
       });
     }
   }

@@ -6,6 +6,7 @@ import {
   SparklesIcon,
   DownloadIcon,
   InfoIcon,
+  SendIcon,
 } from "lucide-react";
 import { buildPartnersInsights } from "@/app/lib/partners-insights";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -56,6 +57,7 @@ type CarouselPreview = {
 type GenerateResult = {
   success: boolean;
   source?: string;
+  caption?: string;
   slideCount?: number;
   previews?: CarouselPreview[];
   error?: string;
@@ -194,19 +196,30 @@ export function SocialTab({
   openaiConfigured,
   youtubeApiConfigured,
   instagramApiConfigured,
+  instagramPublishConfigured,
 }: {
   data: SocialData;
   openaiConfigured: boolean;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
+  instagramPublishConfigured: boolean;
 }) {
   const [theme, setTheme] = useState("");
   const [description, setDescription] = useState("");
+  const [caption, setCaption] = useState("");
   const [status, setStatus] = useState<"idle" | "generating" | "error">("idle");
+  const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "error">("idle");
   const [feedback, setFeedback] = useState("");
+  const [publishFeedback, setPublishFeedback] = useState("");
+  const [publishUrl, setPublishUrl] = useState<string | null>(null);
   const [result, setResult] = useState<GenerateResult | null>(null);
 
-  const ctx = { openaiConfigured, youtubeApiConfigured, instagramApiConfigured };
+  const ctx = {
+    openaiConfigured,
+    youtubeApiConfigured,
+    instagramApiConfigured,
+    instagramPublishConfigured,
+  };
   const insights = buildPartnersInsights("social", data, ctx);
 
   const youtube = data.youtube;
@@ -229,11 +242,41 @@ export function SocialTab({
         throw new Error(payload.error || "Falha ao gerar carrossel");
       }
       setResult(payload);
+      setCaption(payload.caption || "");
+      setPublishUrl(null);
       setStatus("idle");
-      setFeedback("Carrossel gerado — baixe os slides abaixo.");
+      setFeedback("Carrossel gerado — baixe os slides ou publique no Instagram.");
     } catch (err) {
       setStatus("error");
       setFeedback(err instanceof Error ? err.message : "Erro ao gerar");
+    }
+  };
+
+  const publishToInstagram = async () => {
+    if (!result?.previews?.length) return;
+    setPublishStatus("publishing");
+    setPublishFeedback("");
+    setPublishUrl(null);
+    try {
+      const response = await fetch("/api/partners/instagram-publish", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caption,
+          images: result.previews.map((p) => p.dataUrl),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || "Falha ao publicar no Instagram");
+      }
+      setPublishStatus("idle");
+      setPublishFeedback("Publicado no Instagram com sucesso.");
+      setPublishUrl(payload.permalink || null);
+    } catch (err) {
+      setPublishStatus("error");
+      setPublishFeedback(err instanceof Error ? err.message : "Erro ao publicar");
     }
   };
 
@@ -302,8 +345,8 @@ export function SocialTab({
             <CardTitle>Gerar conteúdo</CardTitle>
           </div>
           <CardDescription>
-            Carrossel Instagram 1080×1080 com cores e fontes Omafit — fundo marrom/creme alternado,
-            verde apenas nos detalhes. Baixe os PNGs e publique no Instagram.
+            Carrossel Instagram 1080×1080 com fontes e layouts Omafit — cada slide com design
+            diferente. Baixe os PNGs ou publique direto no @omafit.co.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -353,6 +396,62 @@ export function SocialTab({
 
           {result?.previews?.length ? (
             <div className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Legenda do Instagram</span>
+                <textarea
+                  rows={5}
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  placeholder="Legenda do carrossel..."
+                  className="rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </label>
+
+              {!instagramPublishConfigured ? (
+                <Alert>
+                  <InfoIcon />
+                  <AlertTitle>Publicação automática</AlertTitle>
+                  <AlertDescription className="text-sm">
+                    Para publicar direto, configure{" "}
+                    <code className="text-xs">INSTAGRAM_ACCESS_TOKEN</code> com permissão{" "}
+                    <code className="text-xs">instagram_content_publish</code> e crie o bucket
+                    público <code className="text-xs">partners-social</code> no Supabase Storage.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    disabled={publishStatus === "publishing" || !caption.trim()}
+                    onClick={publishToInstagram}
+                    className="w-full sm:w-auto"
+                  >
+                    <SendIcon data-icon="inline-start" />
+                    {publishStatus === "publishing"
+                      ? "Publicando no Instagram…"
+                      : "Publicar no Instagram"}
+                  </Button>
+                  {publishFeedback ? (
+                    <span
+                      className={cn(
+                        "text-sm",
+                        publishStatus === "error" && "text-destructive",
+                      )}
+                    >
+                      {publishFeedback}
+                    </span>
+                  ) : null}
+                  {publishUrl ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={publishUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLinkIcon data-icon="inline-start" />
+                        Ver post
+                      </a>
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-medium">
                   Prévia ({result.slideCount} slides · {result.source === "ai" ? "IA" : "template"})

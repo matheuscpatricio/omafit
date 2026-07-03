@@ -4,6 +4,7 @@ import { fetchPartnersDashboardStats } from "../partners-dashboard.server";
 import { isShopifyPartnersApiConfigured } from "../shopify-partners-api.server";
 import { getZohoMailDeliveryMode, isZohoMailConfigured } from "../zoho-mail.server";
 import { getCarouselGeneratorStatus } from "../partners-carousel.server";
+import { isInstagramPublishConfigured } from "../partners-instagram-publish.server";
 import {
   isInstagramApiConfigured,
   isYoutubeApiConfigured,
@@ -22,6 +23,7 @@ export const loader = async ({ request }) => {
     openaiConfigured: carouselStatus.openaiConfigured,
     youtubeApiConfigured: isYoutubeApiConfigured(),
     instagramApiConfigured: isInstagramApiConfigured(),
+    instagramPublishConfigured: isInstagramPublishConfigured(),
   };
 };
 

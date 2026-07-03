@@ -8,7 +8,7 @@ import {
   isInstagramApiConfigured,
   isYoutubeApiConfigured,
 } from "../partners-social.server";
-import { isCanvaConfigured } from "../canva-connect.server";
+import { isMetaAppConfigured } from "../meta-instagram.server";
 import { PartnersDashboard } from "../components/partners/PartnersDashboard";
 
 export const loader = async ({ request }) => {
@@ -24,6 +24,7 @@ export const loader = async ({ request }) => {
     openaiConfigured: carouselStatus.openaiConfigured,
     youtubeApiConfigured: isYoutubeApiConfigured(),
     instagramApiConfigured: isInstagramApiConfigured(),
+    metaAppConfigured: isMetaAppConfigured(),
   };
 };
 

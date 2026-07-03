@@ -425,6 +425,7 @@ type DashboardProps = {
   openaiConfigured: boolean;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
+  metaAppConfigured: boolean;
   onRefresh: () => void;
 };
 
@@ -437,6 +438,7 @@ export function PartnersDashboard({
   openaiConfigured,
   youtubeApiConfigured,
   instagramApiConfigured,
+  metaAppConfigured,
   onRefresh,
 }: DashboardProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -816,6 +818,7 @@ export function PartnersDashboard({
               openaiConfigured={openaiConfigured}
               youtubeApiConfigured={youtubeApiConfigured}
               instagramApiConfigured={instagramApiConfigured}
+              metaAppConfigured={metaAppConfigured}
             />
           ) : null}
         </TabsContent>

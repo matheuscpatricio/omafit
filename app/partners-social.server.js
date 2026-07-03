@@ -1,4 +1,9 @@
 import { OMAFIT_BRAND } from "./lib/omafit-brand.server.js";
+import {
+  getInstagramEnvCredentials,
+  isTokenExpiredError,
+  fetchInstagramProfile,
+} from "./meta-instagram.server.js";
 
 const YOUTUBE_HANDLE = OMAFIT_BRAND.youtubeHandle;
 
@@ -89,8 +94,7 @@ async function fetchYoutubeChannelStats() {
 }
 
 async function fetchInstagramInsights() {
-  const token = (process.env.INSTAGRAM_ACCESS_TOKEN || "").trim();
-  const accountId = (process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || "").trim();
+  const { accessToken: token, accountId } = getInstagramEnvCredentials();
 
   if (!token || !accountId) {
     return {
@@ -100,28 +104,13 @@ async function fetchInstagramInsights() {
       followers: null,
       mediaCount: null,
       profilePictureUrl: null,
+      tokenExpired: false,
       error: null,
     };
   }
 
   try {
-    const fields = "followers_count,media_count,username,profile_picture_url";
-    const response = await fetch(
-      `https://graph.facebook.com/v21.0/${encodeURIComponent(accountId)}?fields=${fields}&access_token=${encodeURIComponent(token)}`,
-      { signal: AbortSignal.timeout(12000) },
-    );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return {
-        configured: true,
-        handle: OMAFIT_BRAND.instagramHandle,
-        url: OMAFIT_BRAND.instagramUrl,
-        followers: null,
-        mediaCount: null,
-        profilePictureUrl: null,
-        error: data?.error?.message || `HTTP ${response.status}`,
-      };
-    }
+    const data = await fetchInstagramProfile(token, accountId);
     return {
       configured: true,
       handle: data.username || OMAFIT_BRAND.instagramHandle,
@@ -129,9 +118,11 @@ async function fetchInstagramInsights() {
       followers: formatCount(data.followers_count),
       mediaCount: formatCount(data.media_count),
       profilePictureUrl: data.profile_picture_url || null,
+      tokenExpired: false,
       error: null,
     };
   } catch (err) {
+    const message = err?.message || "instagram_fetch_failed";
     return {
       configured: true,
       handle: OMAFIT_BRAND.instagramHandle,
@@ -139,7 +130,8 @@ async function fetchInstagramInsights() {
       followers: null,
       mediaCount: null,
       profilePictureUrl: null,
-      error: err?.message || "instagram_fetch_failed",
+      tokenExpired: isTokenExpiredError(message),
+      error: message,
     };
   }
 }

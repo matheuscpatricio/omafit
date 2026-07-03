@@ -249,6 +249,17 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
       });
     }
 
+    if (data?.instagram?.tokenExpired) {
+      insights.push({
+        id: "instagram-token-expired",
+        severity: "critical",
+        title: "Token do Instagram expirado",
+        description: "O token no Railway não é mais válido — métricas e publicação falham.",
+        action:
+          "Na aba Redes Sociais, use 'Token de longa duração' com META_APP_ID/SECRET e um token novo do Graph API Explorer.",
+      });
+    }
+
     if (!ctx.openaiConfigured) {
       insights.push({
         id: "carousel-template",

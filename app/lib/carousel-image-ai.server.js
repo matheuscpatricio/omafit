@@ -1,28 +1,26 @@
-import { OMAFIT_BRAND } from "./omafit-brand.server.js";
 import { FONT_FAMILY } from "./carousel-fonts.server.js";
 
 /** Identidade visual embutida em todo prompt de imagem. */
 export const OMAFIT_VISUAL_IDENTITY = `
-MARCA OMAFIT (obrigatório em cada slide):
-- Omafit: provador virtual AR para e-commerce Shopify (moda, eyewear, acessórios)
+IDENTIDADE VISUAL (obrigatório em cada slide):
+- Estética de provador virtual AR para e-commerce Shopify (moda, eyewear, acessórios)
 - Paleta: fundo marrom profundo #16100a ou creme #f6f0e2 — alternar entre slides
 - Marrom médio #241a10 para painéis; texto secundário #a8947e
 - Laranja #d96845 SOMENTE em destaques tipográficos, linhas finas e chips — NUNCA como fundo principal
 - Verde #5baf8a apenas em detalhes mínimos, se necessário
 
 TIPOGRAFIA (renderizar os textos nestes estilos):
-- Wordmark "omafit": JHC Rasbora — serif editorial de moda, elegante
 - Manchete principal (highlight): Gloock — serif display de alto contraste, grande e memorável
 - Rótulo de contexto (eyebrow): Bricolage Grotesque — sans geométrico, pequeno, no topo
 - Texto de apoio (body): Bricolage Grotesque — legível, tamanho médio
-- Rodapé (número do slide): DM Mono — monoespaçada discreta
 
 LAYOUT:
 - Post Instagram quadrado 1080×1080, estética editorial premium de moda/e-commerce
 - Hierarquia clara: eyebrow → setup → destaque → apoio
 - Palavras-chave do highlight em laranja #d96845
 - Respiração generosa, composição sofisticada, não poluída
-- Wordmark "omafit" discreto quando couber
+- PROIBIDO: nome de marca, logotipo, wordmark ou @ de rede social na imagem
+- PROIBIDO: numeração de páginas (ex.: 1/6, 2/6) ou indicadores de slide
 `.trim();
 
 const SLIDE_LAYOUT_HINT = {
@@ -77,10 +75,10 @@ ${style}
 
 ${OMAFIT_VISUAL_IDENTITY}
 
-Fontes de referência: ${FONT_FAMILY.brand} (Rasbora), ${FONT_FAMILY.title} (Gloock), ${FONT_FAMILY.body} (Bricolage), ${FONT_FAMILY.mono} (DM Mono).
+Fontes de referência: ${FONT_FAMILY.title} (Gloock), ${FONT_FAMILY.body} (Bricolage).
 
 TEMA DO CARROSSEL: ${carouselTheme}
-SLIDE ${index + 1} de ${total} (${kind})
+Tipo de slide: ${kind} (slide ${index + 1} interno — não renderizar esse número na imagem)
 ${layoutHint}
 Variação visual: ${variation}
 
@@ -89,13 +87,13 @@ TEXTOS EXATOS A RENDERIZAR (português do Brasil — ortografia correta):
 ${title && title !== highlight ? `- Setup (secundário): "${title}"` : ""}
 - Destaque principal (maior, Gloock, palavras-chave em laranja): "${highlight}"
 ${body ? `- Apoio (corpo): "${body}"` : ""}
-- Rodapé discreto: "${index + 1} / ${total}"
 
 Regras finais:
 - Renderize os textos legíveis, bem espaçados, sem palavras coladas
 - Não invente textos além dos listados
 - Não use fundo laranja dominante
-- Qualidade editorial profissional, pronto para @${OMAFIT_BRAND.instagramHandle}`;
+- Sem logotipo, sem nome de marca, sem numeração de páginas
+- Qualidade editorial profissional`;
 }
 
 function resolveImageModel() {

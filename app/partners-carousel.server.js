@@ -22,6 +22,13 @@ import {
   getImageModelLabel,
 } from "./lib/carousel-image-ai.server.js";
 
+/** Melhor modelo OpenAI para copy criativa (sobrescreva com OPENAI_MODEL). */
+const DEFAULT_COPY_MODEL = "gpt-5.5";
+
+export function getCopyModelLabel() {
+  return (process.env.OPENAI_MODEL || DEFAULT_COPY_MODEL).trim();
+}
+
 function sanitizeSlides(slides) {
   return slides.map((slide) =>
     normalizeSlideCopyFields({
@@ -101,7 +108,7 @@ async function aiCarouselCopy(theme, description) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+          model: getCopyModelLabel(),
           temperature: 1,
           response_format: { type: "json_object" },
           messages: [
@@ -115,7 +122,7 @@ async function aiCarouselCopy(theme, description) {
             },
           ],
         }),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(120000),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -281,6 +288,7 @@ export async function generatePartnersCarousel({ theme, description, imagePrompt
 export function getCarouselGeneratorStatus() {
   return {
     openaiConfigured: Boolean((process.env.OPENAI_API_KEY || "").trim()),
+    copyModel: getCopyModelLabel(),
     imageModel: getImageModelLabel(),
   };
 }

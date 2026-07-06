@@ -201,6 +201,7 @@ function downloadDataUrl(dataUrl: string, filename: string) {
 export function SocialTab({
   data,
   openaiConfigured,
+  copyModel,
   imageModel,
   youtubeApiConfigured,
   instagramApiConfigured,
@@ -208,6 +209,7 @@ export function SocialTab({
 }: {
   data: SocialData;
   openaiConfigured: boolean;
+  copyModel?: string;
   imageModel?: string;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
@@ -440,7 +442,7 @@ export function SocialTab({
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[0.65rem]">
-                {openaiConfigured ? "Copy com GPT" : "GPT não configurado"}
+                {openaiConfigured ? `Copy · ${copyModel || "gpt-5.5"}` : "GPT não configurado"}
               </Badge>
               {openaiConfigured ? (
                 <Badge variant="secondary" className="text-[0.65rem]">

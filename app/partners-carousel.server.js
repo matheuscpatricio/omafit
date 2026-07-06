@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { randomUUID } from "node:crypto";
 import {
   INSTAGRAM_CAROUSEL_SIZE,
   OMAFIT_BRAND,
@@ -17,134 +18,80 @@ import {
   buildDesignPlan,
   themeAtIndex,
   atmosphereAtIndex,
+  createDesignSeed,
 } from "./lib/carousel-design.server.js";
 
-const CONTENT_LAYOUT_HINTS = [
-  "editorial-top",
-  "split-orange",
-  "centered-ring",
-  "side-accent",
-  "quote",
-  "diagonal",
-  "bottom-heavy",
-  "corner-float",
-  "badge",
-];
-
-function normalizeLayoutId(layout) {
-  if (!layout) return null;
-  const id = String(layout).trim();
-  if (id === "stat") return "stat-highlight";
-  if (CONTENT_LAYOUT_HINTS.includes(id) || id === "stat-highlight") return id;
-  return null;
-}
-
-function mapAiSlides(slides) {
-  return slides.map((s) =>
+function sanitizeSlides(slides) {
+  return slides.map((slide) =>
     normalizeSlideCopyFields({
-      kind: s.kind || "content",
-      layout: normalizeLayoutId(s.layout),
-      eyebrow: s.eyebrow ? String(s.eyebrow).slice(0, 60) : null,
-      stat: s.stat ? String(s.stat).slice(0, 12) : null,
-      title: String(s.title || "").slice(0, 80),
-      highlight: s.highlight ? String(s.highlight).slice(0, 90) : null,
-      subtitle: s.subtitle ? String(s.subtitle).slice(0, 80) : null,
-      body: s.body ? String(s.body).slice(0, 280) : null,
+      kind: slide.kind || "content",
+      eyebrow: slide.eyebrow ? String(slide.eyebrow).slice(0, 60) : null,
+      title: String(slide.title || "").slice(0, 80),
+      highlight: slide.highlight ? String(slide.highlight).slice(0, 90) : null,
+      subtitle: slide.subtitle ? String(slide.subtitle).slice(0, 80) : null,
+      body: slide.body ? String(slide.body).slice(0, 280) : null,
     }),
   );
+}
+
+function validateSlideCopy(slides) {
+  if (!Array.isArray(slides) || slides.length < 4) return false;
+
+  const hasCover = slides[0]?.kind === "cover";
+  const hasCta = slides[slides.length - 1]?.kind === "cta";
+  if (!hasCover || !hasCta) return false;
+
+  for (const slide of slides) {
+    if (!String(slide.highlight || slide.title || "").trim()) return false;
+    if (!String(slide.eyebrow || slide.subtitle || "").trim()) return false;
+  }
+
+  return true;
+}
+
+function buildCarouselPrompt(theme, description) {
+  const nonce = randomUUID();
+
+  return `Você é copywriter sênior da Omafit — provador virtual AR para lojas Shopify (moda, eyewear, acessórios).
+
+ID desta geração (cada uma deve ser única): ${nonce}
+
+TEMA: ${theme}
+BRIEFING: ${description}
+
+Crie um carrossel Instagram ORIGINAL. Toda a copy — incluindo rótulos de contexto, manchetes e CTAs — deve ser inventada por você com base no tema e briefing. Não use fórmulas fixas nem estruturas repetidas.
+
+Retorne JSON com:
+- "caption": legenda narrativa (gancho, desenvolvimento, CTA, hashtags, @${OMAFIT_BRAND.instagramHandle})
+- "slides": array de 5 a 7 objetos
+
+Cada slide:
+- "kind": "cover" | "content" | "cta" (primeiro = cover, último = cta)
+- "eyebrow": rótulo curto e criativo que situa o leitor (2-6 palavras) — OBRIGATÓRIO em todos os slides; invente textos únicos, nunca repita o mesmo padrão entre carrosséis
+- "title": setup secundário (menor que highlight)
+- "highlight": ponto principal memorável (4-12 palavras) — use ** palavra ** para ênfase com espaços
+- "subtitle": opcional
+- "body": 1-2 frases concretas (PDP, mobile, carrinho, devolução, eyewear…)
+
+Regras:
+- highlight sempre diferente de title
+- NUNCA junte palavras sem espaço
+- Proibido: "Ponto 1", "Dica", "O contexto", frases genéricas
+- Proibido usar rótulos clichê como "O cenário", "O insight", "A solução" — crie eyebrow original em cada slide
+- Não inclua campo "stat" nem slides focados em porcentagem/número
+- NÃO inclua campo "layout"
+- Tom: confiante, específico, pt-BR`;
 }
 
 async function aiCarouselCopy(theme, description) {
   const apiKey = (process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) return null;
 
-  const prompt = `Você é copywriter sênior da Omafit — provador virtual AR para lojas Shopify (moda, eyewear, acessórios).
-
-TEMA: ${theme}
-BRIEFING DO CLIENTE: ${description}
-
-Escreva um carrossel Instagram com hierarquia visual clara. O leitor deve entender em 2 segundos o ponto principal de cada slide.
-
-Cada slide tem 4 camadas de texto:
-- eyebrow: contexto situacional (onde estamos na história, 2-5 palavras)
-- title: setup secundário (frase de apoio menor que o highlight)
-- highlight: O PONTO MAIS IMPORTANTE — frase curta e memorável (4-10 palavras), é o que o leitor deve lembrar
-- body: contexto e detalhe de apoio (1-2 frases concretas com exemplo real: PDP, carrinho, mobile, devolução)
-
-Retorne JSON com esta estrutura:
-{
-  "caption": "legenda narrativa com gancho, desenvolvimento, CTA e hashtags, @${OMAFIT_BRAND.instagramHandle}",
-  "slides": [
-    {
-      "kind": "cover",
-      "eyebrow": "contexto do tema",
-      "title": "setup opcional",
-      "highlight": "headline principal memorável",
-      "subtitle": "mesmo que eyebrow",
-      "body": "1 frase de contexto que prepara o carrossel"
-    },
-    {
-      "kind": "content",
-      "layout": "stat-highlight",
-      "eyebrow": "O cenário",
-      "stat": "67%",
-      "title": "complemento do número",
-      "highlight": "frase que explica por que o número importa",
-      "body": "detalhe concreto com contexto de loja/consumidor"
-    },
-    {
-      "kind": "content",
-      "layout": "quote",
-      "eyebrow": "O que está em jogo",
-      "title": "rótulo curto",
-      "highlight": "frase de impacto como citação editorial",
-      "body": "contexto que aprofunda a citação"
-    },
-    {
-      "kind": "content",
-      "layout": "editorial-top",
-      "eyebrow": "O insight",
-      "title": "setup",
-      "highlight": "insight principal em poucas palavras",
-      "body": "exemplo prático no e-commerce"
-    },
-    {
-      "kind": "content",
-      "layout": "split-orange",
-      "eyebrow": "A solução",
-      "title": "setup",
-      "highlight": "benefício tangível do try-on/Omafit",
-      "body": "como funciona na prática"
-    },
-    {
-      "kind": "cta",
-      "eyebrow": "Próximo passo",
-      "title": "setup emocional",
-      "highlight": "CTA direto e memorável",
-      "subtitle": "@${OMAFIT_BRAND.instagramHandle}",
-      "body": "omafit.co · provador virtual Shopify"
-    }
-  ]
-}
-
-Layouts disponíveis para slides de conteúdo (varie entre eles): ${CONTENT_LAYOUT_HINTS.join(", ")}.
-Use "stat-highlight" com campo stat em um slide; use "quote" em outro.
-
-Regras obrigatórias:
-- highlight SEMPRE diferente de title — é o destaque visual principal
-- Use ** palavra ** com espaços ao redor dos asteriscos para marcar ênfase (ex.: "Ver antes de **comprar** reduz devolução")
-- NUNCA junte palavras sem espaço — todo texto deve ter espaçamento normal entre palavras
-- eyebrow dá contexto antes do leitor mergulhar no conteúdo
-- body traz cenário concreto, nunca repetir highlight
-- PROIBIDO títulos genéricos ("Ponto 1", "Dica", "O contexto")
-- Tom: confiante, específico, pt-BR
-- caption com arco narrativo completo
-- Varie o campo layout entre os slides de conteúdo`;
-
+  const prompt = buildCarouselPrompt(theme, description);
   const system =
-    "Você é copywriter premiado. Cada slide deve ter personalidade própria. Retorne somente JSON válido, sem markdown.";
+    "Copywriter premiado. Cada carrossel deve ser único em estrutura, rótulos e frases. Retorne somente JSON válido.";
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -154,11 +101,17 @@ Regras obrigatórias:
         },
         body: JSON.stringify({
           model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-          temperature: 0.95,
+          temperature: 1,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: system },
-            { role: "user", content: prompt },
+            {
+              role: "user",
+              content:
+                attempt > 0
+                  ? `${prompt}\n\nATENÇÃO: a resposta anterior foi rejeitada por ser genérica ou repetir rótulos. Seja mais original nos eyebrow de cada slide.`
+                  : prompt,
+            },
           ],
         }),
         signal: AbortSignal.timeout(60000),
@@ -171,9 +124,13 @@ Regras obrigatórias:
       const content = data?.choices?.[0]?.message?.content || "";
       const parsed = JSON.parse(content);
       if (!Array.isArray(parsed?.slides) || !parsed.slides.length) continue;
+
+      const slides = sanitizeSlides(parsed.slides);
+      if (!validateSlideCopy(slides)) continue;
+
       return {
         caption: String(parsed.caption || theme).slice(0, 2200),
-        slides: mapAiSlides(parsed.slides),
+        slides,
       };
     } catch (err) {
       console.error("[aiCarouselCopy] attempt failed:", err?.message || err);
@@ -253,7 +210,7 @@ export async function renderCarouselSlides(slides, designSeed) {
       theme: theme.label,
       kind: slides[i].kind,
       title: slides[i].title,
-      layout: layoutFn.layoutId || slides[i].layout || `layout-${i}`,
+      layout: layoutFn.layoutId || `layout-${i}`,
       dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
     });
   }
@@ -265,7 +222,7 @@ export async function renderCarouselSlides(slides, designSeed) {
  * Gera carrossel Instagram com identidade Omafit (PNG para download/publicação).
  */
 export async function generatePartnersCarousel({ theme, description }) {
-  const designSeed = `${Date.now()}-${Math.random()}`;
+  const designSeed = createDesignSeed();
   const { slides, source, caption } = await generateCarouselCopy(theme, description);
   const { previews, designSeed: resolvedSeed } = await renderCarouselSlides(slides, designSeed);
   const designPlan = buildDesignPlan(slides, resolvedSeed);
@@ -276,9 +233,11 @@ export async function generatePartnersCarousel({ theme, description }) {
     caption,
     designSeed: resolvedSeed,
     slideCount: slides.length,
+    layouts: designPlan.layoutAssignment,
     slides: slides.map((s, i) => ({
       ...s,
       theme: themeAtIndex(designPlan, i).label,
+      layout: designPlan.layoutAssignment[i],
     })),
     previews,
   };

@@ -43,7 +43,7 @@ function normalizeRichTextInput(text) {
 
 export function normalizeSlideCopyFields(slide) {
   if (!slide || typeof slide !== "object") return slide;
-  const fields = ["eyebrow", "title", "highlight", "subtitle", "body", "stat"];
+  const fields = ["eyebrow", "title", "highlight", "subtitle", "body"];
   const next = { ...slide };
   for (const key of fields) {
     if (next[key] != null && next[key] !== "") {
@@ -55,10 +55,7 @@ export function normalizeSlideCopyFields(slide) {
 
 /** Extrai hierarquia de leitura: contexto → manchete → destaque → apoio. */
 export function parseSlideHierarchy(slide, index, total) {
-  const eyebrow =
-    slide.eyebrow ||
-    slide.subtitle ||
-    defaultEyebrow(slide, index, total);
+  const eyebrow = slide.eyebrow || slide.subtitle || null;
 
   const headline = String(slide.title || "").trim();
   const explicitHighlight = String(slide.highlight || "").trim();
@@ -78,19 +75,12 @@ export function parseSlideHierarchy(slide, index, total) {
   if (highlight === support) support = null;
 
   return {
-    eyebrow: String(eyebrow || "").trim(),
+    eyebrow: eyebrow ? String(eyebrow).trim() : null,
     headline,
     highlight,
     support,
-    stat: slide.stat ? String(slide.stat).trim() : null,
+    stat: null,
   };
-}
-
-function defaultEyebrow(slide, index, total) {
-  if (slide.kind === "cover" || index === 0) return "Omafit · provador virtual";
-  if (slide.kind === "cta" || index === total - 1) return "Próximo passo";
-  const labels = ["O cenário", "O problema", "O insight", "A virada", "A solução", "O resultado"];
-  return labels[(index - 1) % labels.length];
 }
 
 function splitBodyForHierarchy(body, headline) {

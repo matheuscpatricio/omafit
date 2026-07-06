@@ -46,6 +46,86 @@ function layoutHeroBottom(slide, theme, index, total, fonts) {
   };
 }
 
+/** Capa minimalista: sem polígonos, faixa lateral. */
+function layoutHeroMinimal(slide, theme, index, total, fonts) {
+  const h = parseSlideHierarchy(slide, index, total);
+
+  return {
+    id: "hero-minimal",
+    decorations: `
+  <rect x="0" y="0" width="8" height="${SIZE}" fill="${theme.accent}" opacity="0.7"/>
+  <rect x="72" y="88" width="160" height="3" rx="1.5" fill="${theme.accent}" opacity="0.45"/>`,
+    content: `
+  ${brandMark(theme, fonts, { x: 100, y: 120, size: 34 })}
+  ${renderHierarchyBlock(
+    {
+      eyebrow: h.eyebrow,
+      headline: h.headline !== h.highlight ? h.headline : null,
+      highlight: h.highlight,
+      support: h.support,
+      stat: null,
+    },
+    theme,
+    fonts,
+    hOpts(index, { x: 100, contentWidth: SIZE - 160, eyebrowY: 200, highlightSize: 60, supportSize: 26 }),
+  )}
+  ${slideFooter(index, total, theme, fonts)}`,
+  };
+}
+
+/** Capa com faixa superior horizontal. */
+function layoutHeroBand(slide, theme, index, total, fonts) {
+  const h = parseSlideHierarchy(slide, index, total);
+
+  return {
+    id: "hero-band",
+    decorations: `
+  <rect x="0" y="0" width="${SIZE}" height="220" fill="${OMAFIT_BRAND.brownMid}" opacity="0.92"/>
+  <rect x="72" y="200" width="${SIZE - 144}" height="4" rx="2" fill="${OMAFIT_BRAND.orange}" opacity="0.6"/>`,
+    content: `
+  ${brandMark(theme, fonts, { x: 72, y: 110, size: 32, fill: OMAFIT_BRAND.cream })}
+  ${renderHierarchyBlock(
+    {
+      eyebrow: h.eyebrow,
+      headline: h.headline !== h.highlight ? h.headline : null,
+      highlight: h.highlight,
+      support: h.support,
+      stat: null,
+    },
+    theme,
+    fonts,
+    hOpts(index, { x: 72, contentWidth: SIZE - 144, eyebrowY: 280, highlightSize: 58, supportSize: 26 }),
+  )}
+  ${slideFooter(index, total, theme, fonts)}`,
+  };
+}
+
+/** Capa centralizada com anel suave. */
+function layoutHeroRing(slide, theme, index, total, fonts) {
+  const h = parseSlideHierarchy(slide, index, total);
+
+  return {
+    id: "hero-ring",
+    decorations: `
+  <circle cx="540" cy="480" r="320" fill="${theme.accent}" opacity="0.06" stroke="${theme.accent}" stroke-width="2" stroke-opacity="0.18"/>`,
+    content: `
+  ${brandMark(theme, fonts, { x: 540, y: 160, size: 40, anchor: "middle" })}
+  ${renderHierarchyBlock(
+    h,
+    theme,
+    fonts,
+    hOpts(index, {
+      anchor: "middle",
+      contentWidth: SIZE - 200,
+      eyebrowY: 240,
+      highlightSize: 56,
+      supportSize: 26,
+    }),
+  )}
+  ${slideFooter(index, total, theme, fonts)}`,
+  };
+}
+
 /** Editorial: coluna esquerda com hierarquia completa. */
 function layoutEditorialTop(slide, theme, index, total, fonts) {
   const h = parseSlideHierarchy(slide, index, total);
@@ -265,7 +345,7 @@ function layoutCta(slide, theme, index, total, fonts) {
     content: `
   ${brandMark(theme, fonts, { x: 540, y: 200, size: 48, anchor: "middle" })}
   ${renderHierarchyBlock(
-    { ...h, eyebrow: h.eyebrow || "Agora é com você" },
+    h,
     theme,
     fonts,
     hOpts(index, { anchor: "middle", contentWidth: SIZE - 160, eyebrowY: 280, highlightSize: 58, supportSize: 24 }),
@@ -289,6 +369,9 @@ const CONTENT_LAYOUTS = [
 
 export const LAYOUT_BY_ID = {
   "hero-bottom": layoutHeroBottom,
+  "hero-minimal": layoutHeroMinimal,
+  "hero-band": layoutHeroBand,
+  "hero-ring": layoutHeroRing,
   "editorial-top": layoutEditorialTop,
   "split-orange": layoutSplitOrange,
   "centered-ring": layoutCentered,
@@ -302,21 +385,35 @@ export const LAYOUT_BY_ID = {
   cta: layoutCta,
 };
 
-/** Layouts embaralháveis (exclui capa e CTA). */
+/** Layouts embaralháveis para slides de conteúdo (exclui capa, CTA, stat e quote). */
 export const CONTENT_LAYOUT_IDS = [
   "editorial-top",
   "split-orange",
   "centered-ring",
   "side-accent",
-  "stat-highlight",
-  "quote",
   "diagonal",
   "bottom-heavy",
   "corner-float",
   "badge",
 ];
 
+/** Capas com visual distinto — sorteadas pelo servidor. */
+export const COVER_LAYOUT_IDS = [
+  "hero-bottom",
+  "hero-minimal",
+  "hero-band",
+  "hero-ring",
+  "editorial-top",
+  "split-orange",
+  "centered-ring",
+  "diagonal",
+  "corner-float",
+];
+
 layoutHeroBottom.layoutId = "hero-bottom";
+layoutHeroMinimal.layoutId = "hero-minimal";
+layoutHeroBand.layoutId = "hero-band";
+layoutHeroRing.layoutId = "hero-ring";
 layoutEditorialTop.layoutId = "editorial-top";
 layoutSplitOrange.layoutId = "split-orange";
 layoutCentered.layoutId = "centered-ring";
@@ -335,11 +432,11 @@ export function pickSlideLayout(slide, index, total, designPlan) {
     return LAYOUT_BY_ID[plannedId];
   }
 
-  if (slide.kind === "cover" || index === 0) return layoutHeroBottom;
+  if (slide.kind === "cover" || index === 0) {
+    return LAYOUT_BY_ID[COVER_LAYOUT_IDS[0]] || layoutHeroBottom;
+  }
   if (slide.kind === "cta" || index === total - 1) return layoutCta;
-  if (slide.layout === "quote") return layoutQuote;
-  if (slide.layout === "stat" || slide.stat) return layoutStatHighlight;
-  return CONTENT_LAYOUTS[(index - 1) % CONTENT_LAYOUTS.length];
+  return CONTENT_LAYOUTS[index % CONTENT_LAYOUTS.length];
 }
 
 export function buildLayoutContent(slide, theme, index, total, fonts, designPlan) {

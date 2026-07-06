@@ -59,10 +59,16 @@ type GenerateResult = {
   source?: string;
   caption?: string;
   designSeed?: number;
+  imageMode?: string;
+  imageModel?: string;
+  imagePrompt?: string | null;
   slideCount?: number;
   previews?: CarouselPreview[];
   error?: string;
 };
+
+const DEFAULT_IMAGE_PROMPT_PLACEHOLDER =
+  "Texturas editoriais em marrom e creme, luz quente, estética de campanha de moda digital";
 
 function formatNumber(value: unknown) {
   if (value == null || Number.isNaN(Number(value))) return "—";
@@ -195,18 +201,21 @@ function downloadDataUrl(dataUrl: string, filename: string) {
 export function SocialTab({
   data,
   openaiConfigured,
+  imageModel,
   youtubeApiConfigured,
   instagramApiConfigured,
   instagramPublishConfigured,
 }: {
   data: SocialData;
   openaiConfigured: boolean;
+  imageModel?: string;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
   instagramPublishConfigured: boolean;
 }) {
   const [theme, setTheme] = useState("");
   const [description, setDescription] = useState("");
+  const [imagePrompt, setImagePrompt] = useState("");
   const [caption, setCaption] = useState("");
   const [status, setStatus] = useState<"idle" | "generating" | "error">("idle");
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "error">("idle");
@@ -238,12 +247,19 @@ export function SocialTab({
     setFeedback("");
     setResult(null);
     setDesignSeed(null);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 600000);
     try {
       const response = await fetch("/api/partners/social-carousel", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme, description }),
+        signal: controller.signal,
+        body: JSON.stringify({
+          theme,
+          description,
+          imagePrompt: imagePrompt.trim() || undefined,
+        }),
       });
       const payload = (await response.json().catch(() => ({}))) as GenerateResult;
       if (!response.ok || !payload.success) {
@@ -254,10 +270,16 @@ export function SocialTab({
       setDesignSeed(payload.designSeed ?? null);
       setPublishUrl(null);
       setStatus("idle");
-      setFeedback("Carrossel gerado — baixe os slides ou publique no Instagram.");
+      setFeedback("Carrossel gerado com GPT Image — baixe os slides ou publique no Instagram.");
     } catch (err) {
       setStatus("error");
-      setFeedback(err instanceof Error ? err.message : "Erro ao gerar");
+      if (err instanceof Error && err.name === "AbortError") {
+        setFeedback("A geração demorou demais — tente novamente.");
+      } else {
+        setFeedback(err instanceof Error ? err.message : "Erro ao gerar");
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   };
 
@@ -284,6 +306,7 @@ export function SocialTab({
           theme,
           description,
           designSeed,
+          imagePrompt: imagePrompt.trim() || undefined,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -372,8 +395,9 @@ export function SocialTab({
             <CardTitle>Gerar conteúdo</CardTitle>
           </div>
           <CardDescription>
-            Carrossel Instagram 1080×1080 com fontes e layouts Omafit — cada slide com design
-            diferente. Baixe os PNGs ou publique direto no @omafit.co.
+            Carrossel Instagram 1080×1080 gerado 100% com GPT Image — copy, layout visual,
+            identidade Omafit e fontes (Gloock, Bricolage, Rasbora, DM Mono) já embutidos no
+            prompt. Baixe os PNGs ou publique no @omafit.co.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -399,10 +423,30 @@ export function SocialTab({
                 className="min-h-[100px] rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium">Estilo visual (opcional)</span>
+              <span className="text-xs text-muted-foreground">
+                A identidade Omafit (cores, fontes Gloock/Bricolage/Rasbora/DM Mono e hierarquia)
+                já vem no prompt. Use este campo para direção criativa extra — textura, luz,
+                atmosfera.
+              </span>
+              <textarea
+                rows={3}
+                value={imagePrompt}
+                onChange={(e) => setImagePrompt(e.target.value)}
+                placeholder={DEFAULT_IMAGE_PROMPT_PLACEHOLDER}
+                className="min-h-[80px] rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[0.65rem]">
                 {openaiConfigured ? "Copy com GPT" : "GPT não configurado"}
               </Badge>
+              {openaiConfigured ? (
+                <Badge variant="secondary" className="text-[0.65rem]">
+                  Imagens · {imageModel || "gpt-image-1"}
+                </Badge>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button
@@ -411,7 +455,9 @@ export function SocialTab({
                 className="w-full sm:w-auto"
               >
                 <SparklesIcon data-icon="inline-start" />
-                {status === "generating" ? "Gerando carrossel…" : "Gerar carrossel"}
+                {status === "generating"
+                  ? "Gerando copy e imagens com GPT…"
+                  : "Gerar carrossel"}
               </Button>
               {feedback ? (
                 <span className={cn("text-sm", status === "error" && "text-destructive")}>
@@ -481,7 +527,8 @@ export function SocialTab({
 
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-medium">
-                  Prévia ({result.slideCount} slides · {result.source === "ai" ? "IA" : "template"})
+                  Prévia ({result.slideCount} slides · GPT Image ·{" "}
+                  {result.imageModel || imageModel || "gpt-image-1"})
                 </h3>
                 <Button
                   type="button"

@@ -422,6 +422,7 @@ type DashboardProps = {
   zohoMailConfigured: boolean;
   zohoMailMode: string;
   openaiConfigured: boolean;
+  imageModel?: string;
   youtubeApiConfigured: boolean;
   instagramApiConfigured: boolean;
   instagramPublishConfigured: boolean;
@@ -434,6 +435,7 @@ export function PartnersDashboard({
   zohoMailConfigured,
   zohoMailMode,
   openaiConfigured,
+  imageModel,
   youtubeApiConfigured,
   instagramApiConfigured,
   instagramPublishConfigured,
@@ -813,6 +815,7 @@ export function PartnersDashboard({
             <SocialTab
               data={social}
               openaiConfigured={openaiConfigured}
+              imageModel={imageModel}
               youtubeApiConfigured={youtubeApiConfigured}
               instagramApiConfigured={instagramApiConfigured}
               instagramPublishConfigured={instagramPublishConfigured}

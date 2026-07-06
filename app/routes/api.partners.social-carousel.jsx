@@ -15,6 +15,7 @@ export async function action({ request }) {
     const body = await request.json().catch(() => ({}));
     const theme = String(body.theme || "").trim();
     const description = String(body.description || "").trim();
+    const imagePrompt = String(body.imagePrompt || "").trim();
 
     if (!theme) {
       return Response.json({ success: false, error: "theme_required" }, { status: 400 });
@@ -23,13 +24,19 @@ export async function action({ request }) {
       return Response.json({ success: false, error: "description_required" }, { status: 400 });
     }
 
-    const result = await generatePartnersCarousel({ theme, description });
+    const result = await generatePartnersCarousel({ theme, description, imagePrompt });
     return Response.json(result);
   } catch (err) {
     console.error("[api.partners.social-carousel]", err);
     const code = err?.message || "generation_failed";
     const status =
-      code === "openai_required" ? 503 : code === "openai_copy_failed" ? 502 : 500;
+      code === "openai_required"
+        ? 503
+        : code === "openai_copy_failed"
+          ? 502
+          : code === "openai_image_failed" || code.startsWith("openai_image")
+            ? 502
+            : 500;
     return Response.json(
       { success: false, error: humanizeCarouselError(code) },
       { status },

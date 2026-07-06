@@ -1,9 +1,6 @@
 import sharp from "sharp";
 import { randomUUID } from "node:crypto";
-import {
-  INSTAGRAM_CAROUSEL_SIZE,
-  OMAFIT_BRAND,
-} from "./lib/omafit-brand.server.js";
+import { INSTAGRAM_CAROUSEL_SIZE, OMAFIT_BRAND } from "./lib/omafit-brand.server.js";
 import {
   getActiveFontFamily,
   getCarouselFontFaceDefs,
@@ -20,6 +17,10 @@ import {
   atmosphereAtIndex,
   createDesignSeed,
 } from "./lib/carousel-design.server.js";
+import {
+  generateCarouselSlideImages,
+  getImageModelLabel,
+} from "./lib/carousel-image-ai.server.js";
 
 function sanitizeSlides(slides) {
   return slides.map((slide) =>
@@ -161,8 +162,10 @@ export async function generateCarouselCopy(theme, description) {
   };
 }
 
-async function buildSlideSvg(slide, theme, index, total, fonts, fontDefs, designPlan) {
+/** Fallback vetorial se um slide GPT falhar. */
+async function renderVectorSlide(slide, designPlan, index, total, fonts, fontDefs) {
   const size = INSTAGRAM_CAROUSEL_SIZE;
+  const theme = themeAtIndex(designPlan, index);
   const atmosphere = atmosphereAtIndex(designPlan, index);
   const { decorations, content } = buildLayoutContent(
     slide,
@@ -173,7 +176,7 @@ async function buildSlideSvg(slide, theme, index, total, fonts, fontDefs, design
     designPlan,
   );
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
   ${fontDefs}
   ${atmosphereDefs(index, theme)}
@@ -182,28 +185,44 @@ async function buildSlideSvg(slide, theme, index, total, fonts, fontDefs, design
   ${decorations}
   ${content}
 </svg>`;
+
+  return sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
 }
 
-export async function renderCarouselSlides(slides, designSeed) {
+export async function renderCarouselSlides(slides, designSeed, options = {}) {
+  const { imagePrompt, carouselTheme } = options;
   const designPlan = buildDesignPlan(slides, designSeed);
   const fontDefs = await getCarouselFontFaceDefs();
   const fonts = getActiveFontFamily();
+  const size = INSTAGRAM_CAROUSEL_SIZE;
+
+  const gptImages = await generateCarouselSlideImages({
+    imagePrompt,
+    slides,
+    carouselTheme: carouselTheme || "Omafit",
+    designSeed: designPlan.seed,
+  });
+
   const buffers = [];
   const previews = [];
 
   for (let i = 0; i < slides.length; i += 1) {
     const theme = themeAtIndex(designPlan, i);
     const layoutFn = pickSlideLayout(slides[i], i, slides.length, designPlan);
-    const svg = await buildSlideSvg(
-      slides[i],
-      theme,
-      i,
-      slides.length,
-      fonts,
-      fontDefs,
-      designPlan,
-    );
-    const buffer = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
+    let buffer;
+    let imageMode = "gpt";
+
+    if (gptImages[i]) {
+      buffer = await sharp(gptImages[i])
+        .resize(size, size, { fit: "cover", position: "centre" })
+        .png()
+        .toBuffer();
+    } else {
+      console.warn(`[carousel] slide ${i + 1}: fallback vetorial`);
+      buffer = await renderVectorSlide(slides[i], designPlan, i, slides.length, fonts, fontDefs);
+      imageMode = "vector-fallback";
+    }
+
     buffers.push(buffer);
     previews.push({
       index: i + 1,
@@ -211,20 +230,33 @@ export async function renderCarouselSlides(slides, designSeed) {
       kind: slides[i].kind,
       title: slides[i].title,
       layout: layoutFn.layoutId || `layout-${i}`,
+      imageMode,
       dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
     });
   }
 
-  return { buffers, previews, designPlan, designSeed: designPlan.seed };
+  return {
+    buffers,
+    previews,
+    designPlan,
+    designSeed: designPlan.seed,
+    imageMode: "gpt",
+    imageModel: getImageModelLabel(),
+  };
 }
 
 /**
  * Gera carrossel Instagram com identidade Omafit (PNG para download/publicação).
  */
-export async function generatePartnersCarousel({ theme, description }) {
+export async function generatePartnersCarousel({ theme, description, imagePrompt }) {
   const designSeed = createDesignSeed();
+  const trimmedImagePrompt = String(imagePrompt || "").trim();
   const { slides, source, caption } = await generateCarouselCopy(theme, description);
-  const { previews, designSeed: resolvedSeed } = await renderCarouselSlides(slides, designSeed);
+  const { previews, designSeed: resolvedSeed, imageModel } = await renderCarouselSlides(
+    slides,
+    designSeed,
+    { imagePrompt: trimmedImagePrompt, carouselTheme: theme },
+  );
   const designPlan = buildDesignPlan(slides, resolvedSeed);
 
   return {
@@ -232,6 +264,9 @@ export async function generatePartnersCarousel({ theme, description }) {
     source,
     caption,
     designSeed: resolvedSeed,
+    imageMode: "gpt",
+    imageModel,
+    imagePrompt: trimmedImagePrompt || null,
     slideCount: slides.length,
     layouts: designPlan.layoutAssignment,
     slides: slides.map((s, i) => ({
@@ -246,6 +281,7 @@ export async function generatePartnersCarousel({ theme, description }) {
 export function getCarouselGeneratorStatus() {
   return {
     openaiConfigured: Boolean((process.env.OPENAI_API_KEY || "").trim()),
+    imageModel: getImageModelLabel(),
   };
 }
 
@@ -256,6 +292,12 @@ export function humanizeCarouselError(error) {
   }
   if (code === "openai_copy_failed") {
     return "O GPT não retornou copy válida — tente novamente em alguns segundos.";
+  }
+  if (code === "openai_image_failed" || code.startsWith("openai_image_failed")) {
+    return "Falha ao gerar imagens com GPT — verifique OPENAI_API_KEY e o modelo de imagem.";
+  }
+  if (code === "openai_image_empty") {
+    return "O GPT não retornou imagens válidas — tente novamente.";
   }
   if (code === "theme_required") return "Informe o tema do carrossel.";
   if (code === "description_required") return "Informe a descrição do carrossel.";

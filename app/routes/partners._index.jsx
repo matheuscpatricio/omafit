@@ -21,6 +21,7 @@ export const loader = async ({ request }) => {
     zohoMailConfigured: isZohoMailConfigured(),
     zohoMailMode: getZohoMailDeliveryMode(),
     openaiConfigured: carouselStatus.openaiConfigured,
+    imageModel: carouselStatus.imageModel,
     youtubeApiConfigured: isYoutubeApiConfigured(),
     instagramApiConfigured: isInstagramApiConfigured(),
     instagramPublishConfigured: isInstagramPublishConfigured(),

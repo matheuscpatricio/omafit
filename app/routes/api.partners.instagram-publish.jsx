@@ -45,6 +45,7 @@ export async function action({ request }) {
     const theme = String(body.theme || "").trim();
     const description = String(body.description || "").trim();
     const designSeed = body.designSeed != null ? String(body.designSeed) : null;
+    const imagePrompt = String(body.imagePrompt || "").trim();
 
     if (!caption) {
       return Response.json({ success: false, error: "caption_required" }, { status: 400 });
@@ -54,7 +55,10 @@ export async function action({ request }) {
 
     if (theme && description) {
       const { slides } = await generateCarouselCopy(theme, description);
-      const rendered = await renderCarouselSlides(slides, designSeed || undefined);
+      const rendered = await renderCarouselSlides(slides, designSeed || undefined, {
+        imagePrompt,
+        carouselTheme: theme,
+      });
       buffers = rendered.buffers;
     } else if (Array.isArray(body.images) && body.images.length) {
       buffers = body.images.map((img) => decodeDataUrl(img)).filter(Boolean);

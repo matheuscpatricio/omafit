@@ -26,7 +26,8 @@ function layoutHeroBottom(slide, theme, index, total, fonts) {
   return {
     id: "hero-bottom",
     decorations: `
-  <polygon points="0,0 ${SIZE},0 ${SIZE},300 0,460" fill="${theme.accent}" opacity="0.9"/>`,
+  <polygon points="0,0 ${SIZE},0 ${SIZE},300 0,460" fill="${OMAFIT_BRAND.brownMid}" opacity="0.95"/>
+  <rect x="0" y="440" width="280" height="6" rx="3" fill="${OMAFIT_BRAND.orange}" opacity="0.85"/>`,
     content: `
   ${brandMark(theme, fonts, { x: 72, y: 118, size: 36, fill: OMAFIT_BRAND.cream })}
   ${renderHierarchyBlock(
@@ -61,7 +62,7 @@ function layoutEditorialTop(slide, theme, index, total, fonts) {
   };
 }
 
-/** Split: painel laranja com contexto, hierarquia à direita. */
+/** Split: painel marrom com contexto, hierarquia à direita. */
 function layoutSplitOrange(slide, theme, index, total, fonts) {
   const h = parseSlideHierarchy(slide, index, total);
   const num = String(index + 1).padStart(2, "0");
@@ -69,8 +70,8 @@ function layoutSplitOrange(slide, theme, index, total, fonts) {
   return {
     id: "split-orange",
     decorations: `
-  <rect x="0" y="0" width="360" height="${SIZE}" fill="${theme.accent}" opacity="0.94"/>
-  <rect x="360" y="0" width="4" height="${SIZE}" fill="${theme.accentSoft || theme.accent}" opacity="0.4"/>`,
+  <rect x="0" y="0" width="360" height="${SIZE}" fill="${OMAFIT_BRAND.brownMid}"/>
+  <rect x="360" y="0" width="4" height="${SIZE}" fill="${OMAFIT_BRAND.orange}" opacity="0.5"/>`,
     content: `
   ${brandMark(theme, fonts, { x: 180, y: 100, size: 30, anchor: "middle", fill: OMAFIT_BRAND.cream })}
   <text x="180" y="400" font-family='${fonts.title}' font-size="120" font-weight="bold" fill="${OMAFIT_BRAND.cream}" opacity="0.28" text-anchor="middle">${num}</text>
@@ -150,7 +151,7 @@ function layoutQuote(slide, theme, index, total, fonts) {
   const quoteLines = wrapText(quote.replace(/\*\*/g, ""), 28);
   const lineH = 52;
   const panelH = quoteLines.length * lineH + 56;
-  const panelTitle = theme.bg === OMAFIT_BRAND.orange ? OMAFIT_BRAND.cream : theme.title;
+  const panelTitle = theme.bg === OMAFIT_BRAND.cream ? OMAFIT_BRAND.brown : OMAFIT_BRAND.cream;
 
   return {
     id: "quote",
@@ -161,7 +162,7 @@ function layoutQuote(slide, theme, index, total, fonts) {
   ${h.eyebrow ? contextChip(h.eyebrow, theme, fonts, { x: 72, y: 160 }) : ""}
   ${
     h.headline && h.headline !== quote
-      ? `<text x="72" y="220" font-family='${fonts.body}' font-size="24" fill="${theme.body}" opacity="0.8">${escapeXml(h.headline)}</text>`
+      ? `<text x="72" y="220" font-family='${fonts.body}' font-size="24" fill="${theme.bg === OMAFIT_BRAND.cream ? OMAFIT_BRAND.brownMid : OMAFIT_BRAND.muted}">${escapeXml(h.headline)}</text>`
       : ""
   }
   ${readingPanel({ x: 56, y: 300, width: SIZE - 112, height: panelH, theme, strong: true })}
@@ -172,10 +173,11 @@ function layoutQuote(slide, theme, index, total, fonts) {
     lineHeight: lineH,
     fontSize: 40,
     fill: panelTitle,
-    accentFill: theme.accent,
+    accentFill: OMAFIT_BRAND.orange,
     fontFamily: fonts.title,
     fontWeight: "bold",
     filter: `txt-shadow-atm-${index}`,
+    theme,
   })}
   ${
     h.support

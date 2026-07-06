@@ -123,13 +123,13 @@ export function atmosphereLayer(index, theme, variant = "mixed") {
   layers.push(`<rect width="${SIZE}" height="${SIZE}" fill="url(#lines-${id})"/>`);
 
   if (variant === "dots" || variant === "mixed") {
-    layers.push(`<circle cx="880" cy="160" r="220" fill="${theme.accent}" opacity="0.07"/>`);
+    layers.push(`<circle cx="880" cy="160" r="220" fill="${OMAFIT_BRAND.brownMid}" opacity="0.06"/>`);
     layers.push(`<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="url(#dots-${id})"/>`);
   }
 
   if (variant === "warm" || variant === "mixed") {
     layers.push(
-      `<polygon points="0,${SIZE} ${SIZE},${SIZE} ${SIZE},${SIZE - 280} 0,${SIZE - 120}" fill="${theme.accent}" opacity="0.06"/>`,
+      `<polygon points="0,${SIZE} ${SIZE},${SIZE} ${SIZE},${SIZE - 280} 0,${SIZE - 120}" fill="${OMAFIT_BRAND.brownMid}" opacity="0.08"/>`,
     );
   }
 
@@ -142,21 +142,36 @@ function isLightBg(theme) {
   return theme.bg === OMAFIT_BRAND.cream;
 }
 
-function isOrangeBg(theme) {
-  return theme.bg === OMAFIT_BRAND.orange || theme.bg === OMAFIT_BRAND.orangeDark;
+/** Garante que a cor do texto nunca seja igual ao fundo do slide. */
+export function contrastFill(theme, color) {
+  const preferred =
+    color || (isLightBg(theme) ? OMAFIT_BRAND.brown : OMAFIT_BRAND.cream);
+  if (preferred === theme.bg) {
+    return isLightBg(theme) ? OMAFIT_BRAND.brown : OMAFIT_BRAND.cream;
+  }
+  return preferred;
+}
+
+/** Laranja de destaque — nunca igual ao fundo. */
+export function accentFill(theme) {
+  const accent = theme.accent || OMAFIT_BRAND.orange;
+  if (accent === theme.bg) {
+    return isLightBg(theme) ? OMAFIT_BRAND.orangeDark : OMAFIT_BRAND.orangeLight;
+  }
+  return accent;
 }
 
 function panelColors(theme) {
   const light = isLightBg(theme);
-  const orange = isOrangeBg(theme);
   return {
-    fill: light ? OMAFIT_BRAND.brown : orange ? OMAFIT_BRAND.brown : OMAFIT_BRAND.cream,
-    fillOpacity: light ? 0.11 : orange ? 0.88 : 0.16,
-    stroke: theme.accent,
-    strokeOpacity: light ? 0.35 : 0.45,
-    support: light ? OMAFIT_BRAND.brownMid : orange ? OMAFIT_BRAND.cream : theme.body,
-    titleOnPanel: light ? OMAFIT_BRAND.cream : orange ? OMAFIT_BRAND.cream : OMAFIT_BRAND.brown,
-    accentOnPanel: theme.accent,
+    fill: light ? OMAFIT_BRAND.brown : OMAFIT_BRAND.cream,
+    fillOpacity: light ? 0.13 : 0.15,
+    stroke: accentFill(theme),
+    strokeOpacity: 0.35,
+    support: contrastFill(theme, light ? OMAFIT_BRAND.brownMid : OMAFIT_BRAND.muted),
+    titleOnPanel: light ? OMAFIT_BRAND.cream : OMAFIT_BRAND.brown,
+    accentOnPanel: accentFill(theme),
+    headline: contrastFill(theme, theme.body),
   };
 }
 
@@ -174,14 +189,11 @@ export function contrastScrim({ x, y, width, height, theme, opacity = 0.55 }) {
 export function contextChip(eyebrow, theme, fonts, { x, y }) {
   const label = String(eyebrow || "").toUpperCase().slice(0, 42);
   const w = Math.min(label.length * 11 + 36, 420);
-  const textOnAccent =
-    theme.bg === OMAFIT_BRAND.orange || theme.bg === OMAFIT_BRAND.orangeDark
-      ? OMAFIT_BRAND.cream
-      : OMAFIT_BRAND.cream;
+  const chipBg = accentFill(theme);
 
   return `
-  <rect x="${x}" y="${y - 28}" width="${w}" height="36" rx="18" fill="${theme.accent}" opacity="0.92"/>
-  <text x="${x + 18}" y="${y - 4}" font-family='${fonts.mono}' font-size="17" font-weight="bold" fill="${textOnAccent}" letter-spacing="2.5">${escapeXml(label)}</text>`;
+  <rect x="${x}" y="${y - 28}" width="${w}" height="36" rx="18" fill="${chipBg}" opacity="0.95"/>
+  <text x="${x + 18}" y="${y - 4}" font-family='${fonts.mono}' font-size="17" font-weight="bold" fill="${OMAFIT_BRAND.cream}" letter-spacing="2.5">${escapeXml(label)}</text>`;
 }
 
 function parseEmphasisSegments(text) {
@@ -224,18 +236,20 @@ function renderRichTextLine(line, opts) {
     y,
     fontSize,
     fill,
-    accentFill = OMAFIT_BRAND.orange,
+    accentFill: emphasisColor,
     fontFamily,
     anchor,
     fontWeight = "normal",
     filter,
+    theme,
   } = opts;
+  const accent = emphasisColor || (theme ? accentFill(theme) : OMAFIT_BRAND.orange);
   const plain = stripEmphasisMarkers(line);
   const segments = parseEmphasisSegments(line);
   const hasRich = segments.some((s) => s.type !== "normal");
 
   if (!hasRich) {
-    return textLine(plain, { x, y, fontSize, fill, fontFamily, anchor, fontWeight, filter });
+    return textLine(plain, { x, y, fontSize, fill: theme ? contrastFill(theme, fill) : fill, fontFamily, anchor, fontWeight, filter });
   }
 
   const anchorAttr = anchor ? ` text-anchor="${anchor}"` : "";
@@ -243,12 +257,12 @@ function renderRichTextLine(line, opts) {
   const inner = segments
     .map((seg) => {
       if (seg.type === "emphasis") {
-        return `<tspan fill="${accentFill}" font-weight="bold">${escapeXml(seg.text.toUpperCase())}</tspan>`;
+        return `<tspan fill="${accent}" font-weight="bold">${escapeXml(seg.text.toUpperCase())}</tspan>`;
       }
       if (seg.type === "caps") {
-        return `<tspan fill="${accentFill}" font-weight="bold">${escapeXml(seg.text)}</tspan>`;
+        return `<tspan fill="${accent}" font-weight="bold">${escapeXml(seg.text)}</tspan>`;
       }
-      return `<tspan fill="${fill}">${escapeXml(seg.text)}</tspan>`;
+      return `<tspan fill="${theme ? contrastFill(theme, fill) : fill}">${escapeXml(seg.text)}</tspan>`;
     })
     .join("");
 
@@ -314,7 +328,6 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
   const parts = [];
   const cx = anchor === "middle" ? SIZE / 2 : x;
   const colors = panelColors(theme);
-  const onOrangeBg = isOrangeBg(theme);
   const textShadowId = layout.slideIndex != null ? `txt-shadow-atm-${layout.slideIndex}` : null;
 
   if (hierarchy.eyebrow) {
@@ -334,7 +347,7 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
         x: cx,
         y: cursorY + statSize * 0.75,
         fontSize: statSize,
-        fill: onOrangeBg ? OMAFIT_BRAND.cream : theme.accent,
+        fill: accentFill(theme),
         fontFamily: fonts.title,
         fontWeight: "bold",
         anchor,
@@ -352,11 +365,12 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
         startY: cursorY,
         lineHeight: 40,
         fontSize: 30,
-        fill: colors.support,
-        accentFill: theme.accent,
+        fill: colors.headline,
+        accentFill: colors.accentOnPanel,
         fontFamily: fonts.body,
         anchor,
         filter: textShadowId,
+        theme,
       }),
     );
     cursorY += headlineLines.length * 40 + 24;
@@ -368,8 +382,6 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
     const highlightLines = wrapText(stripEmphasisMarkers(hierarchy.highlight), anchor === "middle" ? 18 : 24);
     const highlightLineH = Math.round(highlightSize * 1.12);
     const highlightBlockH = highlightLines.length * highlightLineH + 32;
-    const highlightFill = onOrangeBg ? OMAFIT_BRAND.cream : colors.titleOnPanel;
-    const strongPanel = onOrangeBg || theme.bg === OMAFIT_BRAND.brown;
 
     parts.push(
       readingPanel({
@@ -378,11 +390,11 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
         width: contentWidth,
         height: highlightBlockH,
         theme,
-        strong: strongPanel,
+        strong: true,
       }),
     );
     parts.push(
-      `<rect x="${panelX + 20}" y="${cursorY + 2}" width="6" height="${highlightBlockH - 24}" rx="3" fill="${theme.accent}"/>`,
+      `<rect x="${panelX + 20}" y="${cursorY + 2}" width="6" height="${highlightBlockH - 24}" rx="3" fill="${accentFill(theme)}"/>`,
     );
     parts.push(
       renderRichTextBlock(highlightLines, {
@@ -390,12 +402,13 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
         startY: cursorY + highlightSize * 0.68,
         lineHeight: highlightLineH,
         fontSize: highlightSize,
-        fill: highlightFill,
-        accentFill: onOrangeBg ? OMAFIT_BRAND.orangeLight : theme.accent,
+        fill: colors.titleOnPanel,
+        accentFill: colors.accentOnPanel,
         fontFamily: fonts.title,
         anchor,
         fontWeight: "bold",
-        filter: onOrangeBg ? null : textShadowId,
+        filter: textShadowId,
+        theme,
       }),
     );
     cursorY += highlightBlockH + 20;
@@ -411,7 +424,7 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
         width: contentWidth,
         height: supportH,
         theme,
-        strong: onOrangeBg,
+        strong: true,
         rx: 16,
       }),
     );
@@ -422,10 +435,11 @@ export function renderHierarchyBlock(hierarchy, theme, fonts, layout) {
         lineHeight: 36,
         fontSize: supportSize,
         fill: colors.support,
-        accentFill: theme.accent,
+        accentFill: colors.accentOnPanel,
         fontFamily: fonts.body,
         anchor,
         filter: textShadowId,
+        theme,
       }),
     );
   }
@@ -438,7 +452,7 @@ export function brandMark(theme, fonts, { x, y, size = 34, anchor, fill } = {}) 
     x,
     y,
     fontSize: size,
-    fill: fill || theme.accent,
+    fill: contrastFill(theme, fill || accentFill(theme)),
     fontFamily: fonts.brand,
     fontWeight: "bold",
     anchor,
@@ -446,13 +460,12 @@ export function brandMark(theme, fonts, { x, y, size = 34, anchor, fill } = {}) 
 }
 
 export function slideFooter(index, total, theme, fonts) {
-  const scrimFill = isLightBg(theme) ? OMAFIT_BRAND.cream : OMAFIT_BRAND.brown;
   return `${contrastScrim({ x: 0, y: 960, width: SIZE, height: 120, theme, opacity: isLightBg(theme) ? 0.65 : 0.72 })}
   ${textLine(`${index + 1} / ${total}`, {
     x: 72,
     y: 1010,
     fontSize: 18,
-    fill: theme.accent,
+    fill: accentFill(theme),
     fontFamily: fonts.mono,
     opacity: 0.95,
   })}
@@ -460,10 +473,10 @@ export function slideFooter(index, total, theme, fonts) {
     x: 1008,
     y: 1010,
     fontSize: 17,
-    fill: isLightBg(theme) ? OMAFIT_BRAND.brownMid : OMAFIT_BRAND.cream,
+    fill: contrastFill(theme, isLightBg(theme) ? OMAFIT_BRAND.brownMid : OMAFIT_BRAND.cream),
     fontFamily: fonts.mono,
     anchor: "end",
-    opacity: 0.7,
+    opacity: 0.75,
   })}`;
 }
 

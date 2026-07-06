@@ -14,10 +14,7 @@ export const OMAFIT_BRAND = {
   instagramUrl: "https://www.instagram.com/omafit.co/",
 };
 
-/**
- * Uma paleta por posição de slide — laranja como destaque principal.
- * Verde reservado só para um slide de contraste sutil.
- */
+/** Fundos apenas marrom/creme — laranja só em detalhes e destaques de texto. */
 export const OMAFIT_SLIDE_THEMES = [
   {
     bg: OMAFIT_BRAND.brown,
@@ -25,55 +22,55 @@ export const OMAFIT_SLIDE_THEMES = [
     body: OMAFIT_BRAND.muted,
     accent: OMAFIT_BRAND.orange,
     accentSoft: OMAFIT_BRAND.orangeDark,
-    label: "Marrom + laranja",
+    label: "Marrom + creme",
   },
   {
     bg: OMAFIT_BRAND.cream,
     title: OMAFIT_BRAND.brown,
     body: OMAFIT_BRAND.brownMid,
     accent: OMAFIT_BRAND.orange,
-    accentSoft: OMAFIT_BRAND.orangeLight,
-    label: "Creme + laranja",
-  },
-  {
-    bg: OMAFIT_BRAND.orange,
-    title: OMAFIT_BRAND.cream,
-    body: OMAFIT_BRAND.brown,
-    accent: OMAFIT_BRAND.brown,
     accentSoft: OMAFIT_BRAND.orangeDark,
-    label: "Laranja invertido",
+    label: "Creme + marrom",
   },
   {
     bg: OMAFIT_BRAND.brownMid,
-    title: OMAFIT_BRAND.orange,
-    body: OMAFIT_BRAND.cream,
-    accent: OMAFIT_BRAND.orangeLight,
-    accentSoft: OMAFIT_BRAND.orange,
-    label: "Marrom escuro + laranja",
+    title: OMAFIT_BRAND.cream,
+    body: OMAFIT_BRAND.muted,
+    accent: OMAFIT_BRAND.orange,
+    accentSoft: OMAFIT_BRAND.orangeLight,
+    label: "Marrom escuro",
   },
   {
     bg: OMAFIT_BRAND.cream,
-    title: OMAFIT_BRAND.orangeDark,
+    title: OMAFIT_BRAND.brownMid,
     body: OMAFIT_BRAND.brown,
-    accent: OMAFIT_BRAND.orange,
-    accentSoft: OMAFIT_BRAND.brownMid,
-    label: "Creme + título laranja",
+    accent: OMAFIT_BRAND.orangeDark,
+    accentSoft: OMAFIT_BRAND.orange,
+    label: "Creme editorial",
   },
   {
     bg: OMAFIT_BRAND.brown,
-    title: OMAFIT_BRAND.orange,
-    body: OMAFIT_BRAND.cream,
-    accent: OMAFIT_BRAND.orangeLight,
-    accentSoft: OMAFIT_BRAND.orange,
-    label: "Marrom + título laranja",
-  },
-  {
-    bg: OMAFIT_BRAND.orangeDark,
     title: OMAFIT_BRAND.cream,
     body: OMAFIT_BRAND.cream,
-    accent: OMAFIT_BRAND.brown,
+    accent: OMAFIT_BRAND.orange,
+    accentSoft: OMAFIT_BRAND.orangeLight,
+    label: "Marrom profundo",
+  },
+  {
+    bg: OMAFIT_BRAND.brownMid,
+    title: OMAFIT_BRAND.cream,
+    body: OMAFIT_BRAND.muted,
+    accent: OMAFIT_BRAND.orangeLight,
     accentSoft: OMAFIT_BRAND.orange,
-    label: "Laranja escuro",
+    label: "Marrom + destaque",
+  },
+  {
+    bg: OMAFIT_BRAND.cream,
+    title: OMAFIT_BRAND.brown,
+    body: OMAFIT_BRAND.muted,
+    accent: OMAFIT_BRAND.orange,
+    accentSoft: OMAFIT_BRAND.brownMid,
+    label: "Creme suave",
   },
 ];
 

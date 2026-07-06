@@ -30,6 +30,29 @@ export function wrapText(text, maxChars = 38) {
   return lines.slice(0, 8);
 }
 
+function normalizeRichTextInput(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .replace(/(\S)\*\*/g, "$1 **")
+    .replace(/\*\*(\S)/g, "** $1")
+    .replace(/\*\*\s+/g, "** ")
+    .replace(/\s+\*\*/g, " **")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeSlideCopyFields(slide) {
+  if (!slide || typeof slide !== "object") return slide;
+  const fields = ["eyebrow", "title", "highlight", "subtitle", "body", "stat"];
+  const next = { ...slide };
+  for (const key of fields) {
+    if (next[key] != null && next[key] !== "") {
+      next[key] = normalizeRichTextInput(next[key]);
+    }
+  }
+  return next;
+}
+
 /** Extrai hierarquia de leitura: contexto → manchete → destaque → apoio. */
 export function parseSlideHierarchy(slide, index, total) {
   const eyebrow =
@@ -245,7 +268,7 @@ function renderRichTextLine(line, opts) {
   } = opts;
   const accent = emphasisColor || (theme ? accentFill(theme) : OMAFIT_BRAND.orange);
   const plain = stripEmphasisMarkers(line);
-  const segments = parseEmphasisSegments(line);
+  const segments = parseEmphasisSegments(normalizeRichTextInput(line));
   const hasRich = segments.some((s) => s.type !== "normal");
 
   if (!hasRich) {
@@ -255,14 +278,25 @@ function renderRichTextLine(line, opts) {
   const anchorAttr = anchor ? ` text-anchor="${anchor}"` : "";
   const filterAttr = filter ? ` filter="url(#${filter})"` : "";
   const inner = segments
-    .map((seg) => {
+    .map((seg, i) => {
+      let chunk = seg.text;
+      if (i > 0) {
+        const prev = segments[i - 1];
+        const needsSpace =
+          prev?.text &&
+          chunk &&
+          !/\s$/.test(prev.text) &&
+          !/^\s/.test(chunk);
+        if (needsSpace) chunk = ` ${chunk}`;
+      }
+
       if (seg.type === "emphasis") {
-        return `<tspan fill="${accent}" font-weight="bold">${escapeXml(seg.text.toUpperCase())}</tspan>`;
+        return `<tspan fill="${accent}" font-weight="bold">${escapeXml(chunk.trim().toUpperCase())}</tspan>`;
       }
       if (seg.type === "caps") {
-        return `<tspan fill="${accent}" font-weight="bold">${escapeXml(seg.text)}</tspan>`;
+        return `<tspan fill="${accent}" font-weight="bold">${escapeXml(chunk)}</tspan>`;
       }
-      return `<tspan fill="${theme ? contrastFill(theme, fill) : fill}">${escapeXml(seg.text)}</tspan>`;
+      return `<tspan fill="${theme ? contrastFill(theme, fill) : fill}">${escapeXml(chunk)}</tspan>`;
     })
     .join("");
 

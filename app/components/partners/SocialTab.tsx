@@ -58,6 +58,7 @@ type GenerateResult = {
   success: boolean;
   source?: string;
   caption?: string;
+  designSeed?: number;
   slideCount?: number;
   previews?: CarouselPreview[];
   error?: string;
@@ -212,6 +213,7 @@ export function SocialTab({
   const [feedback, setFeedback] = useState("");
   const [publishFeedback, setPublishFeedback] = useState("");
   const [publishUrl, setPublishUrl] = useState<string | null>(null);
+  const [designSeed, setDesignSeed] = useState<number | null>(null);
   const [result, setResult] = useState<GenerateResult | null>(null);
 
   const ctx = {
@@ -227,9 +229,15 @@ export function SocialTab({
 
   const generate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!openaiConfigured) {
+      setStatus("error");
+      setFeedback("Configure OPENAI_API_KEY no servidor para gerar textos com GPT.");
+      return;
+    }
     setStatus("generating");
     setFeedback("");
     setResult(null);
+    setDesignSeed(null);
     try {
       const response = await fetch("/api/partners/social-carousel", {
         method: "POST",
@@ -243,6 +251,7 @@ export function SocialTab({
       }
       setResult(payload);
       setCaption(payload.caption || "");
+      setDesignSeed(payload.designSeed ?? null);
       setPublishUrl(null);
       setStatus("idle");
       setFeedback("Carrossel gerado — baixe os slides ou publique no Instagram.");
@@ -274,6 +283,7 @@ export function SocialTab({
           caption,
           theme,
           description,
+          designSeed,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -391,13 +401,13 @@ export function SocialTab({
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[0.65rem]">
-                {openaiConfigured ? "Copy com IA" : "Copy com template"}
+                {openaiConfigured ? "Copy com GPT" : "GPT não configurado"}
               </Badge>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button
                 type="submit"
-                disabled={status === "generating"}
+                disabled={status === "generating" || !openaiConfigured}
                 className="w-full sm:w-auto"
               >
                 <SparklesIcon data-icon="inline-start" />

@@ -1,5 +1,8 @@
 import { requirePartnersAuth } from "../partners-auth.server";
-import { generatePartnersCarousel } from "../partners-carousel.server";
+import {
+  generatePartnersCarousel,
+  humanizeCarouselError,
+} from "../partners-carousel.server";
 
 export async function action({ request }) {
   await requirePartnersAuth(request);
@@ -24,9 +27,12 @@ export async function action({ request }) {
     return Response.json(result);
   } catch (err) {
     console.error("[api.partners.social-carousel]", err);
+    const code = err?.message || "generation_failed";
+    const status =
+      code === "openai_required" ? 503 : code === "openai_copy_failed" ? 502 : 500;
     return Response.json(
-      { success: false, error: err?.message || "generation_failed" },
-      { status: 500 },
+      { success: false, error: humanizeCarouselError(code) },
+      { status },
     );
   }
 }

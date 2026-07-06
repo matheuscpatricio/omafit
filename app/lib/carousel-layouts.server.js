@@ -287,6 +287,35 @@ const CONTENT_LAYOUTS = [
   layoutBadge,
 ];
 
+export const LAYOUT_BY_ID = {
+  "hero-bottom": layoutHeroBottom,
+  "editorial-top": layoutEditorialTop,
+  "split-orange": layoutSplitOrange,
+  "centered-ring": layoutCentered,
+  "side-accent": layoutSideAccent,
+  "stat-highlight": layoutStatHighlight,
+  quote: layoutQuote,
+  diagonal: layoutDiagonal,
+  "bottom-heavy": layoutBottomHeavy,
+  "corner-float": layoutCornerFloat,
+  badge: layoutBadge,
+  cta: layoutCta,
+};
+
+/** Layouts embaralháveis (exclui capa e CTA). */
+export const CONTENT_LAYOUT_IDS = [
+  "editorial-top",
+  "split-orange",
+  "centered-ring",
+  "side-accent",
+  "stat-highlight",
+  "quote",
+  "diagonal",
+  "bottom-heavy",
+  "corner-float",
+  "badge",
+];
+
 layoutHeroBottom.layoutId = "hero-bottom";
 layoutEditorialTop.layoutId = "editorial-top";
 layoutSplitOrange.layoutId = "split-orange";
@@ -300,7 +329,12 @@ layoutCornerFloat.layoutId = "corner-float";
 layoutBadge.layoutId = "badge";
 layoutCta.layoutId = "cta";
 
-export function pickSlideLayout(slide, index, total) {
+export function pickSlideLayout(slide, index, total, designPlan) {
+  const plannedId = designPlan?.layoutAssignment?.[index];
+  if (plannedId && LAYOUT_BY_ID[plannedId]) {
+    return LAYOUT_BY_ID[plannedId];
+  }
+
   if (slide.kind === "cover" || index === 0) return layoutHeroBottom;
   if (slide.kind === "cta" || index === total - 1) return layoutCta;
   if (slide.layout === "quote") return layoutQuote;
@@ -308,7 +342,7 @@ export function pickSlideLayout(slide, index, total) {
   return CONTENT_LAYOUTS[(index - 1) % CONTENT_LAYOUTS.length];
 }
 
-export function buildLayoutContent(slide, theme, index, total, fonts) {
-  const layout = pickSlideLayout(slide, index, total);
+export function buildLayoutContent(slide, theme, index, total, fonts, designPlan) {
+  const layout = pickSlideLayout(slide, index, total, designPlan);
   return layout(slide, theme, index, total, fonts);
 }

@@ -1,6 +1,10 @@
 import { requirePartnersAuth } from "../partners-auth.server";
 import { publishCarouselToInstagram } from "../partners-instagram-publish.server";
-import { generateCarouselCopy, renderCarouselSlides } from "../partners-carousel.server";
+import {
+  generateCarouselCopy,
+  renderCarouselSlides,
+  humanizeCarouselError,
+} from "../partners-carousel.server";
 
 function decodeDataUrl(dataUrl) {
   const match = String(dataUrl || "").match(/^data:image\/png;base64,(.+)$/);
@@ -40,6 +44,7 @@ export async function action({ request }) {
     const caption = String(body.caption || "").trim();
     const theme = String(body.theme || "").trim();
     const description = String(body.description || "").trim();
+    const designSeed = body.designSeed != null ? String(body.designSeed) : null;
 
     if (!caption) {
       return Response.json({ success: false, error: "caption_required" }, { status: 400 });
@@ -49,7 +54,7 @@ export async function action({ request }) {
 
     if (theme && description) {
       const { slides } = await generateCarouselCopy(theme, description);
-      const rendered = await renderCarouselSlides(slides);
+      const rendered = await renderCarouselSlides(slides, designSeed || undefined);
       buffers = rendered.buffers;
     } else if (Array.isArray(body.images) && body.images.length) {
       buffers = body.images.map((img) => decodeDataUrl(img)).filter(Boolean);
@@ -74,12 +79,15 @@ export async function action({ request }) {
     return Response.json(result);
   } catch (err) {
     console.error("[api.partners.instagram-publish]", err);
+    const code = err?.message || "publish_failed";
+    const status =
+      code === "openai_required" || code === "openai_copy_failed" ? 503 : 500;
     return Response.json(
       {
         success: false,
-        error: humanizePublishError(err?.message || "publish_failed"),
+        error: humanizePublishError(humanizeCarouselError(code)),
       },
-      { status: 500 },
+      { status },
     );
   }
 }

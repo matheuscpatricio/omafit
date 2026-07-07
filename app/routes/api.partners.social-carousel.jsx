@@ -38,13 +38,20 @@ export async function action({ request }) {
     const status =
       code === "openai_required"
         ? 503
-        : code === "openai_copy_failed"
+        : code === "openai_copy_failed" || code.startsWith("openai_copy_failed:")
           ? 502
-          : code === "openai_image_failed" || code.startsWith("openai_image")
+          : code === "openai_image_failed" ||
+              code.startsWith("openai_image_failed") ||
+              code.startsWith("openai_image")
             ? 502
             : 500;
     return Response.json(
-      { success: false, error: humanizeCarouselError(code) },
+      {
+        success: false,
+        error: humanizeCarouselError(code),
+        errorCode: code.split(":")[0],
+        detail: code.includes(":") ? code.slice(code.indexOf(":") + 1) : null,
+      },
       { status },
     );
   }

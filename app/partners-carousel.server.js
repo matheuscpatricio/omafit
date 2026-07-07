@@ -73,8 +73,10 @@ function extractResponsesOutputText(data) {
     if (item?.type === "message" && Array.isArray(item.content)) {
       for (const block of item.content) {
         if (block?.type === "output_text" && block.text) parts.push(block.text);
+        if (block?.type === "text" && block.text) parts.push(block.text);
       }
     }
+    if (item?.type === "text" && item.text) parts.push(item.text);
   }
   return parts.join("").trim();
 }
@@ -121,7 +123,7 @@ function sanitizeSlides(slides) {
 }
 
 function validateSlideCopy(slides) {
-  if (!Array.isArray(slides) || slides.length < 4) {
+  if (!Array.isArray(slides) || slides.length < 3) {
     console.warn("[validateSlideCopy] invalid slide count:", slides?.length);
     return false;
   }
@@ -192,15 +194,13 @@ async function requestCopyViaResponsesApi(apiKey, model, system, userPrompt) {
     },
     body: JSON.stringify({
       model,
-      reasoning: { effort: "low" },
-      max_output_tokens: 12000,
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: userPrompt },
-      ],
+      instructions: system,
+      reasoning: { effort: "none" },
+      max_output_tokens: 4096,
+      input: userPrompt,
       text: { format: { type: "json_object" } },
     }),
-    signal: AbortSignal.timeout(180000),
+    signal: AbortSignal.timeout(120000),
   });
 
   const data = await response.json().catch(() => ({}));
@@ -233,8 +233,7 @@ async function requestCopyViaChatCompletions(apiKey, model, system, userPrompt) 
   };
 
   if (isReasoning) {
-    body.max_completion_tokens = 12000;
-    body.reasoning_effort = "low";
+    body.max_completion_tokens = 4096;
   } else {
     body.max_tokens = 4096;
     body.temperature = 0.9;
@@ -247,7 +246,7 @@ async function requestCopyViaChatCompletions(apiKey, model, system, userPrompt) 
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(180000),
+    signal: AbortSignal.timeout(120000),
   });
 
   const data = await response.json().catch(() => ({}));
@@ -278,7 +277,7 @@ async function requestCopyFromModel(apiKey, model, system, userPrompt) {
 
 async function aiCarouselCopy(theme, description) {
   const apiKey = (process.env.OPENAI_API_KEY || "").trim();
-  if (!apiKey) return null;
+  if (!apiKey) return { error: "openai_required" };
 
   const prompt = buildCarouselPrompt(theme, description);
   const system =
@@ -326,7 +325,7 @@ async function aiCarouselCopy(theme, description) {
   }
 
   if (lastError) console.error("[aiCarouselCopy] exhausted all models:", lastError);
-  return null;
+  return { error: lastError || "unknown" };
 }
 
 export async function generateCarouselCopy(theme, description) {
@@ -340,7 +339,8 @@ export async function generateCarouselCopy(theme, description) {
 
   const aiResult = await aiCarouselCopy(trimmedTheme, trimmedDesc);
   if (!aiResult?.slides?.length) {
-    throw new Error("openai_copy_failed");
+    const detail = aiResult?.error ? String(aiResult.error) : "";
+    throw new Error(detail ? `openai_copy_failed:${detail}` : "openai_copy_failed");
   }
 
   return {
@@ -500,26 +500,38 @@ export function getCarouselGeneratorStatus() {
 }
 
 export function humanizeCarouselError(error) {
-  const code = String(error || "");
-  if (code === "openai_required") {
+  const raw = String(error || "");
+  if (raw.startsWith("openai_copy_failed:")) {
+    const detail = raw.slice("openai_copy_failed:".length).trim();
+    return detail
+      ? `O GPT não retornou copy válida (${detail}). Tente novamente.`
+      : "O GPT não retornou copy válida — tente novamente em alguns segundos.";
+  }
+  if (raw.startsWith("openai_image_failed:")) {
+    const detail = raw.slice("openai_image_failed:".length).trim();
+    return detail
+      ? `Falha ao gerar imagens com GPT (${detail}).`
+      : "Falha ao gerar imagens com GPT — verifique OPENAI_API_KEY e o modelo de imagem.";
+  }
+  if (raw === "openai_required") {
     return "Configure OPENAI_API_KEY no servidor para gerar textos com GPT.";
   }
-  if (code === "openai_copy_failed") {
+  if (raw === "openai_copy_failed") {
     return "O GPT não retornou copy válida — tente novamente em alguns segundos.";
   }
-  if (code === "openai_image_failed" || code.startsWith("openai_image_failed")) {
+  if (raw === "openai_image_failed" || raw.startsWith("openai_image_failed")) {
     return "Falha ao gerar imagens com GPT — verifique OPENAI_API_KEY e o modelo de imagem.";
   }
-  if (code === "openai_image_empty") {
+  if (raw === "openai_image_empty") {
     return "O GPT não retornou imagens válidas — tente novamente.";
   }
-  if (code === "invalid_reference_image") {
+  if (raw === "invalid_reference_image") {
     return "Imagem de referência inválida — use PNG, JPG ou WebP.";
   }
-  if (code === "reference_image_too_large") {
+  if (raw === "reference_image_too_large") {
     return "Imagem de referência muito grande — máximo 5 MB.";
   }
-  if (code === "theme_required") return "Informe o tema do carrossel.";
-  if (code === "description_required") return "Informe a descrição do carrossel.";
-  return code || "Falha ao gerar carrossel";
+  if (raw === "theme_required") return "Informe o tema do carrossel.";
+  if (raw === "description_required") return "Informe a descrição do carrossel.";
+  return raw || "Falha ao gerar carrossel";
 }

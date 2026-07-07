@@ -286,14 +286,14 @@ async function extractImageBuffer(data) {
   throw new Error("openai_image_empty");
 }
 
-async function requestOpenAiImageGenerate(prompt, apiKey) {
+async function requestOpenAiImageGenerate(prompt, apiKey, quality = "high") {
   const model = resolveImageModel();
   const body = {
     model,
     prompt,
     n: 1,
     size: OPENAI_IMAGE_SIZE,
-    quality: "high",
+    quality,
   };
 
   if (model === "dall-e-3") {
@@ -345,7 +345,7 @@ export async function generateCarouselSlideImages({
     }
   }
 
-  const concurrency = 2;
+  const concurrency = 3;
   const images = new Array(slides.length);
   let cursor = 0;
 
@@ -364,10 +364,18 @@ export async function generateCarouselSlideImages({
       });
 
       try {
-        images[index] = await requestOpenAiImageGenerate(prompt, apiKey);
+        images[index] = await requestOpenAiImageGenerate(prompt, apiKey, "high");
       } catch (err) {
-        console.error(`[carousel-image-ai] slide ${index + 1} failed:`, err?.message || err);
-        images[index] = null;
+        console.error(`[carousel-image-ai] slide ${index + 1} high failed:`, err?.message || err);
+        try {
+          images[index] = await requestOpenAiImageGenerate(prompt, apiKey, "medium");
+        } catch (retryErr) {
+          console.error(
+            `[carousel-image-ai] slide ${index + 1} medium failed:`,
+            retryErr?.message || retryErr,
+          );
+          images[index] = null;
+        }
       }
     }
   }
@@ -375,7 +383,7 @@ export async function generateCarouselSlideImages({
   await Promise.all(Array.from({ length: Math.min(concurrency, slides.length) }, () => worker()));
 
   if (images.every((img) => !img)) {
-    throw new Error("openai_image_failed");
+    console.warn("[carousel-image-ai] all GPT image slides failed — vector fallback will be used");
   }
 
   return images;

@@ -307,9 +307,12 @@ export function SocialTab({
           referenceImage: referenceImage || undefined,
         }),
       });
-      const payload = (await response.json().catch(() => ({}))) as GenerateResult;
+      const payload = (await response.json().catch(() => ({}))) as GenerateResult & {
+        detail?: string | null;
+      };
       if (!response.ok || !payload.success) {
-        throw new Error(payload.error || "Falha ao gerar carrossel");
+        const detail = payload.detail ? ` — ${payload.detail}` : "";
+        throw new Error((payload.error || "Falha ao gerar carrossel") + detail);
       }
       setResult(payload);
       setCaption(payload.caption || "");

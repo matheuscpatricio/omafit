@@ -1,4 +1,7 @@
+import sharp from "sharp";
 import { FONT_FAMILY } from "./carousel-fonts.server.js";
+
+const MAX_REFERENCE_BYTES = 5 * 1024 * 1024;
 
 /** Identidade visual embutida em todo prompt de imagem. */
 export const OMAFIT_VISUAL_IDENTITY = `
@@ -50,6 +53,20 @@ function plainCopy(text) {
     .trim();
 }
 
+export function parseReferenceImageDataUrl(dataUrl) {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) throw new Error("invalid_reference_image");
+
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length > MAX_REFERENCE_BYTES) throw new Error("reference_image_too_large");
+  if (buffer.length < 64) throw new Error("invalid_reference_image");
+
+  return buffer;
+}
+
 function buildSlideImagePrompt({
   imagePrompt,
   slide,
@@ -57,6 +74,7 @@ function buildSlideImagePrompt({
   total,
   carouselTheme,
   designSeed,
+  hasReference,
 }) {
   const style = String(imagePrompt || "").trim() || DEFAULT_STYLE_PROMPT;
   const variation = hashSeed(`${designSeed}-${index}`) % 997;
@@ -68,11 +86,20 @@ function buildSlideImagePrompt({
   const highlight = plainCopy(slide.highlight);
   const body = plainCopy(slide.body);
 
+  const referenceBlock = hasReference
+    ? `
+REFERÊNCIA VISUAL (imagem anexada):
+- Use a referência como guia de estilo: paleta, textura, composição, iluminação e mood editorial
+- Não copie textos, logos ou marcas da referência — apenas o look visual
+- Combine a referência com a identidade Omafit e os textos listados abaixo
+`
+    : "";
+
   return `Crie um slide completo de carrossel Instagram — imagem final pronta para publicar, com TODOS os textos renderizados na composição.
 
 DIREÇÃO CRIATIVA DO USUÁRIO:
 ${style}
-
+${referenceBlock}
 ${OMAFIT_VISUAL_IDENTITY}
 
 Fontes de referência: ${FONT_FAMILY.title} (Gloock), ${FONT_FAMILY.body} (Bricolage).
@@ -100,7 +127,21 @@ function resolveImageModel() {
   return (process.env.OPENAI_IMAGE_MODEL || "gpt-image-1").trim();
 }
 
-async function requestOpenAiImage(prompt, apiKey) {
+async function extractImageBuffer(data) {
+  const item = data?.data?.[0];
+  const b64 = item?.b64_json;
+  if (b64) return Buffer.from(b64, "base64");
+
+  if (item?.url) {
+    const imgRes = await fetch(item.url, { signal: AbortSignal.timeout(60000) });
+    if (!imgRes.ok) throw new Error("openai_image_download_failed");
+    return Buffer.from(await imgRes.arrayBuffer());
+  }
+
+  throw new Error("openai_image_empty");
+}
+
+async function requestOpenAiImageGenerate(prompt, apiKey) {
   const model = resolveImageModel();
   const body = {
     model,
@@ -130,17 +171,53 @@ async function requestOpenAiImage(prompt, apiKey) {
     throw new Error(data?.error?.message || `openai_image_failed:${response.status}`);
   }
 
-  const item = data?.data?.[0];
-  const b64 = item?.b64_json;
-  if (b64) return Buffer.from(b64, "base64");
+  return await extractImageBuffer(data);
+}
 
-  if (item?.url) {
-    const imgRes = await fetch(item.url, { signal: AbortSignal.timeout(60000) });
-    if (!imgRes.ok) throw new Error("openai_image_download_failed");
-    return Buffer.from(await imgRes.arrayBuffer());
+async function requestOpenAiImageEdit(prompt, apiKey, referenceBuffer) {
+  const model = resolveImageModel();
+  const png = await sharp(referenceBuffer)
+    .resize(1024, 1024, { fit: "inside", withoutEnlargement: false })
+    .png()
+    .toBuffer();
+
+  const form = new FormData();
+  form.append("model", model);
+  form.append("prompt", prompt);
+  form.append("size", "1024x1024");
+  form.append("n", "1");
+  form.append("quality", "high");
+  form.append("image", new Blob([png], { type: "image/png" }), "reference.png");
+
+  const response = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: form,
+    signal: AbortSignal.timeout(180000),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `openai_image_failed:${response.status}`);
   }
 
-  throw new Error("openai_image_empty");
+  return await extractImageBuffer(data);
+}
+
+async function requestOpenAiImage(prompt, apiKey, referenceBuffer) {
+  if (referenceBuffer) {
+    try {
+      return await requestOpenAiImageEdit(prompt, apiKey, referenceBuffer);
+    } catch (err) {
+      console.warn(
+        "[carousel-image-ai] reference edit failed, falling back to generate:",
+        err?.message || err,
+      );
+    }
+  }
+  return requestOpenAiImageGenerate(prompt, apiKey);
 }
 
 /**
@@ -151,10 +228,12 @@ export async function generateCarouselSlideImages({
   slides,
   carouselTheme,
   designSeed,
+  referenceBuffer,
 }) {
   const apiKey = (process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) throw new Error("openai_required");
 
+  const hasReference = Boolean(referenceBuffer);
   const concurrency = 2;
   const images = new Array(slides.length);
   let cursor = 0;
@@ -171,10 +250,11 @@ export async function generateCarouselSlideImages({
         total: slides.length,
         carouselTheme,
         designSeed,
+        hasReference,
       });
 
       try {
-        images[index] = await requestOpenAiImage(prompt, apiKey);
+        images[index] = await requestOpenAiImage(prompt, apiKey, referenceBuffer);
       } catch (err) {
         console.error(`[carousel-image-ai] slide ${index + 1} failed:`, err?.message || err);
         images[index] = null;

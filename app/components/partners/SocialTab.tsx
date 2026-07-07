@@ -7,6 +7,8 @@ import {
   DownloadIcon,
   InfoIcon,
   SendIcon,
+  UploadIcon,
+  XIcon,
 } from "lucide-react";
 import { buildPartnersInsights } from "@/app/lib/partners-insights";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -69,6 +71,8 @@ type GenerateResult = {
 
 const DEFAULT_IMAGE_PROMPT_PLACEHOLDER =
   "Texturas editoriais em marrom e creme, luz quente, estética de campanha de moda digital";
+
+const MAX_REFERENCE_BYTES = 4 * 1024 * 1024;
 
 function formatNumber(value: unknown) {
   if (value == null || Number.isNaN(Number(value))) return "—";
@@ -218,6 +222,8 @@ export function SocialTab({
   const [theme, setTheme] = useState("");
   const [description, setDescription] = useState("");
   const [imagePrompt, setImagePrompt] = useState("");
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  const [referenceName, setReferenceName] = useState("");
   const [caption, setCaption] = useState("");
   const [status, setStatus] = useState<"idle" | "generating" | "error">("idle");
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "error">("idle");
@@ -237,6 +243,42 @@ export function SocialTab({
 
   const youtube = data.youtube;
   const instagram = data.instagram;
+
+  const handleReferenceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setStatus("error");
+      setFeedback("Envie uma imagem PNG, JPG ou WebP como referência.");
+      return;
+    }
+    if (file.size > MAX_REFERENCE_BYTES) {
+      setStatus("error");
+      setFeedback("A imagem de referência deve ter no máximo 4 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      if (!dataUrl.startsWith("data:image/")) {
+        setStatus("error");
+        setFeedback("Não foi possível ler a imagem de referência.");
+        return;
+      }
+      setReferenceImage(dataUrl);
+      setReferenceName(file.name);
+      setStatus("idle");
+      setFeedback("");
+    };
+    reader.onerror = () => {
+      setStatus("error");
+      setFeedback("Não foi possível ler a imagem de referência.");
+    };
+    reader.readAsDataURL(file);
+  };
 
   const generate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -261,6 +303,7 @@ export function SocialTab({
           theme,
           description,
           imagePrompt: imagePrompt.trim() || undefined,
+          referenceImage: referenceImage || undefined,
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as GenerateResult;
@@ -309,6 +352,7 @@ export function SocialTab({
           description,
           designSeed,
           imagePrompt: imagePrompt.trim() || undefined,
+          referenceImage: referenceImage || undefined,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -397,9 +441,9 @@ export function SocialTab({
             <CardTitle>Gerar conteúdo</CardTitle>
           </div>
           <CardDescription>
-            Carrossel Instagram 1080×1080 gerado 100% com GPT Image — copy, layout visual,
-            identidade Omafit e fontes (Gloock, Bricolage, Rasbora, DM Mono) já embutidos no
-            prompt. Baixe os PNGs ou publique no @omafit.co.
+            Carrossel Instagram 1080×1080 gerado 100% com GPT Image — copy, layout visual
+            e identidade Omafit já embutidos no prompt. Opcionalmente envie um design de
+            referência. Baixe os PNGs ou publique no @omafit.co.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -440,6 +484,56 @@ export function SocialTab({
                 className="min-h-[80px] rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
+            <div className="flex flex-col gap-2 text-sm">
+              <span className="font-medium">Design de referência (opcional)</span>
+              <span className="text-xs text-muted-foreground">
+                Envie um slide ou peça visual para o GPT usar como guia de estilo (cores,
+                textura, composição). Não copia textos nem logos da referência.
+              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    onChange={handleReferenceFile}
+                    disabled={status === "generating"}
+                  />
+                  <Button type="button" variant="outline" size="sm" asChild>
+                    <span>
+                      <UploadIcon data-icon="inline-start" />
+                      Enviar referência
+                    </span>
+                  </Button>
+                </label>
+                {referenceImage ? (
+                  <>
+                    <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 p-1.5 pr-3">
+                      <img
+                        src={referenceImage}
+                        alt=""
+                        className="size-14 rounded-md object-cover"
+                      />
+                      <span className="max-w-[160px] truncate text-xs text-muted-foreground">
+                        {referenceName || "referência"}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setReferenceImage(null);
+                        setReferenceName("");
+                      }}
+                    >
+                      <XIcon data-icon="inline-start" />
+                      Remover
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[0.65rem]">
                 {openaiConfigured ? `Copy · ${copyModel || "gpt-5.5"}` : "GPT não configurado"}
@@ -447,6 +541,11 @@ export function SocialTab({
               {openaiConfigured ? (
                 <Badge variant="secondary" className="text-[0.65rem]">
                   Imagens · {imageModel || "gpt-image-1"}
+                </Badge>
+              ) : null}
+              {referenceImage ? (
+                <Badge variant="outline" className="text-[0.65rem]">
+                  Referência visual
                 </Badge>
               ) : null}
             </div>

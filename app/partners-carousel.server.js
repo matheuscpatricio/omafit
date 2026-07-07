@@ -20,6 +20,7 @@ import {
 import {
   generateCarouselSlideImages,
   getImageModelLabel,
+  parseReferenceImageDataUrl,
 } from "./lib/carousel-image-ai.server.js";
 
 /** Melhor modelo OpenAI para copy criativa (sobrescreva com OPENAI_MODEL). */
@@ -197,7 +198,7 @@ async function renderVectorSlide(slide, designPlan, index, total, fonts, fontDef
 }
 
 export async function renderCarouselSlides(slides, designSeed, options = {}) {
-  const { imagePrompt, carouselTheme } = options;
+  const { imagePrompt, carouselTheme, referenceBuffer } = options;
   const designPlan = buildDesignPlan(slides, designSeed);
   const fontDefs = await getCarouselFontFaceDefs();
   const fonts = getActiveFontFamily();
@@ -208,6 +209,7 @@ export async function renderCarouselSlides(slides, designSeed, options = {}) {
     slides,
     carouselTheme: carouselTheme || "Omafit",
     designSeed: designPlan.seed,
+    referenceBuffer: referenceBuffer || null,
   });
 
   const buffers = [];
@@ -255,14 +257,24 @@ export async function renderCarouselSlides(slides, designSeed, options = {}) {
 /**
  * Gera carrossel Instagram com identidade Omafit (PNG para download/publicação).
  */
-export async function generatePartnersCarousel({ theme, description, imagePrompt }) {
+export async function generatePartnersCarousel({
+  theme,
+  description,
+  imagePrompt,
+  referenceImage,
+}) {
   const designSeed = createDesignSeed();
   const trimmedImagePrompt = String(imagePrompt || "").trim();
+  const referenceBuffer = referenceImage ? parseReferenceImageDataUrl(referenceImage) : null;
   const { slides, source, caption } = await generateCarouselCopy(theme, description);
   const { previews, designSeed: resolvedSeed, imageModel } = await renderCarouselSlides(
     slides,
     designSeed,
-    { imagePrompt: trimmedImagePrompt, carouselTheme: theme },
+    {
+      imagePrompt: trimmedImagePrompt,
+      carouselTheme: theme,
+      referenceBuffer,
+    },
   );
   const designPlan = buildDesignPlan(slides, resolvedSeed);
 
@@ -274,6 +286,7 @@ export async function generatePartnersCarousel({ theme, description, imagePrompt
     imageMode: "gpt",
     imageModel,
     imagePrompt: trimmedImagePrompt || null,
+    hasReferenceDesign: Boolean(referenceBuffer),
     slideCount: slides.length,
     layouts: designPlan.layoutAssignment,
     slides: slides.map((s, i) => ({
@@ -306,6 +319,12 @@ export function humanizeCarouselError(error) {
   }
   if (code === "openai_image_empty") {
     return "O GPT não retornou imagens válidas — tente novamente.";
+  }
+  if (code === "invalid_reference_image") {
+    return "Imagem de referência inválida — use PNG, JPG ou WebP.";
+  }
+  if (code === "reference_image_too_large") {
+    return "Imagem de referência muito grande — máximo 5 MB.";
   }
   if (code === "theme_required") return "Informe o tema do carrossel.";
   if (code === "description_required") return "Informe a descrição do carrossel.";

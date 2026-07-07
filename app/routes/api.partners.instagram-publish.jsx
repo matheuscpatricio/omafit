@@ -5,6 +5,7 @@ import {
   renderCarouselSlides,
   humanizeCarouselError,
 } from "../partners-carousel.server";
+import { parseReferenceImageDataUrl } from "../lib/carousel-image-ai.server.js";
 
 function decodeDataUrl(dataUrl) {
   const match = String(dataUrl || "").match(/^data:image\/png;base64,(.+)$/);
@@ -46,6 +47,7 @@ export async function action({ request }) {
     const description = String(body.description || "").trim();
     const designSeed = body.designSeed != null ? String(body.designSeed) : null;
     const imagePrompt = String(body.imagePrompt || "").trim();
+    const referenceImage = body.referenceImage ? String(body.referenceImage) : null;
 
     if (!caption) {
       return Response.json({ success: false, error: "caption_required" }, { status: 400 });
@@ -54,10 +56,12 @@ export async function action({ request }) {
     let buffers = null;
 
     if (theme && description) {
+      const referenceBuffer = referenceImage ? parseReferenceImageDataUrl(referenceImage) : null;
       const { slides } = await generateCarouselCopy(theme, description);
       const rendered = await renderCarouselSlides(slides, designSeed || undefined, {
         imagePrompt,
         carouselTheme: theme,
+        referenceBuffer,
       });
       buffers = rendered.buffers;
     } else if (Array.isArray(body.images) && body.images.length) {

@@ -16,6 +16,7 @@ export async function action({ request }) {
     const theme = String(body.theme || "").trim();
     const description = String(body.description || "").trim();
     const imagePrompt = String(body.imagePrompt || "").trim();
+    const referenceImage = body.referenceImage ? String(body.referenceImage) : null;
 
     if (!theme) {
       return Response.json({ success: false, error: "theme_required" }, { status: 400 });
@@ -24,7 +25,12 @@ export async function action({ request }) {
       return Response.json({ success: false, error: "description_required" }, { status: 400 });
     }
 
-    const result = await generatePartnersCarousel({ theme, description, imagePrompt });
+    const result = await generatePartnersCarousel({
+      theme,
+      description,
+      imagePrompt,
+      referenceImage,
+    });
     return Response.json(result);
   } catch (err) {
     console.error("[api.partners.social-carousel]", err);

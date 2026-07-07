@@ -443,8 +443,9 @@ export function SocialTab({
           </div>
           <CardDescription>
             Carrossel Instagram 1080×1080 gerado 100% com GPT Image — copy, layout visual
-            e identidade Omafit já embutidos no prompt. Opcionalmente envie um design de
-            referência. Baixe os PNGs ou publique no @omafit.co.
+            e identidade Omafit já embutidos no prompt. Opcionalmente envie uma referência visual
+            para inspirar composição (planos, mood) — sem copiar a cena. Baixe os PNGs ou publique
+            no @omafit.co.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -488,8 +489,8 @@ export function SocialTab({
             <div className="flex flex-col gap-2 text-sm">
               <span className="font-medium">Design de referência (opcional)</span>
               <span className="text-xs text-muted-foreground">
-                Envie um slide ou peça visual para o GPT usar como guia de estilo (cores,
-                textura, composição). Não copia textos nem logos da referência.
+                Envie uma imagem para o GPT extrair inspiração de composição — mood, planos,
+                profundidade e atmosfera. As cenas geradas serão novas, sem copiar a referência.
               </span>
               <div className="flex flex-wrap items-center gap-3">
                 <input

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   CameraIcon,
   ExternalLinkIcon,
@@ -224,6 +224,7 @@ export function SocialTab({
   const [imagePrompt, setImagePrompt] = useState("");
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [referenceName, setReferenceName] = useState("");
+  const referenceInputRef = useRef<HTMLInputElement>(null);
   const [caption, setCaption] = useState("");
   const [status, setStatus] = useState<"idle" | "generating" | "error">("idle");
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "error">("idle");
@@ -491,21 +492,24 @@ export function SocialTab({
                 textura, composição). Não copia textos nem logos da referência.
               </span>
               <div className="flex flex-wrap items-center gap-3">
-                <label className="inline-flex cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="sr-only"
-                    onChange={handleReferenceFile}
-                    disabled={status === "generating"}
-                  />
-                  <Button type="button" variant="outline" size="sm" asChild>
-                    <span>
-                      <UploadIcon data-icon="inline-start" />
-                      Enviar referência
-                    </span>
-                  </Button>
-                </label>
+                <input
+                  ref={referenceInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={handleReferenceFile}
+                  disabled={status === "generating"}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={status === "generating"}
+                  onClick={() => referenceInputRef.current?.click()}
+                >
+                  <UploadIcon data-icon="inline-start" />
+                  Enviar referência
+                </Button>
                 {referenceImage ? (
                   <>
                     <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 p-1.5 pr-3">

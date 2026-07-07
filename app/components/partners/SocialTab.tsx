@@ -474,9 +474,8 @@ export function SocialTab({
             <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium">Estilo visual (opcional)</span>
               <span className="text-xs text-muted-foreground">
-                A identidade Omafit (cores, fontes Gloock/Bricolage/Rasbora/DM Mono e hierarquia)
-                já vem no prompt. Use este campo para direção criativa extra — textura, luz,
-                atmosfera.
+                Direção extra de luz, textura e atmosfera. Se enviar referência visual,
+                os dois se combinam: estilo define o tratamento; referência inspira composição e planos.
               </span>
               <textarea
                 rows={3}
@@ -489,8 +488,8 @@ export function SocialTab({
             <div className="flex flex-col gap-2 text-sm">
               <span className="font-medium">Design de referência (opcional)</span>
               <span className="text-xs text-muted-foreground">
-                Envie uma imagem para o GPT extrair inspiração de composição — mood, planos,
-                profundidade e atmosfera. As cenas geradas serão novas, sem copiar a referência.
+                Inspira composição — mood, planos, profundidade e atmosfera espacial. Combina com
+                o estilo visual acima; as cenas geradas serão novas, sem copiar a referência.
               </span>
               <div className="flex flex-wrap items-center gap-3">
                 <input

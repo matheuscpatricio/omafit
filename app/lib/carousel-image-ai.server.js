@@ -56,6 +56,18 @@ Retorne JSON:
   "doNotCopy": "o que evitar reproduzir literalmente da referência"
 }`;
 
+function buildReferenceAnalysisPrompt(userStylePrompt) {
+  const style = String(userStylePrompt || "").trim();
+  if (!style) return REFERENCE_ANALYSIS_PROMPT;
+
+  return `${REFERENCE_ANALYSIS_PROMPT}
+
+O usuário também descreveu um ESTILO VISUAL em texto separado. Sua análise deve COMPLEMENTAR esse estilo — foque em composição, planos, profundidade e mood espacial que o texto não cobre.
+NÃO repita nem substitua o estilo visual do usuário; extraia o que a referência acrescenta em termos compositivos.
+Estilo visual já informado pelo usuário:
+"${style}"`;
+}
+
 function hashSeed(input) {
   let h = 2166136261;
   const str = String(input);
@@ -124,8 +136,9 @@ function formatReferenceInspiration(parsed) {
 /**
  * Analisa a referência com visão — extrai inspiração compositiva, sem anexar a imagem ao gerador.
  */
-export async function analyzeReferenceInspiration(referenceBuffer, apiKey) {
+export async function analyzeReferenceInspiration(referenceBuffer, apiKey, userStylePrompt) {
   const imageUrl = await referenceBufferToVisionUrl(referenceBuffer);
+  const analysisPrompt = buildReferenceAnalysisPrompt(userStylePrompt);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -141,7 +154,7 @@ export async function analyzeReferenceInspiration(referenceBuffer, apiKey) {
         {
           role: "user",
           content: [
-            { type: "text", text: REFERENCE_ANALYSIS_PROMPT },
+            { type: "text", text: analysisPrompt },
             { type: "image_url", image_url: { url: imageUrl, detail: "low" } },
           ],
         },
@@ -165,6 +178,45 @@ export async function analyzeReferenceInspiration(referenceBuffer, apiKey) {
   }
 }
 
+function buildCreativeDirectionBlock({ imagePrompt, referenceInspiration }) {
+  const style = String(imagePrompt || "").trim();
+  const hasStyle = Boolean(style);
+  const hasReference = Boolean(referenceInspiration);
+
+  if (!hasStyle && !hasReference) {
+    return `DIREÇÃO CRIATIVA:\n${DEFAULT_STYLE_PROMPT}`;
+  }
+
+  if (hasStyle && !hasReference) {
+    return `DIREÇÃO CRIATIVA DO USUÁRIO (estilo visual):\n${style}`;
+  }
+
+  if (!hasStyle && hasReference) {
+    return `INSPIRAÇÃO DE COMPOSIÇÃO (extraída da referência — cenas novas, não copiar):
+${referenceInspiration}
+
+Regras da inspiração:
+- Gere uma cena NOVA que compartilhe o espírito compositivo (planos, mood, amplitude, camadas)
+- NÃO copie pessoas, objetos, poses, paisagens nem layout idênticos à referência
+- Adapte os princípios ao conteúdo textual deste slide e à identidade Omafit`;
+  }
+
+  return `DIREÇÃO CRIATIVA COMBINADA (estilo visual + referência — os dois são obrigatórios e se complementam):
+
+1) ESTILO VISUAL DO USUÁRIO (luz, textura, materialidade, tratamento fotográfico, atmosfera):
+${style}
+
+2) INSPIRAÇÃO DE COMPOSIÇÃO (da referência — planos, profundidade, mood espacial, hierarquia de camadas):
+${referenceInspiration}
+
+REGRAS DE FUSÃO (crítico):
+- Aplique o estilo visual (#1) SOBRE uma composição inspirada na referência (#2)
+- O estilo visual NÃO pode anular nem substituir os princípios compositivos da referência
+- A referência NÃO pode ignorar o estilo visual descrito pelo usuário
+- Crie cenas NOVAS — não reproduza literalmente a referência
+- Adapte a fusão ao conteúdo textual deste slide e à identidade Omafit`;
+}
+
 function buildSlideImagePrompt({
   imagePrompt,
   slide,
@@ -173,7 +225,6 @@ function buildSlideImagePrompt({
   designSeed,
   referenceInspiration,
 }) {
-  const style = String(imagePrompt || "").trim() || DEFAULT_STYLE_PROMPT;
   const variation = hashSeed(`${designSeed}-${index}`) % 997;
   const kind = slide.kind || "content";
   const layoutHint = SLIDE_LAYOUT_HINT[kind] || SLIDE_LAYOUT_HINT.content;
@@ -183,23 +234,12 @@ function buildSlideImagePrompt({
   const highlight = plainCopy(slide.highlight);
   const body = plainCopy(slide.body);
 
-  const referenceBlock = referenceInspiration
-    ? `
-INSPIRAÇÃO DE COMPOSIÇÃO (extraída da referência do usuário — use só como guia, NÃO reproduza a cena):
-${referenceInspiration}
-
-Regras da inspiração:
-- Gere uma cena NOVA que compartilhe o espírito compositivo (planos, mood, amplitude, camadas)
-- NÃO copie pessoas, objetos, poses, paisagens nem layout idênticos à referência
-- Adapte os princípios ao conteúdo textual deste slide e à identidade Omafit
-`
-    : "";
+  const creativeDirection = buildCreativeDirectionBlock({ imagePrompt, referenceInspiration });
 
   return `Crie um slide completo de carrossel Instagram — imagem final pronta para publicar, com TODOS os textos renderizados na composição.
 
-DIREÇÃO CRIATIVA DO USUÁRIO:
-${style}
-${referenceBlock}
+${creativeDirection}
+
 ${OMAFIT_VISUAL_IDENTITY}
 
 Fontes de referência: ${FONT_FAMILY.title} (Gloock), ${FONT_FAMILY.body} (Bricolage).
@@ -285,7 +325,11 @@ export async function generateCarouselSlideImages({
 
   let referenceInspiration = null;
   if (referenceBuffer) {
-    referenceInspiration = await analyzeReferenceInspiration(referenceBuffer, apiKey);
+    referenceInspiration = await analyzeReferenceInspiration(
+      referenceBuffer,
+      apiKey,
+      imagePrompt,
+    );
     if (referenceInspiration) {
       console.info("[carousel-image-ai] reference inspiration extracted for composition");
     }

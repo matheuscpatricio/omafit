@@ -1,7 +1,13 @@
 import sharp from "sharp";
 import { FONT_FAMILY } from "./carousel-fonts.server.js";
+import {
+  INSTAGRAM_CAROUSEL_WIDTH,
+  INSTAGRAM_CAROUSEL_HEIGHT,
+} from "./omafit-brand.server.js";
 
 const MAX_REFERENCE_BYTES = 5 * 1024 * 1024;
+/** Geração portrait na OpenAI (2:3) — redimensionado para 4:5 sem crop. */
+const OPENAI_IMAGE_SIZE = "1024x1536";
 
 /** Identidade visual embutida em todo prompt de imagem. */
 export const OMAFIT_VISUAL_IDENTITY = `
@@ -18,8 +24,9 @@ TIPOGRAFIA (renderizar os textos nestes estilos):
 - Texto de apoio (body): Bricolage Grotesque — legível, tamanho médio
 
 LAYOUT:
-- Post Instagram quadrado 1080×1080, estética editorial premium de moda/e-commerce
-- Hierarquia clara: eyebrow → setup → destaque → apoio
+- Post Instagram retrato 1080×1350 (proporção 4:5), estética editorial premium de moda/e-commerce
+- Margens generosas (mínimo 8% em todos os lados) — nenhuma palavra ou linha pode ser cortada
+- Hierarquia clara: eyebrow → setup → destaque → apoio, com espaço vertical suficiente para todo o texto
 - Palavras-chave do highlight em laranja #d96845
 - Respiração generosa, composição sofisticada, não poluída
 - PROIBIDO: nome de marca, logotipo, wordmark ou @ de rede social na imagem
@@ -257,6 +264,8 @@ ${body ? `- Apoio (corpo): "${body}"` : ""}
 
 Regras finais:
 - Renderize os textos legíveis, bem espaçados, sem palavras coladas
+- Todo o texto deve caber integralmente no canvas ${INSTAGRAM_CAROUSEL_WIDTH}×${INSTAGRAM_CAROUSEL_HEIGHT} — nada cortado nas bordas
+- Reduza tamanho de fonte se necessário, mas nunca truncar ou cortar palavras
 - Não invente textos além dos listados
 - Não use fundo laranja dominante
 - Sem logotipo, sem nome de marca, sem numeração de páginas
@@ -283,11 +292,12 @@ async function requestOpenAiImageGenerate(prompt, apiKey) {
     model,
     prompt,
     n: 1,
-    size: "1024x1024",
+    size: OPENAI_IMAGE_SIZE,
     quality: "high",
   };
 
   if (model === "dall-e-3") {
+    body.size = "1024x1792";
     body.quality = "hd";
     body.response_format = "b64_json";
   }

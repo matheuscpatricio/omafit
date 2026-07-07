@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { randomUUID } from "node:crypto";
-import { INSTAGRAM_CAROUSEL_SIZE, OMAFIT_BRAND } from "./lib/omafit-brand.server.js";
+import { INSTAGRAM_CAROUSEL_WIDTH, INSTAGRAM_CAROUSEL_HEIGHT, OMAFIT_BRAND } from "./lib/omafit-brand.server.js";
 import {
   getActiveFontFamily,
   getCarouselFontFaceDefs,
@@ -170,9 +170,26 @@ export async function generateCarouselCopy(theme, description) {
   };
 }
 
+function hexToRgb(hex) {
+  const value = String(hex || "#16100a").replace("#", "");
+  const n = parseInt(value, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+async function finalizeSlideBuffer(rawBuffer, background = OMAFIT_BRAND.brown) {
+  return sharp(rawBuffer)
+    .resize(INSTAGRAM_CAROUSEL_WIDTH, INSTAGRAM_CAROUSEL_HEIGHT, {
+      fit: "contain",
+      background: hexToRgb(background),
+    })
+    .png()
+    .toBuffer();
+}
+
 /** Fallback vetorial se um slide GPT falhar. */
 async function renderVectorSlide(slide, designPlan, index, total, fonts, fontDefs) {
-  const size = INSTAGRAM_CAROUSEL_SIZE;
+  const width = INSTAGRAM_CAROUSEL_WIDTH;
+  const height = INSTAGRAM_CAROUSEL_HEIGHT;
   const theme = themeAtIndex(designPlan, index);
   const atmosphere = atmosphereAtIndex(designPlan, index);
   const { decorations, content } = buildLayoutContent(
@@ -185,10 +202,10 @@ async function renderVectorSlide(slide, designPlan, index, total, fonts, fontDef
   );
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
   ${fontDefs}
   ${atmosphereDefs(index, theme)}
-  <rect width="${size}" height="${size}" fill="${theme.bg}"/>
+  <rect width="${width}" height="${height}" fill="${theme.bg}"/>
   ${atmosphereLayer(index, theme, atmosphere)}
   ${decorations}
   ${content}
@@ -202,7 +219,6 @@ export async function renderCarouselSlides(slides, designSeed, options = {}) {
   const designPlan = buildDesignPlan(slides, designSeed);
   const fontDefs = await getCarouselFontFaceDefs();
   const fonts = getActiveFontFamily();
-  const size = INSTAGRAM_CAROUSEL_SIZE;
 
   const gptImages = await generateCarouselSlideImages({
     imagePrompt,
@@ -222,10 +238,7 @@ export async function renderCarouselSlides(slides, designSeed, options = {}) {
     let imageMode = "gpt";
 
     if (gptImages[i]) {
-      buffer = await sharp(gptImages[i])
-        .resize(size, size, { fit: "cover", position: "centre" })
-        .png()
-        .toBuffer();
+      buffer = await finalizeSlideBuffer(gptImages[i], theme.bg);
     } else {
       console.warn(`[carousel] slide ${i + 1}: fallback vetorial`);
       buffer = await renderVectorSlide(slides[i], designPlan, i, slides.length, fonts, fontDefs);

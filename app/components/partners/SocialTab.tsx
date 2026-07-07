@@ -442,7 +442,7 @@ export function SocialTab({
             <CardTitle>Gerar conteúdo</CardTitle>
           </div>
           <CardDescription>
-            Carrossel Instagram 1080×1080 gerado 100% com GPT Image — copy, layout visual
+            Carrossel Instagram 1080×1350 (retrato 4:5) gerado 100% com GPT Image — copy, layout visual
             e identidade Omafit já embutidos no prompt. Opcionalmente envie uma referência visual
             para inspirar composição (planos, mood) — sem copiar a cena. Baixe os PNGs ou publique
             no @omafit.co.
@@ -658,7 +658,7 @@ export function SocialTab({
                     <img
                       src={slide.dataUrl}
                       alt={`Slide ${slide.index}: ${slide.title}`}
-                      className="aspect-square w-full object-cover"
+                      className="aspect-[4/5] w-full object-contain bg-muted/20"
                     />
                     <div className="flex items-center justify-between gap-2 p-3">
                       <div className="min-w-0">
@@ -691,7 +691,7 @@ export function SocialTab({
           hint="Perfil oficial"
         />
         <MetricCard label="YouTube" value={`@${youtube?.handle || "omafit-g3d"}`} hint="Canal oficial" />
-        <MetricCard label="Formato" value="1080²" hint="Carrossel quadrado Instagram" />
+        <MetricCard label="Formato" value="1080×1350" hint="Carrossel retrato 4:5 Instagram" />
         <MetricCard
           label="Identidade"
           value="Omafit"

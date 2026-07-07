@@ -74,4 +74,8 @@ export const OMAFIT_SLIDE_THEMES = [
   },
 ];
 
-export const INSTAGRAM_CAROUSEL_SIZE = 1080;
+export const INSTAGRAM_CAROUSEL_WIDTH = 1080;
+/** Retrato 4:5 — mais altura para copy sem cortar palavras. */
+export const INSTAGRAM_CAROUSEL_HEIGHT = 1350;
+/** Largura do slide (legado: layouts vetoriais usam esta constante). */
+export const INSTAGRAM_CAROUSEL_SIZE = INSTAGRAM_CAROUSEL_WIDTH;

@@ -23,6 +23,8 @@ import { getShopDomain } from "../utils/getShopDomain";
 import { useAppI18n } from "../contexts/AppI18n";
 import { shopHasWhatsappMarketingAccess } from "../shop-whatsapp-marketing-access.server.js";
 
+const META_WHATSAPP_MANAGER_URL = "https://business.facebook.com/wa/manage/home/";
+
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const check = await ensureShopHasActiveBilling(admin, session.shop);
@@ -281,6 +283,9 @@ export default function TryOnMarketingPage() {
                   Informe o Phone Number ID e o token permanente da Meta Business Manager.
                 </Text>
               )}
+              <Button url={META_WHATSAPP_MANAGER_URL} external>
+                Abrir Meta Business Manager (WhatsApp)
+              </Button>
               <TextField label="Phone Number ID" value={phoneNumberId} onChange={setPhoneNumberId} autoComplete="off" />
               <TextField label="WABA ID" value={wabaId} onChange={setWabaId} autoComplete="off" />
               <TextField label="Número exibido" value={displayPhone} onChange={setDisplayPhone} autoComplete="off" />

@@ -2,6 +2,34 @@
 (function () {
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
+  const OMAFIT_SHOPPER_DEVICE_KEY = 'omafit_device_id_v1';
+
+  function createOmafitShopperDeviceId() {
+    try {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    } catch (e) {}
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0;
+      var v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  function readOmafitShopperDeviceId() {
+    try {
+      var existing = localStorage.getItem(OMAFIT_SHOPPER_DEVICE_KEY);
+      if (existing && String(existing).trim()) return String(existing).trim();
+    } catch (e) {}
+    return null;
+  }
+
+  function adoptOmafitShopperDeviceId(deviceId) {
+    var id = deviceId && String(deviceId).trim();
+    if (!id) return;
+    try {
+      localStorage.setItem(OMAFIT_SHOPPER_DEVICE_KEY, id);
+    } catch (e) {}
+  }
 
   var OMAFIT_GROWTH_PLUS_PLANS = { growth: 1, pro: 1, professional: 1, enterprise: 1 };
   function omafitHasGrowthPlusPlan(plan) {
@@ -2189,6 +2217,10 @@
     // Construir URL apenas com dados essenciais (evitar 414 URI Too Long)
     const publicIdToUse = OMAFIT_CONFIG.publicId || 'wgt_pub_default';
     console.log('🔑 PublicId sendo usado:', publicIdToUse);
+    var omafitShopperDeviceId = readOmafitShopperDeviceId();
+    if (omafitShopperDeviceId) {
+      console.log('🆔 Shopper device id (loja):', omafitShopperDeviceId);
+    }
 
     const resolvedProductHandle =
       (productInfo && productInfo.productHandle ? String(productInfo.productHandle).trim() : '') ||
@@ -2220,6 +2252,9 @@
       '&locale=' + encodeURIComponent(storeLanguage) +
       '&tryon_layout=' + encodeURIComponent(omafitIframeTryonLayout) +
       '&tryonLayout=' + encodeURIComponent(omafitIframeTryonLayout);
+    if (omafitShopperDeviceId) {
+      widgetUrl += '&omafitDeviceId=' + encodeURIComponent(omafitShopperDeviceId);
+    }
 
     /** Dados da loja na query — o provador AR (iframe /widget) lê o bootstrap só pela URL antes do postMessage. */
     if (config && config.primaryColor && String(config.primaryColor).trim()) {
@@ -2533,6 +2568,11 @@
           language: storeLanguage,
           locale: storeLanguage,
           storeLanguage: storeLanguage,
+          shopDomain: shopDomain,
+          shop_domain: shopDomain,
+          omafitDeviceId: omafitShopperDeviceId || null,
+          omafit_device_id: omafitShopperDeviceId || null,
+          shopperDeviceId: omafitShopperDeviceId || null,
           shopName: resolvedStoreName,
           shop_name: resolvedStoreName,
           storeName: resolvedStoreName,
@@ -3316,6 +3356,15 @@
   }
 
   window.addEventListener('message', async function (event) {
+    if (event && event.data && event.data.type === 'omafit-device-id-adopt') {
+      if (event.origin !== OMAFIT_WIDGET_ORIGIN) return;
+      adoptOmafitShopperDeviceId(event.data.deviceId);
+      if (OMAFIT_DEBUG) {
+        console.log('🆔 Shopper device id adoptado da loja iframe:', event.data.deviceId);
+      }
+      return;
+    }
+
     /** Widget no iframe pede galeria completa — só a página do produto (mesma origem) acede a product.js/DOM. */
     if (event && event.data && event.data.type === 'omafit-request-product-images') {
       if (event.origin !== OMAFIT_WIDGET_ORIGIN) return;

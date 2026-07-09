@@ -16,6 +16,7 @@ import ptBRTranslations from "@shopify/polaris/locales/pt-BR.json";
 import esTranslations from "@shopify/polaris/locales/es.json";
 import { authenticate, registerWebhooks } from "../shopify.server";
 import { syncBillingFromShopify } from "../billing-sync.server";
+import { shopHasWhatsappMarketingAccess } from "../shop-whatsapp-marketing-access.server.js";
 import { AppI18nProvider, useAppI18n } from "../contexts/AppI18n";
 import { OmafitBrandBanner } from "../components/OmafitBrandBanner";
 import "../styles/omafit-brand.css";
@@ -168,17 +169,26 @@ export const loader = async ({ request }) => {
   }
 
   const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
+  let whatsappMarketingEnabled = false;
+  try {
+    whatsappMarketingEnabled = await shopHasWhatsappMarketingAccess(session.shop);
+  } catch (e) {
+    console.warn("[App] WhatsApp marketing plan check failed:", e);
+  }
+
   return {
     apiKey: process.env.SHOPIFY_API_KEY || "",
     supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "",
     supabaseKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "",
     appUrl: appUrl || "",
     locale,
+    whatsappMarketingEnabled,
   };
 };
 
 function AppNav() {
   const { t } = useAppI18n();
+  const { whatsappMarketingEnabled } = useLoaderData();
   const location = useLocation();
   const search = location.search || "";
   // React Router <Link> evita reload completo do iframe; <s-link> pode forçar navegação documento inteiro.
@@ -200,6 +210,11 @@ function AppNav() {
       <Link to={`/app/analytics${search}`} style={navLinkStyle}>
         {t("nav.analytics")}
       </Link>
+      {whatsappMarketingEnabled ? (
+        <Link to={`/app/try-on-marketing${search}`} style={navLinkStyle}>
+          Try On Marketing
+        </Link>
+      ) : null}
       <Link to={`/app/ar-eyewear${search}`} style={navLinkStyle}>
         {t("nav.arEyewear")}
       </Link>

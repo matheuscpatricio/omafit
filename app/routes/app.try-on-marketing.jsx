@@ -83,7 +83,6 @@ export default function TryOnMarketingPage() {
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [selectedCollections, setSelectedCollections] = useState([]);
   const [scheduledAt, setScheduledAt] = useState("");
-  const [generationMode, setGenerationMode] = useState("personalized_tryon");
   const [preview, setPreview] = useState(null);
 
   const collectionOptions = useMemo(
@@ -154,17 +153,21 @@ export default function TryOnMarketingPage() {
   };
 
   const handlePreview = async () => {
+    if (selectedCollections.length === 0) {
+      setError("Selecione uma coleção para preview da audiência.");
+      return;
+    }
     try {
       const res = await apiFetch("segments/preview", {
         method: "POST",
         body: {
           filter_json: {
             has_marketing_consent: true,
+            has_photo_consent: true,
             tryon_since_days: 30,
             product_handles: [],
           },
           promoted_collection_handles: selectedCollections,
-          generation_mode: generationMode,
         },
       });
       setPreview(res);
@@ -174,27 +177,22 @@ export default function TryOnMarketingPage() {
   };
 
   const handleCreateCampaign = async () => {
-    if (generationMode === "personalized_tryon" && selectedCollections.length === 0) {
-      setError("Selecione uma coleção para campanhas com try-on personalizado.");
+    if (selectedCollections.length === 0) {
+      setError("Selecione uma coleção — cada destinatário recebe um try-on com peça dessa coleção.");
       return;
     }
     try {
       let segmentId = segments[0]?.id;
       const segmentFilter = {
         has_marketing_consent: true,
+        has_photo_consent: true,
         tryon_since_days: 30,
-        ...(generationMode === "personalized_tryon" && selectedCollections.length > 0
-          ? { has_photo_consent: true }
-          : {}),
       };
       if (!segmentId) {
         const seg = await apiFetch("segments", {
           method: "POST",
           body: {
-            name:
-              generationMode === "personalized_tryon"
-                ? "Opt-in + foto (30 dias)"
-                : "Opt-in ativos (30 dias)",
+            name: "Opt-in + foto (30 dias)",
             filter_json: segmentFilter,
           },
         });
@@ -208,7 +206,6 @@ export default function TryOnMarketingPage() {
           template_id: selectedTemplate || null,
           promoted_collection_handles: selectedCollections,
           scheduled_at: scheduledAt || null,
-          generation_mode: generationMode,
           materialize: true,
           confirm: Boolean(scheduledAt),
         },
@@ -338,20 +335,10 @@ export default function TryOnMarketingPage() {
                 Nova campanha
               </Text>
               <Banner tone="info">
-                Campanhas personalizadas geram um try-on por destinatário (foto + peça da coleção) e
-                enviam a imagem no WhatsApp. O template Meta deve ter header IMAGE e variáveis no body
-                (ex.: nome do produto e loja).
+                Cada destinatário recebe um try-on personalizado (foto dele + peça da coleção) enviado no
+                WhatsApp. O template Meta deve ter header IMAGE e variáveis no body (ex.: nome do produto e loja).
               </Banner>
               <TextField label="Nome" value={campaignName} onChange={setCampaignName} autoComplete="off" />
-              <Select
-                label="Modo de geração"
-                options={[
-                  { label: "Try-on personalizado (recomendado)", value: "personalized_tryon" },
-                  { label: "Somente template (sem imagem gerada)", value: "template_only" },
-                ]}
-                value={generationMode}
-                onChange={setGenerationMode}
-              />
               <Select
                 label="Template"
                 options={[
@@ -363,11 +350,7 @@ export default function TryOnMarketingPage() {
               />
               <Select
                 label="Coleção promovida"
-                helpText={
-                  generationMode === "personalized_tryon"
-                    ? "Obrigatório — cada destinatário recebe um produto desta coleção."
-                    : "Opcional — link da coleção na mensagem."
-                }
+                helpText="Obrigatório — cada destinatário recebe um produto desta coleção com try-on personalizado."
                 options={[{ label: "Selecione…", value: "" }, ...collectionOptions]}
                 value={selectedCollections[0] || ""}
                 onChange={(value) => {
@@ -387,14 +370,12 @@ export default function TryOnMarketingPage() {
                 {preview != null ? (
                   <BlockStack gap="100">
                     <Badge>{`${preview.count ?? 0} elegíveis`}</Badge>
-                    {generationMode === "personalized_tryon" ? (
-                      <Text as="span" tone="subdued" variant="bodySm">
-                        {`${preview.tryon_generations ?? 0} gerações try-on · ~$${Number(preview.estimated_cost_usd ?? 0).toFixed(2)} USD`}
-                        {preview.base_opt_in_count != null && preview.count !== preview.base_opt_in_count
-                          ? ` (${preview.base_opt_in_count} opt-ins, ${(preview.base_opt_in_count ?? 0) - (preview.count ?? 0)} sem foto/consentimento)`
-                          : ""}
-                      </Text>
-                    ) : null}
+                    <Text as="span" tone="subdued" variant="bodySm">
+                      {`${preview.tryon_generations ?? preview.count ?? 0} try-ons · ~$${Number(preview.estimated_cost_usd ?? 0).toFixed(2)} USD`}
+                      {preview.base_opt_in_count != null && preview.count !== preview.base_opt_in_count
+                        ? ` (${preview.base_opt_in_count} opt-ins, ${(preview.base_opt_in_count ?? 0) - (preview.count ?? 0)} sem foto/consentimento)`
+                        : ""}
+                    </Text>
                   </BlockStack>
                 ) : null}
                 <Button variant="primary" onClick={() => void handleCreateCampaign()}>

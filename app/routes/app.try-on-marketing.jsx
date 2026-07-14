@@ -18,6 +18,7 @@ import {
   Spinner,
   Collapsible,
   List,
+  RangeSlider,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
@@ -26,6 +27,7 @@ import { useAppI18n } from "../contexts/AppI18n";
 import { shopHasWhatsappMarketingAccess } from "../shop-whatsapp-marketing-access.server.js";
 
 const META_WHATSAPP_MANAGER_URL = "https://business.facebook.com/wa/manage/home/";
+const WHATSAPP_MESSAGE_PRICE_USD = 0.07;
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -89,6 +91,7 @@ export default function TryOnMarketingPage() {
   const [selectedCollections, setSelectedCollections] = useState([]);
   const [scheduledAt, setScheduledAt] = useState("");
   const [preview, setPreview] = useState(null);
+  const [messageCount, setMessageCount] = useState(1);
   const [showConnectionForm, setShowConnectionForm] = useState(false);
   const [showAdvancedConnection, setShowAdvancedConnection] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
@@ -107,6 +110,17 @@ export default function TryOnMarketingPage() {
   const selectedTemplateMeta = useMemo(
     () => approvedTemplates.find((tpl) => tpl.id === selectedTemplate) || approvedTemplates[0] || null,
     [approvedTemplates, selectedTemplate],
+  );
+
+  const capturedCustomers = metrics?.opt_in_count ?? 0;
+  const maxMessageCount = useMemo(() => {
+    if (preview == null) return 0;
+    return Math.min(Math.max(0, preview.count ?? 0), capturedCustomers);
+  }, [preview, capturedCustomers]);
+
+  const selectedMessageCost = useMemo(
+    () => (Number(messageCount) || 0) * WHATSAPP_MESSAGE_PRICE_USD,
+    [messageCount],
   );
 
   const loadAll = useCallback(async () => {
@@ -163,6 +177,11 @@ export default function TryOnMarketingPage() {
       setSelectedTemplate(approvedTemplates[0].id);
     }
   }, [approvedTemplates, selectedTemplate]);
+
+  useEffect(() => {
+    if (preview == null || maxMessageCount < 1) return;
+    setMessageCount(maxMessageCount);
+  }, [preview, maxMessageCount]);
 
   const handleConnect = async () => {
     setError(null);
@@ -229,6 +248,19 @@ export default function TryOnMarketingPage() {
       setError(t("tryOnMarketing.selectCollectionCreate"));
       return;
     }
+    if (!preview) {
+      setError(t("tryOnMarketing.previewRequired"));
+      return;
+    }
+    const count = Number(messageCount);
+    if (!Number.isFinite(count) || count < 1) {
+      setError(t("tryOnMarketing.messageCountRequired"));
+      return;
+    }
+    if (count > maxMessageCount) {
+      setError(t("tryOnMarketing.messageCountExceeded", { max: maxMessageCount }));
+      return;
+    }
     try {
       let segmentId = segments[0]?.id;
       const segmentFilter = {
@@ -257,6 +289,7 @@ export default function TryOnMarketingPage() {
           promoted_collection_handles: selectedCollections,
           generation_mode: campaignMode,
           scheduled_at: scheduledAt || null,
+          max_recipients: count,
           materialize: true,
           confirm: Boolean(scheduledAt),
         },
@@ -264,6 +297,7 @@ export default function TryOnMarketingPage() {
       setNotice(t("tryOnMarketing.campaignCreated"));
       setCampaignName("");
       setPreview(null);
+      setMessageCount(1);
       await loadAll();
     } catch (err) {
       setError(err.message);
@@ -473,6 +507,7 @@ export default function TryOnMarketingPage() {
                 onChange={(value) => {
                   setCampaignMode(value);
                   setPreview(null);
+                  setMessageCount(1);
                 }}
               />
               <Select
@@ -491,6 +526,7 @@ export default function TryOnMarketingPage() {
                 onChange={(value) => {
                   setSelectedCollections(value ? [value] : []);
                   setPreview(null);
+                  setMessageCount(1);
                 }}
               />
               <TextField
@@ -526,32 +562,51 @@ export default function TryOnMarketingPage() {
                   autoComplete="off"
                 />
               </Collapsible>
+              <Button onClick={() => void handlePreview()}>{t("tryOnMarketing.previewAudience")}</Button>
+              {preview != null ? (
+                <BlockStack gap="300">
+                  {maxMessageCount > 0 ? (
+                    <RangeSlider
+                      label={t("tryOnMarketing.messageCount")}
+                      helpText={t("tryOnMarketing.messageCountHelp", {
+                        max: capturedCustomers,
+                        eligible: preview.count ?? 0,
+                      })}
+                      min={1}
+                      max={maxMessageCount}
+                      value={Math.min(Math.max(1, messageCount), maxMessageCount)}
+                      onChange={setMessageCount}
+                      output
+                    />
+                  ) : (
+                    <Banner tone="warning">{t("tryOnMarketing.noEligibleCustomers")}</Banner>
+                  )}
+                  <Text as="span" tone="subdued" variant="bodySm">
+                    {t(
+                      isExistingPhotoMode ? "tryOnMarketing.previewCostExisting" : "tryOnMarketing.previewCost",
+                      { cost: selectedMessageCost.toFixed(2) },
+                    )}
+                    {!isExistingPhotoMode &&
+                    preview.base_opt_in_count != null &&
+                    preview.count !== preview.base_opt_in_count
+                      ? ` ${t("tryOnMarketing.previewFiltered", {
+                          total: preview.base_opt_in_count ?? 0,
+                          excluded: (preview.base_opt_in_count ?? 0) - (preview.count ?? 0),
+                        })}`
+                      : ""}
+                  </Text>
+                </BlockStack>
+              ) : (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  {t("tryOnMarketing.messageCountHint", { max: capturedCustomers })}
+                </Text>
+              )}
               <InlineStack gap="200" blockAlign="center">
-                <Button onClick={() => void handlePreview()}>{t("tryOnMarketing.previewAudience")}</Button>
-                {preview != null ? (
-                  <BlockStack gap="100">
-                    <Badge>{t("tryOnMarketing.eligible", { count: preview.count ?? 0 })}</Badge>
-                    <Text as="span" tone="subdued" variant="bodySm">
-                      {t(
-                        preview.generation_mode === "existing_tryon" || isExistingPhotoMode
-                          ? "tryOnMarketing.previewCostExisting"
-                          : "tryOnMarketing.previewCost",
-                        {
-                          cost: Number(preview.estimated_cost_usd ?? 0).toFixed(2),
-                        },
-                      )}
-                      {!isExistingPhotoMode &&
-                      preview.base_opt_in_count != null &&
-                      preview.count !== preview.base_opt_in_count
-                        ? ` ${t("tryOnMarketing.previewFiltered", {
-                            total: preview.base_opt_in_count ?? 0,
-                            excluded: (preview.base_opt_in_count ?? 0) - (preview.count ?? 0),
-                          })}`
-                        : ""}
-                    </Text>
-                  </BlockStack>
-                ) : null}
-                <Button variant="primary" onClick={() => void handleCreateCampaign()}>
+                <Button
+                  variant="primary"
+                  onClick={() => void handleCreateCampaign()}
+                  disabled={!preview || maxMessageCount < 1}
+                >
                   {t("tryOnMarketing.createCampaign")}
                 </Button>
               </InlineStack>

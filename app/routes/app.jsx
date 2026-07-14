@@ -212,7 +212,7 @@ function AppNav() {
       </Link>
       {whatsappMarketingEnabled ? (
         <Link to={`/app/try-on-marketing${search}`} style={navLinkStyle}>
-          Try On Marketing
+          {t("nav.tryOnMarketing")}
         </Link>
       ) : null}
       <Link to={`/app/ar-eyewear${search}`} style={navLinkStyle}>

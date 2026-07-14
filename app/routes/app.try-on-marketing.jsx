@@ -16,6 +16,8 @@ import {
   Badge,
   DataTable,
   Spinner,
+  Collapsible,
+  List,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
@@ -82,14 +84,29 @@ export default function TryOnMarketingPage() {
   const [displayPhone, setDisplayPhone] = useState("");
 
   const [campaignName, setCampaignName] = useState("");
+  const [campaignMode, setCampaignMode] = useState("personalized_tryon");
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [selectedCollections, setSelectedCollections] = useState([]);
   const [scheduledAt, setScheduledAt] = useState("");
   const [preview, setPreview] = useState(null);
+  const [showConnectionForm, setShowConnectionForm] = useState(false);
+  const [showAdvancedConnection, setShowAdvancedConnection] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [showMessages, setShowMessages] = useState(false);
 
   const collectionOptions = useMemo(
     () => collections.map((c) => ({ label: c.title || c.handle, value: c.handle })),
     [collections],
+  );
+
+  const approvedTemplates = useMemo(
+    () => (templates || []).filter((tpl) => String(tpl.status || "").toUpperCase() === "APPROVED"),
+    [templates],
+  );
+
+  const selectedTemplateMeta = useMemo(
+    () => approvedTemplates.find((tpl) => tpl.id === selectedTemplate) || approvedTemplates[0] || null,
+    [approvedTemplates, selectedTemplate],
   );
 
   const loadAll = useCallback(async () => {
@@ -104,7 +121,17 @@ export default function TryOnMarketingPage() {
         apiFetch("segments").catch(() => ({ segments: [] })),
       ]);
       setConnection(connRes);
-      setTemplates(tplRes.templates || []);
+      let loadedTemplates = tplRes.templates || [];
+      if (connRes.connected && loadedTemplates.length === 0) {
+        try {
+          await apiFetch("templates/sync", { method: "POST", body: {} });
+          const refreshed = await apiFetch("templates").catch(() => ({ templates: [] }));
+          loadedTemplates = refreshed.templates || [];
+        } catch {
+          /* sync optional on load */
+        }
+      }
+      setTemplates(loadedTemplates);
       setCampaigns(campRes.campaigns || []);
       setMetrics(metricsRes);
       setSegments(segRes.segments || []);
@@ -115,15 +142,27 @@ export default function TryOnMarketingPage() {
         setCollections(colJson.collections || []);
       }
     } catch (err) {
-      setError(err.message || "Erro ao carregar");
+      setError(err.message || t("tryOnMarketing.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [shopDomain]);
+  }, [shopDomain, t]);
 
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (!connection?.connected) {
+      setShowConnectionForm(true);
+    }
+  }, [connection?.connected]);
+
+  useEffect(() => {
+    if (approvedTemplates.length > 0 && !selectedTemplate) {
+      setSelectedTemplate(approvedTemplates[0].id);
+    }
+  }, [approvedTemplates, selectedTemplate]);
 
   const handleConnect = async () => {
     setError(null);
@@ -137,8 +176,10 @@ export default function TryOnMarketingPage() {
           display_phone: displayPhone || null,
         },
       });
-      setNotice("WhatsApp conectado com sucesso.");
+      setNotice(t("tryOnMarketing.connectSuccess"));
+      setShowConnectionForm(false);
       await loadAll();
+      await handleSyncTemplates();
     } catch (err) {
       setError(err.message);
     }
@@ -147,30 +188,35 @@ export default function TryOnMarketingPage() {
   const handleSyncTemplates = async () => {
     try {
       await apiFetch("templates/sync", { method: "POST", body: {} });
-      setNotice("Templates sincronizados.");
+      setNotice(t("tryOnMarketing.messagesSynced"));
       await loadAll();
     } catch (err) {
       setError(err.message);
     }
   };
 
+  const isExistingPhotoMode = campaignMode === "existing_tryon";
+
+  const buildCampaignPayload = () => ({
+    filter_json: {
+      has_marketing_consent: true,
+      has_photo_consent: !isExistingPhotoMode,
+      tryon_since_days: 30,
+      product_handles: [],
+    },
+    promoted_collection_handles: selectedCollections,
+    generation_mode: campaignMode,
+  });
+
   const handlePreview = async () => {
-    if (selectedCollections.length === 0) {
-      setError("Selecione uma coleção para preview da audiência.");
+    if (!isExistingPhotoMode && selectedCollections.length === 0) {
+      setError(t("tryOnMarketing.selectCollectionPreview"));
       return;
     }
     try {
       const res = await apiFetch("segments/preview", {
         method: "POST",
-        body: {
-          filter_json: {
-            has_marketing_consent: true,
-            has_photo_consent: true,
-            tryon_since_days: 30,
-            product_handles: [],
-          },
-          promoted_collection_handles: selectedCollections,
-        },
+        body: buildCampaignPayload(),
       });
       setPreview(res);
     } catch (err) {
@@ -179,22 +225,24 @@ export default function TryOnMarketingPage() {
   };
 
   const handleCreateCampaign = async () => {
-    if (selectedCollections.length === 0) {
-      setError("Selecione uma coleção — cada destinatário recebe um try-on com peça dessa coleção.");
+    if (!isExistingPhotoMode && selectedCollections.length === 0) {
+      setError(t("tryOnMarketing.selectCollectionCreate"));
       return;
     }
     try {
       let segmentId = segments[0]?.id;
       const segmentFilter = {
         has_marketing_consent: true,
-        has_photo_consent: true,
+        has_photo_consent: !isExistingPhotoMode,
         tryon_since_days: 30,
       };
       if (!segmentId) {
         const seg = await apiFetch("segments", {
           method: "POST",
           body: {
-            name: "Opt-in + foto (30 dias)",
+            name: isExistingPhotoMode
+              ? t("tryOnMarketing.segmentDefaultNameExisting")
+              : t("tryOnMarketing.segmentDefaultName"),
             filter_json: segmentFilter,
           },
         });
@@ -203,16 +251,17 @@ export default function TryOnMarketingPage() {
       await apiFetch("campaigns", {
         method: "POST",
         body: {
-          name: campaignName || "Campanha Try On",
+          name: campaignName || t("tryOnMarketing.newCampaignTitle"),
           segment_id: segmentId,
-          template_id: selectedTemplate || null,
+          template_id: selectedTemplateMeta?.id || selectedTemplate || null,
           promoted_collection_handles: selectedCollections,
+          generation_mode: campaignMode,
           scheduled_at: scheduledAt || null,
           materialize: true,
           confirm: Boolean(scheduledAt),
         },
       });
-      setNotice("Campanha criada.");
+      setNotice(t("tryOnMarketing.campaignCreated"));
       setCampaignName("");
       setPreview(null);
       await loadAll();
@@ -223,7 +272,7 @@ export default function TryOnMarketingPage() {
 
   if (loading) {
     return (
-      <Page title="Try On Marketing">
+      <Page title={t("tryOnMarketing.title")}>
         <InlineStack align="center">
           <Spinner />
         </InlineStack>
@@ -233,14 +282,14 @@ export default function TryOnMarketingPage() {
 
   if (!hasWhatsappMarketingAccess) {
     return (
-      <Page title="Try On Marketing">
+      <Page title={t("tryOnMarketing.title")}>
         <Layout>
           <Layout.Section>
             <Banner tone="warning">
               <p>
-                Try On Marketing está em piloto e ainda não está disponível para esta loja.{" "}
+                {t("tryOnMarketing.pilotLocked")}{" "}
                 <Link to={`/app/billing${searchParams.toString() ? `?${searchParams.toString()}` : ""}`}>
-                  Ver planos
+                  {t("tryOnMarketing.viewPlans")}
                 </Link>
               </p>
             </Banner>
@@ -251,7 +300,7 @@ export default function TryOnMarketingPage() {
   }
 
   return (
-    <Page title="Try On Marketing" subtitle="WhatsApp marketing pós-provador virtual">
+    <Page title={t("tryOnMarketing.title")} subtitle={t("tryOnMarketing.subtitle")}>
       <Layout>
         {error ? (
           <Layout.Section>
@@ -269,65 +318,131 @@ export default function TryOnMarketingPage() {
         ) : null}
 
         <Layout.Section>
+          <Banner tone="info">{t("tryOnMarketing.introHelp")}</Banner>
+        </Layout.Section>
+
+        <Layout.Section>
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">
-                Conexão WhatsApp (WABA)
+                {t("tryOnMarketing.connectionTitle")}
               </Text>
               {connection?.connected ? (
                 <Banner tone="success">
-                  Conectado — {connection.display_phone || connection.phone_number_id}
+                  {t("tryOnMarketing.connected", {
+                    phone: connection.display_phone || connection.phone_number_id,
+                  })}
                 </Banner>
               ) : (
                 <Text as="p" tone="subdued">
-                  Informe o Phone Number ID e o token permanente da Meta Business Manager.
+                  {t("tryOnMarketing.connectionHint")}
                 </Text>
               )}
-              <Button url={META_WHATSAPP_MANAGER_URL} external>
-                Abrir Meta Business Manager (WhatsApp)
-              </Button>
-              <TextField label="Phone Number ID" value={phoneNumberId} onChange={setPhoneNumberId} autoComplete="off" />
-              <TextField label="WABA ID" value={wabaId} onChange={setWabaId} autoComplete="off" />
-              <TextField label="Número exibido" value={displayPhone} onChange={setDisplayPhone} autoComplete="off" />
-              <TextField label="Access Token" value={accessToken} onChange={setAccessToken} type="password" autoComplete="off" />
-              <Button variant="primary" onClick={() => void handleConnect()}>
-                Salvar conexão
-              </Button>
+              {connection?.connected && !showConnectionForm ? (
+                <Button onClick={() => setShowConnectionForm(true)}>{t("tryOnMarketing.changeConnection")}</Button>
+              ) : (
+                <BlockStack gap="300">
+                  <Button url={META_WHATSAPP_MANAGER_URL} external>
+                    {t("tryOnMarketing.openMeta")}
+                  </Button>
+                  <List type="number">
+                    <List.Item>{t("tryOnMarketing.connectionStep1")}</List.Item>
+                    <List.Item>{t("tryOnMarketing.connectionStep2")}</List.Item>
+                    <List.Item>{t("tryOnMarketing.connectionStep3")}</List.Item>
+                  </List>
+                  <TextField
+                    label={t("tryOnMarketing.metaPhoneId")}
+                    helpText={t("tryOnMarketing.metaPhoneIdHelp")}
+                    value={phoneNumberId}
+                    onChange={setPhoneNumberId}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label={t("tryOnMarketing.metaAccessToken")}
+                    helpText={t("tryOnMarketing.metaAccessTokenHelp")}
+                    value={accessToken}
+                    onChange={setAccessToken}
+                    type="password"
+                    autoComplete="off"
+                  />
+                  <Button
+                    disclosure={showAdvancedConnection ? "up" : "down"}
+                    onClick={() => setShowAdvancedConnection((open) => !open)}
+                  >
+                    {t("tryOnMarketing.advancedSettings")}
+                  </Button>
+                  <Collapsible open={showAdvancedConnection} id="whatsapp-advanced-connection">
+                    <BlockStack gap="300">
+                      <TextField
+                        label={t("tryOnMarketing.wabaId")}
+                        helpText={t("tryOnMarketing.wabaIdHelp")}
+                        value={wabaId}
+                        onChange={setWabaId}
+                        autoComplete="off"
+                      />
+                      <TextField
+                        label={t("tryOnMarketing.displayPhone")}
+                        value={displayPhone}
+                        onChange={setDisplayPhone}
+                        autoComplete="off"
+                      />
+                    </BlockStack>
+                  </Collapsible>
+                  <Button variant="primary" onClick={() => void handleConnect()}>
+                    {t("tryOnMarketing.saveConnection")}
+                  </Button>
+                </BlockStack>
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>
 
-        <Layout.Section variant="oneHalf">
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack align="space-between">
-                <Text as="h2" variant="headingMd">
-                  Templates
-                </Text>
-                <Button onClick={() => void handleSyncTemplates()}>Sincronizar</Button>
-              </InlineStack>
-              <DataTable
-                columnContentTypes={["text", "text", "text"]}
-                headings={["Nome", "Idioma", "Status"]}
-                rows={(templates || []).map((tpl) => [tpl.name, tpl.language, tpl.status])}
-              />
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+        {connection?.connected ? (
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="300">
+                <Button disclosure={showMessages ? "up" : "down"} onClick={() => setShowMessages((open) => !open)}>
+                  {t("tryOnMarketing.messagesToggle")}
+                </Button>
+                <Collapsible open={showMessages} id="whatsapp-messages">
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between">
+                      <Text as="h2" variant="headingMd">
+                        {t("tryOnMarketing.messagesTitle")}
+                      </Text>
+                      <Button onClick={() => void handleSyncTemplates()}>{t("tryOnMarketing.syncMessages")}</Button>
+                    </InlineStack>
+                    <DataTable
+                      columnContentTypes={["text", "text", "text"]}
+                      headings={[
+                        t("tryOnMarketing.messageName"),
+                        t("tryOnMarketing.messageLanguage"),
+                        t("tryOnMarketing.messageStatus"),
+                      ]}
+                      rows={(templates || []).map((tpl) => [tpl.name, tpl.language, tpl.status])}
+                    />
+                  </BlockStack>
+                </Collapsible>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        ) : null}
 
         <Layout.Section variant="oneHalf">
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">
-                Métricas
+                {t("tryOnMarketing.metricsTitle")}
               </Text>
               <InlineStack gap="400">
-                <Badge tone="info">{`Opt-ins: ${metrics?.opt_in_count ?? 0}`}</Badge>
-                <Badge>{`Campanhas: ${metrics?.campaigns_total ?? 0}`}</Badge>
-                <Badge tone="success">{`Entregues: ${metrics?.messages_delivered ?? 0}`}</Badge>
+                <Badge tone="info">{`${t("tryOnMarketing.metricsCustomers")}: ${metrics?.opt_in_count ?? 0}`}</Badge>
+                <Badge>{`${t("tryOnMarketing.metricsCampaigns")}: ${metrics?.campaigns_total ?? 0}`}</Badge>
+                <Badge tone="success">{`${t("tryOnMarketing.metricsDelivered")}: ${metrics?.messages_delivered ?? 0}`}</Badge>
               </InlineStack>
               <Text as="p" tone="subdued">
-                Custo estimado (USD): ${Number(metrics?.estimated_cost_usd ?? 0).toFixed(2)}
+                {t("tryOnMarketing.metricsCost", {
+                  amount: Number(metrics?.estimated_cost_usd ?? 0).toFixed(2),
+                })}
               </Text>
             </BlockStack>
           </Card>
@@ -337,26 +452,41 @@ export default function TryOnMarketingPage() {
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">
-                Nova campanha
+                {t("tryOnMarketing.newCampaignTitle")}
               </Text>
               <Banner tone="info">
-                Cada destinatário recebe um try-on personalizado (foto dele + peça da coleção) enviado no
-                WhatsApp. O template Meta deve ter header IMAGE e variáveis no body (ex.: nome do produto e loja).
+                {isExistingPhotoMode ? t("tryOnMarketing.campaignHintExisting") : t("tryOnMarketing.campaignHint")}
               </Banner>
-              <TextField label="Nome" value={campaignName} onChange={setCampaignName} autoComplete="off" />
               <Select
-                label="Template"
+                label={t("tryOnMarketing.campaignType")}
                 options={[
-                  { label: "Selecione…", value: "" },
-                  ...templates.map((tpl) => ({ label: `${tpl.name} (${tpl.status})`, value: tpl.id })),
+                  {
+                    label: t("tryOnMarketing.campaignTypeNewCollection"),
+                    value: "personalized_tryon",
+                  },
+                  {
+                    label: t("tryOnMarketing.campaignTypeExisting"),
+                    value: "existing_tryon",
+                  },
                 ]}
-                value={selectedTemplate}
-                onChange={setSelectedTemplate}
+                value={campaignMode}
+                onChange={(value) => {
+                  setCampaignMode(value);
+                  setPreview(null);
+                }}
               />
               <Select
-                label="Coleção promovida"
-                helpText="Obrigatório — cada destinatário recebe um produto desta coleção com try-on personalizado."
-                options={[{ label: "Selecione…", value: "" }, ...collectionOptions]}
+                label={isExistingPhotoMode ? t("tryOnMarketing.collectionFilterOptional") : t("tryOnMarketing.collection")}
+                helpText={isExistingPhotoMode ? undefined : t("tryOnMarketing.collectionHelp")}
+                options={[
+                  {
+                    label: isExistingPhotoMode
+                      ? t("tryOnMarketing.selectCollectionOptional")
+                      : t("tryOnMarketing.selectOption"),
+                    value: "",
+                  },
+                  ...collectionOptions,
+                ]}
                 value={selectedCollections[0] || ""}
                 onChange={(value) => {
                   setSelectedCollections(value ? [value] : []);
@@ -364,27 +494,65 @@ export default function TryOnMarketingPage() {
                 }}
               />
               <TextField
-                label="Agendar (ISO local)"
-                value={scheduledAt}
-                onChange={setScheduledAt}
-                placeholder="2026-07-09T10:00:00"
+                label={t("tryOnMarketing.campaignName")}
+                value={campaignName}
+                onChange={setCampaignName}
+                placeholder={t("tryOnMarketing.campaignNamePlaceholder")}
                 autoComplete="off"
               />
+              {approvedTemplates.length > 1 ? (
+                <Select
+                  label={t("tryOnMarketing.message")}
+                  options={approvedTemplates.map((tpl) => ({ label: tpl.name, value: tpl.id }))}
+                  value={selectedTemplate}
+                  onChange={setSelectedTemplate}
+                />
+              ) : selectedTemplateMeta ? (
+                <Text as="p" tone="subdued">
+                  {t("tryOnMarketing.autoMessage", { name: selectedTemplateMeta.name })}
+                </Text>
+              ) : (
+                <Banner tone="warning">{t("tryOnMarketing.noApprovedMessage")}</Banner>
+              )}
+              <Button disclosure={showSchedule ? "up" : "down"} onClick={() => setShowSchedule((open) => !open)}>
+                {t("tryOnMarketing.scheduleToggle")}
+              </Button>
+              <Collapsible open={showSchedule} id="whatsapp-campaign-schedule">
+                <TextField
+                  label={t("tryOnMarketing.schedule")}
+                  value={scheduledAt}
+                  onChange={setScheduledAt}
+                  placeholder={t("tryOnMarketing.schedulePlaceholder")}
+                  autoComplete="off"
+                />
+              </Collapsible>
               <InlineStack gap="200" blockAlign="center">
-                <Button onClick={() => void handlePreview()}>Preview audiência</Button>
+                <Button onClick={() => void handlePreview()}>{t("tryOnMarketing.previewAudience")}</Button>
                 {preview != null ? (
                   <BlockStack gap="100">
-                    <Badge>{`${preview.count ?? 0} elegíveis`}</Badge>
+                    <Badge>{t("tryOnMarketing.eligible", { count: preview.count ?? 0 })}</Badge>
                     <Text as="span" tone="subdued" variant="bodySm">
-                      {`${preview.tryon_generations ?? preview.count ?? 0} try-ons · ~$${Number(preview.estimated_cost_usd ?? 0).toFixed(2)} USD`}
-                      {preview.base_opt_in_count != null && preview.count !== preview.base_opt_in_count
-                        ? ` (${preview.base_opt_in_count} opt-ins, ${(preview.base_opt_in_count ?? 0) - (preview.count ?? 0)} sem foto/consentimento)`
+                      {t(
+                        preview.generation_mode === "existing_tryon" || isExistingPhotoMode
+                          ? "tryOnMarketing.previewCostExisting"
+                          : "tryOnMarketing.previewCost",
+                        {
+                          cost: Number(preview.estimated_cost_usd ?? 0).toFixed(2),
+                        },
+                      )}
+                      {!isExistingPhotoMode &&
+                      preview.base_opt_in_count != null &&
+                      preview.count !== preview.base_opt_in_count
+                        ? ` ${t("tryOnMarketing.previewFiltered", {
+                            total: preview.base_opt_in_count ?? 0,
+                            excluded: (preview.base_opt_in_count ?? 0) - (preview.count ?? 0),
+                          })}`
                         : ""}
                     </Text>
                   </BlockStack>
                 ) : null}
                 <Button variant="primary" onClick={() => void handleCreateCampaign()}>
-                  Criar campanha
+                  {t("tryOnMarketing.createCampaign")}
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -395,15 +563,19 @@ export default function TryOnMarketingPage() {
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">
-                Campanhas
+                {t("tryOnMarketing.campaignsTitle")}
               </Text>
               <DataTable
                 columnContentTypes={["text", "text", "text"]}
-                headings={["Nome", "Status", "Agendada"]}
+                headings={[
+                  t("tryOnMarketing.campaignNameCol"),
+                  t("tryOnMarketing.campaignStatusCol"),
+                  t("tryOnMarketing.campaignScheduledCol"),
+                ]}
                 rows={(campaigns || []).map((c) => [
                   c.name,
                   c.status,
-                  c.scheduled_at ? new Date(c.scheduled_at).toLocaleString() : "—",
+                  c.scheduled_at ? new Date(c.scheduled_at).toLocaleString() : t("tryOnMarketing.notScheduled"),
                 ])}
               />
             </BlockStack>

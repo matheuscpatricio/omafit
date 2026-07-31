@@ -95,15 +95,42 @@ async function countTable(table, filter = "") {
 }
 
 async function fetchAllShops() {
+  // Limite explícito + colunas mínimas: evita timeout/falha silenciosa no loader.
   const response = await supabaseFetch(
-    "/rest/v1/shopify_shops?select=shop_domain,plan,billing_status,images_used_month,created_at,shop_owner_email&order=created_at.desc",
+    "/rest/v1/shopify_shops?select=shop_domain,plan,billing_status,images_used_month,created_at,shop_owner_email&order=created_at.desc&limit=1000",
   );
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+    // Fallback sem shop_owner_email (schemas legados / coluna em falta).
+    if (
+      response.status === 400 &&
+      (body.includes("shop_owner_email") || body.includes("column"))
+    ) {
+      const fallback = await supabaseFetch(
+        "/rest/v1/shopify_shops?select=shop_domain,plan,billing_status,images_used_month,created_at&order=created_at.desc&limit=1000",
+      );
+      if (!fallback.ok) {
+        const fbBody = await fallback.text().catch(() => "");
+        return { shops: [], error: fbBody || `HTTP ${fallback.status}` };
+      }
+      const { data } = await parseSupabaseList(fallback);
+      return { shops: data, error: null };
+    }
     return { shops: [], error: body || `HTTP ${response.status}` };
   }
   const { data } = await parseSupabaseList(response);
   return { shops: data, error: null };
+}
+
+/** Isola falhas para o Promise.all não derrubar o dashboard inteiro. */
+function settled(promise, fallback) {
+  return promise.then(
+    (value) => value,
+    (err) => {
+      console.error("[partners-dashboard] fetch failed:", err?.message || err);
+      return typeof fallback === "function" ? fallback(err) : fallback;
+    },
+  );
 }
 
 async function fetchNuvemshopStores() {
@@ -377,18 +404,59 @@ export async function fetchPartnersDashboardStats() {
     expensesRes,
     socialRes,
   ] = await Promise.all([
-    fetchAllShops(),
-    fetchNuvemshopStores(),
-    countTable("session_analytics"),
-    countSessionsThisMonth(),
-    fetchSessionInsights(),
-    sumOrderRevenue(),
-    fetchOrderInsights(),
-    countTable("widget_keys", "is_active=eq.true"),
-    countTable("widget_keys", "is_active=eq.false"),
-    fetchShopifyPartnersMetrics(),
-    fetchPartnersExpenses(),
-    fetchPartnersSocialStats(),
+    settled(fetchAllShops(), { shops: [], error: "shops_fetch_failed" }),
+    settled(fetchNuvemshopStores(), {
+      stores: [],
+      error: "nuvemshop_fetch_failed",
+      tableExists: true,
+    }),
+    settled(countTable("session_analytics"), { count: null, error: "sessions_count_failed" }),
+    settled(countSessionsThisMonth(), { count: null, error: "sessions_month_failed" }),
+    settled(fetchSessionInsights(), {
+      totalFetched: 0,
+      monthCount: null,
+      completedCount: null,
+      topStores: [],
+      error: "sessions_insights_failed",
+    }),
+    settled(sumOrderRevenue(), {
+      totalRevenue: null,
+      monthRevenue: null,
+      ordersCount: null,
+      error: "orders_failed",
+    }),
+    settled(fetchOrderInsights(), {
+      ordersMonth: null,
+      revenueMonth: null,
+      topStores: [],
+      error: "order_insights_failed",
+    }),
+    settled(countTable("widget_keys", "is_active=eq.true"), {
+      count: null,
+      error: "widgets_active_failed",
+    }),
+    settled(countTable("widget_keys", "is_active=eq.false"), {
+      count: null,
+      error: "widgets_inactive_failed",
+    }),
+    settled(fetchShopifyPartnersMetrics(), {
+      configured: false,
+      installs: null,
+      uninstalls: null,
+      activeStoresEstimate: null,
+      charges: null,
+      error: "partners_api_failed",
+    }),
+    settled(fetchPartnersExpenses(), {
+      expenses: [],
+      tableExists: true,
+      error: "expenses_failed",
+    }),
+    settled(fetchPartnersSocialStats(), {
+      youtube: { configured: false, error: null },
+      instagram: { configured: false, error: null },
+      links: { instagram: null, youtube: null },
+    }),
   ]);
 
   const shops = shopsRes.shops || [];
@@ -417,8 +485,19 @@ export async function fetchPartnersDashboardStats() {
     social: socialRes,
   };
 
+  const dataErrors = [
+    shopsRes.error,
+    sessionsTotalRes.error,
+    sessionsMonthRes.error,
+    ordersRes.error,
+    partnersApi?.error,
+  ]
+    .filter(Boolean)
+    .join("; ");
+
   return {
     generatedAt,
+    error: shopsRes.error && shops.length === 0 ? shopsRes.error : null,
     tabs,
     shopify: {
       source: "supabase",
@@ -439,9 +518,7 @@ export async function fetchPartnersDashboardStats() {
         imagesUsedMonth: s.images_used_month,
         createdAt: s.created_at,
       })),
-      errors: [shopsRes.error, sessionsTotalRes.error, sessionsMonthRes.error, ordersRes.error]
-        .filter(Boolean)
-        .join("; ") || null,
+      errors: dataErrors || null,
     },
     partnersApi: {
       platform: "shopify",

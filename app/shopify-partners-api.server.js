@@ -15,20 +15,30 @@ export function isShopifyPartnersApiConfigured() {
   return Boolean(PARTNER_ORG_ID && PARTNER_ACCESS_TOKEN && PARTNER_APP_GID);
 }
 
-async function partnerGraphql(query, variables = {}) {
+async function partnerGraphql(query, variables = {}, timeoutMs = 8000) {
   if (!isShopifyPartnersApiConfigured()) {
     return { ok: false, error: "not_configured", data: null };
   }
 
   const url = `https://partners.shopify.com/${PARTNER_ORG_ID}/api/${PARTNER_API_VERSION}/graphql.json`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": PARTNER_ACCESS_TOKEN,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": PARTNER_ACCESS_TOKEN,
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const message =
+      err?.name === "TimeoutError" || err?.name === "AbortError"
+        ? "partner_api_timeout"
+        : err?.message || "partner_api_fetch_failed";
+    return { ok: false, error: message, data: null };
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.errors?.length) {
@@ -40,7 +50,11 @@ async function partnerGraphql(query, variables = {}) {
   return { ok: true, error: null, data: payload.data };
 }
 
-async function countAppEvents(types, maxPages = 20) {
+/**
+ * Conta eventos da Partner API com poucas páginas e timeout curto.
+ * Evita bloquear o dashboard de lojas (loader) quando a API demora.
+ */
+async function countAppEvents(types, maxPages = 3) {
   let after = null;
   let count = 0;
   let pages = 0;
@@ -95,36 +109,60 @@ export async function fetchShopifyPartnersMetrics() {
     };
   }
 
-  const [installsRes, uninstallsRes, chargesRes] = await Promise.all([
-    countAppEvents(INSTALL_TYPES),
-    countAppEvents(UNINSTALL_TYPES),
-    countAppEvents(CHARGE_TYPES),
-  ]);
-
-  const installs = installsRes.count;
-  const uninstalls = uninstallsRes.count;
-  const charges = chargesRes.count;
-
-  const activeStoresEstimate =
-    typeof installs === "number" && typeof uninstalls === "number"
-      ? Math.max(0, installs - uninstalls)
-      : null;
-
-  const errors = [installsRes.error, uninstallsRes.error, chargesRes.error].filter(
-    (e) => e && e !== "pagination_limit_reached",
-  );
-
-  return {
+  const empty = {
     configured: true,
-    installs,
-    uninstalls,
-    activeStoresEstimate,
-    charges,
-    error: errors.length ? errors.join("; ") : null,
-    paginationLimited: Boolean(
-      installsRes.error === "pagination_limit_reached" ||
-        uninstallsRes.error === "pagination_limit_reached" ||
-        chargesRes.error === "pagination_limit_reached",
-    ),
+    installs: null,
+    uninstalls: null,
+    activeStoresEstimate: null,
+    charges: null,
+    error: null,
+    paginationLimited: false,
   };
+
+  try {
+    const race = Promise.race([
+      Promise.all([
+        countAppEvents(INSTALL_TYPES),
+        countAppEvents(UNINSTALL_TYPES),
+        countAppEvents(CHARGE_TYPES),
+      ]),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("partner_metrics_budget_exceeded")), 12_000),
+      ),
+    ]);
+
+    const [installsRes, uninstallsRes, chargesRes] = await race;
+
+    const installs = installsRes.count;
+    const uninstalls = uninstallsRes.count;
+    const charges = chargesRes.count;
+
+    const activeStoresEstimate =
+      typeof installs === "number" && typeof uninstalls === "number"
+        ? Math.max(0, installs - uninstalls)
+        : null;
+
+    const errors = [installsRes.error, uninstallsRes.error, chargesRes.error].filter(
+      (e) => e && e !== "pagination_limit_reached",
+    );
+
+    return {
+      configured: true,
+      installs,
+      uninstalls,
+      activeStoresEstimate,
+      charges,
+      error: errors.length ? errors.join("; ") : null,
+      paginationLimited: Boolean(
+        installsRes.error === "pagination_limit_reached" ||
+          uninstallsRes.error === "pagination_limit_reached" ||
+          chargesRes.error === "pagination_limit_reached",
+      ),
+    };
+  } catch (err) {
+    return {
+      ...empty,
+      error: err?.message || "partner_metrics_failed",
+    };
+  }
 }

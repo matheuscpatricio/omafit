@@ -416,6 +416,7 @@ type DashboardProps = {
       finance?: Record<string, unknown>;
       social?: Record<string, unknown>;
     } | null;
+    shopify?: { errors?: string | null; totalStores?: number };
     partnersApi?: { error?: string };
   };
   partnersApiConfigured: boolean;
@@ -533,6 +534,31 @@ export function PartnersDashboard({
           <AlertTriangleIcon />
           <AlertTitle>Erro nos dados</AlertTitle>
           <AlertDescription>{stats.error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {stats.shopify?.errors && !stats.error ? (
+        <Alert>
+          <InfoIcon />
+          <AlertTitle>Aviso parcial nos dados</AlertTitle>
+          <AlertDescription>
+            Algumas fontes falharam, mas as lojas do Supabase continuam abaixo.
+            {typeof stats.shopify.totalStores === "number"
+              ? ` Lojas carregadas: ${stats.shopify.totalStores}.`
+              : ""}{" "}
+            Detalhe: {stats.shopify.errors}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {stats.partnersApi?.error && stats.partnersApi.error !== "not_configured" ? (
+        <Alert>
+          <InfoIcon />
+          <AlertTitle>Partner API</AlertTitle>
+          <AlertDescription>
+            Métricas de instalações/cobranças da Shopify Partners indisponíveis no
+            momento ({stats.partnersApi.error}). As lojas do Supabase não são afetadas.
+          </AlertDescription>
         </Alert>
       ) : null}
 

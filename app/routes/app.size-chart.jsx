@@ -97,16 +97,27 @@ function getExpectedMeasurementCount(type) {
   return isFootwearCollectionType(type) ? 1 : 3;
 }
 
-function normalizeMeasurementRefsForType(refs, type) {
+function normalizeMeasurementRefsForType(refs, type, sizes) {
   const expectedCount = getExpectedMeasurementCount(type);
   if (Array.isArray(refs) && refs.length === expectedCount) {
     return refs.slice();
+  }
+  // Se measurement_refs estiver corrompido/ausente, tenta inferir pelas chaves
+  // já gravadas em sizes — evita “sumir” ou trocar valores ao recarregar.
+  if (Array.isArray(sizes) && sizes.length > 0 && sizes[0] && typeof sizes[0] === 'object') {
+    const inferred = Object.keys(sizes[0]).filter((k) => k !== 'size');
+    if (inferred.length === expectedCount) {
+      return inferred;
+    }
   }
   return getMeasurementRefsForCollectionType(type);
 }
 
 function getDefaultSizesForRefs(refs) {
-  return refs.reduce((acc, key) => ({ ...acc, [key]: '' }), { size: '' });
+  return refs.reduce((acc, key) => ({ ...acc, [key]: '' }), {
+    size: '',
+    _key: `sz-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  });
 }
 
 function createEmptyCollectionCharts() {
@@ -263,19 +274,20 @@ export default function SizeChartPage() {
     const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (!supabaseUrl || !supabaseKey) return;
     const chartsRes = await fetch(
-      `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`,
+      `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=updated_at.desc&limit=1000`,
       {
         headers: {
           apikey: supabaseKey,
           Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          Prefer: 'count=exact'
         }
       }
     );
     if (chartsRes.ok) {
       const data = await chartsRes.json();
       const byScope = { collection: {}, product: {} };
-      data.forEach((row) => {
+      (Array.isArray(data) ? data : []).forEach((row) => {
         const productHandle = String(row.product_handle || '').trim();
         const handle = productHandle || (row.collection_handle ?? '');
         const scope = productHandle ? 'product' : 'collection';
@@ -293,11 +305,16 @@ export default function SizeChartPage() {
         if (row.gender_scope !== undefined && row.gender_scope !== null) {
           byScope[scope][handle].genderScope = normalizeGenderScope(row.gender_scope);
         }
-        const refs = normalizeMeasurementRefsForType(row.measurement_refs, row.collection_type);
+        const sizes = Array.isArray(row.sizes) ? row.sizes : [];
+        const refs = normalizeMeasurementRefsForType(
+          row.measurement_refs,
+          row.collection_type,
+          sizes,
+        );
         byScope[scope][handle][row.gender] = {
           enabled: true,
           measurementRefs: refs,
-          sizes: row.sizes || []
+          sizes
         };
       });
       setCharts(byScope);
@@ -329,7 +346,11 @@ export default function SizeChartPage() {
     if (!chart) return fallbackChart;
     return {
       ...chart,
-      measurementRefs: normalizeMeasurementRefsForType(chart.measurementRefs, collectionType)
+      measurementRefs: normalizeMeasurementRefsForType(
+        chart.measurementRefs,
+        collectionType,
+        chart.sizes,
+      )
     };
   };
 
@@ -463,6 +484,14 @@ export default function SizeChartPage() {
           ['male', 'female', 'unisex'].forEach((gender) => {
             const c = byGender[gender];
             if (c.enabled && c.sizes.length > 0 && c.measurementRefs.length === expectedMeasurementCount) {
+              const refs = c.measurementRefs;
+              const cleanedSizes = (c.sizes || []).map((row) => {
+                const cleaned = { size: row?.size ?? '' };
+                refs.forEach((key) => {
+                  cleaned[key] = row?.[key] ?? '';
+                });
+                return cleaned;
+              });
               toSave.push({
                 shop_domain: shopDomain,
                 collection_handle: scope === 'product' ? '' : handle,
@@ -471,38 +500,38 @@ export default function SizeChartPage() {
                 collection_type: collectionType,
                 collection_elasticity: isFootwearCollectionType(collectionType) ? null : getCollectionElasticity(handle, scope),
                 gender_scope: genderScope,
-                measurement_refs: c.measurementRefs,
-                sizes: c.sizes
+                measurement_refs: refs,
+                sizes: cleanedSizes
               });
             }
           });
         });
       });
 
-      const deleteUrl = `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`;
-      const deleteRes = await fetch(deleteUrl, {
-        method: 'DELETE',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      if (!deleteRes.ok) console.warn('[SizeChart] Aviso ao deletar:', await deleteRes.text());
+      const measurementKey = (row) =>
+        `${String(row.collection_handle ?? '')}|${String(row.product_handle ?? '')}|${String(row.gender ?? '')}`;
 
+      const authHeaders = {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json'
+      };
+
+      // 1) UPSERT primeiro — se falhar, os dados antigos permanecem (não usamos delete-all).
       if (toSave.length > 0) {
-        const doInsert = async (payload) => fetch(`${supabaseUrl}/rest/v1/size_charts`, {
-          method: 'POST',
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify(payload)
-        });
+        const doUpsert = async (payload) => fetch(
+          `${supabaseUrl}/rest/v1/size_charts?on_conflict=shop_domain,collection_handle,product_handle,gender`,
+          {
+            method: 'POST',
+            headers: {
+              ...authHeaders,
+              Prefer: 'resolution=merge-duplicates,return=minimal'
+            },
+            body: JSON.stringify(payload)
+          }
+        );
 
-        let insertRes = await doInsert(toSave);
+        let insertRes = await doUpsert(toSave);
         let insertErrText = '';
         if (!insertRes.ok) {
           insertErrText = await insertRes.text();
@@ -513,7 +542,7 @@ export default function SizeChartPage() {
           if (missingGenderScopeColumn) {
             // eslint-disable-next-line no-unused-vars
             const fallbackPayload = toSave.map(({ gender_scope, ...rest }) => rest);
-            insertRes = await doInsert(fallbackPayload);
+            insertRes = await doUpsert(fallbackPayload);
             if (insertRes.ok) {
               setError(t('sizeChart.warnGenderScopeColumnMissing'));
             } else {
@@ -529,7 +558,7 @@ export default function SizeChartPage() {
           if (missingCollectionMetaColumn) {
             // eslint-disable-next-line no-unused-vars
             const fallbackPayload = toSave.map(({ collection_type, collection_elasticity, gender_scope, ...rest }) => rest);
-            insertRes = await doInsert(fallbackPayload);
+            insertRes = await doUpsert(fallbackPayload);
             if (insertRes.ok) {
               setError(t('sizeChart.warnCollectionMetadataNotPersisted'));
             } else {
@@ -538,17 +567,59 @@ export default function SizeChartPage() {
           }
         }
         if (!insertRes.ok) {
-          const errText = insertErrText;
-          let msg = t('sizeChart.errorSave');
-          try {
-            const j = JSON.parse(errText);
-            msg = j.message || j.error || msg;
-          } catch {
-            if (errText.trim()) msg = errText;
+          // Fallback legado: alguns ambientes não aceitam on_conflict no POST.
+          const legacyInsert = await fetch(`${supabaseUrl}/rest/v1/size_charts`, {
+            method: 'POST',
+            headers: {
+              ...authHeaders,
+              Prefer: 'resolution=merge-duplicates,return=minimal'
+            },
+            body: JSON.stringify(toSave)
+          });
+          if (!legacyInsert.ok) {
+            const errText = insertErrText || (await legacyInsert.text());
+            let msg = t('sizeChart.errorSave');
+            try {
+              const j = JSON.parse(errText);
+              msg = j.message || j.error || msg;
+            } catch {
+              if (errText.trim()) msg = errText;
+            }
+            throw new Error(msg);
           }
-          throw new Error(msg);
         }
       }
+
+      // 2) Remover apenas órfãos (tabelas desativadas / apagadas), depois do upsert.
+      const existingRes = await fetch(
+        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,collection_handle,product_handle,gender&limit=1000`,
+        { headers: authHeaders }
+      );
+      if (existingRes.ok) {
+        const existing = await existingRes.json();
+        const keep = new Set(toSave.map(measurementKey));
+        const orphanIds = (Array.isArray(existing) ? existing : [])
+          .filter((row) => !keep.has(measurementKey(row)))
+          .map((row) => row.id)
+          .filter(Boolean);
+        // Apaga em lotes para evitar URL demasiado longa.
+        for (let i = 0; i < orphanIds.length; i += 50) {
+          const batch = orphanIds.slice(i, i + 50);
+          const delRes = await fetch(
+            `${supabaseUrl}/rest/v1/size_charts?id=in.(${batch.join(',')})`,
+            { method: 'DELETE', headers: authHeaders }
+          );
+          if (!delRes.ok) {
+            console.warn('[SizeChart] Aviso ao remover órfãos:', await delRes.text());
+          }
+        }
+      } else if (toSave.length === 0) {
+        // Sem tabelas ativas e não conseguimos listar existentes — fallback seguro só neste caso.
+        const deleteUrl = `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`;
+        const deleteRes = await fetch(deleteUrl, { method: 'DELETE', headers: authHeaders });
+        if (!deleteRes.ok) console.warn('[SizeChart] Aviso ao deletar:', await deleteRes.text());
+      }
+
       await loadSizeCharts();
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
@@ -586,32 +657,35 @@ export default function SizeChartPage() {
   const handleToggleChart = () => {
     setChart(selectedHandle, currentGender, (c) => ({
       ...c,
+      // Não apagar sizes ao desativar — só deixa de gravar se continuar desativada no save.
       enabled: !c.enabled,
-      sizes: !c.enabled ? c.sizes : []
+      sizes: Array.isArray(c.sizes) ? c.sizes : []
     }));
   };
 
   const setMeasurementRef = (index, value) => {
-    const refs = [...currentChart.measurementRefs];
-    if (refs[index] === value) return;
-    const oldKey = refs[index];
-    const otherIndex = refs.findIndex((r, i) => i !== index && r === value);
-    const isSwap = otherIndex >= 0;
-    if (isSwap) refs[otherIndex] = oldKey;
-    refs[index] = value;
-    setChart(selectedHandle, currentGender, (c) => ({
-      ...c,
-      measurementRefs: refs,
-      sizes: c.sizes.map((row) => {
-        const next = { size: row.size };
-        refs.forEach((key) => {
-          if (key === value) next[key] = row[oldKey] ?? '';
-          else if (key === oldKey && isSwap) next[key] = row[value] ?? '';
-          else next[key] = row[key] ?? '';
-        });
-        return next;
-      })
-    }));
+    setChart(selectedHandle, currentGender, (c) => {
+      const refs = [...(c.measurementRefs || [])];
+      if (refs[index] === value) return c;
+      const oldKey = refs[index];
+      const otherIndex = refs.findIndex((r, i) => i !== index && r === value);
+      const isSwap = otherIndex >= 0;
+      if (isSwap) refs[otherIndex] = oldKey;
+      refs[index] = value;
+      return {
+        ...c,
+        measurementRefs: refs,
+        sizes: (c.sizes || []).map((row) => {
+          const next = { size: row.size };
+          refs.forEach((key) => {
+            if (key === value) next[key] = row[oldKey] ?? '';
+            else if (key === oldKey && isSwap) next[key] = row[value] ?? '';
+            else next[key] = row[key] ?? '';
+          });
+          return next;
+        })
+      };
+    });
   };
 
   const handleAddSize = () => {
@@ -735,8 +809,8 @@ export default function SizeChartPage() {
 
               <Tabs
                 tabs={scopeTabs}
-                selected={String(selectedScopeTab)}
-                onSelect={(id) => setSelectedScopeTab(parseInt(id, 10))}
+                selected={selectedScopeTab}
+                onSelect={(index) => setSelectedScopeTab(Number(index) || 0)}
               />
 
               <Box minWidth="280px">
@@ -919,7 +993,11 @@ export default function SizeChartPage() {
                 </Badge>
               </InlineStack>
 
-              <Tabs tabs={tabs} selected={String(visibleTabIndex)} onSelect={(id) => setSelectedTab(parseInt(id, 10))} />
+              <Tabs
+                tabs={tabs}
+                selected={visibleTabIndex}
+                onSelect={(index) => setSelectedTab(Number(index) || 0)}
+              />
 
               <Box paddingBlockStart="400">
                 <Card>
@@ -967,7 +1045,7 @@ export default function SizeChartPage() {
                         ) : (
                           <BlockStack gap="300">
                             {currentChart.sizes.map((row, index) => (
-                              <Card key={index} sectioned>
+                              <Card key={row._key || `size-${index}-${row.size || ''}`} sectioned>
                                 <BlockStack gap="300">
                                   <InlineStack align="space-between">
                                     <Text variant="headingSm" as="h4">{t('sizeChart.sizeN', { n: index + 1 })}</Text>

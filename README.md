@@ -76,6 +76,15 @@ Shopify Storefront / Admin
                          AWS EC2 GPU
 ```
 
+## Engineering documentation
+
+- [System architecture](docs/architecture.md)
+- [Virtual try-on inference pipeline](docs/inference-pipeline.md)
+- [Deterministic sizing engine](docs/sizing-engine.md)
+- [Shopify integration](docs/shopify-integration.md)
+
+These notes document the engineering decisions and architecture behind the production system without exposing proprietary implementation details.
+
 ## Core stack
 
 **Frontend:** React, TypeScript, JavaScript  

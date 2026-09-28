@@ -120,14 +120,10 @@ Não há `railway.toml` / `nixpacks.toml` neste repo.
 
 ## Known Technical Debt
 
-Factos confirmados no código/docs atuais:
-
-1. SQL histórico com policies **conflitantes** (`shopify_shops` ENABLE vs DISABLE, RLS `USING (true)`).
-2. Algumas rotas precisam revisão de auth/tenant (`api.analytics.sessions` query `shop_domain`; `api.billing.create-usage` sem `authenticate.admin`).
-3. Attribution ATC→order incompleta: `properties: {}` no theme; `orders` webhook fora do toml.
-4. `app/ar-eyewear.server.js` monolítico (~1.6k linhas) — plano em `docs/ar/refactor-plan.md`.
-5. `app/*.server.js` ainda flat — plano em `docs/architecture/app-domains-refactor-plan.md`.
-6. Branch pode estar atrás de `main` (ex.: catalog-search stylist ausente aqui).
+- Some legacy Supabase policies require consolidation.
+- A few older endpoints need stronger tenant/auth boundaries.
+- Order attribution is being consolidated into a single canonical flow.
+- Large AR modules are planned for modularization.
 
 ## Contributing / Docs
 

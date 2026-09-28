@@ -53,5 +53,5 @@ app/
 ## INCERTO
 
 - `billing.guard.js` — presente; uso em rotas ativas a confirmar antes de mover/arquivar.
-- Pasta `partners/` — **não há** ficheiros `partners-*` neste repo hoje.
-- Ficheiros de catalog-search / stylist — existem em `main` noutro snapshot; **ausentes** neste branch.
+- Pasta `partners/` — há `app/partners-dashboard.server.js` e componentes em `app/components/partners/`.
+- Catalog-search / stylist — presentes na `main` (`widget-catalog-search.server.js`, `widget-catalog-auth.server.js`, `api.widget.catalog-search.jsx`).

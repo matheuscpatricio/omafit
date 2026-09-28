@@ -314,7 +314,7 @@ export function FinanceTab({
         <Alert variant="destructive">
           <AlertTitle>Tabela partners_expenses ausente</AlertTitle>
           <AlertDescription>
-            Execute <code className="text-xs">supabase_partners_expenses.sql</code> no Supabase para
+            Execute <code className="text-xs">supabase/patches/supabase_partners_expenses.sql</code> no Supabase para
             habilitar despesas manuais.
           </AlertDescription>
         </Alert>

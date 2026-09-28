@@ -41,7 +41,7 @@ export {
 const TABLE = "ar_eyewear_assets";
 
 const AR_SCHEMA_MIGRATION_HINT =
-  "Execute supabase_migrate_ar_rodin_pipeline.sql no Supabase SQL Editor (colunas wearable_class, lens_profile, image_urls, etc.).";
+  "Execute supabase/patches/supabase_migrate_ar_rodin_pipeline.sql no Supabase SQL Editor (colunas wearable_class, lens_profile, image_urls, etc.).";
 
 function enrichSupabaseDbError(message, status, bodyText) {
   const base = `Insert failed: ${status} ${bodyText.slice(0, 300)}`;

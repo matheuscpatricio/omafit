@@ -35,10 +35,11 @@ Scripts movidos da raiz (`supabase_*.sql`, `habilitar_widget.sql`). Incluem:
 |------|----------|
 | Billing / shops | `supabase_billing_shopify_shops.sql`, `supabase_billing_plans_growth_enterprise.sql`, `supabase_update_plans.sql` |
 | Widget keys / public_id | `supabase_create_widget_keys_final.sql`, `supabase_auto_create_public_id.sql`, `supabase_add_*_widget_keys*` |
-| Widget config | `supabase_migration_widget_config.sql`, `supabase_fix_widget_config_complete.sql`, `supabase_widget_config_embed_cta.sql` |
-| Size charts | `supabase_fix_size_charts_*.sql`, `supabase_size_chart_entries.sql`, `supabase_add_collection_*` |
+| Widget config | `supabase_migration_widget_config.sql`, `supabase_fix_widget_config_complete.sql`, `supabase_widget_config_embed_cta.sql`, `supabase_add_cta_button_border_radius.sql` |
+| Size charts | `supabase_fix_size_charts_*.sql`, `supabase_size_chart_entries.sql`, `supabase_add_collection_*`, `supabase_add_product_handle_to_size_charts.sql`, `supabase_add_gender_scope_to_size_charts.sql` |
 | Analytics | `supabase_create_session_analytics.sql`, `supabase_create_order_analytics_omafit.sql`, `supabase_fix_analytics_rls.sql` |
-| AR | `supabase_create_ar_eyewear_assets.sql`, `supabase_ar_eyewear_storage_policies.sql`, `supabase_add_ar_*` |
+| AR | `supabase_create_ar_eyewear_assets.sql`, `supabase_ar_eyewear_storage_policies.sql`, `supabase_add_ar_*`, `supabase_migrate_ar_rodin_pipeline.sql` |
+| Partners | `supabase_partners_dashboard.sql`, `supabase_partners_expenses.sql` |
 | Storage | `supabase_storage_rls_policies.sql`, `supabase_storage_self_hosted_results_private.sql` |
 | RLS fixes | `supabase_fix_widget_configurations_rls.sql`, `supabase_fix_size_charts_rls.sql`, … |
 

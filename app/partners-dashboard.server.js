@@ -543,7 +543,7 @@ export async function fetchPartnersDashboardStats() {
         createdAt: s.created_at,
       })),
       note: nuvemshopRes.tableExists === false
-        ? "Execute supabase_partners_dashboard.sql para criar nuvemshop_stores"
+        ? "Execute supabase/patches/supabase_partners_dashboard.sql para criar nuvemshop_stores"
         : null,
       error: nuvemshopRes.error === "table_not_found" ? null : nuvemshopRes.error,
     },

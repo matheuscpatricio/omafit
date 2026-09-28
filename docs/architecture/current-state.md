@@ -66,7 +66,7 @@ Neste repo: signed URL admin (`api.storage.signed-url.jsx`), docs de storage pri
 
 ## Stylist (GPT)
 
-Edge `validate-size` + catalog-search no ecossistema **omafit-widget** / ficheiros em `main` deste repo. **Neste branch** os ficheiros `widget-catalog-search.server.js` / `api.widget.catalog-search.jsx` **não estão presentes** (existem em `main`).
+Edge `validate-size` (ecossistema **omafit-widget**) + **catalog-search neste repo** (`app/widget-catalog-search.server.js`, `app/widget-catalog-auth.server.js`, `app/routes/api.widget.catalog-search.jsx`) — presentes na `main`.
 
 Não é RAG: candidatos pré-filtrados + `gpt-4o-mini` + sanitização de handles.
 

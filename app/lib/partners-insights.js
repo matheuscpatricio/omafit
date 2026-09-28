@@ -162,7 +162,7 @@ export function buildPartnersInsights(tab, data, ctx = {}) {
         severity: "warning",
         title: "Tabela de despesas não criada",
         description: "As despesas manuais precisam da tabela partners_expenses no Supabase.",
-        action: "Execute o arquivo supabase_partners_expenses.sql no SQL Editor do Supabase.",
+        action: "Execute o arquivo supabase/patches/supabase_partners_expenses.sql no SQL Editor do Supabase.",
       });
     }
 

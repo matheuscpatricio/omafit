@@ -105,11 +105,15 @@ SQL: [`supabase/README.md`](supabase/README.md) — patches ≠ garantia de prod
 Confirmado no código/config:
 
 - App URL em `shopify.app.toml` aponta para host Railway (`omafit-production.up.railway.app`).
-- `Dockerfile` + `docker-compose.ar-eyewear-worker.yml` para worker AR.
 - Extensão: `shopify app deploy`.
 - Supabase: projeto separado (URL nas env / theme asset).
 
-Não há `railway.toml` / `nixpacks.toml` neste repo.
+Deployment configuration includes:
+
+- Railway via `railway.toml`
+- `Dockerfile` as primary Railway build path
+- `nixpacks.toml` as fallback configuration
+- `docker-compose.ar-eyewear-worker.yml` for the AR worker
 
 ## Security Notes
 

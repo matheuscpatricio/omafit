@@ -14,7 +14,14 @@ database.sqlite
 .env.*
 railway-vars.json
 
-
+# Chaves / credenciais acidentais
+*.pem
+*.key
+id_rsa
+id_ed25519
+id_ed25519.pub
+# Nomes de ficheiro gerados por prompts mal colados no ssh-keygen
+\#*
 
 
 

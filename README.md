@@ -1,111 +1,136 @@
-# Omafit
+# Omafit Shopify App
 
-**AI infrastructure and full-stack SaaS for fashion e-commerce.**
+App Shopify embutida (React Router) para virtual try-on, size charts, billing, analytics e AR eyewear.
+A storefront carrega o widget via **Theme App Extension**; a UI do try-on em iframe aponta para o projeto Netlify (`omafit-widget`).
 
-Omafit helps fashion stores improve product discovery, sizing and purchase confidence through AI virtual try-on, personalized size recommendations and context-aware shopping assistance.
+## Overview
 
-> This repository represents the Shopify application layer of Omafit. Some production infrastructure and proprietary AI components are intentionally not public.
+- **Merchant admin:** app embutida no Shopify Admin (`/app`).
+- **Storefront:** App Embed Liquid + `omafit-widget.js` / AR MindAR.
+- **Dados de negócio:** Supabase (config, keys, charts, analytics, AR assets).
+- **Sessões Shopify:** Prisma (`Session` + access tokens).
+- **Billing:** Shopify Managed Pricing + sync para `shopify_shops`.
 
-## Production impact
-
-- **20+ e-commerce stores** and ~900 catalog products
-- **~30,000 virtual try-ons/month**
-- **87% lower inference cost** compared with third-party API inference ($0.075 → $0.0095 per generation)
-- **36% lower generation latency** (25s → 16s)
-- **95% sizing recommendation accuracy**
-- Participating merchants reported an average **46% reduction in returns** and **39% increase in conversion** after two months
-
-## Engineering highlights
-
-### AI inference
-
-The virtual try-on workflow uses an asynchronous inference architecture with self-hosted GPU infrastructure on AWS EC2. The production flow handles job creation, polling and failure states while keeping the application layer decoupled from inference execution.
-
-Moving the primary workload to self-hosted inference reduced marginal generation cost by 87% and latency by 36% compared with the evaluated third-party API path.
-
-### Sizing engine
-
-Omafit includes a deterministic recommendation engine that combines:
-
-- body measurements and BMI adjustments
-- body-profile calibration
-- customer fit preference
-- garment-specific measurement weighting
-- fabric elasticity tolerance
-- asymmetric penalties for overly tight recommendations
-- confidence scoring
-
-The system currently achieves a measured **95% recommendation accuracy rate**.
-
-### Context-aware AI shopping
-
-The conversational shopping layer retrieves matching catalog data before injecting product context into the LLM. This constrains recommendations to real store inventory and reduces unnecessary context while supporting product discovery and styling workflows.
-
-### Shopify integration
-
-The application integrates with Shopify across:
-
-- Admin API and Storefront API
-- OAuth authentication
-- managed billing
-- webhook processing
-- product synchronization
-- merchant configuration
-- customer-facing storefront workflows
+Documentação detalhada: [`docs/README.md`](docs/README.md) · Arquitetura: [`docs/architecture/current-state.md`](docs/architecture/current-state.md).
 
 ## Architecture
 
-```text
-Shopify Storefront / Admin
-          │
-          ▼
-   Omafit Application
-   ├── Merchant dashboard
-   ├── Product & store configuration
-   ├── Sizing engine
-   ├── Analytics
-   └── AI orchestration
-          │
-          ├──────────────► PostgreSQL / Supabase
-          │
-          ├──────────────► LLM / product-context workflows
-          │
-          └──────────────► Async Try-On Pipeline
-                              │
-                              ▼
-                         AWS EC2 GPU
+| Peça | Onde |
+|------|------|
+| Shopify App (OAuth, admin, webhooks) | `app/`, `shopify.app.toml` |
+| Theme App Extension | `extensions/omafit-theme/` |
+| Supabase SQL / Edge Functions | `supabase/` |
+| Prisma sessions | `prisma/` |
+| Billing sync / gates | `app/billing-*.server.js` |
+| Widget storefront bridge | `extensions/omafit-theme/assets/omafit-widget.js` |
+| AR eyewear (admin + metafields + fal) | `app/ar-eyewear.server.js`, `workers/ar-eyewear-tripo/` |
+| Analytics (sessions / orders) | `app/routes/api.analytics*.jsx`, `webhooks.orders.jsx` |
+| Try-on garment / GPT stylist | Repo irmão **omafit-widget** (+ edges) |
+
+## Repository Structure
+
+```
+app/                  # App React Router + server modules (.server.js)
+docs/                 # Documentação por domínio (setup, billing, widget, …)
+extensions/           # Theme App Extension (source assets)
+prisma/               # Schema + migrations de Session
+scripts/              # Utilitários de repo
+shared/               # Código partilhado app ↔ edge (ex. GLB canonicalize)
+supabase/
+  functions/          # Edge Functions deste repo
+  patches/            # SQL operacional (não = prod garantido)
+  archived/           # SQL supersedido / diagnóstico
+  migrations/         # Reservado (ver supabase/README.md)
+workers/              # Worker AR Tripo (Docker)
 ```
 
-## Engineering documentation
+## Local Development
 
-- [System architecture](docs/architecture.md)
-- [Virtual try-on inference pipeline](docs/inference-pipeline.md)
-- [Deterministic sizing engine](docs/sizing-engine.md)
-- [Shopify integration](docs/shopify-integration.md)
+Requisitos: Node `>=20.19 <22 || >=22.12`, Shopify CLI, conta Partner + loja de desenvolvimento.
 
-These notes document the engineering decisions and architecture behind the production system without exposing proprietary implementation details.
+```bash
+npm install
+npm run setup          # prisma generate && migrate deploy
+npm run dev            # shopify app dev
+```
 
-## Core stack
+Outros scripts úteis: `npm run lint`, `npm run build`, `npm run typecheck`, `npm run deploy`.
 
-**Frontend:** React, TypeScript, JavaScript  
-**Backend:** Node.js, Python, REST APIs  
-**Data:** PostgreSQL, Supabase  
-**AI:** Computer Vision, LLM integrations, agentic workflows  
-**Cloud:** AWS EC2, Railway, Netlify  
-**Commerce:** Shopify Admin API, Storefront API, OAuth, Billing, Webhooks
+O try-on Netlify / sync AR a partir do tema:
 
-## About the engineering work
+```bash
+# requer checkout irmão ../omafit-widget
+npm run sync:netlify-widget-ar
+```
 
-Omafit was built from 0→1 with end-to-end ownership across product architecture, frontend, backend, data modeling, AI integration, Shopify infrastructure, cloud deployment and production iteration.
+## Environment Variables
 
-The engineering focus has been less about adding isolated AI features and more about making AI workflows economically viable and reliable enough to operate inside real e-commerce stores.
+**Nunca commite valores.** Nomes usados pelo código deste repo:
 
-## Links
+| Variável | Uso |
+|----------|-----|
+| `SHOPIFY_API_KEY` | App Shopify |
+| `SHOPIFY_API_SECRET` | App + HMAC webhooks |
+| `SHOPIFY_APP_URL` | URL pública da app |
+| `SCOPES` | Scopes (fallback; toml também declara) |
+| `SHOP_CUSTOM_DOMAIN` | Opcional |
+| `DATABASE_URL` | Prisma (se configurado além do default sqlite) |
+| `SUPABASE_URL` / `VITE_SUPABASE_URL` | API Supabase |
+| `SUPABASE_ANON_KEY` / `VITE_SUPABASE_ANON_KEY` | Anon (client/admin loader) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server: bypass RLS, Storage AR, sync billing |
+| `FAL_API_KEY` | Geração GLB Tripo |
+| `FAL_*` / `FAL_TRIPO_*` | Overrides do pipeline fal (modelo, timeout, textura, …) |
+| `OMAFIT_AR_EYEWEAR_OPEN_BETA` | Flag beta AR (`1` = open) |
 
-- Product: https://omafit.co
-- LinkedIn: https://www.linkedin.com/in/matheuscpatricio
-- GitHub: https://github.com/matheuscpatricio
 
----
+## Shopify Integration
 
-Built by **Matheus Patrício** — Founding Engineer / AI Product & Full-Stack Engineer.
+- **Auth:** `authenticate.admin` / `login` — `app/shopify.server.js`
+- **Billing:** Managed Pricing + `billing-sync.server.js` + webhook `app_subscriptions/update`
+- **Webhooks (toml):** `app/uninstalled`, `app/scopes_update`, `app_subscriptions/update`, compliance. Handler `webhooks.orders.jsx` existe; **não** está subscrito no `shopify.app.toml` atual.
+- **Theme:** ver [`extensions/omafit-theme/README.md`](extensions/omafit-theme/README.md)
+- **Scopes:** `read_products,read_orders,write_products`
+
+## Database
+
+| Store | Responsabilidade |
+|-------|------------------|
+| **Prisma** | Sessões Shopify (tokens offline/online) |
+| **Supabase** | Lojas/billing, widget config/keys, size charts, analytics, AR assets, storage |
+
+SQL: [`supabase/README.md`](supabase/README.md) — patches ≠ garantia de produção.
+
+## Deployment
+
+Confirmado no código/config:
+
+- App URL em `shopify.app.toml` aponta para host Railway (`omafit-production.up.railway.app`).
+- `Dockerfile` + `docker-compose.ar-eyewear-worker.yml` para worker AR.
+- Extensão: `shopify app deploy`.
+- Supabase: projeto separado (URL nas env / theme asset).
+
+Não há `railway.toml` / `nixpacks.toml` neste repo.
+
+## Security Notes
+
+- Admin: autenticação Shopify (`authenticate.admin`); não trate `shop_domain` sozinho como auth.
+- Webhooks: HMAC via `authenticate.webhook`.
+- `SUPABASE_SERVICE_ROLE_KEY` só no servidor (billing, AR, várias APIs).
+- Storefront: superfície pública (anon key no theme JS + filtro `shop_domain`).
+
+## Known Technical Debt
+
+Factos confirmados no código/docs atuais:
+
+1. SQL histórico com policies **conflitantes** (`shopify_shops` ENABLE vs DISABLE, RLS `USING (true)`).
+2. Algumas rotas precisam revisão de auth/tenant (`api.analytics.sessions` query `shop_domain`; `api.billing.create-usage` sem `authenticate.admin`).
+3. Attribution ATC→order incompleta: `properties: {}` no theme; `orders` webhook fora do toml.
+4. `app/ar-eyewear.server.js` monolítico (~1.6k linhas) — plano em `docs/ar/refactor-plan.md`.
+5. `app/*.server.js` ainda flat — plano em `docs/architecture/app-domains-refactor-plan.md`.
+6. Branch pode estar atrás de `main` (ex.: catalog-search stylist ausente aqui).
+
+## Contributing / Docs
+
+- Índice: [`docs/README.md`](docs/README.md)
+- Não adicionar mais `FIX_*.md` / `CONFIGURAR_*.md` na raiz — usar `docs/<domínio>/`.
+- Novos SQL: `supabase/patches/` (ou `migrations/` quando houver fluxo canónico).

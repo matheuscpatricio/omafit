@@ -5,21 +5,8 @@ import {
   jsonWithCors,
   getWidgetCatalogCorsHeaders,
 } from "../widget-catalog-auth.server";
-import {
-  buildCatalogSearchQueries,
-  runCatalogSearches,
-  titleLooksDark,
-  resolveCatalogSearchTargetGender,
-  parseCollectionHandlesInput,
-  resolveCollectionHandlesForCatalog,
-} from "../widget-catalog-search.server";
 import prisma from "../db.server";
-import { rankCandidatesByLearnedBoost } from "../widget-suggestion-learn.server";
-import {
-  filterCandidatesByStylistParams,
-  scoreCandidatesForStylist,
-} from "../widget-stylist-filters.server.js";
-import { resolveStoreProfileForShop } from "../widget-store-profile.server.js";
+import { runStylistCatalogSearch } from "../stylist/catalog.server.js";
 import {
   getShopifyAdminForWidget,
   noSessionDebugPayload,
@@ -89,20 +76,6 @@ export async function action({ request }) {
     );
   }
 
-  const userMessage = String(params.user_message || "").trim();
-  const excludeHandle = String(params.exclude_handle || "").trim();
-  const productName = String(params.product_name || "").trim();
-  const collectionType = String(params.collection_type || "upper").trim().toLowerCase();
-  const safeCollection =
-    collectionType === "lower" || collectionType === "full" ? collectionType : "upper";
-  const shopperGender = String(params.shopper_gender || "").trim();
-  const chartGenderScope = String(params.chart_gender_scope || "both").trim();
-  const collectionHandles = parseCollectionHandlesInput(params.collection_handles);
-  const targetGender = resolveCatalogSearchTargetGender({
-    shopperGender,
-    chartGenderScope,
-  });
-
   const adminResult = await getShopifyAdminForWidget(prisma, unauthenticated, v.shopDomain);
   if (!adminResult.ok) {
     console.error("[api.widget.catalog-search] no_session", adminResult);
@@ -114,70 +87,25 @@ export async function action({ request }) {
   }
 
   try {
-    const admin = adminResult.admin;
-
-    const storeProfile = await resolveStoreProfileForShop(prisma, v.shopDomain, admin);
-    if (
-      storeProfile?.audience &&
-      storeProfile.audience !== "mixed" &&
-      (!String(params.store_audience || "").trim() ||
-        String(params.store_audience).trim() === "unknown")
-    ) {
-      params.store_audience = storeProfile.audience;
-    }
-    if (!String(params.price_band || "").trim() && storeProfile?.price_band) {
-      params.price_band = storeProfile.price_band;
-    }
-
-    const resolvedCollectionHandles = await resolveCollectionHandlesForCatalog(
-      admin,
-      collectionHandles,
-      excludeHandle
-    );
-    const handlesForSearch =
-      resolvedCollectionHandles.length > 0 ? resolvedCollectionHandles : collectionHandles;
-
-    const effectiveSearchGender =
-      String(params.effective_search_gender || "").trim() || targetGender;
-
-    const queries = buildCatalogSearchQueries({
-      userMessage,
-      productName,
-      collectionType: safeCollection,
-      titleLooksDark: titleLooksDark(productName),
-      shopperGender,
-      chartGenderScope,
-      collectionHandles: handlesForSearch,
-      searchTermsBoost: String(params.search_terms_boost || ""),
-    });
-
-    const candidatesRaw = await runCatalogSearches(admin, queries, {
-      excludeHandle,
-      limit: 15,
-      targetGender: effectiveSearchGender,
-      collectionHandles: handlesForSearch,
-    });
-
-    const boosted = await rankCandidatesByLearnedBoost(
+    const { candidates, scoredTop, storeProfile, diagnostics } = await runStylistCatalogSearch({
       prisma,
-      v.shopDomain,
+      admin: adminResult.admin,
+      shopDomain: v.shopDomain,
+      params,
+    });
+    const {
       excludeHandle,
-      candidatesRaw
-    );
-
-    const filtered = filterCandidatesByStylistParams(boosted, {
-      ...params,
-      exclude_handle: excludeHandle,
-      effective_search_gender: effectiveSearchGender,
-    });
-
-    const scoredTop = scoreCandidatesForStylist(filtered, {
-      ...params,
-      product_name: productName,
-      collection_type: safeCollection,
-    });
-
-    const candidates = scoredTop.length ? scoredTop : filtered.slice(0, 15);
+      collectionHandles,
+      resolvedCollectionHandles,
+      queries,
+      targetGender,
+      effectiveSearchGender,
+      chartGenderScope,
+      shopperGender,
+      safeCollection,
+      candidatesRaw,
+      filtered,
+    } = diagnostics;
 
     const payload = {
       candidates,

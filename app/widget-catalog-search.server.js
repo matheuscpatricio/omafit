@@ -358,6 +358,7 @@ const PRODUCT_BY_HANDLE = `#graphql
       handle
       title
       productType
+      status
       onlineStoreUrl
       featuredImage {
         url
@@ -376,6 +377,7 @@ const PRODUCT_BY_HANDLE = `#graphql
             legacyResourceId
             title
             availableForSale
+            price
             image {
               url
             }
@@ -637,6 +639,7 @@ const PRODUCT_BY_HANDLE_FALLBACK = `#graphql
           handle
           title
           productType
+          status
           onlineStoreUrl
           featuredImage {
             url
@@ -655,6 +658,7 @@ const PRODUCT_BY_HANDLE_FALLBACK = `#graphql
                 legacyResourceId
                 title
                 availableForSale
+                price
                 image {
                   url
                 }
@@ -671,10 +675,14 @@ const PRODUCT_BY_HANDLE_FALLBACK = `#graphql
   }
 `;
 
-export async function fetchProductDetailByHandle(admin, handle) {
+/**
+ * Nó bruto do Admin API (inclui `status` e `price` por variante, que o contrato público não expõe).
+ * @returns {Promise<{ node: any, error: string | null }>}
+ */
+export async function fetchProductNodeByHandle(admin, handle) {
   const h = String(handle || "").trim();
   if (!h) {
-    return { product: null, error: "missing_handle" };
+    return { node: null, error: "missing_handle" };
   }
 
   let p = null;
@@ -692,9 +700,13 @@ export async function fetchProductDetailByHandle(admin, handle) {
   }
 
   if (!p) {
-    return { product: null, error: "not_found" };
+    return { node: null, error: "not_found" };
   }
+  return { node: p, error: null };
+}
 
+/** Formato público de `/api/widget/product-by-handle` (sem `status`/`price`). */
+export function mapProductNodeToWidgetDetail(p, collection_handles = []) {
   const images = [];
   if (p.featuredImage?.url) {
     images.push(p.featuredImage.url);
@@ -748,24 +760,29 @@ export async function fetchProductDetailByHandle(admin, handle) {
     }
   }
 
-  const collection_handles = await resolveCollectionHandlesForCatalog(admin, [], h);
-
   return {
-    product: {
-      id: p.legacyResourceId != null ? String(p.legacyResourceId) : String(p.id || ""),
-      handle: p.handle,
-      title: p.title,
-      product_type: p.productType || "",
-      url: p.onlineStoreUrl || "",
-      images,
-      image_url: images[0] || "",
-      collection_handles,
-      catalog: {
-        sizes: Array.from(sizes),
-        colors: Array.from(colors),
-        variants,
-      },
+    id: p.legacyResourceId != null ? String(p.legacyResourceId) : String(p.id || ""),
+    handle: p.handle,
+    title: p.title,
+    product_type: p.productType || "",
+    url: p.onlineStoreUrl || "",
+    images,
+    image_url: images[0] || "",
+    collection_handles,
+    catalog: {
+      sizes: Array.from(sizes),
+      colors: Array.from(colors),
+      variants,
     },
-    error: null,
   };
+}
+
+export async function fetchProductDetailByHandle(admin, handle) {
+  const { node, error } = await fetchProductNodeByHandle(admin, handle);
+  if (!node) {
+    return { product: null, error };
+  }
+  const h = String(handle || "").trim();
+  const collection_handles = await resolveCollectionHandlesForCatalog(admin, [], h);
+  return { product: mapProductNodeToWidgetDetail(node, collection_handles), error: null };
 }

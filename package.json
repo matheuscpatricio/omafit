@@ -20,7 +20,8 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "security:audit": "node ./scripts/security-audit.mjs"
+    "security:audit": "node ./scripts/security-audit.mjs",
+    "test": "node --test \"tests/**/*.test.mjs\""
   },
   "type": "module",
   "engines": {

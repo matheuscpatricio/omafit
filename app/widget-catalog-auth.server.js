@@ -10,7 +10,7 @@ const BUILTIN_WIDGET_CORS_ORIGINS = [
   "http://127.0.0.1:5173",
 ];
 
-function isAllowedWidgetCatalogOrigin(origin) {
+export function isAllowedWidgetCatalogOrigin(origin) {
   const o = String(origin || "").trim();
   if (!o) return false;
   if (BUILTIN_WIDGET_CORS_ORIGINS.includes(o)) return true;

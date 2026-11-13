@@ -46,7 +46,7 @@ export function shopDomainLookupVariants(shopDomain) {
 /**
  * Encontra o valor `shop` na tabela Session (offline) mais provável para este pedido.
  */
-export async function resolveOfflineSessionShop(prisma, shopDomain) {
+export async function resolveOfflineSessionShop(prisma, shopDomain, options = {}) {
   const variants = shopDomainLookupVariants(shopDomain);
   for (const shop of variants) {
     const row = await prisma.session.findFirst({
@@ -55,6 +55,11 @@ export async function resolveOfflineSessionShop(prisma, shopDomain) {
     });
     if (row?.shop) return row.shop;
   }
+
+  // Substring match can resolve `rrascaneta-2` to another tenant's session (`arrascaneta-2`).
+  const allowFuzzy =
+    options.allowFuzzy ?? process.env.WIDGET_LEGACY_FUZZY_SHOP_MATCH === "1";
+  if (!allowFuzzy) return null;
 
   const handle = normalizeMyshopifyDomain(shopDomain).replace(/\.myshopify\.com$/, "");
   if (handle) {
@@ -74,9 +79,9 @@ export async function resolveOfflineSessionShop(prisma, shopDomain) {
 /**
  * Obtém cliente Admin GraphQL para pedidos do widget (catalog-search, product-by-handle).
  */
-export async function getShopifyAdminForWidget(prisma, unauthenticated, shopDomain) {
+export async function getShopifyAdminForWidget(prisma, unauthenticated, shopDomain, options = {}) {
   const requested = String(shopDomain || "").trim();
-  const sessionShop = await resolveOfflineSessionShop(prisma, requested);
+  const sessionShop = await resolveOfflineSessionShop(prisma, requested, options);
   const shopToUse = sessionShop || normalizeMyshopifyDomain(requested);
 
   try {

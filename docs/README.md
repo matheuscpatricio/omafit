@@ -9,6 +9,7 @@
 | [shopify/](shopify/) | Instruções de loja, widget_keys, shop_domain |
 | [billing/](billing/) | Checklist, planos, usage charges |
 | [widget/](widget/) | Embed, postMessage, ATC, Netlify |
+| [stylist/](stylist/) | AI Stylist: auditoria de auth, sessões curtas, ferramentas comerciais |
 | [supabase/](supabase/) | Storage, RLS storage, setup (SQL em `/supabase`) |
 | [ar/](ar/) | Rollout AR eyewear + plano de modularização |
 | [troubleshooting/](troubleshooting/) | FIX_*, DIAGNOSTICO_*, EDGE_FUNCTION_*, etc. |

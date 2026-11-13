@@ -1,6 +1,7 @@
 // Omafit - Widget oficial adaptado para Theme App Extension
 (function () {
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
+  const OMAFIT_APP_ORIGIN = 'https://omafit-production.up.railway.app';
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
   const OMAFIT_SHOPPER_DEVICE_KEY = 'omafit_device_id_v1';
 
@@ -1760,6 +1761,206 @@
     }
   }
 
+  function omafitEmailCaptureCopy(productName) {
+    var lang = String(detectStoreLanguage() || 'pt').slice(0, 2);
+    var name = String(productName || '').trim();
+    var packs = {
+      es: {
+        title: name ? '¿Te gustó ' + name + '?' : '¿Te gustó esta prenda?',
+        hint: 'Deja tu correo y la tienda puede avisarte sobre esta pieza. No guardamos la foto del probador.',
+        consent: 'Al guardar, aceptas recibir correos de la tienda sobre esta pieza.',
+        placeholder: 'tu@email.com',
+        button: 'Guardar correo',
+        dismiss: 'Ahora no',
+        success: 'Correo guardado.',
+        invalid: 'Escribe un correo válido.',
+        error: 'No se pudo guardar ahora.'
+      },
+      en: {
+        title: name ? 'Like ' + name + '?' : 'Like this piece?',
+        hint: 'Leave your email so the store can follow up on this item. We do not save the try-on photo.',
+        consent: 'By saving, you agree to hear from the store about this item.',
+        placeholder: 'you@email.com',
+        button: 'Save email',
+        dismiss: 'Not now',
+        success: 'Email saved.',
+        invalid: 'Enter a valid email.',
+        error: 'Could not save right now.'
+      }
+    };
+    var pt = {
+      title: name ? 'Gostou de ' + name + '?' : 'Gostou desta peça?',
+      hint: 'Deixe seu e-mail e a loja pode te avisar sobre esta peça. A foto do provador não é guardada.',
+      consent: 'Ao salvar, você aceita receber e-mails da loja sobre esta peça.',
+      placeholder: 'voce@email.com',
+      button: 'Salvar e-mail',
+      dismiss: 'Agora não',
+      success: 'E-mail salvo.',
+      invalid: 'Digite um e-mail válido.',
+      error: 'Não foi possível salvar agora.'
+    };
+    return packs[lang] || pt;
+  }
+
+  function omafitRememberEmailCapture(storage, key) {
+    try { storage.setItem(key, '1'); } catch (_err) {}
+  }
+
+  async function omafitOfferEmailCapture() {
+    if (!OMAFIT_CONFIG || !OMAFIT_CONFIG.shopDomain) return;
+    if (document.getElementById('omafit-email-capture')) return;
+
+    var info = typeof getProductInfo === 'function' ? getProductInfo() : {};
+    var handle = info && info.productHandle ? String(info.productHandle).trim() : '';
+    var shop = String(OMAFIT_CONFIG.shopDomain || '').trim().toLowerCase();
+    var productKey = handle || 'product';
+    var savedKey = 'omafit_email_saved_v1:' + shop + ':' + productKey;
+    var dismissKey = 'omafit_email_dismiss_v1:' + shop + ':' + productKey;
+    try {
+      if (localStorage.getItem(savedKey) === '1') return;
+      if (sessionStorage.getItem(dismissKey) === '1') return;
+    } catch (_err) {}
+
+    var enabled = false;
+    try {
+      var statusRes = await fetch(
+        OMAFIT_APP_ORIGIN + '/api/widget/email-capture?shop_domain=' + encodeURIComponent(shop),
+        { method: 'GET', credentials: 'omit', mode: 'cors' }
+      );
+      var statusJson = await statusRes.json();
+      enabled = !!(statusJson && statusJson.enabled);
+    } catch (_err) {
+      return;
+    }
+    if (!enabled || document.getElementById('omafit-email-capture')) return;
+    if (document.querySelector('.omafit-modal-overlay')) return;
+
+    var copy = omafitEmailCaptureCopy(info && info.productName ? String(info.productName).slice(0, 80) : '');
+    var primary = (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.primary) || '#810707';
+    var card = document.createElement('aside');
+    card.id = 'omafit-email-capture';
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-label', copy.title);
+    card.style.cssText =
+      'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(420px,calc(100% - 24px));' +
+      'background:#fff;color:#1a1a1a;border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,.22);' +
+      'z-index:1000003;padding:16px;box-sizing:border-box;font-family:inherit;';
+
+    var title = document.createElement('div');
+    title.textContent = copy.title;
+    title.style.cssText = 'font-size:16px;font-weight:650;line-height:1.3;margin:0 28px 6px 0;';
+
+    var hint = document.createElement('p');
+    hint.textContent = copy.hint;
+    hint.style.cssText = 'margin:0 0 10px;font-size:13px;line-height:1.4;color:#3d3d3d;';
+
+    var form = document.createElement('form');
+    form.style.cssText = 'display:flex;gap:8px;align-items:center;';
+
+    var trap = document.createElement('input');
+    trap.type = 'text';
+    trap.tabIndex = -1;
+    trap.autocomplete = 'off';
+    trap.setAttribute('aria-hidden', 'true');
+    trap.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;opacity:0;';
+
+    var input = document.createElement('input');
+    input.type = 'email';
+    input.required = true;
+    input.placeholder = copy.placeholder;
+    input.autocomplete = 'email';
+    input.style.cssText =
+      'flex:1;min-width:0;height:42px;border:1px solid #d0d0d0;border-radius:10px;padding:0 12px;font:inherit;font-size:14px;';
+
+    var submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.textContent = copy.button;
+    submit.style.cssText =
+      'height:42px;border:0;border-radius:10px;padding:0 14px;background:' + primary +
+      ';color:#fff;font:inherit;font-size:14px;font-weight:650;cursor:pointer;white-space:nowrap;';
+
+    var consent = document.createElement('p');
+    consent.textContent = copy.consent;
+    consent.style.cssText = 'margin:8px 0 0;font-size:11px;line-height:1.35;color:#666;';
+
+    var feedback = document.createElement('p');
+    feedback.style.cssText = 'margin:8px 0 0;font-size:13px;line-height:1.3;min-height:0;';
+
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.textContent = '×';
+    dismiss.setAttribute('aria-label', copy.dismiss);
+    dismiss.style.cssText =
+      'position:absolute;top:8px;right:8px;width:32px;height:32px;border:0;background:transparent;' +
+      'font-size:24px;line-height:1;cursor:pointer;color:#444;';
+
+    function closeCard(rememberDismiss) {
+      if (rememberDismiss) omafitRememberEmailCapture(sessionStorage, dismissKey);
+      if (card.parentNode) card.parentNode.removeChild(card);
+    }
+
+    dismiss.addEventListener('click', function () { closeCard(true); });
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var email = String(input.value || '').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        feedback.textContent = copy.invalid;
+        feedback.style.color = '#8a1f11';
+        return;
+      }
+      if (String(trap.value || '').trim()) {
+        omafitRememberEmailCapture(localStorage, savedKey);
+        closeCard(false);
+        return;
+      }
+      submit.disabled = true;
+      feedback.textContent = '';
+      try {
+        var response = await fetch(OMAFIT_APP_ORIGIN + '/api/widget/email-capture', {
+          method: 'POST',
+          credentials: 'omit',
+          mode: 'cors',
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify({
+            shop_domain: shop,
+            email: email,
+            product_handle: handle,
+            product_title: info && info.productName ? String(info.productName).slice(0, 200) : '',
+            product_url: String(window.location.href || '').split('#')[0],
+            company: trap.value || ''
+          })
+        });
+        var payload = await response.json().catch(function () { return {}; });
+        if (!response.ok || !payload.ok) {
+          feedback.textContent = payload && payload.error === 'invalid_email' ? copy.invalid : copy.error;
+          feedback.style.color = '#8a1f11';
+          submit.disabled = false;
+          return;
+        }
+        omafitRememberEmailCapture(localStorage, savedKey);
+        feedback.textContent = copy.success;
+        feedback.style.color = '#1f6b3a';
+        setTimeout(function () { closeCard(false); }, 1400);
+      } catch (_err) {
+        feedback.textContent = copy.error;
+        feedback.style.color = '#8a1f11';
+        submit.disabled = false;
+      }
+    });
+
+    form.appendChild(trap);
+    form.appendChild(input);
+    form.appendChild(submit);
+    card.appendChild(dismiss);
+    card.appendChild(title);
+    card.appendChild(hint);
+    card.appendChild(form);
+    card.appendChild(consent);
+    card.appendChild(feedback);
+    document.body.appendChild(card);
+    input.focus();
+  }
+
   // Função que abre o modal do Omafit
   window.openOmafitModal = async function () {
     if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
@@ -1964,6 +2165,7 @@
             document.body.removeChild(overlay);
             document.body.style.overflow = '';
             scheduleOmafitWidgetWarmup();
+            omafitOfferEmailCapture().catch(function () {});
           }
         }, 400);
       }

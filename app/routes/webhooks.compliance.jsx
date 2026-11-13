@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { redactCustomerEmail, redactShopEmailData } from "../shop-klaviyo.server.js";
 
 /**
  * Webhook de conformidade obrigatório para App Store
@@ -96,6 +97,7 @@ async function handleDataRequest(payload, shop) {
 async function handleCustomerRedact(payload, shop) {
   console.log(`[Compliance Webhook] Customer ID: ${payload.customer?.id || payload.customer_id}`);
   console.log(`[Compliance Webhook] Customer Email: ${payload.customer?.email || "N/A"}`);
+  await redactCustomerEmail(shop, payload.customer?.email || "");
 
   // De acordo com a documentação da Shopify, você deve:
   // 1. Remover todos os dados pessoais do cliente armazenados pelo app
@@ -129,7 +131,8 @@ async function handleCustomerRedact(payload, shop) {
  * Processa solicitação de remoção de dados da loja (shop/redact)
  */
 async function handleShopRedact(payload, shop) {
-  console.log(`[Compliance Webhook] Shop Domain: ${shop}`);
+    console.log(`[Compliance Webhook] Shop Domain: ${shop}`);
+    await redactShopEmailData(shop);
 
   // De acordo com a documentação da Shopify, você deve:
   // 1. Remover todos os dados da loja armazenados pelo app

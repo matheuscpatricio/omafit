@@ -6,8 +6,8 @@
 import { SHOPIFY_PLAN_CONFIG, normalizeShopifyPlanKey } from "./billing-plans.server.js";
 
 const APP_SUBSCRIPTION_CREATE = `#graphql
-  mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!) {
-    appSubscriptionCreate(name: $name, returnUrl: $returnUrl, lineItems: $lineItems) {
+  mutation AppSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!, $trialDays: Int) {
+    appSubscriptionCreate(name: $name, returnUrl: $returnUrl, lineItems: $lineItems, trialDays: $trialDays) {
       userErrors {
         field
         message
@@ -25,13 +25,13 @@ const PLAN_CONFIG = SHOPIFY_PLAN_CONFIG;
 /**
  * Cria a assinatura na Shopify e retorna a confirmationUrl.
  * @param {{ admin: object, session: { shop: string } }} auth
- * @param {string} planKey - ondemand | growth | pro | enterprise | basic | starter
+ * @param {string} planKey - growth | pro | scale | enterprise
  * @returns {Promise<{ confirmationUrl: string, plan: string }>}
  */
 export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const { admin, session } = auth;
   const normalizedKey = normalizeShopifyPlanKey(planKey);
-  if (!["ondemand", "growth", "pro", "enterprise"].includes(normalizedKey)) {
+  if (!["growth", "pro", "scale", "enterprise"].includes(normalizedKey)) {
     throw new Response(JSON.stringify({ error: "Invalid plan" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
@@ -42,11 +42,9 @@ export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
   const returnUrl = `${appUrl}/billing/confirm?shop=${encodeURIComponent(session.shop)}`;
   // Line items: 1) Recurring (base), 2) Usage (appUsagePricingDetails) - obrigatório para appUsageRecordCreate
   const usageTerms =
-    normalizedKey === "ondemand"
-      ? `$${config.pricePerExtra.toFixed(2)} per try-on session (after 50 free one-time)`
-      : normalizedKey === "enterprise"
-        ? `Enterprise: unlimited try-on sessions included in the monthly fee ($0 per extra session).`
-        : `$${config.pricePerExtra.toFixed(2)} per extra try-on session (after ${config.imagesIncluded} included per month)`;
+    normalizedKey === "enterprise"
+      ? `Enterprise: unlimited try-on sessions included in the monthly fee ($0 per extra session).`
+      : `$${config.pricePerExtra.toFixed(2)} per extra try-on session (after ${config.imagesIncluded} included per month)`;
   const lineItems = [
     {
       plan: {
@@ -68,11 +66,13 @@ export async function createSubscriptionAndGetConfirmationUrl(auth, planKey) {
       },
     },
   ];
+  const trialDays = Number(config.trialDays) > 0 ? Number(config.trialDays) : null;
   const response = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
     variables: {
       name: config.name,
       returnUrl,
       lineItems,
+      trialDays,
     },
   });
   const json = await response.json();

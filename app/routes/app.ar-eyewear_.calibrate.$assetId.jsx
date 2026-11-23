@@ -66,7 +66,21 @@ function tryResignIfPrivate(rawUrl) {
   }
 }
 
+/** Temporariamente desativado no admin Shopify. Volte a `true` para reabrir a página. */
+const AR_EYEWEAR_ADMIN_ENABLED = false;
+
 export async function loader({ request, params }) {
+  const requestUrl = new URL(request.url);
+
+  if (!AR_EYEWEAR_ADMIN_ENABLED) {
+    const redirectQs = new URLSearchParams();
+    for (const key of ["shop", "host", "embedded", "locale"]) {
+      const value = requestUrl.searchParams.get(key);
+      if (value) redirectQs.set(key, value);
+    }
+    return redirect(`/app${redirectQs.toString() ? `?${redirectQs.toString()}` : ""}`);
+  }
+
   const { Buffer } = await import("node:buffer");
   const {
     getAssetById,
@@ -80,9 +94,8 @@ export async function loader({ request, params }) {
   const { admin, session } = await authenticate.admin(request);
   const billing = await ensureShopHasActiveBilling(admin, session.shop);
   if (!billing.active) {
-    const url = new URL(request.url);
-    const hostFromQuery = url.searchParams.get("host") || "";
-    const embeddedFromQuery = url.searchParams.get("embedded") || "";
+    const hostFromQuery = requestUrl.searchParams.get("host") || "";
+    const embeddedFromQuery = requestUrl.searchParams.get("embedded") || "";
     const shopHandle = String(session.shop || "").replace(/\.myshopify\.com$/i, "");
     const derivedHost = shopHandle
       ? Buffer.from(`admin.shopify.com/store/${shopHandle}`, "utf8").toString("base64")

@@ -122,6 +122,32 @@ Deployment configuration includes:
 - `SUPABASE_SERVICE_ROLE_KEY` só no servidor (billing, AR, várias APIs).
 - Storefront: superfície pública (anon key no theme JS + filtro `shop_domain`).
 
+### Shopify IP allowlist (obrigatório — app pública)
+
+A Omafit chama Admin API com tokens no Railway. **Não** uses “block all”. Código já tem `expiringOfflineAccessTokens`. Allowlist = config no Dev Dashboard (não `shopify.app.toml`).
+
+**Estado:** Railway **Hobby**, região **us-west2**, IPv6 egress off. Sem Pro não há Static Outbound IPs — usamos **ASN** (ponte).
+
+**Prazos:** 12 nov 2026 bulk bloqueado · 20 nov 2026 delist / novos installs · 15 jan 2027 aviso merchants.
+
+**Passo a passo (ASN — Hobby):**
+
+1. [Dev Dashboard](https://dev.shopify.com) → Omafit → **Logs** → anota IPs cliente dos pedidos Admin API recentes → confirma ASN (ex. [bgp.he.net](https://bgp.he.net/) ou whois).
+2. Settings → **IP allowlist** → **Networks (ASN)** — no Hobby US West costuma ser necessário **ambos**:
+   ```
+   400940
+   396982
+   ```
+   (`AS400940` Railway Metal · `AS396982` Google Cloud; o egress do Hobby pode alternar entre os dois após redeploy.)
+3. **Limit ASNs to countries:** `United States` (serviço em `us-west2`). Só alarga países se o **Run test** mostrar bloqueios noutro país.
+4. **Run test** contra tráfego dos últimos 30 dias. Se algum IP próprio for bloqueado, acrescenta o ASN em falta e testa de novo.
+5. Liga **Enforce IP allowlist** → Save.
+6. Valida: app no admin Shopify OK; pedido Admin GraphQL de fora da lista = **403**.
+
+**Após cada redeploy Railway:** abre a app no admin e confirma que GraphQL/Admin continua a funcionar. Se der 403, volta aos Logs, atualiza ASNs e re-testa.
+
+**Não faças:** block all; allowlist só com um ASN (Hobby pode mudar de rede). Proxy com IP fixo ou Pro+Static IPs são o caminho estável se o ASN falhar.
+
 ## Known Technical Debt
 
 - Some legacy Supabase policies require consolidation.

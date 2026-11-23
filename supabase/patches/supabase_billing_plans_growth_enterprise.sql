@@ -1,25 +1,29 @@
 -- =============================================================================
--- Omafit: planos Growth e Enterprise (referência para shopify_shops.plan)
+-- Omafit: planos Growth / Pro / Scale / Enterprise (referência shopify_shops.plan)
 -- =============================================================================
--- Não é obrigatório executar isto para o app funcionar: o backend já grava
--- `plan`, `images_included` e `price_per_extra_image` ao sincronizar com a Shopify.
+-- O backend grava plan, images_included e price_per_extra_image ao sincronizar
+-- com a Shopify (Managed Pricing). Este SQL é só referência / correção pontual.
 --
--- Valores esperados após sync (Managed Pricing + plan handles corretos):
---   ondemand   → plan = 'ondemand',   images_included = 50,       price_per_extra_image = 0.18
---   growth     → plan = 'growth',    images_included = 700,      price_per_extra_image = 0.12
---   pro        → plan = 'pro',       images_included = 3000,     price_per_extra_image = 0.08
---   enterprise → plan = 'enterprise', images_included = 2000000, price_per_extra_image = 0
+-- Valores esperados após sync:
+--   growth     → $99/mês  ou $999/ano,   images_included = 1000,  price_per_extra = 0.12, trial 14d
+--   pro        → $399/mês ou $3990/ano,  images_included = 5000,  price_per_extra = 0.08, trial 14d
+--   scale      → $999/mês ou $9990/ano,  images_included = 15000, price_per_extra = 0.04, trial 14d
+--   enterprise → $2499/mês ou $24900/ano, images_included = 2000000, price_per_extra = 0
 --
--- Ajuste manual (ex.: correção pontual no SQL Editor), por loja:
+-- On-demand / free já NÃO é oferecido. Lojas legadas podem permanecer com
+-- plan = 'ondemand' até escolherem um plano pago no Managed Pricing.
+--
+-- Ajuste manual por loja:
 --   UPDATE shopify_shops
 --   SET plan = 'growth',
---       images_included = 700,
+--       images_included = 1000,
 --       price_per_extra_image = 0.12,
 --       updated_at = NOW()
 --   WHERE shop_domain = 'sua-loja.myshopify.com';
 --
--- Opcional: migrar lojas que tinham plano antigo "growth" mapeado para Pro no código legado:
---   UPDATE shopify_shops SET plan = 'growth', images_included = 700, price_per_extra_image = 0.12
---   WHERE plan = 'pro' AND images_included = 3000 AND billing_status = 'active'
---     AND shop_domain IN (...);  -- só se souber que eram Growth na Shopify
+-- Atualizar lojas já em Growth/Pro com preços/limites antigos (opcional):
+--   UPDATE shopify_shops SET images_included = 1000, price_per_extra_image = 0.12
+--   WHERE LOWER(plan) = 'growth' AND billing_status = 'active';
+--   UPDATE shopify_shops SET images_included = 5000, price_per_extra_image = 0.08
+--   WHERE LOWER(plan) = 'pro' AND billing_status = 'active';
 -- =============================================================================

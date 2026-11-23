@@ -1,12 +1,19 @@
 /** Loja piloto Shopify (Arrascaneta) — default enquanto feature está em teste. */
-export const DEFAULT_WHATSAPP_PILOT_STORE_KEYS = ["arrascaneta-2.myshopify.com"];
+export const DEFAULT_WHATSAPP_PILOT_STORE_KEYS = [
+  "arrascaneta-2.myshopify.com",
+  "nuvemshop/6994912",
+];
 
 export function normalizeWhatsappStoreKey(key) {
-  return String(key || "")
+  const cleaned = String(key || "")
     .trim()
     .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "");
+    .replace(/^https?:\/\//, "");
+  // Tenants Nuvemshop são `nuvemshop/{storeId}` — preservar o id para não
+  // colapsar todas as lojas Nuvemshop na mesma chave de piloto.
+  const nuvemshop = cleaned.match(/^nuvemshop\/([^/?#\s]+)/);
+  if (nuvemshop) return `nuvemshop/${nuvemshop[1]}`;
+  return cleaned.replace(/[/?#].*$/, "");
 }
 
 /** Pilot ativo por default. Defina `OMAFIT_WHATSAPP_PILOT_STORE_KEYS=*` para desligar e usar só Growth+. */
@@ -28,6 +35,14 @@ export function getWhatsappPilotStoreKeys() {
     );
   }
   return new Set(DEFAULT_WHATSAPP_PILOT_STORE_KEYS.map(normalizeWhatsappStoreKey));
+}
+
+export function isDefaultWhatsappPilotStore(storeKey) {
+  const normalized = normalizeWhatsappStoreKey(storeKey);
+  if (!normalized) return false;
+  return DEFAULT_WHATSAPP_PILOT_STORE_KEYS.some(
+    (key) => normalizeWhatsappStoreKey(key) === normalized,
+  );
 }
 
 export function isStoreWhatsappPilotAllowed(storeKey) {

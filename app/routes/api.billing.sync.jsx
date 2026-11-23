@@ -9,6 +9,7 @@ import {
   writeBillingToSupabase,
   resolvePlanFromSubscription,
   extractRecurringAmountFromSubscription,
+  extractRecurringIntervalFromSubscription,
   extractPlanHandleFromSubscription,
   PLAN_IMAGES,
   PLAN_PRICE_EXTRA,
@@ -37,7 +38,7 @@ async function tryForcePersistActiveBilling({
   supabaseUrl,
   supabaseKey,
   shop,
-  plan = "ondemand",
+  plan = "growth",
 }) {
   const headers = {
     apikey: supabaseKey,
@@ -50,8 +51,8 @@ async function tryForcePersistActiveBilling({
   const payload = {
     plan: normalizedPlan,
     billing_status: "active",
-    images_included: PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.ondemand,
-    price_per_extra_image: PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.ondemand,
+    images_included: PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.growth,
+    price_per_extra_image: PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.growth,
     ar_products_max: getArProductsMaxForPlan(normalizedPlan),
     currency: "USD",
     updated_at: new Date().toISOString(),
@@ -136,6 +137,7 @@ export async function loader({ request }) {
             pricingDetails {
               ... on AppRecurringPricing {
                 price { amount currencyCode }
+                interval
                 planHandle
               }
             }
@@ -155,10 +157,12 @@ export async function loader({ request }) {
         if (active) {
           const recurringAmount = extractRecurringAmountFromSubscription(active);
           const planHandle = extractPlanHandleFromSubscription(active);
+          const interval = extractRecurringIntervalFromSubscription(active);
           const plan = resolvePlanFromSubscription({
             subscriptionName: active?.name || "",
             recurringAmount,
             planHandle,
+            interval,
           });
           const normalizedPlan = normalizeShopifyPlanKey(plan);
           const saved = await writeBillingToSupabase(session.shop, {
@@ -213,11 +217,11 @@ export async function loader({ request }) {
           const body = {
             shop_domain: session.shop,
             [identifier]: session.shop,
-            plan: "ondemand",
+            plan: "growth",
             billing_status: "inactive",
-            images_included: 50,
-            price_per_extra_image: 0.18,
-            ar_products_max: getArProductsMaxForPlan("ondemand"),
+            images_included: 0,
+            price_per_extra_image: 0,
+            ar_products_max: getArProductsMaxForPlan("growth"),
             images_used_month: 0,
             free_images_used: 0,
             currency: "USD",
@@ -251,7 +255,7 @@ export async function loader({ request }) {
         // Caso clássico: bootstrap cria loja, mas writeBillingToSupabase/sync falham por schema/RLS.
         // Só força "active" no Supabase se a Shopify ainda tiver assinatura ACTIVE (evita Pro→ondemand ou ativar sem pagamento).
         if (!result) {
-          let forcePlan = "ondemand";
+          let forcePlan = "growth";
           let shopifyHasActive = false;
           try {
             const forceCheckResponse = await admin.graphql(`#graphql
@@ -267,6 +271,7 @@ export async function loader({ request }) {
                         pricingDetails {
                           ... on AppRecurringPricing {
                             price { amount currencyCode }
+                            interval
                             planHandle
                           }
                         }
@@ -286,12 +291,14 @@ export async function loader({ request }) {
               shopifyHasActive = true;
               const recurringAmount = extractRecurringAmountFromSubscription(active);
               const planHandle = extractPlanHandleFromSubscription(active);
+              const interval = extractRecurringIntervalFromSubscription(active);
               const resolved = resolvePlanFromSubscription({
                 subscriptionName: active?.name || "",
                 recurringAmount,
                 planHandle,
+                interval,
               });
-              forcePlan = normalizeShopifyPlanKey(resolved || "ondemand");
+              forcePlan = normalizeShopifyPlanKey(resolved || "growth");
             }
           } catch (forceCheckErr) {
             console.warn("[api.billing.sync] force-check active subscription failed:", forceCheckErr);
@@ -310,8 +317,8 @@ export async function loader({ request }) {
                 ok: true,
                 shop: session.shop,
                 plan: np,
-                imagesIncluded: PLAN_IMAGES[np] ?? PLAN_IMAGES.ondemand,
-                pricePerExtra: PLAN_PRICE_EXTRA[np] ?? PLAN_PRICE_EXTRA.ondemand,
+                imagesIncluded: PLAN_IMAGES[np] ?? PLAN_IMAGES.growth,
+                pricePerExtra: PLAN_PRICE_EXTRA[np] ?? PLAN_PRICE_EXTRA.growth,
                 forcePersistStrategy: forced.strategy,
               });
             }

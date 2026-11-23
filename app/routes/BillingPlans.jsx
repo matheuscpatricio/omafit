@@ -5,6 +5,7 @@ import {
   Button,
   BlockStack,
   InlineStack,
+  List,
 } from "@shopify/polaris";
 import { useAppI18n } from "../contexts/AppI18n";
 
@@ -27,28 +28,49 @@ export default function BillingPlans({
       ? plans
       : [
           {
-            planKey: "ondemand",
-            name: "On-demand",
-            priceKey: "billing.planOndemandPrice",
-            imagesIncluded: 50,
-            pricePerExtraKey: "billing.planOndemandExtra",
-            descriptionKey: "billing.planOndemandDesc",
-          },
-          {
             planKey: "growth",
             name: "Growth",
             priceKey: "billing.planGrowthPrice",
-            imagesIncluded: 700,
+            imagesIncluded: 1000,
             pricePerExtraKey: "billing.planGrowthExtra",
             descriptionKey: "billing.planGrowthDesc",
+            featureKeys: [
+              "billing.planGrowthFeature1",
+              "billing.planGrowthFeature2",
+              "billing.planGrowthFeature3",
+              "billing.planGrowthFeature4",
+              "billing.planGrowthFeature5",
+            ],
           },
           {
             planKey: "pro",
             name: "Pro",
             priceKey: "billing.planProPrice",
-            imagesIncluded: 3000,
+            imagesIncluded: 5000,
             pricePerExtraKey: "billing.planProExtra",
             descriptionKey: "billing.planProDesc",
+            featureKeys: [
+              "billing.planProFeature1",
+              "billing.planProFeature2",
+              "billing.planProFeature3",
+              "billing.planProFeature4",
+              "billing.planProFeature5",
+            ],
+          },
+          {
+            planKey: "scale",
+            name: "Scale",
+            priceKey: "billing.planScalePrice",
+            imagesIncluded: 15000,
+            pricePerExtraKey: "billing.planScaleExtra",
+            descriptionKey: "billing.planScaleDesc",
+            featureKeys: [
+              "billing.planScaleFeature1",
+              "billing.planScaleFeature2",
+              "billing.planScaleFeature3",
+              "billing.planScaleFeature4",
+              "billing.planScaleFeature5",
+            ],
           },
           {
             planKey: "enterprise",
@@ -57,6 +79,13 @@ export default function BillingPlans({
             imagesIncluded: "billing.unlimited",
             pricePerExtraKey: "billing.planEnterpriseExtra",
             descriptionKey: "billing.planEnterpriseDesc",
+            featureKeys: [
+              "billing.planEnterpriseFeature1",
+              "billing.planEnterpriseFeature2",
+              "billing.planEnterpriseFeature3",
+              "billing.planEnterpriseFeature4",
+              "billing.planEnterpriseFeature5",
+            ],
           },
         ];
 
@@ -75,7 +104,7 @@ export default function BillingPlans({
 
       <BlockStack gap="400">
         {effectivePlans.map((plan) => {
-          const planKey = plan.planKey || (plan.name.toLowerCase().includes("demand") ? "ondemand" : "pro");
+          const planKey = plan.planKey || String(plan.name || "").toLowerCase();
           const normalizedCurrent = (currentPlan || "").toLowerCase().trim().replace(/-/g, "");
           const isCurrent = Boolean(
             normalizedCurrent &&
@@ -108,7 +137,7 @@ export default function BillingPlans({
                   <Text as="p">
                     <strong>{t("billing.imagesIncludedLabel")}</strong>{" "}
                     {typeof plan.imagesIncluded === "number"
-                      ? plan.imagesIncluded
+                      ? plan.imagesIncluded.toLocaleString()
                       : t(String(plan.imagesIncluded))}
                   </Text>
                   <Text as="p">
@@ -116,6 +145,14 @@ export default function BillingPlans({
                     {t(plan.pricePerExtraKey)}
                   </Text>
                 </BlockStack>
+
+                {Array.isArray(plan.featureKeys) && plan.featureKeys.length > 0 && (
+                  <List type="bullet">
+                    {plan.featureKeys.map((key) => (
+                      <List.Item key={key}>{t(key)}</List.Item>
+                    ))}
+                  </List>
+                )}
 
                 {isCurrent ? (
                   <Button disabled>{t("billing.planActive")}</Button>

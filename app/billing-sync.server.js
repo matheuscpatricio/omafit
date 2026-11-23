@@ -1,6 +1,8 @@
 /**
  * Sincroniza o plano de billing da Shopify com o Supabase.
- * Planos: ondemand | growth (700, $0,12) | pro | enterprise (ilimitado, $0 extra).
+ * Planos: growth ($99 / 1000 / $0,12) | pro ($399 / 5000 / $0,08) |
+ * scale ($999 / 15000 / $0,04) | enterprise ($2499 ilimitado).
+ * Legado: ondemand (já não é oferecido).
  */
 import {
   PLAN_IMAGES,
@@ -22,6 +24,7 @@ const GET_ACTIVE_SUBSCRIPTIONS = `#graphql
             pricingDetails {
               ... on AppRecurringPricing {
                 price { amount currencyCode }
+                interval
                 planHandle
               }
             }
@@ -45,6 +48,7 @@ const GET_SHOP_CONTACT = `#graphql
 // Ordem importa: mais específicos primeiro
 const PLAN_MATCHERS = [
   { pattern: "omafit enterprise", plan: "enterprise" },
+  { pattern: "omafit scale", plan: "scale" },
   { pattern: "omafit growth", plan: "growth" },
   { pattern: "omafit on-demand", plan: "ondemand" },
   { pattern: "omafit on demand", plan: "ondemand" },
@@ -55,6 +59,7 @@ const PLAN_MATCHERS = [
   { pattern: "free", plan: "ondemand" },
   { pattern: "professional", plan: "pro" },
   { pattern: "enterprise", plan: "enterprise" },
+  { pattern: "scale", plan: "scale" },
   { pattern: "pro", plan: "pro" },
   { pattern: "growth", plan: "growth" },
   { pattern: "starter", plan: "ondemand" },
@@ -63,11 +68,11 @@ const PLAN_MATCHERS = [
 
 function resolvePlanFromSubscriptionName(subscriptionName) {
   const name = (subscriptionName || "").toLowerCase().trim();
-  if (!name) return "ondemand";
+  if (!name) return "growth";
   for (const { pattern, plan } of PLAN_MATCHERS) {
     if (name.includes(pattern)) return plan;
   }
-  return "ondemand";
+  return "growth";
 }
 
 // planHandle do Partner Dashboard (Managed Pricing) - mapeamento direto e confiável
@@ -79,28 +84,52 @@ const PLAN_HANDLE_MAP = {
   starter: "ondemand",
   pro: "pro",
   growth: "growth",
+  scale: "scale",
   professional: "pro",
   enterprise: "enterprise",
 };
 
-function resolvePlanFromSubscription({ subscriptionName, recurringAmount, planHandle }) {
+function amountMatches(parsedAmount, target, tolerance = 0.5) {
+  return Math.abs(parsedAmount - target) < tolerance;
+}
+
+function resolvePlanFromSubscription({ subscriptionName, recurringAmount, planHandle, interval }) {
   // 1) planHandle (Managed Pricing) é a fonte mais confiável
   if (planHandle) {
     const h = String(planHandle).toLowerCase().trim();
     const direct = PLAN_HANDLE_MAP[h];
     if (direct) return direct;
     if (h.includes("enterprise")) return "enterprise";
+    if (h.includes("scale")) return "scale";
     if (h.includes("growth")) return "growth";
     if (h.includes("free") || h.includes("ondemand")) return "ondemand";
     if (h.includes("pro") || h.includes("professional")) return "pro";
   }
-  // 2) Valor recorrente (USD / 30 dias)
+  // 2) Valor recorrente (mensal ou anual USD)
   const parsedAmount = Number(recurringAmount);
+  const isAnnual = String(interval || "").toUpperCase().includes("ANNUAL");
   if (Number.isFinite(parsedAmount)) {
     if (Math.abs(parsedAmount) < 0.01) return "ondemand";
-    if (Math.abs(parsedAmount - 89) < 0.5) return "growth";
-    if (Math.abs(parsedAmount - 300) < 0.5) return "pro";
-    if (Math.abs(parsedAmount - 600) < 0.5) return "enterprise";
+    if (isAnnual) {
+      if (amountMatches(parsedAmount, 24900, 5)) return "enterprise";
+      if (amountMatches(parsedAmount, 9990, 5)) return "scale";
+      if (amountMatches(parsedAmount, 3990, 5)) return "pro";
+      if (amountMatches(parsedAmount, 999, 2)) return "growth";
+    } else {
+      // Mensais atuais — $999 é Scale (Growth anual também é 999, mas só com interval ANNUAL)
+      if (amountMatches(parsedAmount, 2499, 2)) return "enterprise";
+      if (amountMatches(parsedAmount, 999, 2)) return "scale";
+      if (amountMatches(parsedAmount, 399, 1)) return "pro";
+      if (amountMatches(parsedAmount, 99, 1)) return "growth";
+      // Legados (antes da mudança de preço)
+      if (amountMatches(parsedAmount, 600, 1)) return "enterprise";
+      if (amountMatches(parsedAmount, 300, 1)) return "pro";
+      if (amountMatches(parsedAmount, 89, 1)) return "growth";
+      // Sem interval: anuais óbvios
+      if (amountMatches(parsedAmount, 24900, 5)) return "enterprise";
+      if (amountMatches(parsedAmount, 9990, 5)) return "scale";
+      if (amountMatches(parsedAmount, 3990, 5)) return "pro";
+    }
   }
   // 3) Fallback: nome da subscription
   return resolvePlanFromSubscriptionName(subscriptionName);
@@ -113,6 +142,16 @@ function extractRecurringAmountFromSubscription(activeSubscription) {
     const amountRaw = details?.price?.amount;
     const amount = Number(amountRaw);
     if (Number.isFinite(amount)) return amount;
+  }
+  return null;
+}
+
+function extractRecurringIntervalFromSubscription(activeSubscription) {
+  const lineItems = activeSubscription?.lineItems || [];
+  for (const item of lineItems) {
+    const details = item?.plan?.pricingDetails ?? item?.plan;
+    const interval = details?.interval;
+    if (interval && typeof interval === "string") return String(interval).trim().toUpperCase();
   }
   return null;
 }
@@ -267,7 +306,7 @@ async function inferValueForMissingColumn(columnName, shop, payload, context = {
     }
     return context.cachedUserId || null;
   }
-  if (key === "plan" || key.includes("plan_")) return payload.plan || "ondemand";
+  if (key === "plan" || key.includes("plan_")) return payload.plan || "growth";
   if (key.includes("billing_status") || key === "status") return payload.billing_status || "inactive";
   if (key.includes("images_included")) return payload.images_included ?? 0;
   if (key.includes("price_per_extra")) return payload.price_per_extra_image ?? 0.18;
@@ -444,9 +483,9 @@ export async function writeBillingToSupabase(shop, { plan, billingStatus, admin 
     return null;
   }
 
-  const normalizedPlan = normalizeShopifyPlanKey(plan || "ondemand");
-  const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.ondemand;
-  const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.ondemand;
+  const normalizedPlan = normalizeShopifyPlanKey(plan || "growth");
+  const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES.growth;
+  const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA.growth;
   const arProductsMax = getArProductsMaxForPlan(normalizedPlan);
   const binding = await resolveShopUserBinding({
     admin,
@@ -525,21 +564,23 @@ export async function syncBillingFromShopify(admin, shop) {
     const subscriptionName = active?.name || "";
     const recurringAmount = extractRecurringAmountFromSubscription(active);
     const planHandle = extractPlanHandleFromSubscription(active);
+    const interval = extractRecurringIntervalFromSubscription(active);
     const plan = resolvePlanFromSubscription({
       subscriptionName,
       recurringAmount,
       planHandle,
+      interval,
     });
-    // Normaliza nomes antigos para ondemand/pro
     const normalizedPlan = normalizeShopifyPlanKey(plan);
     const imagesIncluded = PLAN_IMAGES[normalizedPlan] ?? PLAN_IMAGES[plan] ?? 0;
-    const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA[plan] ?? 0.18;
+    const pricePerExtra = PLAN_PRICE_EXTRA[normalizedPlan] ?? PLAN_PRICE_EXTRA[plan] ?? 0.12;
 
     console.log("[Billing Sync] Resolved:", {
       shop,
       activeName: subscriptionName,
       planHandle,
       recurringAmount,
+      interval,
       hasActiveSubscription,
       resolvedPlan: normalizedPlan,
       imagesIncluded,
@@ -566,6 +607,7 @@ export {
   resolvePlanFromSubscriptionName,
   resolvePlanFromSubscription,
   extractRecurringAmountFromSubscription,
+  extractRecurringIntervalFromSubscription,
   extractPlanHandleFromSubscription,
   PLAN_IMAGES,
   PLAN_PRICE_EXTRA,

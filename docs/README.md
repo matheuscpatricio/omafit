@@ -6,7 +6,7 @@
 |-------|----------|
 | [architecture/](architecture/) | Estado atual da arquitetura, planos de refactor (sem mudança funcional) |
 | [setup/](setup/) | Deploy, URLs, public_id, logo upload |
-| [shopify/](shopify/) | Instruções de loja, widget_keys, shop_domain |
+| [shopify/](shopify/) | Instruções de loja, widget_keys, shop_domain; IP allowlist: [README → Security Notes](../README.md#security-notes) |
 | [billing/](billing/) | Checklist, planos, usage charges |
 | [widget/](widget/) | Embed, postMessage, ATC, Netlify |
 | [supabase/](supabase/) | Storage, RLS storage, setup (SQL em `/supabase`) |

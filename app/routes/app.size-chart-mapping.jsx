@@ -120,28 +120,14 @@ export default function SizeChartMappingPage() {
     setLoading(true);
     setError(null);
     try {
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error(t('sizeChart.errorSupabaseNotConfigured'));
-      }
-
       const productsPromise = fetch('/api/products', { credentials: 'include' }).then((r) => r.json());
-      const chartsPromise = fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=collection_handle,product_handle`,
-        {
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      ).then(async (r) => {
+      const chartsPromise = fetch('/api/size-charts', { credentials: 'include' }).then(async (r) => {
         if (!r.ok) {
           const text = await r.text().catch(() => '');
           throw new Error(text || t('sizeChartMapping.errorLoadCharts'));
         }
-        return r.json();
+        const json = await r.json();
+        return Array.isArray(json?.charts) ? json.charts : [];
       });
 
       const [productsJson, chartsJson] = await Promise.all([productsPromise, chartsPromise]);

@@ -1,84 +1,110 @@
 /**
  * Planos Omafit (Shopify Billing + Supabase shopify_shops.plan).
- * Valores alinhados a Growth ($89 / 700 / $0,12), Enterprise ($600 ilimitado), Pro e On-demand.
+ * Growth / Pro / Scale / Enterprise — sem plano gratuito (on-demand).
  */
 
 /** Limite alto para INTEGER no Postgres e para comparações de “ilimitado”. */
 export const ENTERPRISE_IMAGES_INCLUDED = 2_000_000;
 
-/** Chaves válidas em shopify_shops.plan */
-export const VALID_PLAN_KEYS = ["ondemand", "growth", "pro", "enterprise"];
+/** Chaves vendáveis (Managed Pricing + App Subscription). */
+export const VALID_PLAN_KEYS = ["growth", "pro", "scale", "enterprise"];
+
+/** Alias legado ainda presente em lojas antigas no Supabase. */
+export const LEGACY_PLAN_KEYS = ["ondemand", "basic", "starter", "free"];
 
 /**
  * Config usada em appSubscriptionCreate (recurring + usage) e espelhada no Supabase.
- * @type {Record<string, { name: string; amount: number; currency: string; imagesIncluded: number; pricePerExtra: number; cappedAmount: number }>}
+ * Preços mensais; anuais (Managed Pricing): Growth $999, Pro $3990, Scale $9990, Enterprise $24900.
+ * @type {Record<string, { name: string; amount: number; currency: string; imagesIncluded: number; pricePerExtra: number; cappedAmount: number; trialDays: number; annualAmount?: number }>}
  */
 export const SHOPIFY_PLAN_CONFIG = {
-  ondemand: {
-    name: "Omafit On-demand",
-    amount: 0,
-    currency: "USD",
-    imagesIncluded: 50,
-    pricePerExtra: 0.18,
-    cappedAmount: 1000,
-  },
   growth: {
     name: "Omafit Growth",
-    amount: 89,
+    amount: 99,
+    annualAmount: 999,
     currency: "USD",
-    imagesIncluded: 700,
+    imagesIncluded: 1000,
     pricePerExtra: 0.12,
     cappedAmount: 2500,
+    trialDays: 14,
   },
   pro: {
     name: "Omafit Pro",
-    amount: 300,
+    amount: 399,
+    annualAmount: 3990,
     currency: "USD",
-    imagesIncluded: 3000,
+    imagesIncluded: 5000,
     pricePerExtra: 0.08,
     cappedAmount: 5000,
+    trialDays: 14,
+  },
+  scale: {
+    name: "Omafit Scale",
+    amount: 999,
+    annualAmount: 9990,
+    currency: "USD",
+    imagesIncluded: 15000,
+    pricePerExtra: 0.04,
+    cappedAmount: 10000,
+    trialDays: 14,
   },
   enterprise: {
     name: "Omafit Enterprise",
-    amount: 600,
+    amount: 2499,
+    annualAmount: 24900,
     currency: "USD",
     imagesIncluded: ENTERPRISE_IMAGES_INCLUDED,
     pricePerExtra: 0,
     cappedAmount: 50000,
+    trialDays: 0,
+  },
+  // Legado: lojas ainda no On-demand (já não é oferecido).
+  ondemand: {
+    name: "Omafit On-demand (legacy)",
+    amount: 0,
+    currency: "USD",
+    imagesIncluded: 50,
+    pricePerExtra: 0.18,
+    cappedAmount: 1000,
+    trialDays: 0,
   },
   starter: {
-    name: "Omafit On-demand",
+    name: "Omafit On-demand (legacy)",
     amount: 0,
     currency: "USD",
     imagesIncluded: 50,
     pricePerExtra: 0.18,
     cappedAmount: 1000,
+    trialDays: 0,
   },
   basic: {
-    name: "Omafit On-demand",
+    name: "Omafit On-demand (legacy)",
     amount: 0,
     currency: "USD",
     imagesIncluded: 50,
     pricePerExtra: 0.18,
     cappedAmount: 1000,
+    trialDays: 0,
   },
 };
 
 /** Mapa plan → imagens incluídas (sync / Supabase). */
 export const PLAN_IMAGES = {
-  ondemand: SHOPIFY_PLAN_CONFIG.ondemand.imagesIncluded,
   growth: SHOPIFY_PLAN_CONFIG.growth.imagesIncluded,
   pro: SHOPIFY_PLAN_CONFIG.pro.imagesIncluded,
+  scale: SHOPIFY_PLAN_CONFIG.scale.imagesIncluded,
   enterprise: SHOPIFY_PLAN_CONFIG.enterprise.imagesIncluded,
+  ondemand: SHOPIFY_PLAN_CONFIG.ondemand.imagesIncluded,
   starter: SHOPIFY_PLAN_CONFIG.starter.imagesIncluded,
   basic: SHOPIFY_PLAN_CONFIG.basic.imagesIncluded,
 };
 
 export const PLAN_PRICE_EXTRA = {
-  ondemand: SHOPIFY_PLAN_CONFIG.ondemand.pricePerExtra,
   growth: SHOPIFY_PLAN_CONFIG.growth.pricePerExtra,
   pro: SHOPIFY_PLAN_CONFIG.pro.pricePerExtra,
+  scale: SHOPIFY_PLAN_CONFIG.scale.pricePerExtra,
   enterprise: SHOPIFY_PLAN_CONFIG.enterprise.pricePerExtra,
+  ondemand: SHOPIFY_PLAN_CONFIG.ondemand.pricePerExtra,
   starter: SHOPIFY_PLAN_CONFIG.starter.pricePerExtra,
   basic: SHOPIFY_PLAN_CONFIG.basic.pricePerExtra,
 };
@@ -88,10 +114,11 @@ export const PLAN_PRICE_EXTRA = {
  * `null` = ilimitado (Enterprise).
  */
 export const PLAN_AR_PRODUCTS_MAX = {
-  ondemand: 5,
   growth: 20,
   pro: 100,
+  scale: 300,
   enterprise: null,
+  ondemand: 5,
   starter: 5,
   basic: 5,
 };
@@ -105,24 +132,46 @@ export function getArProductsMaxForPlan(planKey) {
   const v = PLAN_AR_PRODUCTS_MAX[k];
   if (v === null) return null;
   if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
-  return PLAN_AR_PRODUCTS_MAX.ondemand;
+  return PLAN_AR_PRODUCTS_MAX.growth;
 }
 
 /**
- * Normaliza aliases legados. **Growth** deixa de ser alias de Pro.
+ * Normaliza aliases. On-demand/free legados mantêm chave `ondemand` (leitura/sync).
+ * Desconhecido → growth (menor plano pago).
  * @param {string} planKey
- * @returns {"ondemand"|"growth"|"pro"|"enterprise"}
+ * @returns {"growth"|"pro"|"scale"|"enterprise"|"ondemand"}
  */
 export function normalizeShopifyPlanKey(planKey) {
   const k = String(planKey || "").toLowerCase().trim();
-  if (k === "basic" || k === "starter" || k === "free") return "ondemand";
+  if (k === "basic" || k === "starter" || k === "free" || k === "ondemand" || k === "on-demand") {
+    return "ondemand";
+  }
   if (k === "growth") return "growth";
   if (k === "pro" || k === "professional") return "pro";
+  if (k === "scale") return "scale";
   if (k === "enterprise") return "enterprise";
   if (VALID_PLAN_KEYS.includes(k)) return k;
-  return "ondemand";
+  return "growth";
 }
 
 export function isEnterprisePlanKey(planKey) {
   return normalizeShopifyPlanKey(planKey) === "enterprise";
 }
+
+export function isSellablePlanKey(planKey) {
+  return VALID_PLAN_KEYS.includes(normalizeShopifyPlanKey(planKey));
+}
+
+/** Lista ordenada para UI (Growth → Pro → Scale → Enterprise). */
+export const SELLABLE_PLANS = VALID_PLAN_KEYS.map((planKey) => {
+  const cfg = SHOPIFY_PLAN_CONFIG[planKey];
+  return {
+    planKey,
+    name: cfg.name.replace(/^Omafit\s+/i, ""),
+    amount: cfg.amount,
+    annualAmount: cfg.annualAmount ?? null,
+    imagesIncluded: planKey === "enterprise" ? null : cfg.imagesIncluded,
+    pricePerExtra: cfg.pricePerExtra,
+    trialDays: cfg.trialDays,
+  };
+});

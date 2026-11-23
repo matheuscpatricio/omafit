@@ -40,6 +40,41 @@ const CREATE_USAGE_RECORD_MUTATION = `#graphql
   }
 `;
 
+const GET_USAGE_LINE_ITEM_QUERY = `#graphql
+  query GetOmafitUsageLineItem {
+    currentAppInstallation {
+      activeSubscriptions {
+        id
+        status
+        lineItems {
+          id
+          plan {
+            pricingDetails {
+              __typename
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/** Busca o line item de usage da assinatura ativa na Shopify (self-heal quando não persistido). */
+async function resolveUsageLineItemId(admin) {
+  const response = await admin.graphql(GET_USAGE_LINE_ITEM_QUERY);
+  const result = await response.json();
+  const subscriptions = result?.data?.currentAppInstallation?.activeSubscriptions || [];
+  for (const subscription of subscriptions) {
+    if (subscription?.status && subscription.status !== "ACTIVE") continue;
+    for (const item of subscription?.lineItems || []) {
+      if (item?.plan?.pricingDetails?.__typename === "AppUsagePricing" && item?.id) {
+        return item.id;
+      }
+    }
+  }
+  return null;
+}
+
 function supabaseHeaders() {
   return {
     apikey: SUPABASE_KEY,
@@ -107,7 +142,7 @@ export async function processPendingWhatsappMessageBilling(shopDomain = null) {
       );
       const shop = Array.isArray(shops) ? shops[0] : null;
 
-      if (!shop?.shopify_usage_line_item_id || shop.billing_status !== "active") {
+      if (shop?.billing_status !== "active") {
         await fetchSupabaseJson(
           `/rest/v1/whatsapp_message_billing_events?id=eq.${encodeURIComponent(event.id)}`,
           {
@@ -122,9 +157,38 @@ export async function processPendingWhatsappMessageBilling(shopDomain = null) {
       }
 
       const { admin } = await unauthenticated.admin(storeKey);
+
+      let usageLineItemId = shop?.shopify_usage_line_item_id || null;
+      if (!usageLineItemId) {
+        usageLineItemId = await resolveUsageLineItemId(admin);
+        if (usageLineItemId) {
+          await fetchSupabaseJson(
+            `/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(storeKey)}`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({ shopify_usage_line_item_id: usageLineItemId }),
+            },
+          );
+        }
+      }
+
+      if (!usageLineItemId) {
+        await fetchSupabaseJson(
+          `/rest/v1/whatsapp_message_billing_events?id=eq.${encodeURIComponent(event.id)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              billing_status: "skipped",
+              error_reason: "no_usage_line_item_or_inactive_billing",
+            }),
+          },
+        );
+        continue;
+      }
+
       const response = await admin.graphql(CREATE_USAGE_RECORD_MUTATION, {
         variables: {
-          subscriptionLineItemId: shop.shopify_usage_line_item_id,
+          subscriptionLineItemId: usageLineItemId,
           amount: Number(event.amount_usd || WHATSAPP_MESSAGE_PRICE_USD).toFixed(2),
           currency: "USD",
           description: "WhatsApp Try On Marketing — mensagem entregue",

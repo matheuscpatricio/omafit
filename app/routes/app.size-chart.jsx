@@ -25,6 +25,7 @@ import {
 import { SearchIcon } from '@shopify/polaris-icons';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
+import TutorialDocBanner from '../components/TutorialDocBanner';
 import { authenticate } from '../shopify.server';
 import { redirect } from "react-router";
 import { Buffer } from "node:buffer";
@@ -268,58 +269,50 @@ export default function SizeChartPage() {
     loadProducts();
   }, [loadProducts]);
 
+  const applyChartsRows = useCallback((rows) => {
+    const byScope = { collection: {}, product: {} };
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const productHandle = String(row.product_handle || '').trim();
+      const handle = productHandle || (row.collection_handle ?? '');
+      const scope = productHandle ? 'product' : 'collection';
+      if (!byScope[scope][handle]) {
+        byScope[scope][handle] = createEmptyCollectionCharts();
+      }
+      if (row.collection_type && ALL_COLLECTION_TYPES.includes(row.collection_type)) {
+        byScope[scope][handle].collectionType = row.collection_type;
+      }
+      if (row.collection_elasticity && ['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(row.collection_elasticity)) {
+        byScope[scope][handle].collectionElasticity = row.collection_elasticity;
+      }
+      // O escopo é replicado em todas as linhas da coleção/produto. A última lida vence
+      // (idempotente, pois deve ser igual em todas) — fallback 'both' quando coluna ausente.
+      if (row.gender_scope !== undefined && row.gender_scope !== null) {
+        byScope[scope][handle].genderScope = normalizeGenderScope(row.gender_scope);
+      }
+      const sizes = Array.isArray(row.sizes) ? row.sizes : [];
+      const refs = normalizeMeasurementRefsForType(
+        row.measurement_refs,
+        row.collection_type,
+        sizes,
+      );
+      byScope[scope][handle][row.gender] = {
+        enabled: true,
+        measurementRefs: refs,
+        sizes
+      };
+    });
+    setCharts(byScope);
+  }, []);
+
   const loadSizeCharts = useCallback(async () => {
     if (!shopDomain) return;
-    const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-    const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseKey) return;
-    const chartsRes = await fetch(
-      `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=updated_at.desc&limit=1000`,
-      {
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'count=exact'
-        }
-      }
-    );
+    // Persistência via API autenticada (service_role no servidor) — evita escrita anon em size_charts.
+    const chartsRes = await fetch('/api/size-charts', { credentials: 'include' });
     if (chartsRes.ok) {
       const data = await chartsRes.json();
-      const byScope = { collection: {}, product: {} };
-      (Array.isArray(data) ? data : []).forEach((row) => {
-        const productHandle = String(row.product_handle || '').trim();
-        const handle = productHandle || (row.collection_handle ?? '');
-        const scope = productHandle ? 'product' : 'collection';
-        if (!byScope[scope][handle]) {
-          byScope[scope][handle] = createEmptyCollectionCharts();
-        }
-        if (row.collection_type && ALL_COLLECTION_TYPES.includes(row.collection_type)) {
-          byScope[scope][handle].collectionType = row.collection_type;
-        }
-        if (row.collection_elasticity && ['structured', 'light_flex', 'flexible', 'high_elasticity'].includes(row.collection_elasticity)) {
-          byScope[scope][handle].collectionElasticity = row.collection_elasticity;
-        }
-        // O escopo é replicado em todas as linhas da coleção/produto. A última lida vence
-        // (idempotente, pois deve ser igual em todas) — fallback 'both' quando coluna ausente.
-        if (row.gender_scope !== undefined && row.gender_scope !== null) {
-          byScope[scope][handle].genderScope = normalizeGenderScope(row.gender_scope);
-        }
-        const sizes = Array.isArray(row.sizes) ? row.sizes : [];
-        const refs = normalizeMeasurementRefsForType(
-          row.measurement_refs,
-          row.collection_type,
-          sizes,
-        );
-        byScope[scope][handle][row.gender] = {
-          enabled: true,
-          measurementRefs: refs,
-          sizes
-        };
-      });
-      setCharts(byScope);
+      applyChartsRows(data?.charts);
     }
-  }, [shopDomain]);
+  }, [shopDomain, applyChartsRows]);
 
   useEffect(() => {
     if (!shopDomain) return;
@@ -468,10 +461,6 @@ export default function SizeChartPage() {
       setSuccess(false);
       if (!shopDomain) throw new Error(t('sizeChart.errorShopDomainMissing'));
 
-      const supabaseUrl = window.ENV?.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = window.ENV?.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
-      if (!supabaseUrl || !supabaseKey) throw new Error(t('sizeChart.errorSupabaseNotConfigured'));
-
       const toSave = [];
       ['collection', 'product'].forEach((scope) => {
         Object.entries(charts[scope] || {}).forEach(([handle, byGender]) => {
@@ -508,119 +497,22 @@ export default function SizeChartPage() {
         });
       });
 
-      const measurementKey = (row) =>
-        `${String(row.collection_handle ?? '')}|${String(row.product_handle ?? '')}|${String(row.gender ?? '')}`;
-
-      const authHeaders = {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json'
-      };
-
-      // 1) UPSERT primeiro — se falhar, os dados antigos permanecem (não usamos delete-all).
-      if (toSave.length > 0) {
-        const doUpsert = async (payload) => fetch(
-          `${supabaseUrl}/rest/v1/size_charts?on_conflict=shop_domain,collection_handle,product_handle,gender`,
-          {
-            method: 'POST',
-            headers: {
-              ...authHeaders,
-              Prefer: 'resolution=merge-duplicates,return=minimal'
-            },
-            body: JSON.stringify(payload)
-          }
-        );
-
-        let insertRes = await doUpsert(toSave);
-        let insertErrText = '';
-        if (!insertRes.ok) {
-          insertErrText = await insertRes.text();
-          const missingGenderScopeColumn =
-            insertErrText.includes('gender_scope') &&
-            (insertErrText.includes('column') || insertErrText.includes('42703') || insertErrText.includes('PGRST204'));
-
-          if (missingGenderScopeColumn) {
-            // eslint-disable-next-line no-unused-vars
-            const fallbackPayload = toSave.map(({ gender_scope, ...rest }) => rest);
-            insertRes = await doUpsert(fallbackPayload);
-            if (insertRes.ok) {
-              setError(t('sizeChart.warnGenderScopeColumnMissing'));
-            } else {
-              insertErrText = await insertRes.text();
-            }
-          }
-        }
-        if (!insertRes.ok) {
-          const missingCollectionMetaColumn =
-            (insertErrText.includes('collection_type') || insertErrText.includes('collection_elasticity')) &&
-            (insertErrText.includes('column') || insertErrText.includes('42703'));
-
-          if (missingCollectionMetaColumn) {
-            // eslint-disable-next-line no-unused-vars
-            const fallbackPayload = toSave.map(({ collection_type, collection_elasticity, gender_scope, ...rest }) => rest);
-            insertRes = await doUpsert(fallbackPayload);
-            if (insertRes.ok) {
-              setError(t('sizeChart.warnCollectionMetadataNotPersisted'));
-            } else {
-              insertErrText = await insertRes.text();
-            }
-          }
-        }
-        if (!insertRes.ok) {
-          // Fallback legado: alguns ambientes não aceitam on_conflict no POST.
-          const legacyInsert = await fetch(`${supabaseUrl}/rest/v1/size_charts`, {
-            method: 'POST',
-            headers: {
-              ...authHeaders,
-              Prefer: 'resolution=merge-duplicates,return=minimal'
-            },
-            body: JSON.stringify(toSave)
-          });
-          if (!legacyInsert.ok) {
-            const errText = insertErrText || (await legacyInsert.text());
-            let msg = t('sizeChart.errorSave');
-            try {
-              const j = JSON.parse(errText);
-              msg = j.message || j.error || msg;
-            } catch {
-              if (errText.trim()) msg = errText;
-            }
-            throw new Error(msg);
-          }
-        }
+      // Upsert + remoção de órfãos no servidor (service_role). Não faz delete-all.
+      const saveRes = await fetch('/api/size-charts', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ charts: toSave })
+      });
+      const saveJson = await saveRes.json().catch(() => ({}));
+      if (!saveRes.ok) {
+        throw new Error(saveJson?.error || t('sizeChart.errorSave'));
       }
-
-      // 2) Remover apenas órfãos (tabelas desativadas / apagadas), depois do upsert.
-      const existingRes = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=id,collection_handle,product_handle,gender&limit=1000`,
-        { headers: authHeaders }
-      );
-      if (existingRes.ok) {
-        const existing = await existingRes.json();
-        const keep = new Set(toSave.map(measurementKey));
-        const orphanIds = (Array.isArray(existing) ? existing : [])
-          .filter((row) => !keep.has(measurementKey(row)))
-          .map((row) => row.id)
-          .filter(Boolean);
-        // Apaga em lotes para evitar URL demasiado longa.
-        for (let i = 0; i < orphanIds.length; i += 50) {
-          const batch = orphanIds.slice(i, i + 50);
-          const delRes = await fetch(
-            `${supabaseUrl}/rest/v1/size_charts?id=in.(${batch.join(',')})`,
-            { method: 'DELETE', headers: authHeaders }
-          );
-          if (!delRes.ok) {
-            console.warn('[SizeChart] Aviso ao remover órfãos:', await delRes.text());
-          }
-        }
-      } else if (toSave.length === 0) {
-        // Sem tabelas ativas e não conseguimos listar existentes — fallback seguro só neste caso.
-        const deleteUrl = `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}`;
-        const deleteRes = await fetch(deleteUrl, { method: 'DELETE', headers: authHeaders });
-        if (!deleteRes.ok) console.warn('[SizeChart] Aviso ao deletar:', await deleteRes.text());
+      if (Array.isArray(saveJson?.charts)) {
+        applyChartsRows(saveJson.charts);
+      } else {
+        await loadSizeCharts();
       }
-
-      await loadSizeCharts();
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -717,6 +609,9 @@ export default function SizeChartPage() {
       <Page title={t('sizeChart.title')}>
         <Layout>
           <Layout.Section>
+            <TutorialDocBanner tutorialKey="sizeChart" />
+          </Layout.Section>
+          <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
@@ -786,6 +681,10 @@ export default function SizeChartPage() {
       }}
     >
       <Layout>
+        <Layout.Section>
+          <TutorialDocBanner tutorialKey="sizeChart" />
+        </Layout.Section>
+
         {success && (
           <Layout.Section>
             <Banner tone="success" onDismiss={() => setSuccess(false)}>

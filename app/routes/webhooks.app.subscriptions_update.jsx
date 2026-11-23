@@ -29,10 +29,16 @@ export const action = async ({ request }) => {
     const rawHandle =
       recurringItem?.plan?.plan_handle ?? recurringItem?.plan?.planHandle;
     const planHandle = rawHandle ? String(rawHandle).trim().toLowerCase() : null;
+    const rawInterval =
+      recurringItem?.plan?.pricing_details?.interval ??
+      recurringItem?.plan?.pricingDetails?.interval ??
+      null;
+    const interval = rawInterval ? String(rawInterval).trim().toUpperCase() : null;
     const planFromPayload = resolvePlanFromSubscription({
       subscriptionName: sub?.name || "",
       recurringAmount: Number.isFinite(recurringAmount) ? recurringAmount : null,
       planHandle,
+      interval,
     });
     console.log(`[Webhook] Received ${topic} for ${shop}`, {
       status: rawStatus || null,

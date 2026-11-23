@@ -897,7 +897,9 @@
         id: variant.id,
         title: variant.title || '',
         available: !!variant.available,
-        options: namedOptions
+        options: namedOptions,
+        price_amount: variant.price != null && variant.price !== '' ? Number(variant.price) / 100 : null,
+        currency_code: (window.Shopify && window.Shopify.currency && window.Shopify.currency.active) || null
       };
     });
 
@@ -1211,39 +1213,33 @@
         }
       }
 
-      // Buscar shopify_shops e widget_keys para obter publicId válido
-      const [shopResponse, widgetKeyResponse] = await Promise.all([
-        fetch(
-          `${supabaseUrl}/rest/v1/shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,id,plan,billing_status`,
-          {
-            headers: {
-              'apikey': supabaseAnonKey,
-              'Authorization': `Bearer ${supabaseAnonKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        ),
-        fetch(
-          `${supabaseUrl}/rest/v1/widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,status`,
-          {
-            headers: {
-              'apikey': supabaseAnonKey,
-              'Authorization': `Bearer ${supabaseAnonKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        )
-      ]);
+      // Resolver publicId e flags de plano via RPC (sem expor widget_keys.key / shopify_shops)
+      const rpcHeaders = {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      };
+
+      const widgetKeyResponse = await fetch(
+        `${supabaseUrl}/rest/v1/rpc/get_widget_public_id_by_shop`,
+        {
+          method: 'POST',
+          headers: rpcHeaders,
+          body: JSON.stringify({ p_shop_domain: shopDomain })
+        }
+      );
 
       let config = null;
       let validPublicId = publicId || 'wgt_pub_default';
+      if (publicId && publicId.startsWith('wgt_pub_') && publicId !== 'wgt_pub_default') {
+        validPublicId = publicId;
+      }
       let shopBillingPlan = null;
       let stylistModeEnabled = false;
 
-      // Prioridade 1: Tentar obter publicId da tabela widget_keys (mais confiável)
-      let isWidgetActive = true; // Default true para permitir funcionar na primeira instalação
+      let isWidgetActive = true;
       let widgetKeyFound = false;
-      
+
       if (widgetKeyResponse.ok) {
         try {
           const widgetKeyText = await widgetKeyResponse.text();
@@ -1251,61 +1247,57 @@
             const widgetKeyData = JSON.parse(widgetKeyText);
             if (widgetKeyData && widgetKeyData.length > 0) {
               widgetKeyFound = true;
-              
+
               if (widgetKeyData[0].public_id) {
                 validPublicId = widgetKeyData[0].public_id;
               }
-              
-              // Só verificar status se widget_keys foi encontrado
-              // Se não encontrou, permitir funcionar (pode ser primeira instalação)
+
               if (widgetKeyData[0].status === 'inactive') {
                 isWidgetActive = false;
-                console.warn('⚠️ Widget encontrado em widget_keys mas status=inactive');
-              } else if (widgetKeyData[0].status === 'active') {
-                isWidgetActive = true;
-                console.log('✅ Widget encontrado e ativo em widget_keys. PublicId:', validPublicId);
+                console.warn('⚠️ Widget encontrado mas status=inactive');
               } else {
-                // status pode ser null/undefined, tratar como true
                 isWidgetActive = true;
-                console.log('✅ Widget encontrado em widget_keys (status não especificado, tratando como true). PublicId:', validPublicId);
+                console.log('✅ Widget ativo. PublicId:', validPublicId);
               }
             } else {
-              console.log('ℹ️ Nenhum registro encontrado em widget_keys. Permissão para funcionar (primeira instalação).');
+              console.log('ℹ️ Nenhum widget ativo para esta loja.');
             }
           }
         } catch (e) {
-          console.warn('⚠️ Erro ao obter publicId de widget_keys:', e);
-          // Em caso de erro, permitir funcionar
+          console.warn('⚠️ Erro ao obter publicId via RPC:', e);
           isWidgetActive = true;
         }
       } else {
-        console.log('ℹ️ widget_keys não encontrado ou erro ao buscar. Status:', widgetKeyResponse.status, 'Permitindo funcionar (pode ser primeira instalação).');
+        console.log('ℹ️ RPC get_widget_public_id_by_shop falhou. Status:', widgetKeyResponse.status);
       }
-      
-      // Prioridade 2: shopify_shops (plano + publicId se ainda não resolvido)
-      if (shopResponse.ok) {
+
+      if (validPublicId && validPublicId !== 'wgt_pub_default') {
         try {
-          const shopDataText = await shopResponse.text();
-          if (shopDataText && shopDataText.trim().length > 0) {
-            const shopData = JSON.parse(shopDataText);
-            if (shopData && shopData.length > 0) {
-              if (shopData[0].billing_status === 'active' && shopData[0].plan) {
-                shopBillingPlan = String(shopData[0].plan).trim().toLowerCase();
-                stylistModeEnabled = omafitHasGrowthPlusPlan(shopBillingPlan);
-              }
-              if (validPublicId === (publicId || 'wgt_pub_default')) {
-                if (shopData[0].public_id) {
-                  validPublicId = shopData[0].public_id;
-                  console.log('✅ PublicId obtido de shopify_shops:', validPublicId);
-                } else if (shopData[0].id) {
-                  validPublicId = `wgt_pub_${shopData[0].id}`;
-                  console.log('✅ PublicId gerado baseado no ID:', validPublicId);
+          const flagsResponse = await fetch(
+            `${supabaseUrl}/rest/v1/rpc/get_shop_widget_flags`,
+            {
+              method: 'POST',
+              headers: rpcHeaders,
+              body: JSON.stringify({
+                p_shop_domain: shopDomain,
+                p_public_id: validPublicId
+              })
+            }
+          );
+          if (flagsResponse.ok) {
+            const flagsText = await flagsResponse.text();
+            if (flagsText && flagsText.trim().length > 0) {
+              const flagsData = JSON.parse(flagsText);
+              if (flagsData && flagsData.length > 0) {
+                stylistModeEnabled = Boolean(flagsData[0].stylist_enabled);
+                if (stylistModeEnabled) {
+                  shopBillingPlan = 'growth';
                 }
               }
             }
           }
         } catch (e) {
-          console.warn('⚠️ Erro ao obter dados de shopify_shops:', e);
+          console.warn('⚠️ Erro ao obter flags do widget via RPC:', e);
         }
       }
       
@@ -1493,9 +1485,11 @@
     }
   }
 
-  // Buscar tabela de medidas do Supabase por loja, coleção e gênero
-  // collectionHandle: handle da coleção (ex: 'camisetas'); '' = tabela padrão da loja
-  async function fetchSizeCharts(shopDomain, collectionHandle, gender) {
+  // Buscar tabela de medidas do Supabase: produto → coleção → padrão da loja
+  // product_handle preenchido = tabela por produto (collection_handle fica '').
+  // Sem filtrar product_handle=eq.'' nas queries de coleção/padrão, linhas por produto
+  // (collection_handle='') “contaminam” o resultado e o widget pega data[0] errado.
+  async function fetchSizeCharts(shopDomain, collectionHandle, gender, productHandle) {
     try {
       if (!shopDomain) return null;
 
@@ -1503,8 +1497,15 @@
       const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI';
 
       const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+      const product = typeof productHandle === 'string' ? productHandle.trim() : '';
       let genderToFetch = gender;
       if (gender !== 'male' && gender !== 'female') genderToFetch = 'unisex';
+
+      const headers = {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      };
 
       const normalizeMeasurementRefs = function (refs, collectionType) {
         if (collectionType === 'footwear') {
@@ -1513,51 +1514,66 @@
         return Array.isArray(refs) && refs.length === 3 ? refs : ['peito', 'cintura', 'quadril'];
       };
 
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.${genderToFetch}&select=sizes,measurement_refs,collection_type,collection_elasticity`,
-        {
-          headers: {
-            'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${supabaseAnonKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      const mapChartRow = function (row) {
+        if (!row || !row.sizes) return null;
+        return {
+          sizes: row.sizes,
+          collectionType: row.collection_type || '',
+          collectionElasticity: row.collection_elasticity || '',
+          measurementRefs: normalizeMeasurementRefs(row.measurement_refs, row.collection_type || '')
+        };
+      };
 
-      if (response.ok) {
+      const queryChart = async function (params) {
+        const qs = Object.keys(params)
+          .map(function (key) {
+            return key + '=' + params[key];
+          })
+          .join('&');
+        const response = await fetch(
+          `${supabaseUrl}/rest/v1/size_charts?${qs}&select=sizes,measurement_refs,collection_type,collection_elasticity&limit=1`,
+          { headers: headers }
+        );
+        if (!response.ok) return null;
         const data = await response.json();
-        if (data && data.length > 0 && data[0].sizes) {
-            return {
-            sizes: data[0].sizes,
-              collectionType: data[0].collection_type || '',
-              collectionElasticity: data[0].collection_elasticity || '',
-            measurementRefs: normalizeMeasurementRefs(data[0].measurement_refs, data[0].collection_type || '')
-          };
+        if (data && data.length > 0) return mapChartRow(data[0]);
+        return null;
+      };
+
+      const tryGender = async function (genderValue) {
+        // 1) Tabela por produto (prioridade)
+        if (product) {
+          const byProduct = await queryChart({
+            shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+            product_handle: 'eq.' + encodeURIComponent(product),
+            gender: 'eq.' + genderValue
+          });
+          if (byProduct) return byProduct;
         }
-      }
+        // 2) Tabela por coleção (exclui linhas product-scoped)
+        if (coll) {
+          const byCollection = await queryChart({
+            shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+            collection_handle: 'eq.' + encodeURIComponent(coll),
+            product_handle: 'eq.',
+            gender: 'eq.' + genderValue
+          });
+          if (byCollection) return byCollection;
+        }
+        // 3) Tabela padrão da loja
+        return queryChart({
+          shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+          collection_handle: 'eq.',
+          product_handle: 'eq.',
+          gender: 'eq.' + genderValue
+        });
+      };
+
+      const primary = await tryGender(genderToFetch);
+      if (primary) return primary;
 
       if (genderToFetch !== 'unisex') {
-        const unisexResponse = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&gender=eq.unisex&select=sizes,measurement_refs,collection_type,collection_elasticity`,
-          {
-            headers: {
-              'apikey': supabaseAnonKey,
-              'Authorization': `Bearer ${supabaseAnonKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        if (unisexResponse.ok) {
-          const unisexData = await unisexResponse.json();
-          if (unisexData && unisexData.length > 0 && unisexData[0].sizes) {
-            return {
-              sizes: unisexData[0].sizes,
-              collectionType: unisexData[0].collection_type || '',
-              collectionElasticity: unisexData[0].collection_elasticity || '',
-              measurementRefs: normalizeMeasurementRefs(unisexData[0].measurement_refs, unisexData[0].collection_type || '')
-            };
-          }
-        }
+        return tryGender('unisex');
       }
 
       return null;
@@ -1567,12 +1583,13 @@
     }
   }
 
-  async function fetchCollectionType(shopDomain, collectionHandle) {
+  async function fetchCollectionType(shopDomain, collectionHandle, productHandle) {
     try {
       if (!shopDomain) return '';
       const supabaseUrl = 'https://lhkgnirolvbmomeduoaj.supabase.co';
       const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI';
       const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+      const product = typeof productHandle === 'string' ? productHandle.trim() : '';
 
       const headers = {
         'apikey': supabaseAnonKey,
@@ -1591,35 +1608,47 @@
         return '';
       };
 
-      let response = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&select=collection_type`,
-        { headers: headers }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(function () { return ''; });
-        const missingColumn = errorText.indexOf('collection_type') !== -1 && (errorText.indexOf('column') !== -1 || errorText.indexOf('42703') !== -1);
-        if (missingColumn) return '';
-        return '';
-      }
-
-      let data = await response.json();
-      let collectionType = parseCollectionType(data);
-      if (collectionType) return collectionType;
-
-      if (coll) {
-        response = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent('')}&select=collection_type`,
+      const queryType = async function (params) {
+        const qs = Object.keys(params)
+          .map(function (key) {
+            return key + '=' + params[key];
+          })
+          .join('&');
+        const response = await fetch(
+          `${supabaseUrl}/rest/v1/size_charts?${qs}&select=collection_type&limit=5`,
           { headers: headers }
         );
-        if (response.ok) {
-          data = await response.json();
-          collectionType = parseCollectionType(data);
-          if (collectionType) return collectionType;
+        if (!response.ok) {
+          const errorText = await response.text().catch(function () { return ''; });
+          const missingColumn = errorText.indexOf('collection_type') !== -1 && (errorText.indexOf('column') !== -1 || errorText.indexOf('42703') !== -1);
+          if (missingColumn) return '';
+          return '';
         }
+        return parseCollectionType(await response.json());
+      };
+
+      if (product) {
+        const byProduct = await queryType({
+          shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+          product_handle: 'eq.' + encodeURIComponent(product)
+        });
+        if (byProduct) return byProduct;
       }
 
-      return '';
+      if (coll) {
+        const byCollection = await queryType({
+          shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+          collection_handle: 'eq.' + encodeURIComponent(coll),
+          product_handle: 'eq.'
+        });
+        if (byCollection) return byCollection;
+      }
+
+      return queryType({
+        shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+        collection_handle: 'eq.',
+        product_handle: 'eq.'
+      });
     } catch (_error) {
       return '';
     }
@@ -1641,12 +1670,13 @@
     }
   }
 
-  async function fetchCollectionElasticity(shopDomain, collectionHandle) {
+  async function fetchCollectionElasticity(shopDomain, collectionHandle, productHandle) {
     try {
       if (!shopDomain) return '';
       const supabaseUrl = 'https://lhkgnirolvbmomeduoaj.supabase.co';
       const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI';
       const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+      const product = typeof productHandle === 'string' ? productHandle.trim() : '';
 
       const headers = {
         'apikey': supabaseAnonKey,
@@ -1665,35 +1695,47 @@
         return '';
       };
 
-      let response = await fetch(
-        `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent(coll)}&select=collection_elasticity`,
-        { headers: headers }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(function () { return ''; });
-        const missingColumn = errorText.indexOf('collection_elasticity') !== -1 && (errorText.indexOf('column') !== -1 || errorText.indexOf('42703') !== -1);
-        if (missingColumn) return '';
-        return '';
-      }
-
-      let data = await response.json();
-      let collectionElasticity = parseCollectionElasticity(data);
-      if (collectionElasticity) return collectionElasticity;
-
-      if (coll) {
-        response = await fetch(
-          `${supabaseUrl}/rest/v1/size_charts?shop_domain=eq.${encodeURIComponent(shopDomain)}&collection_handle=eq.${encodeURIComponent('')}&select=collection_elasticity`,
+      const queryElasticity = async function (params) {
+        const qs = Object.keys(params)
+          .map(function (key) {
+            return key + '=' + params[key];
+          })
+          .join('&');
+        const response = await fetch(
+          `${supabaseUrl}/rest/v1/size_charts?${qs}&select=collection_elasticity&limit=5`,
           { headers: headers }
         );
-        if (response.ok) {
-          data = await response.json();
-          collectionElasticity = parseCollectionElasticity(data);
-          if (collectionElasticity) return collectionElasticity;
+        if (!response.ok) {
+          const errorText = await response.text().catch(function () { return ''; });
+          const missingColumn = errorText.indexOf('collection_elasticity') !== -1 && (errorText.indexOf('column') !== -1 || errorText.indexOf('42703') !== -1);
+          if (missingColumn) return '';
+          return '';
         }
+        return parseCollectionElasticity(await response.json());
+      };
+
+      if (product) {
+        const byProduct = await queryElasticity({
+          shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+          product_handle: 'eq.' + encodeURIComponent(product)
+        });
+        if (byProduct) return byProduct;
       }
 
-      return '';
+      if (coll) {
+        const byCollection = await queryElasticity({
+          shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+          collection_handle: 'eq.' + encodeURIComponent(coll),
+          product_handle: 'eq.'
+        });
+        if (byCollection) return byCollection;
+      }
+
+      return queryElasticity({
+        shop_domain: 'eq.' + encodeURIComponent(shopDomain),
+        collection_handle: 'eq.',
+        product_handle: 'eq.'
+      });
     } catch (_error) {
       return '';
     }
@@ -1715,13 +1757,14 @@
     }
   }
 
-  // Calcular tamanho recomendado: tabela por coleção + gênero, usando as 3 referências configuradas
-  async function calculateRecommendedSize(userMeasurements, shopDomain, collectionHandle) {
+  // Calcular tamanho recomendado: produto → coleção → padrão; usa as referências configuradas
+  async function calculateRecommendedSize(userMeasurements, shopDomain, collectionHandle, productHandle) {
     try {
       const { gender, height, weight, bodyType, fit } = userMeasurements;
       const coll = typeof collectionHandle === 'string' ? collectionHandle : '';
+      const product = typeof productHandle === 'string' ? productHandle : '';
 
-      const chart = await fetchSizeCharts(shopDomain, coll, gender);
+      const chart = await fetchSizeCharts(shopDomain, coll, gender, product);
       if (!chart || !chart.sizes || chart.sizes.length === 0) {
         console.warn('⚠️ Nenhuma tabela de medidas encontrada para esta coleção/gênero');
         return null;
@@ -2410,8 +2453,8 @@
     var __omafitImagesP = getOnlyProductImages(resolvedHandleForImages);
     var __omafitProductDataP = getCurrentProductData(productInfo);
     var __omafitCollTitleP = withFastTimeout(collectionTitlePromise, collectionTitle || '');
-    var __omafitCollTypeP = withFastTimeout(fetchCollectionType(shopDomain, collectionHandle), '');
-    var __omafitElasticityP = withFastTimeout(fetchCollectionElasticity(shopDomain, collectionHandle), '');
+    var __omafitCollTypeP = withFastTimeout(fetchCollectionType(shopDomain, collectionHandle, resolvedHandleForImages), '');
+    var __omafitElasticityP = withFastTimeout(fetchCollectionElasticity(shopDomain, collectionHandle, resolvedHandleForImages), '');
     var __omafitComplementaryP = withFastTimeout(getComplementaryProduct(collectionHandle), null);
 
     var collectionType = await __omafitCollTypeP;
@@ -3876,11 +3919,10 @@
     scheduleOmafitWidgetWarmup();
   }
 
-  /** Botão pill com logo + texto (alternativa ao link). */
+  /** Botão pill com texto (logo só dentro do widget). */
   function createOmafitButton() {
     const primaryColor = OMAFIT_CONFIG?.colors?.primary || OMAFIT_CONFIG?.colors?.text || '#810707';
     const label = OMAFIT_CONFIG?.linkText || 'Experimentar virtualmente';
-    const logoRaw = OMAFIT_CONFIG?.storeLogo != null ? String(OMAFIT_CONFIG.storeLogo).trim() : '';
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -3907,20 +3949,6 @@
     btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
     btn.style.transition = 'opacity 0.2s ease, transform 0.15s ease';
     btn.style.maxWidth = '100%';
-
-    if (logoRaw && /^https?:\/\//i.test(logoRaw)) {
-      const img = document.createElement('img');
-      img.src = logoRaw;
-      img.alt = '';
-      img.width = 32;
-      img.height = 32;
-      img.style.width = '32px';
-      img.style.height = '32px';
-      img.style.objectFit = 'contain';
-      img.style.borderRadius = '6px';
-      img.style.flexShrink = '0';
-      btn.appendChild(img);
-    }
 
     const span = document.createElement('span');
     span.textContent = label;

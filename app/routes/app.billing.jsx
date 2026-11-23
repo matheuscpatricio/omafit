@@ -75,7 +75,7 @@ export default function BillingPage() {
         currentPlan: isBillingActive ? (shop?.plan || null) : null,
         billingStatus: shop?.billing_status || null,
         usage: isBillingActive && shop ? {
-          plan: shop?.plan || 'ondemand',
+          plan: shop?.plan || null,
           isEnterprise,
           used: imagesUsed,
           included: imagesIncluded,
@@ -87,7 +87,7 @@ export default function BillingPage() {
           extraImages,
           percentage,
           withinLimit,
-          pricePerExtra: Number(shop?.price_per_extra_image) || 0.18
+          pricePerExtra: Number(shop?.price_per_extra_image) || 0.12
         } : null
       });
     } catch (error) {

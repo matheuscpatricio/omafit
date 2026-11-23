@@ -20,7 +20,7 @@ export function UsageIndicator({ usage }) {
     percentage,
     withinLimit,
     extraImages = 0,
-    pricePerExtra = 0.18,
+    pricePerExtra = 0.12,
     isEnterprise = false,
   } = usage;
 

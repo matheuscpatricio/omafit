@@ -215,9 +215,11 @@ function AppNav() {
           {t("nav.tryOnMarketing")}
         </Link>
       ) : null}
+      {/* Temporariamente oculto: página Acessórios (/app/ar-eyewear)
       <Link to={`/app/ar-eyewear${search}`} style={navLinkStyle}>
         {t("nav.arEyewear")}
       </Link>
+      */}
     </s-app-nav>
   );
 }

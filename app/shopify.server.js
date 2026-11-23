@@ -17,6 +17,8 @@ const shopify = shopifyApp({
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   future: {
+    // Pair with Dev Dashboard IP allowlist + Railway Static Outbound IPs
+    // (see README.md → Security Notes → Shopify IP allowlist).
     expiringOfflineAccessTokens: true,
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN

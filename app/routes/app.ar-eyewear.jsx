@@ -31,11 +31,24 @@ import {
   isSupersededArEyewearErrorMessage,
 } from "../ar-eyewear-messages.shared.js";
 
+/** Temporariamente desativado no admin Shopify. Volte a `true` para reabrir a página. */
+const AR_EYEWEAR_ADMIN_ENABLED = false;
+
 export const loader = async ({ request }) => {
+  const url = new URL(request.url);
+
+  if (!AR_EYEWEAR_ADMIN_ENABLED) {
+    const qs = new URLSearchParams();
+    for (const key of ["shop", "host", "embedded", "locale"]) {
+      const value = url.searchParams.get(key);
+      if (value) qs.set(key, value);
+    }
+    return redirect(`/app${qs.toString() ? `?${qs.toString()}` : ""}`);
+  }
+
   const { admin, session } = await authenticate.admin(request);
   const check = await ensureShopHasActiveBilling(admin, session.shop);
   if (!check.active) {
-    const url = new URL(request.url);
     const hostFromQuery = url.searchParams.get("host") || "";
     const embeddedFromQuery = url.searchParams.get("embedded") || "";
     const shopHandle = String(session.shop || "").replace(/\.myshopify\.com$/i, "");

@@ -22,6 +22,7 @@ import {
 } from '@shopify/polaris';
 import { getShopDomain } from '../utils/getShopDomain';
 import { useAppI18n } from '../contexts/AppI18n';
+import TutorialDocBanner from '../components/TutorialDocBanner';
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
 import { hasGrowthPlusPlan } from "../billing-growth-plus.js";
@@ -601,13 +602,13 @@ export default function WidgetPage() {
     if (!Number.isFinite(n)) return 40;
     return Math.max(0, Math.min(40, Math.round(n)));
   })();
-  const previewHasValidLogo =
-    typeof config.store_logo === 'string' && /^https?:\/\//i.test(config.store_logo.trim());
-
   if (loading) {
     return (
       <Page title={t("widget.title")}>
         <Layout>
+          <Layout.Section>
+            <TutorialDocBanner tutorialKey="widget" />
+          </Layout.Section>
           <Layout.Section>
             <Card>
               <BlockStack gap="400" inlineAlign="center">
@@ -628,6 +629,10 @@ export default function WidgetPage() {
       backAction={{ content: t("common.dashboard"), onAction: () => navigate(appBackHref) }}
     >
       <Layout>
+        <Layout.Section>
+          <TutorialDocBanner tutorialKey="widget" />
+        </Layout.Section>
+
         {success && (
           <Layout.Section>
             <Banner tone="success" onDismiss={() => setSuccess(false)}>
@@ -752,19 +757,6 @@ export default function WidgetPage() {
                           maxWidth: '100%'
                         }}
                       >
-                        {previewHasValidLogo && (
-                          <img
-                            src={config.store_logo}
-                            alt=""
-                            style={{
-                              width: 32,
-                              height: 32,
-                              objectFit: 'contain',
-                              borderRadius: 6,
-                              flexShrink: 0
-                            }}
-                          />
-                        )}
                         <span style={{ textAlign: 'center' }}>{previewLinkText}</span>
                       </button>
                     ) : (

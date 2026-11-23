@@ -3,6 +3,7 @@ export const GROWTH_PLUS_PLANS = new Set([
   "growth",
   "pro",
   "professional",
+  "scale",
   "enterprise",
 ]);
 

@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { ensureShopHasActiveBilling } from "../billing-access.server";
+import { publishStorefrontConfig } from "../storefront-config.server.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const SUPABASE_KEY =
@@ -118,6 +119,16 @@ export async function loader({ request }) {
     if (config && config.tryon_layout === "hero" && !hasHeroAccess(billing.row?.plan)) {
       config.tryon_layout = "default";
     }
+    try {
+      await publishStorefrontConfig({
+        admin,
+        shopDomain: session.shop,
+        config,
+        billingPlan: billing.row?.plan || null,
+      });
+    } catch (publishErr) {
+      console.warn("[api.widget-config] publish storefront", publishErr?.message || publishErr);
+    }
     return Response.json({ config, billingPlan: billing.row?.plan || null });
   } catch (err) {
     console.error("[api.widget-config] loader", err);
@@ -139,6 +150,16 @@ export async function action({ request }) {
     const updatedRows = await updateConfigByShopDomain(session.shop, payload);
     const config = updatedRows.length > 0 ? updatedRows[0] : await insertConfig(payload);
     const billingPlan = billing.row?.plan || null;
+    try {
+      await publishStorefrontConfig({
+        admin,
+        shopDomain: session.shop,
+        config,
+        billingPlan,
+      });
+    } catch (publishErr) {
+      console.warn("[api.widget-config] publish storefront", publishErr?.message || publishErr);
+    }
     return Response.json({
       config,
       billingPlan,

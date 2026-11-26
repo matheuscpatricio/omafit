@@ -2021,6 +2021,8 @@
       }
       return;
     }
+    if (window.__OMAFIT_MODAL_LOCK || document.querySelector('.omafit-modal-overlay')) return;
+    window.__OMAFIT_MODAL_LOCK = true;
     if (typeof omafitTryOnPreconnect === 'function') {
       omafitTryOnPreconnect();
     }
@@ -2205,6 +2207,7 @@
       'opacity: 0.7;';
 
     const closeModal = function () {
+      window.__OMAFIT_MODAL_LOCK = false;
       if (document.body.contains(overlay)) {
         overlay.style.background = 'rgba(0, 0, 0, 0)';
         overlay.style.backdropFilter = 'blur(0px)';
@@ -3907,6 +3910,7 @@
     });
     el.addEventListener('click', function (e) {
       e.preventDefault();
+      e.stopPropagation();
       window.__OMAFIT_OPEN_WHEN_READY = false;
       if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) return;
       if (typeof window.openOmafitModal === 'function') window.openOmafitModal();

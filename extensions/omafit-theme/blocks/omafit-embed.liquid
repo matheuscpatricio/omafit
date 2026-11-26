@@ -127,7 +127,6 @@
           type="button"
           class="omafit-try-on-cta omafit-try-on-cta-button"
           aria-label="{{ omafit_sf_label | escape }}"
-          onclick="window.__OMAFIT_OPEN_WHEN_READY=true;return false;"
           style="display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:12px 22px;border-radius:{{ omafit_sf_radius }}px;border:2px solid {{ omafit_sf_color | escape }};background:#ffffff;color:{{ omafit_sf_color | escape }};cursor:pointer;font-size:15px;font-weight:600;line-height:1.25;box-shadow:0 1px 3px rgba(0,0,0,0.08);max-width:100%;"
         >
           <span>{{ omafit_sf_label | escape }}</span>
@@ -137,7 +136,6 @@
           class="omafit-try-on-link"
           href="#omafit-tryon"
           aria-label="{{ omafit_sf_label | escape }}"
-          onclick="window.__OMAFIT_OPEN_WHEN_READY=true;return false;"
           style="display:inline-block;color:{{ omafit_sf_color | escape }};text-decoration:underline;text-decoration-color:{{ omafit_sf_color | escape }};text-underline-offset:3px;cursor:pointer;"
         >{{ omafit_sf_label | escape }}</a>
       {% endif %}

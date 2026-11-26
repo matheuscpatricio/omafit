@@ -2021,6 +2021,8 @@
       }
       return;
     }
+    if (window.__OMAFIT_MODAL_LOCK || document.querySelector('.omafit-modal-overlay')) return;
+    window.__OMAFIT_MODAL_LOCK = true;
     if (typeof omafitTryOnPreconnect === 'function') {
       omafitTryOnPreconnect();
     }
@@ -2205,6 +2207,7 @@
       'opacity: 0.7;';
 
     const closeModal = function () {
+      window.__OMAFIT_MODAL_LOCK = false;
       if (document.body.contains(overlay)) {
         overlay.style.background = 'rgba(0, 0, 0, 0)';
         overlay.style.backdropFilter = 'blur(0px)';
@@ -2493,10 +2496,9 @@
 
     const widgetPath = collectionType === 'footwear' ? '/widget-shoes' : '/widget';
 
-    // URL inicial enxuta para reduzir tempo de navegação/boot do iframe.
+    // Só a query. O provador não abre um site: o HTML entra no iframe e o JS vem do CDN da Shopify.
     // Dados ricos (descrição, catálogo, coleções, logo, config completa) seguem via postMessage após load.
     let widgetUrl =
-      'https://omafit.embed' + widgetPath +
       '?productImage=' + encodeURIComponent(productImage) +
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
@@ -2556,11 +2558,18 @@
       }
     }
     
-    console.log('🔗 URL do widget (tamanho:', widgetUrl.length, 'chars):', widgetUrl.substring(0, 200) + '...');
+    var omafitStorefrontJs =
+      (document.getElementById('omafit-widget-root') &&
+        document.getElementById('omafit-widget-root').getAttribute('data-storefront-js')) ||
+      '';
+    console.log(
+      '[Omafit] provador no CDN da Shopify (' + widgetUrl.length + ' caracteres de parâmetros):',
+      omafitStorefrontJs || '(arquivo omafit-storefront.js ausente no tema)'
+    );
     
-    // Mantém payload pesado fora da URL; fallback de segurança.
+    // Mantém payload pesado fora da query; fallback de segurança.
     if (widgetUrl.length > 2000) {
-      console.warn('⚠️ URL do widget ainda longa; mantendo versão mínima.');
+      console.warn('⚠️ Parâmetros do provador ainda longos; mantendo a versão mínima.');
     }
 
     var glbPass = getOmafitArGlbUrlFromDom();
@@ -3901,6 +3910,7 @@
     });
     el.addEventListener('click', function (e) {
       e.preventDefault();
+      e.stopPropagation();
       window.__OMAFIT_OPEN_WHEN_READY = false;
       if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) return;
       if (typeof window.openOmafitModal === 'function') window.openOmafitModal();
@@ -3974,8 +3984,11 @@
     var cssUrl = (root && root.getAttribute('data-storefront-css')) || '';
     var arUrl = (root && root.getAttribute('data-ar-module')) || '';
     if (!jsUrl) throw new Error('Omafit: bundle da vitrine ausente');
-    var qIndex = String(widgetUrl || '').indexOf('?');
-    var search = qIndex >= 0 ? String(widgetUrl).slice(qIndex) : '';
+    var search = String(widgetUrl || '');
+    if (search && search.charAt(0) !== '?') {
+      var qIndex = search.indexOf('?');
+      search = qIndex >= 0 ? search.slice(qIndex) : '';
+    }
     var fontHref =
       'https://fonts.googleapis.com/css2?family=Bungee&family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap';
     return (

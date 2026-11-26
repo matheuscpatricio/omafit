@@ -2,11 +2,12 @@
 (function () {
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   const OMAFIT_APP_ORIGIN = 'https://omafit-production.up.railway.app';
-  /** srcdoc não tem origem nomeável; o postMessage para o provador usa '*'. */
+  /**
+   * srcdoc sem sandbox herda a origem da loja. O postMessage de saída usa '*'.
+   * O iframe ativo é conferido nas mensagens de entrada.
+   */
   const OMAFIT_FRAME_TARGET = '*';
-  function isOmafitEmbedOrigin(origin) {
-    return origin === 'null' || origin === OMAFIT_WIDGET_ORIGIN;
-  }
+  var OMAFIT_ACTIVE_IFRAME = null;
   function omafitReplyOrigin(origin) {
     return !origin || origin === 'null' ? '*' : origin;
   }
@@ -2215,6 +2216,7 @@
           if (document.body.contains(overlay)) {
             document.body.removeChild(overlay);
             document.body.style.overflow = '';
+            if (OMAFIT_ACTIVE_IFRAME === iframe) OMAFIT_ACTIVE_IFRAME = null;
             scheduleOmafitWidgetWarmup();
             omafitOfferEmailCapture().catch(function () {});
           }
@@ -2714,6 +2716,7 @@
           '</div>';
       }
     });
+    OMAFIT_ACTIVE_IFRAME = iframe;
     iframe.srcdoc = buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath);
 
     // Buscas restantes (imagens, catálogo, descrição, contexto) — agora correm
@@ -3078,6 +3081,21 @@
     'http://localhost:3000',
     'http://127.0.0.1:3000'
   ];
+
+  function isOmafitFrameMessage(event) {
+    if (!event) return false;
+    if (OMAFIT_CART_ALLOWED_ORIGINS.indexOf(event.origin) !== -1) return true;
+    if (event.origin === OMAFIT_WIDGET_ORIGIN) return true;
+    try {
+      return (
+        event.origin === window.location.origin &&
+        !!OMAFIT_ACTIVE_IFRAME &&
+        event.source === OMAFIT_ACTIVE_IFRAME.contentWindow
+      );
+    } catch (e) {
+      return false;
+    }
+  }
   const OMAFIT_PROCESSED_REQUEST_IDS = new Set();
   const OMAFIT_REQUEST_ID_MAX_AGE_MS = 5 * 60 * 1000;
   let OMAFIT_LAST_REQUEST_ID_CLEANUP = 0;
@@ -3093,7 +3111,7 @@
     if (!event || !event.data || event.data.type !== 'omafit-add-to-cart-request') {
       return false;
     }
-    if (OMAFIT_CART_ALLOWED_ORIGINS.indexOf(event.origin) === -1) {
+    if (!isOmafitFrameMessage(event)) {
       console.warn('[OmafitCart] Origem não permitida:', event.origin);
       return false;
     }
@@ -3611,7 +3629,7 @@
 
   window.addEventListener('message', async function (event) {
     if (event && event.data && event.data.type === 'omafit-device-id-adopt') {
-      if (!isOmafitEmbedOrigin(event.origin)) return;
+      if (!isOmafitFrameMessage(event)) return;
       adoptOmafitShopperDeviceId(event.data.deviceId);
       if (OMAFIT_DEBUG) {
         console.log('🆔 Shopper device id adoptado da loja iframe:', event.data.deviceId);
@@ -3621,7 +3639,7 @@
 
     /** Widget no iframe pede galeria completa — só a página do produto (mesma origem) acede a product.js/DOM. */
     if (event && event.data && event.data.type === 'omafit-request-product-images') {
-      if (!isOmafitEmbedOrigin(event.origin)) return;
+      if (!isOmafitFrameMessage(event)) return;
       var reqHandle =
         (event.data.handle && String(event.data.handle).trim()) ||
         (window.location.pathname.split('/products/')[1] || '').split('/')[0];
@@ -3642,7 +3660,7 @@
 
     /** Carrinho AR (variant id): iframe Netlify não pode `fetch` cross-origin a `/cart/add.js`. */
     if (event && event.data && event.data.type === 'omafit-ar-cart-add-variant') {
-      if (OMAFIT_CART_ALLOWED_ORIGINS.indexOf(event.origin) === -1) {
+      if (!isOmafitFrameMessage(event)) {
         console.warn('[OmafitCart] AR cart: origem não permitida:', event.origin);
         return;
       }

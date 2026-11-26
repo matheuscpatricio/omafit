@@ -2,6 +2,14 @@
 (function () {
   const OMAFIT_WIDGET_ORIGIN = 'https://omafit.netlify.app';
   const OMAFIT_APP_ORIGIN = 'https://omafit-production.up.railway.app';
+  /** srcdoc não tem origem nomeável; o postMessage para o provador usa '*'. */
+  const OMAFIT_FRAME_TARGET = '*';
+  function isOmafitEmbedOrigin(origin) {
+    return origin === 'null' || origin === OMAFIT_WIDGET_ORIGIN;
+  }
+  function omafitReplyOrigin(origin) {
+    return !origin || origin === 'null' ? '*' : origin;
+  }
   const OMAFIT_DEBUG = typeof window !== 'undefined' && (window.omafitDebug === true || /[?&]omafit_debug=1/.test(window.location.search));
   const OMAFIT_SHOPPER_DEVICE_KEY = 'omafit_device_id_v1';
 
@@ -2486,7 +2494,7 @@
     // URL inicial enxuta para reduzir tempo de navegação/boot do iframe.
     // Dados ricos (descrição, catálogo, coleções, logo, config completa) seguem via postMessage após load.
     let widgetUrl =
-      'https://omafit.netlify.app' + widgetPath +
+      'https://omafit.embed' + widgetPath +
       '?productImage=' + encodeURIComponent(productImage) +
       '&productId=' + encodeURIComponent(productInfo.productId || 'unknown') +
       '&productName=' + encodeURIComponent(productInfo.productName || 'Produto') +
@@ -2706,7 +2714,7 @@
           '</div>';
       }
     });
-    iframe.src = widgetUrl;
+    iframe.srcdoc = buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath);
 
     // Buscas restantes (imagens, catálogo, descrição, contexto) — agora correm
     // em paralelo ao boot do iframe e seguem por postMessage quando prontas.
@@ -2845,7 +2853,7 @@
           stylistModeEnabled: !!OMAFIT_CONFIG.stylistModeEnabled,
           primaryColor: config.primaryColor || '#810707',
           fontFamily: config.fontFamily || detectedFontFamily || ''
-          }, OMAFIT_WIDGET_ORIGIN);
+          }, OMAFIT_FRAME_TARGET);
 
           // Enviar produto complementar em mensagem dedicada (com nomes que o app Netlify usa)
           if (complementaryProduct) {
@@ -2859,7 +2867,7 @@
               },
               recommendedProductName: complementaryProduct.title,
               recommendedProductUrl: complementaryProduct.url
-            }, OMAFIT_WIDGET_ORIGIN);
+            }, OMAFIT_FRAME_TARGET);
           }
 
           // Lista completa de imagens (a URL do iframe não inclui `productImages` para evitar 414).
@@ -2868,7 +2876,7 @@
               type: 'omafit-product-images',
               images: Array.isArray(allProductImages) ? allProductImages : [],
             },
-            OMAFIT_WIDGET_ORIGIN
+            OMAFIT_FRAME_TARGET
           );
 
           // Enviar logo se existir (base64 pode ser muito grande para URL)
@@ -2889,7 +2897,7 @@
               iframe.contentWindow.postMessage({
                 type: 'omafit-store-logo',
                 logo: OMAFIT_CONFIG.storeLogo
-              }, OMAFIT_WIDGET_ORIGIN);
+              }, OMAFIT_FRAME_TARGET);
               
               // Também incluir logo na atualização de configuração
               iframe.contentWindow.postMessage({
@@ -2922,7 +2930,7 @@
                 tryonLayout: omafitIframeTryonLayout,
                 tryon_layout_background_image: omafitIframeTryonLayoutBackground,
                 tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
-              }, OMAFIT_WIDGET_ORIGIN);
+              }, OMAFIT_FRAME_TARGET);
             } else {
               // Enviar atualização de configuração sem logo (logo inválido)
               iframe.contentWindow.postMessage({
@@ -2954,7 +2962,7 @@
                 tryonLayout: omafitIframeTryonLayout,
                 tryon_layout_background_image: omafitIframeTryonLayoutBackground,
                 tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
-              }, OMAFIT_WIDGET_ORIGIN);
+              }, OMAFIT_FRAME_TARGET);
             }
           } else {
             // Enviar atualização de configuração sem logo
@@ -2987,7 +2995,7 @@
               tryonLayout: omafitIframeTryonLayout,
               tryon_layout_background_image: omafitIframeTryonLayoutBackground,
               tryonLayoutBackgroundImage: omafitIframeTryonLayoutBackground
-            }, OMAFIT_WIDGET_ORIGIN);
+            }, OMAFIT_FRAME_TARGET);
           }
         };
 
@@ -3002,7 +3010,7 @@
             allProductImages = mergeUniqueProductImages(allProductImages, fresh);
             iframe.contentWindow.postMessage(
               { type: 'omafit-product-images', images: allProductImages },
-              OMAFIT_WIDGET_ORIGIN
+              OMAFIT_FRAME_TARGET
             );
             iframe.contentWindow.postMessage(
               {
@@ -3012,7 +3020,7 @@
                 productImage: productImage || '',
                 product_image: productImage || '',
               },
-              OMAFIT_WIDGET_ORIGIN
+              OMAFIT_FRAME_TARGET
             );
             console.log('📸 Galeria atualizada (retry):', allProductImages.length);
           }).catch(function () { /* non-blocking */ });
@@ -3064,6 +3072,7 @@
   // Origens permitidas: OMAFIT_CART_ALLOWED_ORIGINS. Idempotência por requestId.
   // Origens permitidas para add-to-cart (remover localhost em produção)
   const OMAFIT_CART_ALLOWED_ORIGINS = [
+    'null',
     'https://omafit.netlify.app',
     'https://omafit.com',
     'http://localhost:3000',
@@ -3580,7 +3589,7 @@
     };
     console.log('[OmafitCart] resultado enviado iframe:', finalMessage);
     try {
-      targetWindow.postMessage(finalMessage, targetOrigin);
+      targetWindow.postMessage(finalMessage, omafitReplyOrigin(targetOrigin));
     } catch (e) {
       console.warn('[OmafitCart] Erro ao enviar resultado ao iframe:', e);
     }
@@ -3602,7 +3611,7 @@
 
   window.addEventListener('message', async function (event) {
     if (event && event.data && event.data.type === 'omafit-device-id-adopt') {
-      if (event.origin !== OMAFIT_WIDGET_ORIGIN) return;
+      if (!isOmafitEmbedOrigin(event.origin)) return;
       adoptOmafitShopperDeviceId(event.data.deviceId);
       if (OMAFIT_DEBUG) {
         console.log('🆔 Shopper device id adoptado da loja iframe:', event.data.deviceId);
@@ -3612,7 +3621,7 @@
 
     /** Widget no iframe pede galeria completa — só a página do produto (mesma origem) acede a product.js/DOM. */
     if (event && event.data && event.data.type === 'omafit-request-product-images') {
-      if (event.origin !== OMAFIT_WIDGET_ORIGIN) return;
+      if (!isOmafitEmbedOrigin(event.origin)) return;
       var reqHandle =
         (event.data.handle && String(event.data.handle).trim()) ||
         (window.location.pathname.split('/products/')[1] || '').split('/')[0];
@@ -3621,7 +3630,7 @@
         if (event.source && event.source.postMessage && Array.isArray(galleryImgs) && galleryImgs.length > 0) {
           event.source.postMessage(
             { type: 'omafit-product-images', images: galleryImgs },
-            event.origin
+            omafitReplyOrigin(event.origin)
           );
           console.log('[Omafit] Galeria enviada ao widget (pedido do iframe):', galleryImgs.length);
         }
@@ -3651,7 +3660,7 @@
                 success: !!ok,
                 message: msg || ''
               },
-              event.origin
+              omafitReplyOrigin(event.origin)
             );
           }
         } catch (eAr) {
@@ -3866,6 +3875,105 @@
     }
   });
 
+  function bindOmafitCta(el) {
+    if (!el || el.getAttribute('data-omafit-bound') === '1') return;
+    el.setAttribute('data-omafit-bound', '1');
+    el.addEventListener('mouseenter', function () {
+      omafitTryOnPreconnect();
+    });
+    el.addEventListener('click', function (e) {
+      e.preventDefault();
+      window.__OMAFIT_OPEN_WHEN_READY = false;
+      if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) return;
+      if (typeof window.openOmafitModal === 'function') window.openOmafitModal();
+    });
+  }
+
+  function readLiquidStorefrontConfig() {
+    var node = document.getElementById('omafit-storefront-config');
+    if (!node || !node.textContent || !String(node.textContent).trim()) return null;
+    var raw;
+    try {
+      raw = JSON.parse(node.textContent);
+    } catch (e) {
+      return null;
+    }
+    if (!raw || typeof raw !== 'object') return null;
+    var rootElement = document.getElementById('omafit-widget-root');
+    var shopNameFromRoot = rootElement && rootElement.dataset ? rootElement.dataset.shopName || '' : '';
+    var primary = raw.primaryColor || '#810707';
+    var excluded = Array.isArray(raw.excludedCollections) ? raw.excludedCollections : [];
+    var handles =
+      rootElement && rootElement.dataset && rootElement.dataset.collectionHandles
+        ? rootElement.dataset.collectionHandles.split(',').map(function (item) { return item.trim(); }).filter(Boolean)
+        : [];
+    var current = rootElement && rootElement.dataset ? rootElement.dataset.collectionHandle || '' : '';
+    var excludedHit =
+      handles.some(function (handle) { return excluded.indexOf(handle) !== -1; }) ||
+      (!!current && excluded.indexOf(current) !== -1);
+    var embed =
+      String(raw.embedPosition || '').toLowerCase() === 'above_buy_buttons'
+        ? 'above_buy_buttons'
+        : 'below_buy_buttons';
+    var cta = String(raw.ctaType || '').toLowerCase() === 'button' ? 'button' : 'link';
+    var radius = Number(raw.ctaButtonBorderRadius);
+    return {
+      publicId: raw.publicId || 'wgt_pub_default',
+      linkText: raw.linkText || 'Experimentar virtualmente',
+      storeName: shopNameFromRoot || raw.storeName || '',
+      storeLogo: raw.storeLogo || '',
+      fontFamily: 'inherit',
+      colors: {
+        primary: primary,
+        background: '#ffffff',
+        text: primary,
+        overlay: primary + 'CC'
+      },
+      adminLocale: raw.adminLocale || '',
+      shopDomain: (rootElement && rootElement.dataset && rootElement.dataset.shopDomain) || raw.shopDomain || '',
+      widgetEnabled: raw.widgetEnabled !== false && raw.isActive !== false && !excludedHit,
+      isActive: raw.isActive !== false,
+      excludedCollections: excluded,
+      embedPosition: embed,
+      ctaType: cta,
+      ctaButtonBorderRadius: Number.isFinite(radius) ? radius : null,
+      tryonLayout: raw.tryonLayout === 'hero' || raw.tryonLayout === 'sidebar' ? raw.tryonLayout : 'default',
+      tryonLayoutBackgroundImage: raw.tryonLayoutBackgroundImage || '',
+      tryon_layout_background_image: raw.tryonLayoutBackgroundImage || '',
+      billingPlan: raw.billingPlan || null,
+      stylistModeEnabled: !!raw.stylistModeEnabled,
+      fromLiquid: true
+    };
+  }
+
+  function jsonForInlineScript(value) {
+    return JSON.stringify(value == null ? '' : value).replace(/</g, '\\u003c');
+  }
+
+  function buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath) {
+    var root = document.getElementById('omafit-widget-root');
+    var jsUrl = (root && root.getAttribute('data-storefront-js')) || '';
+    var cssUrl = (root && root.getAttribute('data-storefront-css')) || '';
+    var arUrl = (root && root.getAttribute('data-ar-module')) || '';
+    if (!jsUrl) throw new Error('Omafit: bundle da vitrine ausente');
+    var qIndex = String(widgetUrl || '').indexOf('?');
+    var search = qIndex >= 0 ? String(widgetUrl).slice(qIndex) : '';
+    var fontHref =
+      'https://fonts.googleapis.com/css2?family=Bungee&family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap';
+    return (
+      '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+      '<meta http-equiv="Permissions-Policy" content="camera=*, microphone=*, fullscreen=*">' +
+      '<link rel="stylesheet" href="' + fontHref + '">' +
+      (cssUrl ? '<link rel="stylesheet" href="' + String(cssUrl).replace(/"/g, '') + '">' : '') +
+      '</head><body><div id="root"></div><script>' +
+      'window.__OMAFIT_SEARCH__=' + jsonForInlineScript(search) + ';' +
+      'window.__OMAFIT_PATH__=' + jsonForInlineScript(widgetPath || '/widget') + ';' +
+      'window.__OMAFIT_AR_MODULE_URL__=' + jsonForInlineScript(arUrl) + ';' +
+      '</script><script type="module" src="' + String(jsUrl).replace(/"/g, '') + '"></script></body></html>'
+    );
+  }
+
   // Criar o link do widget
   function createOmafitLink() {
     const link = document.createElement('a');
@@ -3909,14 +4017,14 @@
   }
 
   function omafitTryOnPreconnect() {
-    if (!document.querySelector('link[rel="preconnect"][href="' + OMAFIT_WIDGET_ORIGIN + '"]')) {
-      const preconnect = document.createElement('link');
-      preconnect.rel = 'preconnect';
-      preconnect.href = OMAFIT_WIDGET_ORIGIN;
-      preconnect.crossOrigin = 'anonymous';
-      document.head.appendChild(preconnect);
-    }
-    scheduleOmafitWidgetWarmup();
+    var root = document.getElementById('omafit-widget-root');
+    var jsUrl = root && root.getAttribute('data-storefront-js');
+    if (!jsUrl || document.querySelector('link[data-omafit-preload="storefront"]')) return;
+    var link = document.createElement('link');
+    link.rel = 'modulepreload';
+    link.href = jsUrl;
+    link.setAttribute('data-omafit-preload', 'storefront');
+    document.head.appendChild(link);
   }
 
   /** Botão pill com texto (logo só dentro do widget). */
@@ -4002,9 +4110,22 @@
     }
     syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
 
-    if (document.querySelector('.omafit-widget')) {
-      console.log('✅ Widget Omafit já existe na página');
-      return;
+    var existingWidget = document.querySelector('.omafit-widget');
+    var reusePrerendered = false;
+    if (existingWidget) {
+      existingWidget.querySelectorAll('.omafit-try-on-link, .omafit-try-on-cta').forEach(function (el) {
+        bindOmafitCta(el);
+      });
+      var alreadyPlaced = existingWidget.getAttribute('data-omafit-placed') === '1';
+      var prerendered = existingWidget.getAttribute('data-omafit-prerendered') === '1';
+      if (alreadyPlaced || !prerendered) {
+        console.log('✅ Widget Omafit já existe na página');
+        return;
+      }
+      reusePrerendered = true;
+      existingWidget.style.opacity = '1';
+      existingWidget.style.height = '';
+      existingWidget.style.overflow = '';
     }
 
     const embedPos =
@@ -4055,31 +4176,26 @@
       }
     }
 
-    const container = document.createElement('div');
-    container.className = 'omafit-widget';
-    container.style.textAlign = 'center';
-    if (embedPos === 'above_buy_buttons') {
-      container.style.marginTop = '0';
-      container.style.marginBottom = '16px';
+    var container;
+    if (reusePrerendered) {
+      container = existingWidget;
     } else {
-      container.style.marginTop = '16px';
-      container.style.marginBottom = '24px';
-    }
-
-    container.appendChild(createOmafitCta());
-
-    // Aquece a conexão ao domínio do iframe sem pesar a PDP (cobre mobile, que
-    // não tem hover). Só abre a conexão TLS — não baixa nada.
-    try {
-      var __omafitWarmConn = function () { try { omafitTryOnPreconnect(); } catch (_e) {} };
-      if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(__omafitWarmConn, { timeout: 2000 });
+      container = document.createElement('div');
+      container.className = 'omafit-widget';
+      container.style.textAlign = 'center';
+      if (embedPos === 'above_buy_buttons') {
+        container.style.marginTop = '0';
+        container.style.marginBottom = '16px';
       } else {
-        setTimeout(__omafitWarmConn, 1200);
+        container.style.marginTop = '16px';
+        container.style.marginBottom = '24px';
       }
-    } catch (_eWarm) {
-      /* non-blocking */
+      container.appendChild(createOmafitCta());
     }
+    container.setAttribute('data-omafit-placed', '1');
+
+    // O bundle do provador só baixa no clique (ou no hover do botão).
+    // Não pré-carregar na PDP: são ~800 KB que atrasariam a página.
 
     function insertContainerFallback() {
       const root = document.getElementById('omafit-widget-root');
@@ -4207,11 +4323,30 @@
   }
 
   // Inicializar assim que a página e configuração estiverem prontas
+  function openQueuedOmafitModal() {
+    if (!window.__OMAFIT_OPEN_WHEN_READY) return;
+    window.__OMAFIT_OPEN_WHEN_READY = false;
+    if (typeof window.openOmafitModal === 'function') window.openOmafitModal();
+  }
+
   async function initOmafit() {
     try {
       if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
         removeClothingOmafitUi();
         console.log('Omafit: provador AR óculos (sem GLB) — widget de roupa não é carregado.');
+        return;
+      }
+      var liquidConfig = readLiquidStorefrontConfig();
+      if (liquidConfig) {
+        OMAFIT_CONFIG = liquidConfig;
+        OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
+        syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
+        if (liquidConfig.widgetEnabled === false) {
+          removeInjectedOmafitCtaOnly();
+          return;
+        }
+        insertOmafitLinkUnderAddToCart();
+        openQueuedOmafitModal();
         return;
       }
       console.log('🚀 Inicializando Omafit...');
@@ -4266,6 +4401,7 @@
       scheduleOmafitWidgetWarmup();
 
       console.log('✅ Omafit inicializado com sucesso');
+      openQueuedOmafitModal();
     } catch (e) {
       console.error('❌ Omafit: erro ao inicializar widget', e);
       // Tentar inserir mesmo com erro, usando configuração padrão
@@ -4297,21 +4433,14 @@
 
   // Inicializar widget (deferido para não bloquear carregamento da página)
   function startInit() {
-    scheduleOmafitWidgetWarmup();
     function doInit() {
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initOmafit);
       } else {
-        setTimeout(initOmafit, 50);
+        initOmafit();
       }
     }
-
-    // Usar requestIdleCallback quando disponível para não competir com recursos críticos
-    if (typeof requestIdleCallback !== 'undefined') {
-      requestIdleCallback(function() { doInit(); }, { timeout: 2000 });
-    } else {
-      doInit();
-    }
+    doInit();
   }
 
   startInit();

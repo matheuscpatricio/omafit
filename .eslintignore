@@ -1,4 +1,8 @@
 node_modules
+storefront-widget
+extensions/omafit-theme/assets/omafit-storefront.js
+extensions/omafit-theme/assets/omafit-storefront-mediapipe.worker.js
+extensions/omafit-theme/assets/omafit-storefront-vision_bundle.js
 build
 public/build
 */*.yml

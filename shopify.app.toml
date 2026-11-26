@@ -39,3 +39,13 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [ ]
+
+# Configuração pequena da vitrine (cor, texto, coleções). O tema lê isto
+# para mostrar o botão sem uma ida ao banco. O app grava o valor ao abrir
+# ou salvar o widget.
+[shop.metafields.app.storefront_config]
+type = "json"
+name = "Omafit storefront config"
+description = "Texto, cor e coleções do botão de provador na página de produto."
+access.admin = "merchant_read"
+access.storefront = "public_read"

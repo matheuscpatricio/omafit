@@ -1119,6 +1119,16 @@
 
       console.log('🔍 Shop domain detectado:', shopDomain);
 
+      try {
+        var cachedRaw = window.__OMAFIT_CONFIG_CACHE__ || sessionStorage.getItem('omafit-store-config:v1:' + shopDomain);
+        if (cachedRaw) {
+          var cachedCfg = JSON.parse(cachedRaw);
+          if (cachedCfg && cachedCfg.shopDomain === shopDomain && cachedCfg.publicId) {
+            return cachedCfg;
+          }
+        }
+      } catch (_cacheRead) {}
+
       if (!shopDomain) {
         console.warn('⚠️ Shop domain não encontrado, usando configuração padrão');
         // Retornar configuração padrão mas continuar funcionando
@@ -1159,10 +1169,33 @@
       var selectWidgetCfgNoExcluded =
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,admin_locale,created_at,updated_at';
 
-      let configResponse = await fetch(
-        `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
-        { headers: configHeaders }
-      );
+      var earlyRaw = window.__OMAFIT_EARLY_RAW__;
+      var useEarly = earlyRaw && earlyRaw.shop === shopDomain && earlyRaw.config && earlyRaw.key;
+      let configResponse;
+      let widgetKeyResponse;
+      if (useEarly) {
+        var earlyPair = await Promise.all([earlyRaw.config, earlyRaw.key]);
+        configResponse = earlyPair[0];
+        widgetKeyResponse = earlyPair[1];
+        window.__OMAFIT_EARLY_RAW__ = null;
+      } else {
+        var freshPair = await Promise.all([
+          fetch(
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
+            { headers: configHeaders }
+          ),
+          fetch(
+            `${supabaseUrl}/rest/v1/rpc/get_widget_public_id_by_shop`,
+            {
+              method: 'POST',
+              headers: configHeaders,
+              body: JSON.stringify({ p_shop_domain: shopDomain })
+            }
+          )
+        ]);
+        configResponse = freshPair[0];
+        widgetKeyResponse = freshPair[1];
+      }
       if (!configResponse.ok) {
         var errT = await configResponse.text().catch(function () { return ''; });
         if (
@@ -1228,15 +1261,6 @@
         'Authorization': `Bearer ${supabaseAnonKey}`,
         'Content-Type': 'application/json'
       };
-
-      const widgetKeyResponse = await fetch(
-        `${supabaseUrl}/rest/v1/rpc/get_widget_public_id_by_shop`,
-        {
-          method: 'POST',
-          headers: rpcHeaders,
-          body: JSON.stringify({ p_shop_domain: shopDomain })
-        }
-      );
 
       let config = null;
       let validPublicId = publicId || 'wgt_pub_default';
@@ -1457,6 +1481,9 @@
         stylistModeEnabled: stylistModeEnabled,
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
+      try {
+        sessionStorage.setItem('omafit-store-config:v1:' + shopDomain, JSON.stringify(mappedConfig));
+      } catch (_cacheWrite) {}
       
       console.log('✅ Configuração mapeada:', {
         linkText: mappedConfig.linkText,
@@ -2015,6 +2042,43 @@
     input.focus();
   }
 
+  var OMAFIT_CONFIG_P = null;
+  var OMAFIT_CONFIG_FROM_LIQUID = false;
+
+  function loadOmafitConfigOnce() {
+    if (!OMAFIT_CONFIG_P) OMAFIT_CONFIG_P = fetchOmafitConfig();
+    return OMAFIT_CONFIG_P;
+  }
+
+  function ensureDefaultOmafitConfig() {
+    if (OMAFIT_CONFIG) return;
+    var root = document.getElementById('omafit-widget-root');
+    OMAFIT_CONFIG = {
+      publicId: 'wgt_pub_default',
+      linkText: 'Experimentar virtualmente',
+      storeName: (root && root.getAttribute('data-shop-name')) || '',
+      storeLogo: '',
+      fontFamily: 'inherit',
+      colors: {
+        primary: '#810707',
+        background: '#ffffff',
+        text: '#810707',
+        overlay: '#810707CC'
+      },
+      shopDomain: (root && root.getAttribute('data-shop-domain')) || '',
+      widgetEnabled: true,
+      isActive: true,
+      embedPosition: 'below_buy_buttons',
+      ctaType: 'link'
+    };
+  }
+
+  function bindVisibleOmafitCtas() {
+    document.querySelectorAll('.omafit-try-on-link, .omafit-try-on-cta').forEach(function (el) {
+      bindOmafitCta(el);
+    });
+  }
+
   // Função que abre o modal do Omafit
   window.openOmafitModal = async function () {
     if (isOmafitArEyewearPage() && !getOmafitArGlbUrlFromDom()) {
@@ -2033,50 +2097,14 @@
       loadOmafitFontsWhenNeeded();
     }, 0);
 
-    // Se configuração não estiver carregada, tentar carregar agora
-    if (!OMAFIT_CONFIG) {
-      console.warn('⚠️ Omafit: configuração não carregada, tentando carregar agora...');
-      try {
-        OMAFIT_CONFIG = await fetchOmafitConfig();
-        if (OMAFIT_CONFIG) {
-          OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
-        }
-        if (!OMAFIT_CONFIG) {
-          console.error('❌ Não foi possível carregar configuração do Omafit');
-          // Usar configuração padrão
-          OMAFIT_CONFIG = {
-            publicId: 'wgt_pub_default',
-            linkText: 'Experimentar virtualmente',
-            storeName: '',
-            storeLogo: '',
-            fontFamily: 'inherit',
-            colors: {
-              primary: '#810707',
-              background: '#ffffff',
-              text: '#810707',
-              overlay: '#810707CC'
-            },
-            shopDomain: ''
-          };
-        }
-      } catch (e) {
-        console.error('❌ Erro ao carregar configuração:', e);
-        // Usar configuração padrão em caso de erro
-        OMAFIT_CONFIG = {
-          publicId: 'wgt_pub_default',
-          linkText: 'Experimentar virtualmente',
-          storeName: '',
-          storeLogo: '',
-          fontFamily: 'inherit',
-          colors: {
-            primary: '#810707',
-            background: '#ffffff',
-            text: '#810707',
-            overlay: '#810707CC'
-          },
-          shopDomain: ''
-        };
-      }
+    if (!OMAFIT_CONFIG_FROM_LIQUID) {
+      var loadedConfig = await loadOmafitConfigOnce();
+      if (loadedConfig) OMAFIT_CONFIG = loadedConfig;
+    }
+    ensureDefaultOmafitConfig();
+    if (OMAFIT_CONFIG.widgetEnabled === false || OMAFIT_CONFIG.isActive === false) {
+      window.__OMAFIT_MODAL_LOCK = false;
+      return;
     }
 
     OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
@@ -4481,8 +4509,16 @@
         console.log('Omafit: provador AR óculos (sem GLB) — widget de roupa não é carregado.');
         return;
       }
+      if (!document.getElementById('omafit-storefront-config')) {
+        loadOmafitConfigOnce();
+      }
+      ensureDefaultOmafitConfig();
+      bindVisibleOmafitCtas();
+      openQueuedOmafitModal();
+
       var liquidConfig = readLiquidStorefrontConfig();
       if (liquidConfig) {
+        OMAFIT_CONFIG_FROM_LIQUID = true;
         OMAFIT_CONFIG = liquidConfig;
         OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
         syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
@@ -4497,22 +4533,12 @@
       console.log('🚀 Inicializando Omafit...');
 
       if (!document.querySelector('.omafit-widget')) {
-        OMAFIT_CONFIG = {
-          publicId: 'wgt_pub_default',
-          linkText: 'Experimentar virtualmente',
-          colors: { primary: '#810707', text: '#810707' },
-          fontFamily: 'inherit',
-          shopDomain: '',
-          widgetEnabled: true,
-          isActive: true,
-          embedPosition: 'below_buy_buttons',
-          ctaType: 'link'
-        };
         insertOmafitLinkUnderAddToCart();
       }
+      bindVisibleOmafitCtas();
 
-      // Buscar configuração via API
-      OMAFIT_CONFIG = await fetchOmafitConfig();
+      // Buscar configuração via API sem segurar o clique
+      OMAFIT_CONFIG = await loadOmafitConfigOnce();
       if (OMAFIT_CONFIG) {
         OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
       }

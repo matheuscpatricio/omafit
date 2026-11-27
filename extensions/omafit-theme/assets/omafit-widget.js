@@ -2393,9 +2393,8 @@
           const fontFamily = computedStyle.fontFamily;
           if (fontFamily && fontFamily !== 'inherit') {
             // Pegar a primeira fonte da lista (remover aspas se houver)
-            const firstFont = fontFamily.split(',')[0].trim().replace(/['"]/g, '');
-            console.log('🎨 Fonte da loja detectada:', firstFont);
-            return firstFont;
+            console.log('🎨 Fonte da loja detectada:', fontFamily);
+            return fontFamily;
           }
         }
       } catch (e) {
@@ -2848,7 +2847,7 @@
       }
     });
     OMAFIT_ACTIVE_IFRAME = iframe;
-    iframe.srcdoc = buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath);
+    iframe.srcdoc = buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath, config.fontFamily || detectedFontFamily);
 
     // Buscas restantes (imagens, catálogo, descrição, contexto) — agora correm
     // em paralelo ao boot do iframe e seguem por postMessage quando prontas.
@@ -4103,7 +4102,7 @@
     return JSON.stringify(value == null ? '' : value).replace(/</g, '\\u003c');
   }
 
-  function buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath) {
+  function buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath, fontStack) {
     var root = document.getElementById('omafit-widget-root');
     var jsUrl = (root && root.getAttribute('data-storefront-js')) || '';
     var cssUrl = (root && root.getAttribute('data-storefront-css')) || '';
@@ -4118,7 +4117,11 @@
       '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       '<meta http-equiv="Permissions-Policy" content="camera=*, microphone=*, fullscreen=*">' +
-      '<style>body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}</style>' +
+      '<style>body{margin:0}' +
+      (fontStack && String(fontStack).trim() && String(fontStack).trim() !== 'inherit'
+        ? 'html,body,#root,#root *{font-family:' + String(fontStack).replace(/[<>]/g, '') + ' !important}'
+        : 'body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}') +
+      '</style>' +
       (cssUrl ? '<link rel="stylesheet" href="' + String(cssUrl).replace(/"/g, '') + '">' : '') +
       '</head><body><div id="root"></div><script>' +
       'window.__OMAFIT_SEARCH__=' + jsonForInlineScript(search) + ';' +

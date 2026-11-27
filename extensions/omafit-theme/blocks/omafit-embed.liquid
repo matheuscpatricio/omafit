@@ -164,10 +164,11 @@
           Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI',
           'Content-Type': 'application/json'
         };
-        var select = 'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at';
+        var select = 'id,shop_domain,link_text,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image';
         window.__OMAFIT_EARLY_RAW__ = {
           shop: shop,
-          config: fetch('https://lhkgnirolvbmomeduoaj.supabase.co/rest/v1/widget_configurations?shop_domain=eq.' + encodeURIComponent(shop) + '&select=' + select + '&order=updated_at.desc&limit=1', { headers: headers }),
+          config: fetch('https://lhkgnirolvbmomeduoaj.supabase.co/rest/v1/widget_configurations?shop_domain=eq.' + encodeURIComponent(shop) + '&select=' + select + '&limit=1', { headers: headers }),
+          logo: fetch('https://lhkgnirolvbmomeduoaj.supabase.co/rest/v1/widget_configurations?shop_domain=eq.' + encodeURIComponent(shop) + '&select=store_logo&limit=1', { headers: headers }),
           key: fetch('https://lhkgnirolvbmomeduoaj.supabase.co/rest/v1/rpc/get_widget_public_id_by_shop', {
             method: 'POST',
             headers: headers,

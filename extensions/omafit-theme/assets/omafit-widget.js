@@ -1124,6 +1124,18 @@
         if (cachedRaw) {
           var cachedCfg = JSON.parse(cachedRaw);
           if (cachedCfg && cachedCfg.shopDomain === shopDomain && cachedCfg.publicId) {
+            if (!cachedCfg.storeLogo) {
+              var cachedLogo = (window.__OMAFIT_EARLY_RAW__ && window.__OMAFIT_EARLY_RAW__.logo) || null;
+              if (cachedLogo) {
+                cachedLogo.then(function (logoResponse) {
+                  if (!logoResponse || !logoResponse.ok) return null;
+                  return logoResponse.json();
+                }).then(function (rows) {
+                  var logo = rows && rows[0] && rows[0].store_logo;
+                  if (logo) cachedCfg.storeLogo = logo;
+                }).catch(function () {});
+              }
+            }
             return cachedCfg;
           }
         }
@@ -1163,7 +1175,7 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at';
+        'id,shop_domain,link_text,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image';
       var selectWidgetCfgLegacy =
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
@@ -1173,15 +1185,20 @@
       var useEarly = earlyRaw && earlyRaw.shop === shopDomain && earlyRaw.config && earlyRaw.key;
       let configResponse;
       let widgetKeyResponse;
+      var logoResponsePromise = earlyRaw && earlyRaw.logo ? earlyRaw.logo : null;
       if (useEarly) {
         var earlyPair = await Promise.all([earlyRaw.config, earlyRaw.key]);
         configResponse = earlyPair[0];
         widgetKeyResponse = earlyPair[1];
         window.__OMAFIT_EARLY_RAW__ = null;
       } else {
+        logoResponsePromise = fetch(
+          `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=store_logo&limit=1`,
+          { headers: configHeaders }
+        );
         var freshPair = await Promise.all([
           fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&limit=1`,
             { headers: configHeaders }
           ),
           fetch(
@@ -1449,7 +1466,7 @@
           config?.shop_name ||
           config?.name ||
           '',
-        storeLogo: config?.store_logo || '',
+        storeLogo: '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
         colors: {
           primary: config?.primary_color || '#810707',
@@ -1485,6 +1502,19 @@
             OMAFIT_CONFIG.billingPlan = flags.plan;
           }
         });
+      }
+      if (logoResponsePromise) {
+        logoResponsePromise.then(function (logoResponse) {
+          if (!logoResponse || !logoResponse.ok) return null;
+          return logoResponse.json();
+        }).then(function (rows) {
+          var logo = rows && rows[0] && rows[0].store_logo;
+          if (!logo) return;
+          mappedConfig.storeLogo = logo;
+          if (OMAFIT_CONFIG && OMAFIT_CONFIG.shopDomain === shopDomain) {
+            OMAFIT_CONFIG.storeLogo = logo;
+          }
+        }).catch(function () {});
       }
       try {
         sessionStorage.setItem('omafit-store-config:v1:' + shopDomain, JSON.stringify(mappedConfig));

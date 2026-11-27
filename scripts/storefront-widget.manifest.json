@@ -2,11 +2,14 @@
   "sourceRepo": "https://github.com/matheuscpatricio/omafit-widget",
   "sourceRef": "main",
   "sourceCommit": "6b8f690a8af0eb7376560d97b8819e1b8693535c",
-  "builtAt": "2026-11-26T11:34:00.000Z",
+  "builtAt": "2026-11-27T12:45:00.000Z",
   "files": {
-    "omafit-storefront.js": 804538,
-    "omafit-storefront-style.css": 80706,
+    "omafit-storefront-ShoeARWidgetPage.js": 60272,
+    "omafit-storefront-WidgetPage.js": 224933,
     "omafit-storefront-mediapipe.worker.js": 128631,
-    "omafit-storefront-vision_bundle.js": 125753
+    "omafit-storefront-style.css": 80706,
+    "omafit-storefront-useTryonMobileFullscreenChrome.js": 374752,
+    "omafit-storefront-vision_bundle.js": 125753,
+    "omafit-storefront.js": 144377
   }
 }

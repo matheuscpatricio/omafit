@@ -2183,12 +2183,10 @@
       iframe.allow = allowVal;
     })();
     iframe.style.cssText =
-      'width: 95vw;' +
-      'max-width: 1000px;' +
-      'height: 85vh;' +
-      'max-height: 800px;' +
+      (isMobile
+        ? 'width: 100vw;max-width: none;height: 100dvh;max-height: none;border-radius: 0;'
+        : 'width: 95vw;max-width: 1000px;height: 85vh;max-height: 800px;border-radius: 16px;') +
       'border: none;' +
-      'border-radius: 16px;' +
       'background: ' +
       (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.background ? OMAFIT_CONFIG.colors.background : '#ffffff') +
       ';' +
@@ -2240,10 +2238,9 @@
     const iframeContainer = document.createElement('div');
     iframeContainer.style.cssText =
       'position: relative;' +
-      'width: 95vw;' +
-      'max-width: 1000px;' +
-      'height: 85vh;' +
-      'max-height: 800px;';
+      (isMobile
+        ? 'width: 100vw;max-width: none;height: 100dvh;max-height: none;'
+        : 'width: 95vw;max-width: 1000px;height: 85vh;max-height: 800px;');
 
     const closeButton = document.createElement('button');
     closeButton.innerHTML = '×';
@@ -2337,8 +2334,7 @@
     byOmafit.appendChild(omafitWord);
     byOmafit.style.cssText =
       'position:absolute;' +
-      'left:2px;' +
-      'bottom:-26px;' +
+      (isMobile ? 'left:12px;bottom:calc(12px + env(safe-area-inset-bottom, 0px));z-index:2;' : 'left:2px;bottom:-26px;') +
       'margin:0;' +
       'padding:0;' +
       'font-family:inherit;' +
@@ -4490,26 +4486,23 @@
       '  }' +
       '  .omafit-modal-overlay > div:not([style*="transform: translate"]) {' +
       '    width: 100vw !important;' +
-      '    height: 100vh !important;' +
+      '    height: 100dvh !important;' +
       '    max-width: none !important;' +
       '    max-height: none !important;' +
       '    background: #ffffff !important;' +
       '  }' +
+      '  .omafit-modal-overlay,' +
       '  .omafit-modal-overlay iframe {' +
       '    width: 100vw !important;' +
-      '    height: calc(100vh - 32px) !important;' +
+      '    height: 100dvh !important;' +
       '    max-width: none !important;' +
       '    max-height: none !important;' +
       '    border-radius: 0 !important;' +
       '  }' +
       '  .omafit-byline {' +
       '    left: 12px !important;' +
-      '    bottom: 8px !important;' +
-      '    color: #6b6b6b !important;' +
-      '    text-shadow: none !important;' +
-      '  }' +
-      '  .omafit-wordmark {' +
-      '    color: #16100A !important;' +
+      '    bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important;' +
+      '    z-index: 2 !important;' +
       '  }' +
       '  .omafit-modal-overlay > div > button {' +
       '    position: fixed !important;' +

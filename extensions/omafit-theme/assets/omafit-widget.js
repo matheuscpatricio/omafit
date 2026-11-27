@@ -2252,9 +2252,25 @@
     };
     document.addEventListener('keydown', handleEscape);
 
-    var byOmafit = document.createElement('div');
+    if (!document.getElementById('omafit-rasbora-font')) {
+      var rasbora = document.createElement('link');
+      rasbora.id = 'omafit-rasbora-font';
+      rasbora.rel = 'stylesheet';
+      rasbora.href = 'https://fonts.cdnfonts.com/css/jhc-rasbora';
+      document.head.appendChild(rasbora);
+    }
+
+    var byOmafit = document.createElement('a');
     byOmafit.className = 'omafit-byline';
-    byOmafit.textContent = 'by Omafit';
+    byOmafit.href = 'https://omafit.co';
+    byOmafit.target = '_blank';
+    byOmafit.rel = 'noopener noreferrer';
+    byOmafit.setAttribute('aria-label', 'by Omafit');
+    byOmafit.appendChild(document.createTextNode('by '));
+    var omafitWord = document.createElement('span');
+    omafitWord.className = 'omafit-wordmark';
+    omafitWord.textContent = 'Omafit';
+    byOmafit.appendChild(omafitWord);
     byOmafit.style.cssText =
       'position:absolute;' +
       'left:2px;' +
@@ -2268,9 +2284,17 @@
       'letter-spacing:0.01em;' +
       'color:rgba(255,255,255,0.9);' +
       'text-shadow:0 1px 2px rgba(0,0,0,0.35);' +
-      'pointer-events:none;' +
+      'text-decoration:none;' +
+      'cursor:pointer;' +
+      'pointer-events:auto;' +
       'user-select:none;' +
       'z-index:1000001;';
+    omafitWord.style.cssText =
+      'font-family:"JHC Rasbora",Georgia,serif;' +
+      'font-weight:800;' +
+      'font-style:normal;' +
+      'letter-spacing:-0.02em;' +
+      'color:#F6F0E2;';
 
     iframeContainer.appendChild(iframe);
     iframeContainer.appendChild(closeButton);
@@ -4360,6 +4384,9 @@
       '    bottom: 8px !important;' +
       '    color: #6b6b6b !important;' +
       '    text-shadow: none !important;' +
+      '  }' +
+      '  .omafit-wordmark {' +
+      '    color: #16100A !important;' +
       '  }' +
       '  .omafit-modal-overlay > div > button {' +
       '    position: fixed !important;' +

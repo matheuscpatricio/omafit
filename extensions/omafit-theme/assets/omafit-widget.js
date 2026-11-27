@@ -4455,6 +4455,21 @@
       }
       console.log('🚀 Inicializando Omafit...');
 
+      if (!document.querySelector('.omafit-widget')) {
+        OMAFIT_CONFIG = {
+          publicId: 'wgt_pub_default',
+          linkText: 'Experimentar virtualmente',
+          colors: { primary: '#810707', text: '#810707' },
+          fontFamily: 'inherit',
+          shopDomain: '',
+          widgetEnabled: true,
+          isActive: true,
+          embedPosition: 'below_buy_buttons',
+          ctaType: 'link'
+        };
+        insertOmafitLinkUnderAddToCart();
+      }
+
       // Buscar configuração via API
       OMAFIT_CONFIG = await fetchOmafitConfig();
       if (OMAFIT_CONFIG) {
@@ -4499,9 +4514,29 @@
         return;
       }
 
-      // Re-render com configuração real da API.
-      removeInjectedOmafitCtaOnly();
-      insertOmafitLinkUnderAddToCart();
+      // Atualiza o botão já visível. Só recria se ele ainda não estiver na página.
+      if (!document.querySelector('.omafit-widget')) {
+        insertOmafitLinkUnderAddToCart();
+      } else {
+        var omafitLiveLink = document.querySelector('.omafit-try-on-link');
+        var omafitLiveColor = (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.primary) || '#810707';
+        var omafitLiveLabel = OMAFIT_CONFIG.linkText || 'Experimentar virtualmente';
+        if (omafitLiveLink) {
+          omafitLiveLink.textContent = omafitLiveLabel;
+          omafitLiveLink.style.color = omafitLiveColor;
+          omafitLiveLink.style.textDecorationColor = omafitLiveColor;
+        }
+        var omafitLiveBtn = document.querySelector('.omafit-try-on-cta-button');
+        if (omafitLiveBtn) {
+          omafitLiveBtn.style.color = omafitLiveColor;
+          omafitLiveBtn.style.borderColor = omafitLiveColor;
+          var omafitLiveSpan = omafitLiveBtn.querySelector('span');
+          if (omafitLiveSpan) omafitLiveSpan.textContent = omafitLiveLabel;
+        }
+        document.querySelectorAll('.omafit-try-on-link, .omafit-try-on-cta').forEach(function (el) {
+          bindOmafitCta(el);
+        });
+      }
       scheduleOmafitWidgetWarmup();
 
       console.log('✅ Omafit inicializado com sucesso');

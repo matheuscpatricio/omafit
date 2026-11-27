@@ -41,6 +41,8 @@
       {% endif %}
     {% endfor %}
   {% endif %}
+{% else %}
+  {% assign omafit_sf_show = true %}
 {% endif %}
 {% if product and omafit_sf_show %}
   {% capture omafit_eyewear_blob %}{{ product.type | downcase }} {{ product.tags | join: ' ' | downcase }}{% endcapture %}
@@ -120,7 +122,7 @@
     <div
       class="omafit-widget"
       data-omafit-prerendered="1"
-      style="text-align:center;{% if omafit_sf_above %}margin:0 0 16px;{% else %}margin:16px 0 24px;{% endif %}opacity:0;height:0;overflow:hidden;"
+      style="text-align:center;{% if omafit_sf_above %}margin:0 0 16px;{% else %}margin:16px 0 24px;{% endif %}"
     >
       {% if omafit_sf_button %}
         <button
@@ -142,6 +144,57 @@
     </div>
   {% endif %}
 </div>
+{% if omafit_sf_show %}
+  <script>
+    (function () {
+      var above = {% if omafit_sf_above %}true{% else %}false{% endif %};
+      var addSelectors = [
+        'button[name="add"]',
+        'button[type="submit"][name="add"]',
+        '.product-form__submit',
+        'form[action*="/cart/add"] button[type="submit"]',
+        'form[action*="/cart/add"] input[type="submit"]',
+        '[name="add"]',
+        'button[data-add-to-cart]',
+        '.btn--add-to-cart',
+        '.product-form__cart-submit'
+      ];
+      var buySelectors = ['.shopify-payment-button', '.shopify-payment-button__button', 'shopify-buy-it-now-button', '[data-shopify="payment-button"]'];
+      function first(selectors, root) {
+        var scope = root || document;
+        for (var i = 0; i < selectors.length; i++) {
+          var el = scope.querySelector(selectors[i]);
+          if (el) return el;
+        }
+        return null;
+      }
+      function place() {
+        var box = document.querySelector('.omafit-widget[data-omafit-prerendered="1"]');
+        if (!box || box.getAttribute('data-omafit-placed') === '1') return true;
+        var addBtn = first(addSelectors);
+        if (!addBtn) return false;
+        var anchor = addBtn;
+        if (!above) {
+          var roots = [addBtn.closest('form'), addBtn.closest('.product-form'), document];
+          for (var r = 0; r < roots.length && roots[r]; r++) {
+            var buy = first(buySelectors, roots[r]);
+            if (buy) { anchor = buy; break; }
+          }
+        }
+        if (anchor && anchor.parentNode) {
+          if (above) anchor.parentNode.insertBefore(box, anchor);
+          else anchor.parentNode.insertBefore(box, anchor.nextSibling);
+        }
+        box.setAttribute('data-omafit-placed', '1');
+        return true;
+      }
+      if (!place()) {
+        document.addEventListener('DOMContentLoaded', place);
+        window.addEventListener('load', place);
+      }
+    })();
+  </script>
+{% endif %}
 
 {% comment %}
   URL do GLB AR (metafield omafit.ar_glb_url) para o iframe Netlify (&arGlbUrl=…) e para MindAR no tema (omafit-ar-widget.js).
@@ -549,56 +602,6 @@
 
 {% if omafit_sf_ready %}
   <script type="application/json" id="omafit-storefront-config">{{ omafit_sf | json }}</script>
-{% endif %}
-{% if omafit_sf_show %}
-  <script>
-    (function () {
-      var box = document.querySelector('.omafit-widget[data-omafit-prerendered="1"]');
-      if (!box || box.getAttribute('data-omafit-placed') === '1') return;
-      var above = {% if omafit_sf_above %}true{% else %}false{% endif %};
-      var addSelectors = [
-        'button[name="add"]',
-        'button[type="submit"][name="add"]',
-        '.product-form__submit',
-        'form[action*="/cart/add"] button[type="submit"]',
-        'form[action*="/cart/add"] input[type="submit"]',
-        '[name="add"]',
-        'button[data-add-to-cart]',
-        '.btn--add-to-cart',
-        '.product-form__cart-submit'
-      ];
-      var buySelectors = ['.shopify-payment-button', '.shopify-payment-button__button', 'shopify-buy-it-now-button', '[data-shopify="payment-button"]'];
-      function visible(sel, root) {
-        var el = (root || document).querySelector(sel);
-        if (el && el.offsetParent !== null) return el;
-        return null;
-      }
-      var addBtn = null;
-      for (var i = 0; i < addSelectors.length; i++) {
-        addBtn = visible(addSelectors[i]);
-        if (addBtn) break;
-      }
-      var anchor = addBtn;
-      if (addBtn && !above) {
-        var roots = [addBtn.closest('form'), addBtn.closest('.product-form'), document];
-        for (var r = 0; r < roots.length && roots[r]; r++) {
-          for (var b = 0; b < buySelectors.length; b++) {
-            var buy = visible(buySelectors[b], roots[r]);
-            if (buy) { anchor = buy; break; }
-          }
-          if (anchor !== addBtn) break;
-        }
-      }
-      box.style.opacity = '1';
-      box.style.height = '';
-      box.style.overflow = '';
-      if (anchor && anchor.parentNode) {
-        if (above) anchor.parentNode.insertBefore(box, anchor);
-        else anchor.parentNode.insertBefore(box, anchor.nextSibling);
-      }
-      box.setAttribute('data-omafit-placed', '1');
-    })();
-  </script>
 {% endif %}
 <script src="{{ 'omafit-widget.js' | asset_url }}" defer></script>
 

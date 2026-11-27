@@ -142,6 +142,58 @@
         >{{ omafit_sf_label | escape }}</a>
       {% endif %}
     </div>
+    {% unless omafit_sf_ready %}
+    <script>
+      (function () {
+        if (window.__OMAFIT_EARLY_RAW__) return;
+        var root = document.getElementById('omafit-widget-root');
+        var shop = root && root.getAttribute('data-shop-domain');
+        if (!shop) return;
+        var cacheKey = 'omafit-store-config:v1:' + shop;
+        try {
+          var cached = sessionStorage.getItem(cacheKey);
+          if (cached) window.__OMAFIT_CONFIG_CACHE__ = cached;
+        } catch (e) {}
+        var pre = document.createElement('link');
+        pre.rel = 'preconnect';
+        pre.href = 'https://lhkgnirolvbmomeduoaj.supabase.co';
+        pre.crossOrigin = 'anonymous';
+        document.head.appendChild(pre);
+        var headers = {
+          apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI',
+          Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxoa2duaXJvbHZibW9tZWR1b2FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3NjE2NDYsImV4cCI6MjA2MzMzNzY0Nn0.aSBMJMT8TiAqvdO_Z9D_oINLaQrFMZIK5IEQJG6KaOI',
+          'Content-Type': 'application/json'
+        };
+        var select = 'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at';
+        window.__OMAFIT_EARLY_RAW__ = {
+          shop: shop,
+          config: fetch('https://lhkgnirolvbmomeduoaj.supabase.co/rest/v1/widget_configurations?shop_domain=eq.' + encodeURIComponent(shop) + '&select=' + select + '&order=updated_at.desc&limit=1', { headers: headers }),
+          key: fetch('https://lhkgnirolvbmomeduoaj.supabase.co/rest/v1/rpc/get_widget_public_id_by_shop', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ p_shop_domain: shop })
+          })
+        };
+      })();
+    </script>
+    {% endunless %}
+    <script>
+      (function () {
+        var box = document.querySelector('.omafit-widget[data-omafit-prerendered="1"]');
+        if (!box || box.getAttribute('data-omafit-click') === '1') return;
+        box.setAttribute('data-omafit-click', '1');
+        box.addEventListener('click', function (e) {
+          var target = e.target && e.target.closest ? e.target.closest('.omafit-try-on-link, .omafit-try-on-cta') : null;
+          if (!target) return;
+          e.preventDefault();
+          if (typeof window.openOmafitModal === 'function') {
+            window.openOmafitModal();
+            return;
+          }
+          window.__OMAFIT_OPEN_WHEN_READY = true;
+        });
+      })();
+    </script>
   {% endif %}
 </div>
 {% if omafit_sf_show %}

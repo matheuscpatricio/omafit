@@ -1495,11 +1495,15 @@
       return mappedConfig;
     } catch (error) {
       console.error('❌ Erro ao buscar configuração:', error);
-      // Retornar configuração padrão em caso de erro (widget habilitado por padrão)
+      var fallbackName = '';
+      try {
+        var nameRoot = document.getElementById('omafit-widget-root');
+        fallbackName = (nameRoot && nameRoot.getAttribute('data-shop-name')) || '';
+      } catch (_nameErr) {}
       return {
         publicId: 'wgt_pub_default',
         linkText: 'Experimentar virtualmente',
-        storeName: shopNameFromRoot || '',
+        storeName: fallbackName,
         storeLogo: '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
         colors: {

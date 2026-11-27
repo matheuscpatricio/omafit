@@ -1636,28 +1636,30 @@
         return parseCollectionType(await response.json());
       };
 
+      var lookups = [];
       if (product) {
-        const byProduct = await queryType({
+        lookups.push(queryType({
           shop_domain: 'eq.' + encodeURIComponent(shopDomain),
           product_handle: 'eq.' + encodeURIComponent(product)
-        });
-        if (byProduct) return byProduct;
+        }));
       }
-
       if (coll) {
-        const byCollection = await queryType({
+        lookups.push(queryType({
           shop_domain: 'eq.' + encodeURIComponent(shopDomain),
           collection_handle: 'eq.' + encodeURIComponent(coll),
           product_handle: 'eq.'
-        });
-        if (byCollection) return byCollection;
+        }));
       }
-
-      return queryType({
+      lookups.push(queryType({
         shop_domain: 'eq.' + encodeURIComponent(shopDomain),
         collection_handle: 'eq.',
         product_handle: 'eq.'
-      });
+      }));
+      var found = await Promise.all(lookups);
+      for (var i = 0; i < found.length; i++) {
+        if (found[i]) return found[i];
+      }
+      return '';
     } catch (_error) {
       return '';
     }
@@ -2512,7 +2514,10 @@
     var __omafitImagesP = getOnlyProductImages(resolvedHandleForImages);
     var __omafitProductDataP = getCurrentProductData(productInfo);
     var __omafitCollTitleP = withFastTimeout(collectionTitlePromise, collectionTitle || '');
-    var __omafitCollTypeP = withFastTimeout(fetchCollectionType(shopDomain, collectionHandle, resolvedHandleForImages), '');
+    var __omafitCollTypeP = withFastTimeout(
+      prefetchOmafitCollectionType(shopDomain, collectionHandle, resolvedHandleForImages),
+      ''
+    );
     var __omafitElasticityP = withFastTimeout(fetchCollectionElasticity(shopDomain, collectionHandle, resolvedHandleForImages), '');
     var __omafitComplementaryP = withFastTimeout(getComplementaryProduct(collectionHandle), null);
 
@@ -4107,15 +4112,51 @@
     return link;
   }
 
-  function omafitTryOnPreconnect() {
+  var OMAFIT_COLLECTION_TYPE_P = null;
+
+  function prefetchOmafitCollectionType(shopDomain, collectionHandle, productHandle) {
+    if (OMAFIT_COLLECTION_TYPE_P) return OMAFIT_COLLECTION_TYPE_P;
+    var root = document.getElementById('omafit-widget-root');
+    var shop = shopDomain || (root && root.getAttribute('data-shop-domain')) || '';
+    var coll = collectionHandle || (root && root.getAttribute('data-collection-handle')) || '';
+    var product = productHandle || (root && root.getAttribute('data-product-handle')) || '';
+    if (!product) {
+      product = (window.location.pathname.split('/products/')[1] || '').split('/')[0] || '';
+    }
+    OMAFIT_COLLECTION_TYPE_P = fetchCollectionType(shop, coll, product);
+    return OMAFIT_COLLECTION_TYPE_P;
+  }
+
+  function omafitSiblingAsset(fileName) {
     var root = document.getElementById('omafit-widget-root');
     var jsUrl = root && root.getAttribute('data-storefront-js');
-    if (!jsUrl || document.querySelector('link[data-omafit-preload="storefront"]')) return;
-    var link = document.createElement('link');
-    link.rel = 'modulepreload';
-    link.href = jsUrl;
-    link.setAttribute('data-omafit-preload', 'storefront');
-    document.head.appendChild(link);
+    if (!jsUrl) return '';
+    return String(jsUrl).replace(/omafit-storefront\.js(\?|$)/, fileName + '$1');
+  }
+
+  function omafitTryOnPreconnect() {
+    var root = document.getElementById('omafit-widget-root');
+    if (!root || root.getAttribute('data-omafit-assets-preloaded') === '1') return;
+    var jsUrl = root.getAttribute('data-storefront-js');
+    var cssUrl = root.getAttribute('data-storefront-css');
+    if (!jsUrl) return;
+    root.setAttribute('data-omafit-assets-preloaded', '1');
+    var assets = [
+      { href: jsUrl, rel: 'modulepreload' },
+      { href: omafitSiblingAsset('omafit-storefront-WidgetPage.js'), rel: 'modulepreload' },
+      { href: omafitSiblingAsset('omafit-storefront-ShoeARWidgetPage.js'), rel: 'modulepreload' },
+      { href: cssUrl, rel: 'preload', as: 'style' }
+    ];
+    assets.forEach(function (asset) {
+      if (!asset.href) return;
+      var link = document.createElement('link');
+      link.rel = asset.rel;
+      link.href = asset.href;
+      if (asset.as) link.as = asset.as;
+      link.setAttribute('data-omafit-preload', 'storefront');
+      document.head.appendChild(link);
+    });
+    prefetchOmafitCollectionType();
   }
 
   /** Botão pill com texto (logo só dentro do widget). */
@@ -4572,6 +4613,14 @@
 
   // Inicializar widget (deferido para não bloquear carregamento da página)
   function startInit() {
+    function warmOpen() {
+      omafitTryOnPreconnect();
+    }
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(warmOpen, { timeout: 400 });
+    } else {
+      setTimeout(warmOpen, 0);
+    }
     function doInit() {
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initOmafit);

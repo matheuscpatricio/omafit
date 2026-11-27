@@ -1127,13 +1127,12 @@
             if (!cachedCfg.storeLogo) {
               var cachedLogo = (window.__OMAFIT_EARLY_RAW__ && window.__OMAFIT_EARLY_RAW__.logo) || null;
               if (cachedLogo) {
-                cachedLogo.then(function (logoResponse) {
-                  if (!logoResponse || !logoResponse.ok) return null;
-                  return logoResponse.json();
-                }).then(function (rows) {
-                  var logo = rows && rows[0] && rows[0].store_logo;
-                  if (logo) cachedCfg.storeLogo = logo;
-                }).catch(function () {});
+                try {
+                  var cachedLogoResponse = await cachedLogo;
+                  var cachedLogoRows = cachedLogoResponse && cachedLogoResponse.ok ? await cachedLogoResponse.json() : null;
+                  var cachedLogoValue = cachedLogoRows && cachedLogoRows[0] && cachedLogoRows[0].store_logo;
+                  if (cachedLogoValue) cachedCfg.storeLogo = cachedLogoValue;
+                } catch (_cachedLogoErr) {}
               }
             }
             return cachedCfg;
@@ -1504,17 +1503,12 @@
         });
       }
       if (logoResponsePromise) {
-        logoResponsePromise.then(function (logoResponse) {
-          if (!logoResponse || !logoResponse.ok) return null;
-          return logoResponse.json();
-        }).then(function (rows) {
-          var logo = rows && rows[0] && rows[0].store_logo;
-          if (!logo) return;
-          mappedConfig.storeLogo = logo;
-          if (OMAFIT_CONFIG && OMAFIT_CONFIG.shopDomain === shopDomain) {
-            OMAFIT_CONFIG.storeLogo = logo;
-          }
-        }).catch(function () {});
+        try {
+          var logoResponse = await logoResponsePromise;
+          var logoRows = logoResponse && logoResponse.ok ? await logoResponse.json() : null;
+          var logoValue = logoRows && logoRows[0] && logoRows[0].store_logo;
+          if (logoValue) mappedConfig.storeLogo = logoValue;
+        } catch (_logoErr) {}
       }
       try {
         sessionStorage.setItem('omafit-store-config:v1:' + shopDomain, JSON.stringify(mappedConfig));
@@ -2137,10 +2131,7 @@
     }, 0);
 
     if (!OMAFIT_CONFIG_FROM_LIQUID) {
-      var loadedConfig = await Promise.race([
-        loadOmafitConfigOnce(),
-        new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 700); })
-      ]);
+      var loadedConfig = await loadOmafitConfigOnce();
       if (loadedConfig) OMAFIT_CONFIG = loadedConfig;
     }
     ensureDefaultOmafitConfig();

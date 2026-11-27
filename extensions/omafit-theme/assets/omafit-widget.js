@@ -1304,34 +1304,28 @@
         console.log('ℹ️ RPC get_widget_public_id_by_shop falhou. Status:', widgetKeyResponse.status);
       }
 
+      var flagsPromise = null;
       if (validPublicId && validPublicId !== 'wgt_pub_default') {
-        try {
-          const flagsResponse = await fetch(
-            `${supabaseUrl}/rest/v1/rpc/get_shop_widget_flags`,
-            {
-              method: 'POST',
-              headers: rpcHeaders,
-              body: JSON.stringify({
-                p_shop_domain: shopDomain,
-                p_public_id: validPublicId
-              })
-            }
-          );
-          if (flagsResponse.ok) {
-            const flagsText = await flagsResponse.text();
-            if (flagsText && flagsText.trim().length > 0) {
-              const flagsData = JSON.parse(flagsText);
-              if (flagsData && flagsData.length > 0) {
-                stylistModeEnabled = Boolean(flagsData[0].stylist_enabled);
-                if (stylistModeEnabled) {
-                  shopBillingPlan = 'growth';
-                }
-              }
-            }
+        flagsPromise = fetch(
+          `${supabaseUrl}/rest/v1/rpc/get_shop_widget_flags`,
+          {
+            method: 'POST',
+            headers: rpcHeaders,
+            body: JSON.stringify({
+              p_shop_domain: shopDomain,
+              p_public_id: validPublicId
+            })
           }
-        } catch (e) {
-          console.warn('⚠️ Erro ao obter flags do widget via RPC:', e);
-        }
+        ).then(function (flagsResponse) {
+          if (!flagsResponse.ok) return null;
+          return flagsResponse.json();
+        }).then(function (flagsData) {
+          if (!flagsData || !flagsData.length) return null;
+          return {
+            stylist: Boolean(flagsData[0].stylist_enabled),
+            plan: flagsData[0].stylist_enabled ? 'growth' : null
+          };
+        }).catch(function () { return null; });
       }
       
       if (configResponse.ok) {
@@ -1481,6 +1475,17 @@
         stylistModeEnabled: stylistModeEnabled,
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
+      if (flagsPromise) {
+        flagsPromise.then(function (flags) {
+          if (!flags) return;
+          mappedConfig.stylistModeEnabled = flags.stylist;
+          mappedConfig.billingPlan = flags.plan;
+          if (OMAFIT_CONFIG && OMAFIT_CONFIG.publicId === mappedConfig.publicId) {
+            OMAFIT_CONFIG.stylistModeEnabled = flags.stylist;
+            OMAFIT_CONFIG.billingPlan = flags.plan;
+          }
+        });
+      }
       try {
         sessionStorage.setItem('omafit-store-config:v1:' + shopDomain, JSON.stringify(mappedConfig));
       } catch (_cacheWrite) {}
@@ -2102,7 +2107,10 @@
     }, 0);
 
     if (!OMAFIT_CONFIG_FROM_LIQUID) {
-      var loadedConfig = await loadOmafitConfigOnce();
+      var loadedConfig = await Promise.race([
+        loadOmafitConfigOnce(),
+        new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 700); })
+      ]);
       if (loadedConfig) OMAFIT_CONFIG = loadedConfig;
     }
     ensureDefaultOmafitConfig();
@@ -4540,55 +4548,20 @@
         insertOmafitLinkUnderAddToCart();
       }
       bindVisibleOmafitCtas();
+      console.log('✅ Omafit inicializado com sucesso');
+      openQueuedOmafitModal();
 
-      // Buscar configuração via API sem segurar o clique
-      OMAFIT_CONFIG = await loadOmafitConfigOnce();
-      if (OMAFIT_CONFIG) {
+      loadOmafitConfigOnce().then(function (cfg) {
+        if (!cfg || OMAFIT_CONFIG_FROM_LIQUID) return;
+        OMAFIT_CONFIG = cfg;
         OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
-      }
-
-      if (!OMAFIT_CONFIG) {
-        console.error('❌ Falha ao carregar configuração do Omafit');
-        // Tentar usar configuração padrão mesmo assim
-        OMAFIT_CONFIG = {
-          publicId: 'wgt_pub_default',
-          linkText: 'Experimentar virtualmente',
-          storeName: '',
-          storeLogo: '',
-          fontFamily: 'inherit',
-          colors: {
-            primary: '#810707',
-            background: '#ffffff',
-            text: '#810707',
-            overlay: '#810707CC'
-          },
-          shopDomain: '',
-          widgetEnabled: true,
-          isActive: true,
-          embedPosition: 'below_buy_buttons',
-          ctaType: 'link'
-        };
-      }
-
-      OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
-      syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
-
-      console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
-
-      // Verificar se widget está habilitado antes de inserir
-      const isEnabled = OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false;
-      
-      if (!isEnabled) {
-        console.warn('⚠️ Widget Omafit está desabilitado. widgetEnabled:', OMAFIT_CONFIG.widgetEnabled, 'isActive:', OMAFIT_CONFIG.isActive);
-        console.warn('⚠️ Para habilitar, configure widget_enabled=true no app e is_active=true em widget_keys');
-        removeInjectedOmafitCtaOnly();
-        return;
-      }
-
-      // Atualiza o botão já visível. Só recria se ele ainda não estiver na página.
-      if (!document.querySelector('.omafit-widget')) {
-        insertOmafitLinkUnderAddToCart();
-      } else {
+        syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
+        console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
+        var isEnabled = OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false;
+        if (!isEnabled) {
+          removeInjectedOmafitCtaOnly();
+          return;
+        }
         var omafitLiveLink = document.querySelector('.omafit-try-on-link');
         var omafitLiveColor = (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.primary) || '#810707';
         var omafitLiveLabel = OMAFIT_CONFIG.linkText || 'Experimentar virtualmente';
@@ -4604,14 +4577,9 @@
           var omafitLiveSpan = omafitLiveBtn.querySelector('span');
           if (omafitLiveSpan) omafitLiveSpan.textContent = omafitLiveLabel;
         }
-        document.querySelectorAll('.omafit-try-on-link, .omafit-try-on-cta').forEach(function (el) {
-          bindOmafitCta(el);
-        });
-      }
-      scheduleOmafitWidgetWarmup();
-
-      console.log('✅ Omafit inicializado com sucesso');
-      openQueuedOmafitModal();
+      }).catch(function (err) {
+        console.error('❌ Omafit: erro ao inicializar widget', err);
+      });
     } catch (e) {
       console.error('❌ Omafit: erro ao inicializar widget', e);
       // Tentar inserir mesmo com erro, usando configuração padrão

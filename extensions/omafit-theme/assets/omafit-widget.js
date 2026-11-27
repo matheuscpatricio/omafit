@@ -2252,8 +2252,29 @@
     };
     document.addEventListener('keydown', handleEscape);
 
+    var byOmafit = document.createElement('div');
+    byOmafit.className = 'omafit-byline';
+    byOmafit.textContent = 'by Omafit';
+    byOmafit.style.cssText =
+      'position:absolute;' +
+      'left:2px;' +
+      'bottom:-26px;' +
+      'margin:0;' +
+      'padding:0;' +
+      'font-family:inherit;' +
+      'font-size:12px;' +
+      'font-weight:500;' +
+      'line-height:1;' +
+      'letter-spacing:0.01em;' +
+      'color:rgba(255,255,255,0.9);' +
+      'text-shadow:0 1px 2px rgba(0,0,0,0.35);' +
+      'pointer-events:none;' +
+      'user-select:none;' +
+      'z-index:1000001;';
+
     iframeContainer.appendChild(iframe);
     iframeContainer.appendChild(closeButton);
+    iframeContainer.appendChild(byOmafit);
     overlay.appendChild(loadingContainer);
     overlay.appendChild(iframeContainer);
     document.body.appendChild(overlay);
@@ -4325,13 +4346,20 @@
       '    height: 100vh !important;' +
       '    max-width: none !important;' +
       '    max-height: none !important;' +
+      '    background: #ffffff !important;' +
       '  }' +
       '  .omafit-modal-overlay iframe {' +
       '    width: 100vw !important;' +
-      '    height: 100vh !important;' +
+      '    height: calc(100vh - 32px) !important;' +
       '    max-width: none !important;' +
       '    max-height: none !important;' +
       '    border-radius: 0 !important;' +
+      '  }' +
+      '  .omafit-byline {' +
+      '    left: 12px !important;' +
+      '    bottom: 8px !important;' +
+      '    color: #6b6b6b !important;' +
+      '    text-shadow: none !important;' +
       '  }' +
       '  .omafit-modal-overlay > div > button {' +
       '    position: fixed !important;' +

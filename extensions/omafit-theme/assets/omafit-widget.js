@@ -1124,6 +1124,17 @@
         if (cachedRaw) {
           var cachedCfg = JSON.parse(cachedRaw);
           if (cachedCfg && cachedCfg.shopDomain === shopDomain && cachedCfg.publicId) {
+            if (!cachedCfg.storeLogo) {
+              var cachedLogo = (window.__OMAFIT_EARLY_RAW__ && window.__OMAFIT_EARLY_RAW__.logo) || null;
+              if (cachedLogo) {
+                try {
+                  var cachedLogoResponse = await cachedLogo;
+                  var cachedLogoRows = cachedLogoResponse && cachedLogoResponse.ok ? await cachedLogoResponse.json() : null;
+                  var cachedLogoValue = cachedLogoRows && cachedLogoRows[0] && cachedLogoRows[0].store_logo;
+                  if (cachedLogoValue) cachedCfg.storeLogo = cachedLogoValue;
+                } catch (_cachedLogoErr) {}
+              }
+            }
             return cachedCfg;
           }
         }
@@ -1163,7 +1174,7 @@
         'Content-Type': 'application/json'
       };
       var selectWidgetCfgFull =
-        'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image,created_at,updated_at';
+        'id,shop_domain,link_text,primary_color,widget_enabled,excluded_collections,admin_locale,embed_position,cta_type,cta_button_border_radius,tryon_layout,tryon_layout_background_image';
       var selectWidgetCfgLegacy =
         'id,shop_domain,link_text,store_logo,primary_color,widget_enabled,excluded_collections,admin_locale,cta_button_border_radius,created_at,updated_at';
       var selectWidgetCfgNoExcluded =
@@ -1173,15 +1184,20 @@
       var useEarly = earlyRaw && earlyRaw.shop === shopDomain && earlyRaw.config && earlyRaw.key;
       let configResponse;
       let widgetKeyResponse;
+      var logoResponsePromise = earlyRaw && earlyRaw.logo ? earlyRaw.logo : null;
       if (useEarly) {
         var earlyPair = await Promise.all([earlyRaw.config, earlyRaw.key]);
         configResponse = earlyPair[0];
         widgetKeyResponse = earlyPair[1];
         window.__OMAFIT_EARLY_RAW__ = null;
       } else {
+        logoResponsePromise = fetch(
+          `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=store_logo&limit=1`,
+          { headers: configHeaders }
+        );
         var freshPair = await Promise.all([
           fetch(
-            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&order=updated_at.desc&limit=1`,
+            `${supabaseUrl}/rest/v1/widget_configurations?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=${selectWidgetCfgFull}&limit=1`,
             { headers: configHeaders }
           ),
           fetch(
@@ -1304,34 +1320,28 @@
         console.log('ℹ️ RPC get_widget_public_id_by_shop falhou. Status:', widgetKeyResponse.status);
       }
 
+      var flagsPromise = null;
       if (validPublicId && validPublicId !== 'wgt_pub_default') {
-        try {
-          const flagsResponse = await fetch(
-            `${supabaseUrl}/rest/v1/rpc/get_shop_widget_flags`,
-            {
-              method: 'POST',
-              headers: rpcHeaders,
-              body: JSON.stringify({
-                p_shop_domain: shopDomain,
-                p_public_id: validPublicId
-              })
-            }
-          );
-          if (flagsResponse.ok) {
-            const flagsText = await flagsResponse.text();
-            if (flagsText && flagsText.trim().length > 0) {
-              const flagsData = JSON.parse(flagsText);
-              if (flagsData && flagsData.length > 0) {
-                stylistModeEnabled = Boolean(flagsData[0].stylist_enabled);
-                if (stylistModeEnabled) {
-                  shopBillingPlan = 'growth';
-                }
-              }
-            }
+        flagsPromise = fetch(
+          `${supabaseUrl}/rest/v1/rpc/get_shop_widget_flags`,
+          {
+            method: 'POST',
+            headers: rpcHeaders,
+            body: JSON.stringify({
+              p_shop_domain: shopDomain,
+              p_public_id: validPublicId
+            })
           }
-        } catch (e) {
-          console.warn('⚠️ Erro ao obter flags do widget via RPC:', e);
-        }
+        ).then(function (flagsResponse) {
+          if (!flagsResponse.ok) return null;
+          return flagsResponse.json();
+        }).then(function (flagsData) {
+          if (!flagsData || !flagsData.length) return null;
+          return {
+            stylist: Boolean(flagsData[0].stylist_enabled),
+            plan: flagsData[0].stylist_enabled ? 'growth' : null
+          };
+        }).catch(function () { return null; });
       }
       
       if (configResponse.ok) {
@@ -1455,7 +1465,7 @@
           config?.shop_name ||
           config?.name ||
           '',
-        storeLogo: config?.store_logo || '',
+        storeLogo: '',
         fontFamily: 'inherit', // Usar fonte da loja automaticamente
         colors: {
           primary: config?.primary_color || '#810707',
@@ -1481,6 +1491,25 @@
         stylistModeEnabled: stylistModeEnabled,
       };
       mappedConfig.storeName = ensureStoreName(mappedConfig);
+      if (flagsPromise) {
+        flagsPromise.then(function (flags) {
+          if (!flags) return;
+          mappedConfig.stylistModeEnabled = flags.stylist;
+          mappedConfig.billingPlan = flags.plan;
+          if (OMAFIT_CONFIG && OMAFIT_CONFIG.publicId === mappedConfig.publicId) {
+            OMAFIT_CONFIG.stylistModeEnabled = flags.stylist;
+            OMAFIT_CONFIG.billingPlan = flags.plan;
+          }
+        });
+      }
+      if (logoResponsePromise) {
+        try {
+          var logoResponse = await logoResponsePromise;
+          var logoRows = logoResponse && logoResponse.ok ? await logoResponse.json() : null;
+          var logoValue = logoRows && logoRows[0] && logoRows[0].store_logo;
+          if (logoValue) mappedConfig.storeLogo = logoValue;
+        } catch (_logoErr) {}
+      }
       try {
         sessionStorage.setItem('omafit-store-config:v1:' + shopDomain, JSON.stringify(mappedConfig));
       } catch (_cacheWrite) {}
@@ -2364,9 +2393,8 @@
           const fontFamily = computedStyle.fontFamily;
           if (fontFamily && fontFamily !== 'inherit') {
             // Pegar a primeira fonte da lista (remover aspas se houver)
-            const firstFont = fontFamily.split(',')[0].trim().replace(/['"]/g, '');
-            console.log('🎨 Fonte da loja detectada:', firstFont);
-            return firstFont;
+            console.log('🎨 Fonte da loja detectada:', fontFamily);
+            return fontFamily;
           }
         }
       } catch (e) {
@@ -2819,7 +2847,7 @@
       }
     });
     OMAFIT_ACTIVE_IFRAME = iframe;
-    iframe.srcdoc = buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath);
+    iframe.srcdoc = buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath, config.fontFamily || detectedFontFamily);
 
     // Buscas restantes (imagens, catálogo, descrição, contexto) — agora correm
     // em paralelo ao boot do iframe e seguem por postMessage quando prontas.
@@ -4074,7 +4102,7 @@
     return JSON.stringify(value == null ? '' : value).replace(/</g, '\\u003c');
   }
 
-  function buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath) {
+  function buildOmafitStorefrontSrcdoc(widgetUrl, widgetPath, fontStack) {
     var root = document.getElementById('omafit-widget-root');
     var jsUrl = (root && root.getAttribute('data-storefront-js')) || '';
     var cssUrl = (root && root.getAttribute('data-storefront-css')) || '';
@@ -4089,7 +4117,11 @@
       '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       '<meta http-equiv="Permissions-Policy" content="camera=*, microphone=*, fullscreen=*">' +
-      '<style>body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}</style>' +
+      '<style>body{margin:0}' +
+      (fontStack && String(fontStack).trim() && String(fontStack).trim() !== 'inherit'
+        ? 'html,body,#root,#root *{font-family:' + String(fontStack).replace(/[<>]/g, '') + ' !important}'
+        : 'body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}') +
+      '</style>' +
       (cssUrl ? '<link rel="stylesheet" href="' + String(cssUrl).replace(/"/g, '') + '">' : '') +
       '</head><body><div id="root"></div><script>' +
       'window.__OMAFIT_SEARCH__=' + jsonForInlineScript(search) + ';' +
@@ -4540,55 +4572,20 @@
         insertOmafitLinkUnderAddToCart();
       }
       bindVisibleOmafitCtas();
+      console.log('✅ Omafit inicializado com sucesso');
+      openQueuedOmafitModal();
 
-      // Buscar configuração via API sem segurar o clique
-      OMAFIT_CONFIG = await loadOmafitConfigOnce();
-      if (OMAFIT_CONFIG) {
+      loadOmafitConfigOnce().then(function (cfg) {
+        if (!cfg || OMAFIT_CONFIG_FROM_LIQUID) return;
+        OMAFIT_CONFIG = cfg;
         OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
-      }
-
-      if (!OMAFIT_CONFIG) {
-        console.error('❌ Falha ao carregar configuração do Omafit');
-        // Tentar usar configuração padrão mesmo assim
-        OMAFIT_CONFIG = {
-          publicId: 'wgt_pub_default',
-          linkText: 'Experimentar virtualmente',
-          storeName: '',
-          storeLogo: '',
-          fontFamily: 'inherit',
-          colors: {
-            primary: '#810707',
-            background: '#ffffff',
-            text: '#810707',
-            overlay: '#810707CC'
-          },
-          shopDomain: '',
-          widgetEnabled: true,
-          isActive: true,
-          embedPosition: 'below_buy_buttons',
-          ctaType: 'link'
-        };
-      }
-
-      OMAFIT_CONFIG.storeName = ensureStoreName(OMAFIT_CONFIG);
-      syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
-
-      console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
-
-      // Verificar se widget está habilitado antes de inserir
-      const isEnabled = OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false;
-      
-      if (!isEnabled) {
-        console.warn('⚠️ Widget Omafit está desabilitado. widgetEnabled:', OMAFIT_CONFIG.widgetEnabled, 'isActive:', OMAFIT_CONFIG.isActive);
-        console.warn('⚠️ Para habilitar, configure widget_enabled=true no app e is_active=true em widget_keys');
-        removeInjectedOmafitCtaOnly();
-        return;
-      }
-
-      // Atualiza o botão já visível. Só recria se ele ainda não estiver na página.
-      if (!document.querySelector('.omafit-widget')) {
-        insertOmafitLinkUnderAddToCart();
-      } else {
+        syncAdminBrandingToWidgetRoot(OMAFIT_CONFIG);
+        console.log('✅ Configuração carregada:', OMAFIT_CONFIG);
+        var isEnabled = OMAFIT_CONFIG.widgetEnabled !== false && OMAFIT_CONFIG.isActive !== false;
+        if (!isEnabled) {
+          removeInjectedOmafitCtaOnly();
+          return;
+        }
         var omafitLiveLink = document.querySelector('.omafit-try-on-link');
         var omafitLiveColor = (OMAFIT_CONFIG.colors && OMAFIT_CONFIG.colors.primary) || '#810707';
         var omafitLiveLabel = OMAFIT_CONFIG.linkText || 'Experimentar virtualmente';
@@ -4604,14 +4601,9 @@
           var omafitLiveSpan = omafitLiveBtn.querySelector('span');
           if (omafitLiveSpan) omafitLiveSpan.textContent = omafitLiveLabel;
         }
-        document.querySelectorAll('.omafit-try-on-link, .omafit-try-on-cta').forEach(function (el) {
-          bindOmafitCta(el);
-        });
-      }
-      scheduleOmafitWidgetWarmup();
-
-      console.log('✅ Omafit inicializado com sucesso');
-      openQueuedOmafitModal();
+      }).catch(function (err) {
+        console.error('❌ Omafit: erro ao inicializar widget', err);
+      });
     } catch (e) {
       console.error('❌ Omafit: erro ao inicializar widget', e);
       // Tentar inserir mesmo com erro, usando configuração padrão

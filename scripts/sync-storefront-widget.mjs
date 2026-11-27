@@ -60,21 +60,23 @@ process.env.OMAFIT_WIDGET_DIR = widgetDir;
 process.env.OMAFIT_STOREFRONT_OUT = outDir;
 run(process.execPath, [path.join(widgetDir, "node_modules", "vite", "bin", "vite.js"), "build", "--config", path.join(here, "storefront-widget.vite.config.mjs")], widgetDir);
 
-const names = [
-  "omafit-storefront.js",
-  "omafit-storefront-style.css",
-  "omafit-storefront-mediapipe.worker.js",
-  "omafit-storefront-vision_bundle.js",
-];
+const names = fs
+  .readdirSync(outDir)
+  .filter((name) => name.startsWith("omafit-storefront"));
+if (!names.includes("omafit-storefront.js") || !names.some((name) => name.endsWith(".css"))) {
+  throw new Error("Build da vitrine incompleto: falta o JS ou o CSS de entrada.");
+}
 const files = {};
 for (const name of names) {
   const from = path.join(outDir, name);
-  if (!fs.existsSync(from)) {
-    throw new Error(`Arquivo de build ausente: ${name}`);
-  }
   const dest = path.join(assetDir, name);
   fs.copyFileSync(from, dest);
   files[name] = fs.statSync(dest).size;
+}
+for (const existing of fs.readdirSync(assetDir)) {
+  if (existing.startsWith("omafit-storefront") && !names.includes(existing)) {
+    fs.rmSync(path.join(assetDir, existing));
+  }
 }
 
 const manifest = {

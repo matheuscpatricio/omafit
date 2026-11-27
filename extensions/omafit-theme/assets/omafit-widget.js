@@ -2208,6 +2208,7 @@
 
     const closeModal = function () {
       window.__OMAFIT_MODAL_LOCK = false;
+      window.removeEventListener('message', onEmbedReady);
       if (document.body.contains(overlay)) {
         overlay.style.background = 'rgba(0, 0, 0, 0)';
         overlay.style.backdropFilter = 'blur(0px)';
@@ -2752,10 +2753,20 @@
     // ⚡ Dispara o download/boot do iframe JÁ — em paralelo às buscas restantes.
     var __omafitIframeLoaded = false;
     var __omafitDispatch = null;
-    iframe.addEventListener('load', function () {
-      if (loadingContainer.parentNode) {
-        loadingContainer.parentNode.removeChild(loadingContainer);
+    function hideOmafitLoading() {
+      if (loadingContainer.parentNode) loadingContainer.parentNode.removeChild(loadingContainer);
+    }
+    function onEmbedReady(event) {
+      if (!event || !event.data || event.data.type !== 'omafit-embed-ready') return;
+      try {
+        if (event.source !== iframe.contentWindow) return;
+      } catch (e) {
+        return;
       }
+      hideOmafitLoading();
+    }
+    window.addEventListener('message', onEmbedReady);
+    iframe.addEventListener('load', function () {
       __omafitIframeLoaded = true;
       if (__omafitDispatch) __omafitDispatch();
     });
@@ -3953,6 +3964,9 @@
     el.addEventListener('mouseenter', function () {
       omafitTryOnPreconnect();
     });
+    el.addEventListener('pointerdown', function () {
+      omafitTryOnPreconnect();
+    }, { passive: true });
     el.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -4034,13 +4048,11 @@
       var qIndex = search.indexOf('?');
       search = qIndex >= 0 ? search.slice(qIndex) : '';
     }
-    var fontHref =
-      'https://fonts.googleapis.com/css2?family=Bungee&family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap';
     return (
       '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       '<meta http-equiv="Permissions-Policy" content="camera=*, microphone=*, fullscreen=*">' +
-      '<link rel="stylesheet" href="' + fontHref + '">' +
+      '<style>body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}</style>' +
       (cssUrl ? '<link rel="stylesheet" href="' + String(cssUrl).replace(/"/g, '') + '">' : '') +
       '</head><body><div id="root"></div><script>' +
       'window.__OMAFIT_SEARCH__=' + jsonForInlineScript(search) + ';' +
@@ -4076,6 +4088,9 @@
       this.style.textDecorationThickness = '2px';
       omafitTryOnPreconnect();
     });
+    link.addEventListener('pointerdown', function () {
+      omafitTryOnPreconnect();
+    }, { passive: true });
     link.addEventListener('mouseleave', function () {
       this.style.opacity = '1';
       this.style.textDecorationThickness = '1px';
@@ -4144,6 +4159,9 @@
       btn.style.transform = 'translateY(-1px)';
       omafitTryOnPreconnect();
     });
+    btn.addEventListener('pointerdown', function () {
+      omafitTryOnPreconnect();
+    }, { passive: true });
     btn.addEventListener('mouseleave', function () {
       btn.style.opacity = '1';
       btn.style.transform = 'none';

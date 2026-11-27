@@ -1,12 +1,10 @@
 /**
- * Entrada da vitrine embutida. Monta as mesmas páginas do omafit-widget
- * (`/widget` e `/widget-shoes`) sem o site, o admin nem o router do Netlify.
- * O tema injeta `window.__OMAFIT_SEARCH__`, `__OMAFIT_PATH__` e
- * `__OMAFIT_AR_MODULE_URL__` antes deste módulo.
+ * Entrada da vitrine embutida. O tema injeta `window.__OMAFIT_SEARCH__`,
+ * `__OMAFIT_PATH__` e `__OMAFIT_AR_MODULE_URL__` antes deste módulo.
+ * Roupa e calçado são arquivos separados: só o fluxo escolhido é baixado.
  */
 import { createRoot } from "react-dom/client";
-import { WidgetPage } from "@omafit-widget/components/WidgetPage";
-import { ShoeARWidgetPage } from "@omafit-widget/components/ShoeARWidgetPage";
+import type { ComponentType } from "react";
 import "@omafit-widget/index.css";
 
 function embedPath(): string {
@@ -21,13 +19,31 @@ function embedSearch(): string {
   return window.location.search || "";
 }
 
-const path = embedPath();
-const search = embedSearch();
-const shoes =
-  path.indexOf("widget-shoes") !== -1 ||
-  new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).get("omafit_surface") === "shoes";
-
-const rootEl = document.getElementById("root");
-if (rootEl) {
-  createRoot(rootEl).render(shoes ? <ShoeARWidgetPage /> : <WidgetPage />);
+function isShoes(path: string, search: string): boolean {
+  if (path.indexOf("widget-shoes") !== -1) return true;
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  return params.get("omafit_surface") === "shoes";
 }
+
+async function mount(): Promise<void> {
+  const rootEl = document.getElementById("root");
+  if (!rootEl) return;
+  const path = embedPath();
+  const search = embedSearch();
+  let Page: ComponentType;
+  if (isShoes(path, search)) {
+    const mod = await import("@omafit-widget/components/ShoeARWidgetPage");
+    Page = mod.ShoeARWidgetPage;
+  } else {
+    const mod = await import("@omafit-widget/components/WidgetPage");
+    Page = mod.WidgetPage;
+  }
+  createRoot(rootEl).render(<Page />);
+  try {
+    window.parent.postMessage({ type: "omafit-embed-ready" }, "*");
+  } catch {
+    /* a página da loja segue com o spinner até o load do iframe */
+  }
+}
+
+void mount();
